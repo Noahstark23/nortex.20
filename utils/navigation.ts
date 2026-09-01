@@ -97,10 +97,10 @@ const BODEGUERO_ITEMS: NavEntry[] = [
 /** Roles con acceso a cada item gated (mismo gating que existía en Layout). */
 const GATE_MANAGER = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'];
 const GATE_ADMIN = ['OWNER', 'ADMIN', 'SUPER_ADMIN'];
-const GATE_PROCUREMENT_READ = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'VIEWER'];
 // Debe reflejar `customers:read` del backend para el catálogo retail. VENDEDOR
 // conserva su menú dedicado (VENDEDOR_ITEMS) y no pasa por este catálogo.
 const GATE_CUSTOMER_READ = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER'];
+const GATE_PROCUREMENT_READ = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'VIEWER'];
 
 interface CatalogEntry extends NavEntry {
     /** Si está presente, solo estos roles ven el item (igual que antes). */

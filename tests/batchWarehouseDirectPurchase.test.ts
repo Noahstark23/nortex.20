@@ -216,24 +216,44 @@ describe('ingreso lote+bodega en compra directa', () => {
     });
 
     it('dos líneas del mismo SKU/lote conservan ids y sourceKeys distintos', async () => {
+        const modeResolutionStart = purchaseRoute.indexOf('const batchWarehouseLedgerMode =');
         const processedStart = purchaseRoute.indexOf('const processedItems = preparedItems.map');
         const purchaseCreate = purchaseRoute.indexOf('const purchase = await tx.purchase.create', processedStart);
         const processedBlock = purchaseRoute.slice(processedStart, purchaseCreate);
+        const sidecarStart = purchaseRoute.indexOf(
+            "if (batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED')",
+            purchaseCreate,
+        );
+        const sidecarEnd = purchaseRoute.indexOf('// Evidencia física de la entrada directa', sidecarStart);
+        const sidecarBlock = purchaseRoute.slice(sidecarStart, sidecarEnd);
         const persistedSpread = processedBlock.indexOf('...persisted');
         const authoritativeId = processedBlock.indexOf('id: crypto.randomUUID()');
 
+        expect(modeResolutionStart).toBeGreaterThan(0);
         expect(persistedSpread).toBeGreaterThan(0);
         expect(authoritativeId).toBeGreaterThan(persistedSpread);
-        expect(processedBlock).toContain("batchWarehouseLedgerMode === 'SHADOW'");
-        expect(processedBlock).toContain("batchWarehouseLedgerMode === 'ENFORCED'");
-        expect(processedBlock).toContain(
+        // La identidad es más fuerte que el sidecar: toda compra directa recibe
+        // UUID. Las líneas tracked en SHADOW/ENFORCED lo heredan y el ledger exige
+        // ese mismo UUID antes de formar el sourceKey idempotente.
+        expect(purchaseRoute).toContain('const isDirectPurchase = !linkedPurchaseOrder');
+        expect(purchaseRoute).toContain(
+            'const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some',
+        );
+        expect(purchaseRoute).toContain(
             'productsById.get(item.productId)?.requiresBatchTracking === true',
         );
-        expect(processedBlock).toContain('? { id: crypto.randomUUID() }');
+        expect(processedBlock).toContain('isDirectPurchase ? { id: crypto.randomUUID() }');
+        expect(purchaseRoute).toContain(
+            "batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED'",
+        );
         expect(purchaseRoute).toContain('create: processedItems.map');
         expect(purchaseRoute).toContain("|| (left.id ?? '').localeCompare(right.id ?? '')");
-        expect(purchaseRoute).toContain("if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED')");
-        expect(purchaseRoute).toContain(
+        expect(sidecarStart).toBeGreaterThan(purchaseCreate);
+        expect(sidecarEnd).toBeGreaterThan(sidecarStart);
+        expect(sidecarBlock).toContain("batchWarehouseLedgerMode === 'SHADOW'");
+        expect(sidecarBlock).toContain("batchWarehouseLedgerMode === 'ENFORCED'");
+        expect(sidecarBlock).toContain("if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED')");
+        expect(sidecarBlock).toContain(
             'sourceKey: `direct-purchase:${purchase.id}:item:${item.id}`',
         );
 

@@ -87,6 +87,7 @@ model Tenant {
   quotations                Quotation[]
   invitations               Invitation[]
   cashMovements             CashMovement[]
+  shiftCloseReports         ShiftCloseReport[]
   productReturns            ProductReturn[]
   serialNumbers             SerialNumber[]
   warehouses                Warehouse[]
@@ -1257,6 +1258,10 @@ model Sale {
   // a recorrer la tabla de ventas entera — el guardrail 3 pide el índice en el
   // MISMO cambio que la query.
   @@index([tenantId, status])
+  // Reporte íntegro por período y cierre por turno: el filtro siempre combina
+  // tenant + estado vigente con fecha o shift, no índices aislados.
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, shiftId, status])
   // Reportes/libros por régimen y período, siempre aislados por tenant.
   @@index([tenantId, fiscalRegimeAtSale, createdAt])
 }
@@ -1514,12 +1519,37 @@ model Shift {
   employee      Employee?      @relation(fields: [employeeId], references: [id])
   sales         Sale[]
   cashMovements CashMovement[]
+  closeReport   ShiftCloseReport?
+  processedReturns ProductReturn[] @relation("ProcessedShiftReturns")
   RouteExpense  RouteExpense[]
 
   @@index([tenantId])
+  @@index([tenantId, status, startTime])
   @@index([userId])
   @@index([employeeId])
   @@unique([tenantId, closeEventId])
+}
+
+// Snapshot Z inmutable generado atómicamente al cerrar una caja. `report`
+// conserva los totales y desgloses exactos de la versión que fue emitida.
+model ShiftCloseReport {
+  id           String   @id @default(cuid())
+  tenantId     String
+  shiftId      String   @unique
+  folio        String
+  businessDate String   @db.VarChar(10)
+  version      Int      @default(1)
+  report       Json
+  contentHash  String   @db.VarChar(64)
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shift  Shift  @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, folio])
+  @@index([tenantId, businessDate])
+  @@index([tenantId, createdAt])
 }
 
 model Expense {
@@ -1577,6 +1607,7 @@ model CashMovement {
   @@index([tenantId])
   @@index([shiftId])
   @@index([createdAt])
+  @@index([tenantId, shiftId, isVoided])
 }
 
 // Cabeza de la cadena del libro por tenant. El UPDATE con increment toma
@@ -1849,6 +1880,8 @@ model Product {
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
   @@index([tenantId])
+  @@index([tenantId, isPublished, name])
+  @@index([tenantId, isPublished, category, name])
   @@index([category])
   @@fulltext([name, category])
 }
@@ -2253,6 +2286,7 @@ model ProductReturn {
   id            String   @id @default(cuid())
   tenantId      String
   saleId        String
+  processedShiftId String?
   total         Decimal  @db.Decimal(10, 2) // Total del reembolso
   reason        String   @db.Text
   items         Json // [{productId, name, quantity, price}]
@@ -2270,6 +2304,7 @@ model ProductReturn {
 
   tenant            Tenant                 @relation(fields: [tenantId], references: [id])
   sale              Sale                   @relation(fields: [saleId], references: [id])
+  processedShift    Shift?                 @relation("ProcessedShiftReturns", fields: [processedShiftId], references: [id])
   correctionRequest SaleCorrectionRequest? @relation(fields: [correctionRequestId], references: [id], onDelete: Restrict)
   normalizedItems   ProductReturnItem[]
   refunds           ReturnRefund[]
@@ -2279,6 +2314,8 @@ model ProductReturn {
   @@index([tenantId])
   @@index([saleId])
   @@unique([tenantId, returnNumber])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, processedShiftId, createdAt])
 }
 
 /// Solicitud aprobable que precede cualquier movimiento de dinero o inventario.

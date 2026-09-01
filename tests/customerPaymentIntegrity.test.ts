@@ -3,8 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildPaymentJournalLines } from '../backend/services/accounting';
 import { CreatePaymentSchema } from '../backend/validation/schemas';
+import { calcularEfectivoTurno } from '../utils/margen';
 
 const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
+const shiftCloseService = readFileSync(resolve(process.cwd(), 'backend/services/shiftCloseService.ts'), 'utf8');
 const schema = readFileSync(resolve(process.cwd(), 'backend/prisma/schema.prisma'), 'utf8');
 const migration = readFileSync(
     resolve(process.cwd(), 'backend/prisma/migrations/20260827_customer_relationship_hub/migration.sql'),
@@ -59,6 +61,70 @@ describe('integridad de abonos de clientes', () => {
         expect(server).toContain("where: { id: saleId, tenantId: authReq.tenantId! },");
         expect(server).toContain("const customerUpdated = await tx.customer.updateMany({");
         expect(server).toContain("where: { id: lockedSale.customerId, tenantId: authReq.tenantId! },");
+    });
+
+    it('liga cada abono CASH nuevo a la caja autoritativa y el replay no duplica el arqueo', () => {
+        const handlerStart = server.indexOf('async function registerCreditPayment');
+        const handlerEnd = server.indexOf('// POST /api/credits/:saleId/writeoff', handlerStart);
+        const handler = server.slice(handlerStart, handlerEnd);
+
+        const saleLock = handler.indexOf('SELECT s.id, s.customerId');
+        const replayGuard = handler.indexOf('if (clientEventId)');
+        const cashBranch = handler.indexOf("if (method === 'CASH')");
+        const shiftLock = handler.indexOf('FROM \\`Shift\\`', cashBranch);
+        const paymentCreate = handler.indexOf('const payment = await tx.payment.create');
+        const movementCreate = handler.indexOf('const cashMovement = await appendSignedCashMovement');
+        const replayReturn = handler.indexOf('return { replayed: true, paymentId: replay.id }');
+
+        expect(saleLock).toBeGreaterThan(-1);
+        expect(replayGuard).toBeGreaterThan(saleLock);
+        expect(replayReturn).toBeGreaterThan(replayGuard);
+        expect(cashBranch).toBeGreaterThan(replayReturn);
+        expect(shiftLock).toBeGreaterThan(cashBranch);
+        expect(paymentCreate).toBeGreaterThan(shiftLock);
+        expect(movementCreate).toBeGreaterThan(paymentCreate);
+
+        // Tenant/usuario vienen del JWT; el body no decide la caja.
+        expect(handler).toContain('WHERE \\`tenantId\\` = ${authReq.tenantId!}');
+        expect(handler).toContain('AND \\`userId\\` = ${authReq.userId!}');
+        expect(handler).not.toContain('req.body.shiftId');
+        expect(handler).toContain('if (ownOpenShifts.length > 1)');
+        expect(handler).toContain("if (!cashShiftId) throw new Error('PAYMENT_OPEN_SHIFT_REQUIRED')");
+        expect(handler).toContain("throw new Error('PAYMENT_OPEN_SHIFT_AMBIGUOUS')");
+
+        // Un único IN firmado alimenta la fórmula del cierre Z; los medios no
+        // CASH nunca entran a esta rama y recordPayment conserva su asiento.
+        expect(handler.match(/appendSignedCashMovement/g)).toHaveLength(1);
+        expect(handler).toContain('shiftId: cashShiftId');
+        expect(handler).toContain("type: 'IN'");
+        expect(handler).toContain('amount: paymentAmount.toFixed(2)');
+        expect(handler).not.toContain('amount: paymentAmount.toNumber()');
+        expect(handler).toContain("currency: 'NIO'");
+        expect(handler).toContain("category: 'COBRO_CREDITO'");
+        expect(handler).toContain('cashShiftId,');
+        expect(handler).toContain('cashMovementId,');
+        expect(shiftCloseService).toContain("tx.cashMovement.groupBy({");
+        expect(shiftCloseService).toContain("where: { tenantId: command.tenantId, shiftId: locked.id, isVoided: false }");
+
+        const drawer = calcularEfectivoTurno({
+            initialCash: '100.00',
+            initialCashUsd: '0',
+            cashSales: '0',
+            movimientos: [{
+                type: 'IN',
+                amount: '25.50',
+                currency: 'NIO',
+                category: 'COBRO_CREDITO',
+            }],
+        });
+        expect(drawer.efectivoNIO.toFixed(2)).toBe('125.50');
+        expect(drawer.desglose.manualINs.toFixed(2)).toBe('25.50');
+
+        const voidStart = server.indexOf("app.post('/api/cash-movements/:id/void'");
+        const voidEnd = server.indexOf('// ==========================================\n// 📦 INVENTORY', voidStart);
+        const voidHandler = server.slice(voidStart, voidEnd);
+        expect(voidHandler).toContain("if (movement.category === 'COBRO_CREDITO')");
+        expect(voidHandler).toContain("code: 'CREDIT_PAYMENT_CASH_MOVEMENT_IMMUTABLE'");
     });
 
     it('persiste la llave idempotente aditiva sin obligar históricos', () => {

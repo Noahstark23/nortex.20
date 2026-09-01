@@ -37,6 +37,11 @@ describe('sanitizeDecimalInput: deja solo dígitos y UN punto', () => {
     it('preserva el punto decimal inicial mientras se teclea', () => {
         expect(sanitizeDecimalInput('.5')).toBe('.5');
     });
+
+    it('sin punto no pierde el primer dígito al normalizar', () => {
+        expect(sanitizeDecimalInput('987654321')).toBe('987654321');
+        expect(sanitizeDecimalInput('C$ 007')).toBe('007');
+    });
 });
 
 describe('toDecimal: nunca lanza, siempre devuelve un Decimal usable', () => {

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import Decimal from 'decimal.js';
 import { vatCollectedFromSale } from '../utils/fiscalRegime';
+import { calculateReportTotals } from '../backend/lib/reportMoney';
 
 /**
  * El reporte de ventas dejaba de suponer que TODO córdoba trae IVA adentro.
@@ -52,6 +53,30 @@ describe('IVA realmente trasladado por una venta', () => {
         expect(iva({ total: 200, exemptTotal: 200, vatAmountAtSale: null })).toBe('0.0000');
     });
 
+    it('con snapshot, valida el IVA contra la porción realmente gravada', () => {
+        // Con C$ 60 exonerados solo quedan C$ 40 contra los que se puede
+        // validar el snapshot. Sin exoneración, el mismo snapshot sí cabe.
+        expect(() => vatCollectedFromSale({
+            total: 100,
+            exemptTotal: 60,
+            vatAmountAtSale: 41,
+        })).toThrowError('El IVA guardado debe estar entre cero y el total gravado de la venta');
+        expect(iva({ total: 100, exemptTotal: null, vatAmountAtSale: 41 })).toBe('41.0000');
+    });
+
+    it.each([
+        ['NaN', Number.NaN, null],
+        ['Infinity', Number.POSITIVE_INFINITY, undefined],
+        ['NaN con snapshot', Number.NaN, 0],
+        ['Infinity con snapshot', Number.POSITIVE_INFINITY, 0],
+    ])('rechaza un total exonerado no finito: %s', (_caso, exemptTotal, vatAmountAtSale) => {
+        expect(() => vatCollectedFromSale({
+            total: 100,
+            exemptTotal,
+            vatAmountAtSale,
+        })).toThrowError('El total exonerado debe ser finito');
+    });
+
     it('un exento inconsistente se acota en vez de tirar', () => {
         // Exento mayor que el total daría un gravado negativo.
         expect(iva({ total: 100, exemptTotal: 500, vatAmountAtSale: null })).toBe('0.0000');
@@ -98,17 +123,41 @@ describe('IVA realmente trasladado por una venta', () => {
 });
 
 describe('el reporte de ventas ya no supone el 15% sobre el período', () => {
-    it('acumula el IVA venta por venta', () => {
-        const server = leer('backend/server.ts');
-        expect(server).toContain('vatCollectedFromSale({');
-        expect(server).toMatch(/ivaRecaudadoD = ivaRecaudadoD\.plus\(vatCollectedFromSale/);
-        // Las netas se DERIVAN del IVA real, no al revés.
-        expect(server).toMatch(/const ventasNetas\s*= totalVentas\.minus\(ivaRecaudado\)/);
+    it('agrega el snapshot por venta y solo después resta el IVA devuelto', () => {
+        const service = leer('backend/services/salesReportService.ts');
+
+        // La consulta suma la regla por cada fila: CUOTA_FIJA=0, snapshot si
+        // existe y fórmula legacy únicamente como fallback.
+        expect(service).toContain("s.\\\`fiscalRegimeAtSale\\\` = 'CUOTA_FIJA'");
+        expect(service).toContain('s.\\\`vatAmountAtSale\\\` IS NOT NULL');
+        expect(service).toContain('COALESCE(SUM(${saleVatSql}), 0) AS grossVat');
+        // Las devoluciones revierten el impuesto del período sin recalcular el
+        // bruto completo al 15 %. Este assert es conductual para sobrevivir a
+        // extracciones/refactors del motor Decimal.
+        const totals = calculateReportTotals({
+            grossSales: '1650',
+            returnsTotal: '115',
+            grossVat: '71.7391',
+            returnedVat: '15',
+            grossCogs: '900',
+            returnedCogs: '60',
+            transactionCount: 3,
+            quantityGross: '30',
+            quantityReturned: '2',
+            productGrossSales: '1650',
+            allocatedReturnTotal: '115',
+        });
+        expect(totals.netSales.toFixed(2)).toBe('1535.00');
+        expect(totals.vatCollected.toFixed(4)).toBe('56.7391');
+        expect(totals.netRevenue.toFixed(4)).toBe('1478.2609');
+        expect(totals.grossProfit.toFixed(4)).toBe('638.2609');
     });
 
     it('no queda ninguna división a ciegas entre 1.15 en el reporte', () => {
         // La regresión concreta: `totalVentas.dividedBy('1.15')`.
-        expect(leer('backend/server.ts')).not.toMatch(/totalVentas\.dividedBy\('1\.15'\)/);
+        expect(leer('backend/lib/salesReport.ts')).not.toMatch(/totalVentas\.dividedBy\('1\.15'\)/);
+        expect(leer('backend/services/salesReportService.ts'))
+            .not.toMatch(/totalVentas\.dividedBy\('1\.15'\)/);
     });
 });
 

@@ -219,14 +219,14 @@ export function calculatePayroll(
     const baseJudicial = totalIncome.minus(totalDeductions);
     let judicialDeduction = new Decimal(0);
     let remanente = baseJudicial;
-    for (const d of (opts?.judicialDeductions ?? [])) {
+    opts?.judicialDeductions?.forEach((d) => {
         const monto = d.amount != null
             ? new Decimal(d.amount)
             : baseJudicial.mul(new Decimal(d.percentage ?? 0).div(100));
         const aplicado = Decimal.min(monto, Decimal.max(0, remanente));
         judicialDeduction = judicialDeduction.plus(aplicado);
         remanente = remanente.minus(aplicado);
-    }
+    });
     judicialDeduction = judicialDeduction.toDecimalPlaces(4);
 
     // 4. Neto a Recibir — descontando deducciones judiciales y luego adelantos.
@@ -419,7 +419,7 @@ export function calculateSettlement(params: {
     const lastDec1 = term.getUTCMonth() >= 11
         ? new Date(Date.UTC(term.getUTCFullYear(), 11, 1))
         : new Date(Date.UTC(term.getUTCFullYear() - 1, 11, 1));
-    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    const aguinaldoStart = new Date(Math.max(hire.getTime(), lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, term);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
         ? Math.min(360, diasDesdeInicioAguinaldo + 1)

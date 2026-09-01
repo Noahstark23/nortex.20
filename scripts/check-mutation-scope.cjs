@@ -29,10 +29,11 @@ const REPORT = path.join(__dirname, '..', 'reports', 'mutation', 'mutation.json'
 // nunca para esconder sobrevivientes: primero se realinea el rango y luego se
 // documenta el conteo exacto y la razón de la reducción.
 const PISO_MUTANTES = {
-    // money.ts entró con el rediseño (formatMoney + los parsers de captura):
-    // 60 mutantes, score medido 98.33%. El único sobreviviente es equivalente
-    // (`dot === -1 ? cleaned : …` — con dot=-1 la rama else calcula lo mismo).
-    'utils/money.ts': 60,
+    // money.ts entró con el rediseño (formatMoney + los parsers de captura).
+    // Bajó exactamente de 60 a 56 al borrar el ternario equivalente de
+    // sanitizeDecimalInput: con dot=-1 la expresión única de slices ya devuelve
+    // `cleaned`. La corrida completa detectó los 56; no se perdió una conducta.
+    'utils/money.ts': 56,
     // calc-laborales.ts bajó de 96 a 88 mutantes en el barrido del motor de
     // nómina, y es una de las bajas legítimas que este guardián contempla: NO se
     // corrió un rango ni se sacó el archivo del alcance, se BORRÓ CÓDIGO. La
@@ -42,30 +43,38 @@ const PISO_MUTANTES = {
     // podía matarlos. Se reemplazó por `indemnizacionDias > 0`, que sí discrimina
     // —el piso de 1 mes no le toca a quien entra y sale el mismo día— y cuyos
     // mutantes SÍ mueren. Menos mutantes, más score (96.81% → 98.86%).
-    'utils/calc-laborales.ts': 88,
+    // La configuración global `Decimal.set` restante también era exactamente el
+    // default de decimal.js y corría antes de que perTest atribuyera cobertura.
+    // Al borrarla el conteo baja de 88 a 87; los 87 quedan detectados.
+    'utils/calc-laborales.ts': 87,
     // pricing.ts bajó de 66 a 51 mutantes cuando el contrato de empaque dejó
     // de inferirse por umbral y pasó a requerir `presentation: 'PACK'`
     // explícita. En esa limpieza se borraron guardas redundantes (`x != null`
     // con `x > 0`) y el default string del parámetro, que eran equivalentes:
     // no había aserción honesta que los distinguiera porque cualquier valor
     // distinto de 'PACK' se trata como BASE. Menos mutantes, mayor señal.
-    'utils/pricing.ts': 51,
+    // La segunda simplificación borró 11 mutantes equivalentes más: el
+    // `threshold` que nunca competía con otro tier, su asignación, y la
+    // renormalización de `presentation` que ya discriminaba solo 'PACK'. El
+    // contrato explícito BASE/PACK no cambia y los 40 restantes quedan detectados.
+    'utils/pricing.ts': 40,
     // margen.ts cubre ganancia bruta real, retiro seguro, efectivo del turno y
     // el ingreso de CUOTA_FIJA: 70/70 mutantes detectados. Los cuatro agregados
     // por el régimen fiscal mueren. El 15% de IVA se construye DENTRO de la función a
     // propósito: como constante de módulo su mutante sobrevivía siempre
     // (se evalúa al importar, antes de que Stryker active el mutante).
     'utils/margen.ts': 70,
-    // stockAlert.ts entró con el aviso de existencias del carrito: 110 mutantes,
-    // score medido 99.09%. No es dinero, es inventario — pero es la misma clase
+    // stockAlert.ts entró con el aviso de existencias del carrito. Bajó
+    // exactamente de 110 a 106 al reemplazar `disponible !== null &&
+    // disponible < 0` por la comparación numérica equivalente: DESCONOCIDO ya
+    // retorna antes y `Number(null) < 0` es false. Los 106 quedan detectados.
+    // No es dinero, es inventario — pero es la misma clase
     // de número que el dueño verifica a ojo contra la góndola, y un aviso falso
-    // se aprende a ignorar. El único sobreviviente es equivalente: la guarda
-    // `disponible !== null` de textoAviso es inalcanzable (el estado DESCONOCIDO
-    // retorna antes), y existe solo para que TypeScript acepte la comparación.
+    // se aprende a ignorar.
     // La tolerancia de 1e-6 se construye DENTRO de una función por el mismo
     // motivo que el IVA de margen.ts: como constante de módulo su mutante
     // sobrevivía siempre.
-    'utils/stockAlert.ts': 110,
+    'utils/stockAlert.ts': 106,
     // cartPersistence.ts creció de 142 a 337 mutantes al incorporar el canal
     // autenticado cotización → POS y sus fronteras de versión, identidad, TTL y
     // máximo de líneas. Los 337/337 quedan detectados: una línea inválida no se
@@ -100,6 +109,11 @@ const PISO_MUTANTES = {
     'utils/purchasePackaging.ts': 117,
     // Serialización pura de filas para el XLSX de reportes medidos: 3/3.
     'utils/measuredReportExport.ts': 3,
+    // Núcleo monetario completo de reportes: Decimal/HALF_UP, IVA histórico,
+    // netos, utilidad, ticket, redondeo y prorrateo exacto de devoluciones.
+    // Corrida dirigida final: 73/73 killed, 0 survived, 0 timeout y
+    // 0 NoCoverage (100.00%), sin rangos ni ignores.
+    'backend/lib/reportMoney.ts': 73,
     // Agrupación exacta de cantidades vendidas: 67/67.
     'backend/lib/salesQuantityReport.ts': 67,
     // Saldo recibido aún facturable por producto: 16/16.
@@ -155,6 +169,9 @@ const PISO_MUTANTES = {
     // Sus dos sobrevivientes iniciales eran el campo `modo` en los caminos de
     // rechazo — los tests miraban `codigo` y `employeeId` pero no `modo`.
     'backend/services/shiftIdentity.ts': 68,
+    // Intención explícita de precio desde compras: roles exactos, presencia,
+    // Decimal persistible, deduplicación y before/after. Corrida dirigida 68/68.
+    'backend/services/purchaseSalePriceService.ts': 68,
     'backend/services/loanMath.ts': 12,
     // DTO público mínimo de tracking: 5/5; descarta notas, GPS y teléfonos.
     'backend/services/pedidoTrackingService.ts': 5,
@@ -200,14 +217,15 @@ const PISO_MUTANTES = {
     // Corrida dirigida: 175/175, sin NoCoverage, ignores ni sobrevivientes.
     'backend/services/journalPosting.ts': 175,
     // Identidad legacy tenant+turno y hash de intención: 9/9.
-    'backend/services/shiftCloseService.ts': 9,
+    'backend/services/legacyShiftCloseService.ts': 9,
     // JSON canónico de cierre (NIO 2dp, USD 4dp, notas normalizadas): 8/8.
     'backend/validation/schemas.ts': 8,
-    // Asientos puros de venta, abonos, compra+PPV y devolución: 177/177, más
-    // 7/7 del orden canónico de locks contables. La factura ligada a OC deja
+    // Asientos puros de venta, abonos, compra+PPV y devolución: 178/178, más
+    // 7/7 del orden canónico de locks contables; 185/185 en la realineación
+    // actual. La factura ligada a OC deja
     // Inventario al costo recibido y separa variación favorable/desfavorable
     // en 5.1.3, incluidos bordes CUOTA_FIJA.
-    'backend/services/accounting.ts': 184,
+    'backend/services/accounting.ts': 185,
 };
 
 if (!fs.existsSync(REPORT)) {

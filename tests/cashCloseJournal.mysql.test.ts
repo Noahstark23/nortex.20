@@ -10,7 +10,7 @@ import {
 import {
     closeLegacyShift,
     type ShiftCloseDatabase,
-} from '../backend/services/shiftCloseService';
+} from '../backend/services/legacyShiftCloseService';
 
 /**
  * Smoke de concurrencia contra MySQL 8 real.

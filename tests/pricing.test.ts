@@ -4,7 +4,7 @@
  * suite permanente: si alguien rompe la escalera, CI lo atrapa.
  */
 import { describe, it, expect } from 'vitest';
-import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
+import { effectiveTier, effectiveUnitPrice, type PricePresentation } from '../utils/pricing';
 
 // Producto completo: detalle 10, mayoreo 8.5 desde 6, caja de 12 a C$90 (7.5/und)
 const P = { basePrice: 10, wholesalePrice: 8.5, wholesaleMinQty: 6, packSize: 12, packPrice: 90 };
@@ -71,6 +71,9 @@ describe('degradaciones (campos ausentes o inválidos)', () => {
     });
     it('packSize negativo → detalle', () => {
         expect(effectiveUnitPrice({ basePrice: 10, packPrice: 90, packSize: -12 }, 20, false, 'PACK')).toBe(10);
+    });
+    it('presentación desconocida de un payload viejo se conserva como BASE', () => {
+        expect(effectiveTier(P, 12, false, 'OTRA' as PricePresentation)).toEqual({ unitPrice: 8.5, kind: 'MAYOREO' });
     });
 });
 
