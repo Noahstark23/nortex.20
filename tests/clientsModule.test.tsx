@@ -41,7 +41,6 @@ Object.defineProperty(globalThis, 'localStorage', {
     value: createMemoryStorage(),
     configurable: true,
 });
-
 const jsonResponse = (payload: unknown, status = 200) => new Response(JSON.stringify(payload), {
     status,
     headers: { 'Content-Type': 'application/json' },

@@ -1366,7 +1366,6 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
 const IR_RETENTION_RATE = 0.02;   // 2% sobre compras de bienes/servicios
 const IMI_RETENTION_RATE = 0.01;  // 1% impuesto municipal
 const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
-
 /**
  * Genera retenciones fiscales del periodo desde las compras registradas.
  * Crea registros en FiscalRetention para cada tipo.

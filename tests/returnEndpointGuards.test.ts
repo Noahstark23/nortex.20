@@ -115,7 +115,7 @@ describe('guardas estructurales de devoluciones', () => {
     });
 
     it('resuelve un processedShiftId no nulo antes de persistir y limita el fallback a CASH', () => {
-        const refundResolutionIndex = returnRoute.indexOf('const refundMethod = resolveReturnRefundMethod');
+        const refundResolutionIndex = returnRoute.indexOf("const refundMethod = resolution === 'REFUND'");
         const shiftSelectionStart = returnRoute.indexOf('const ownProcessingShifts:');
         const attributionIndex = returnRoute.indexOf('resolveReturnShiftAttribution({', shiftSelectionStart);
         const processedShiftIndex = returnRoute.indexOf(

@@ -92,6 +92,10 @@ describe('día civil de negocio de Managua', () => {
             'async function buildCustomerHubList',
             'function applySellerCustomerScope',
         );
+        const hubSegmentWhere = sourceBetween(
+            'function customerHubSegmentWhere',
+            'async function buildCustomerHubList',
+        );
         const hubDetail = sourceBetween(
             "app.get('/api/customers/:id/hub'",
             "'/api/customers/:id/interactions'",
@@ -110,6 +114,9 @@ describe('día civil de negocio de Managua', () => {
         );
 
         expect(hubBuilder).toContain('const today = startOfTodayManaguaBusiness(asOf);');
+        expect(hubSegmentWhere).toContain('const cutoff = new Date(inicioDelDiaManagua(asOf).getTime() - 59 * 86400000);');
+        expect(hubSegmentWhere).toContain('createdAt: { lt: cutoff }');
+        expect(hubSegmentWhere).toContain('createdAt: { gte: cutoff }');
         expect(hubDetail).toContain('const today = managuaBusinessDate(now);');
         expect(hubDetail).toContain('daysSinceManaguaCivilDate(ref, now)');
         expect(worklist).toContain('daysSinceManaguaCivilDate(ref, now)');
