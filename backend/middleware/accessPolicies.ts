@@ -255,6 +255,8 @@ export const RETURN_SEARCH_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
 ];
 
 /** VIEWER puede consultar proformas y pedidos web, pero no convertir/crear. */

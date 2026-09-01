@@ -87,6 +87,7 @@ describe('idempotencia de devoluciones', () => {
         ['otra cantidad', { items: [{ saleItemId: 'line-b', quantity: '0.75' }, { saleItemId: 'line-a', productId: 'product-a', quantity: '1.25' }] }],
         ['otro motivo', { reason: 'Producto vencido' }],
         ['otro canal', { refundMethod: 'CASH' as const }],
+        ['otra aprobación', { correctionRequestId: 'correction-002' }],
     ])('cambia la huella ante %s', (_label, override) => {
         expect(buildReturnPayloadHash({ ...basePayload, ...override })).not.toBe(
             buildReturnPayloadHash(basePayload),

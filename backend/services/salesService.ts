@@ -62,7 +62,10 @@ export type SaleErrorCode =
     | 'RECONCILIATION_REQUIRED'
     | 'DUPLICATE_MEASUREMENT_EVENT'
     | 'QUOTATION_INVALID'
-    | 'OFFLINE_PAYLOAD_MISMATCH';
+    | 'OFFLINE_PAYLOAD_MISMATCH'
+    | 'STORE_CREDIT_CUSTOMER_REQUIRED'
+    | 'STORE_CREDIT_EXCEEDED'
+    | 'STORE_CREDIT_SOURCE_INVALID';
 
 export class SaleError extends Error {
     constructor(
@@ -174,6 +177,11 @@ export const CreateSaleSchema = z.object({
     // Las ventas online aceptan el campo por compatibilidad, pero nunca deciden
     // su régimen a partir del cliente.
     fiscalRegimeVersion: z.number().int().positive().optional(),
+    storeCreditAmount: finiteDecimalInput.refine(
+        (value) => new Decimal(value).greaterThanOrEqualTo(0),
+        'El saldo a favor aplicado no puede ser negativo',
+    ).optional().default('0'),
+    storeCreditSourceReturnId: z.string().trim().min(1).max(191).optional(),
 });
 
 type CreateSaleInput = z.output<typeof CreateSaleSchema>;
@@ -409,7 +417,7 @@ const lineNet = (item: NormalizedSaleItem): Decimal => {
 };
 
 const ensureAccountingCatalog = async (tenantId: string): Promise<void> => {
-    const requiredCodes = ['1.1.1', '1.1.3', '1.1.4', '2.1.2', '4.1.1', '5.1.1'];
+    const requiredCodes = ['1.1.1', '1.1.3', '1.1.4', '2.1.2', '2.1.14', '4.1.1', '5.1.1'];
     const rows = await prisma.account.findMany({
         where: { tenantId, code: { in: requiredCodes } },
         select: { code: true },
@@ -586,6 +594,38 @@ const lockOwnedOfflineShift = async (
     return rows[0];
 };
 
+/**
+ * Gate final del POS online contra cierre/traspaso concurrente.
+ *
+ * Mantiene el orden global Product -> Shift: la venta puede leer el turno al
+ * inicio, pero solo confirma el dinero/stock si todavía logra bloquear SU
+ * mismo turno abierto justo antes del asiento contable.
+ */
+const lockOwnedOpenPosShift = async (
+    tx: PrismaTx,
+    tenantId: string,
+    userId: string,
+    shiftId: string,
+): Promise<void> => {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT \`id\`
+          FROM \`Shift\`
+         WHERE \`id\` = ${shiftId}
+           AND \`tenantId\` = ${tenantId}
+           AND \`userId\` = ${userId}
+           AND \`status\` = 'OPEN'
+         LIMIT 1
+         FOR UPDATE
+    `);
+    if (rows.length !== 1) {
+        throw new SaleError(
+            'NO_SHIFT',
+            409,
+            'CAJA CERRADA: El turno ya fue cerrado o reasignado mientras se procesaba la venta',
+        );
+    }
+};
+
 const assertOfflineEmployeeClaim = (
     claimedEmployeeId: string | null | undefined,
     shiftEmployeeId: string | null,
@@ -621,6 +661,13 @@ export async function executeSaleWithResult(
     const source = offlineSync ? 'OFFLINE_SYNC' : submittedInput.source;
     if (!tenantId || !userId) {
         throw new SaleError('INVALID_INPUT', 401, 'Identidad de venta incompleta');
+    }
+    if (offlineSync && new Decimal(submittedInput.storeCreditAmount).greaterThan(0)) {
+        throw new SaleError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'El saldo a favor requiere conexión para confirmar el balance actual del cliente',
+        );
     }
 
     // Este guard corre ANTES de cualquier early-return idempotente. Una fila
@@ -854,6 +901,40 @@ export async function executeSaleWithResult(
                 fiscalRegime,
             );
 
+            const storeCreditApplied = new Decimal(input.storeCreditAmount).toDecimalPlaces(2);
+            if (storeCreditApplied.greaterThan(finalTotal)) {
+                throw new SaleError('STORE_CREDIT_EXCEEDED', 409, 'El saldo aplicado no puede superar el total de la venta');
+            }
+            if (storeCreditApplied.greaterThan(0) && (!input.customerId || !customer)) {
+                throw new SaleError('STORE_CREDIT_CUSTOMER_REQUIRED', 400, 'Elegí el cliente dueño del saldo a favor');
+            }
+            if (storeCreditApplied.greaterThan(0)) {
+                const currentStoreCredit = new Decimal(customer!.storeCreditBalance.toString());
+                if (storeCreditApplied.greaterThan(currentStoreCredit)) {
+                    throw new SaleError('STORE_CREDIT_EXCEEDED', 409, 'El saldo a favor disponible cambió; volvé a revisar el cobro');
+                }
+            }
+            let sourceReturnId: string | null = null;
+            if (input.storeCreditSourceReturnId) {
+                if (!input.customerId || storeCreditApplied.isZero()) {
+                    throw new SaleError('STORE_CREDIT_SOURCE_INVALID', 400, 'El cambio debe aplicar saldo a favor al cliente');
+                }
+                const sourceReturn = await tx.productReturn.findFirst({
+                    where: {
+                        id: input.storeCreditSourceReturnId,
+                        tenantId,
+                        resolution: { in: ['EXCHANGE', 'STORE_CREDIT'] },
+                        sale: { customerId: input.customerId, tenantId },
+                    },
+                    select: { id: true },
+                });
+                if (!sourceReturn) {
+                    throw new SaleError('STORE_CREDIT_SOURCE_INVALID', 409, 'La devolución origen no pertenece a este cliente o no genera saldo');
+                }
+                sourceReturnId = sourceReturn.id;
+            }
+            const tenderTotal = finalTotal.minus(storeCreditApplied).toDecimalPlaces(2);
+
             let finalStatus = 'COMPLETED';
             let creditBalance = new Decimal(0);
             let dueDate: Date | null = null;
@@ -866,7 +947,7 @@ export async function executeSaleWithResult(
                 }
                 const currentDebt = new Decimal(customer.currentDebt.toString());
                 const creditLimit = new Decimal(customer.creditLimit.toString());
-                if (currentDebt.plus(finalTotal).greaterThan(creditLimit)) {
+                if (currentDebt.plus(tenderTotal).greaterThan(creditLimit)) {
                     const available = Decimal.max(creditLimit.minus(currentDebt), 0).toDecimalPlaces(2);
                     throw new SaleError(
                         'CREDIT_LIMIT_EXCEEDED',
@@ -874,9 +955,11 @@ export async function executeSaleWithResult(
                         `Excede limite de credito. Disponible: C$${available.toString()}`,
                     );
                 }
-                finalStatus = 'CREDIT_PENDING';
-                creditBalance = finalTotal;
-                dueDate = new Date(saleCreatedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+                finalStatus = tenderTotal.greaterThan(0) ? 'CREDIT_PENDING' : 'COMPLETED';
+                creditBalance = tenderTotal;
+                dueDate = tenderTotal.greaterThan(0)
+                    ? new Date(saleCreatedAt.getTime() + 30 * 24 * 60 * 60 * 1000)
+                    : null;
             }
 
             const counter = await tx.invoiceSeries.upsert({
@@ -906,6 +989,7 @@ export async function executeSaleWithResult(
                     customerId: input.customerId ?? null,
                     employeeId: input.employeeId ?? null,
                     balance: creditBalance.toNumber(),
+                    storeCreditApplied: storeCreditApplied.toFixed(4),
                     dueDate,
                     shiftId: shiftId ?? null,
                     soldById: userId,
@@ -1060,12 +1144,46 @@ export async function executeSaleWithResult(
             }
 
             if (input.paymentMethod === 'CREDIT' && input.customerId) {
-                await reserveCustomerCredit(tx, {
-                    tenantId,
-                    customerId: input.customerId,
-                    creditLimit: customer!.creditLimit.toString(),
-                    amount: finalTotal,
+                if (tenderTotal.greaterThan(0)) {
+                    await reserveCustomerCredit(tx, {
+                        tenantId,
+                        customerId: input.customerId,
+                        creditLimit: customer!.creditLimit.toString(),
+                        amount: tenderTotal,
+                    });
+                }
+            }
+
+            if (storeCreditApplied.greaterThan(0) && input.customerId) {
+                const balanceBefore = new Decimal(customer!.storeCreditBalance.toString());
+                const balanceAfter = balanceBefore.minus(storeCreditApplied).toDecimalPlaces(4);
+                const customerUpdated = await tx.customer.updateMany({
+                    where: {
+                        id: input.customerId,
+                        tenantId,
+                        storeCreditBalance: customer!.storeCreditBalance,
+                    },
+                    data: { storeCreditBalance: balanceAfter.toFixed(4) },
                 });
+                if (customerUpdated.count !== 1) {
+                    throw new SaleError('STORE_CREDIT_EXCEEDED', 409, 'El saldo a favor cambió mientras se cobraba; volvé a intentarlo');
+                }
+                await tx.customerCreditEntry.create({
+                    data: {
+                        tenantId,
+                        customerId: input.customerId,
+                        productReturnId: sourceReturnId,
+                        saleId: created.id,
+                        type: 'EXCHANGE_DEBIT',
+                        amount: storeCreditApplied.negated().toFixed(4),
+                        balanceAfter: balanceAfter.toFixed(4),
+                        createdBy: userId,
+                    },
+                });
+            }
+
+            if (source === 'POS') {
+                await lockOwnedOpenPosShift(tx, tenantId, userId, shiftId!);
             }
 
             // Hard-fail: una venta no confirma sin su asiento en la misma tx.
@@ -1082,6 +1200,7 @@ export async function executeSaleWithResult(
                     date: saleCreatedAt,
                     fiscalRegime,
                     vatAmount: fiscalAmounts.vatAmount,
+                    storeCreditApplied,
                 },
             );
 
@@ -1102,6 +1221,8 @@ export async function executeSaleWithResult(
                         itemCount: normalizedItems.length,
                         measuredCount: normalizedItems.filter((item) => item.measurement !== null).length,
                         paymentMethod: input.paymentMethod,
+                        storeCreditApplied: storeCreditApplied.toFixed(2),
+                        storeCreditSourceReturnId: sourceReturnId,
                     }),
                 },
             });

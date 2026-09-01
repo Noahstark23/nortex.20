@@ -27,6 +27,7 @@
   "concurrency": 2,
   "nicaLabor_comment": "nicaLabor.ts (motor de nómina del ERP) entra por CINCO rangos y no entero. Las constantes de nivel módulo corren al importar, antes de que `perTest` atribuya cobertura; por eso los StringLiteral de las cinco filas estáticas de IR_TABLE tienen una directiva Stryker acotada. No se ignora su estructura: el ArrayDeclaration (52-58) permanece mutado y prueba que una tabla vacía rompe los números oro. calendarDaysBetween (44-48) es la función pura extraída que ahora sostiene los cálculos de fechas y también queda dentro de la red. `calculateLaborLiability` (283-339) llama `new Date()` internamente y queda fuera: para volverlo determinista habría que inyectarle la fecha. Lo cubierto es IR_TABLE estructural (52-58), calendarDaysBetween (44-48), irAnualDeTabla (65-80), calculatePayroll (142-262) y calculateSettlement (368-451). OJO: estos rangos se desfasan con cualquier refactor que mueva las funciones.",
   "mutate_comment": "nicaTax arranca en la línea 25 para incluir IVA_FACTOR = IVA_RATE.plus(1) y termina en la 77 para cubrir completas las dos funciones puras: la aritmética del 15% es el número que esta red debe proteger, y los tests de desglose la matan. NO se incluyen las líneas 22-24 (IVA_RATE, ANTICIPO_IR_RATE, IMI_RATE): son inicialización de nivel módulo — corren al importar, antes de que `perTest` atribuya cobertura, así que sus mutantes sobrevivirían sin significado. Además ANTICIPO_IR_RATE e IMI_RATE solo se usan en generateMonthlyReport/generateAnnualIR (con Prisma, sin tests): son ZONA CIEGA declarada, no cobertura falsa.",
+  "cash_close_journal_mutate_comment": "PR-01 agrega tres rangos puros y deliberadamente acotados: journalPosting.ts:212-355 protege completa la normalización estricta (solo string o Decimal real), balance, orden canónico y buildJournalPayloadHash, pero excluye el posting async; shiftCloseService.ts:96-106 solo deriva identidad/hash legacy y excluye transacciones; schemas.ts:824-836 solo serializa la intención canónica del cierre y excluye la inicialización global de Zod. Antes de ampliar el rango se eliminaron seis validaciones equivalentes de decimalText; no se ignoró ni sobrevivió ningún mutante nuevo. Los pisos detectan cualquier desplazamiento.",
   "mutate": [
     "utils/money.ts",
     "utils/calc-laborales.ts",
@@ -75,6 +76,9 @@
     "backend/services/nicaTax.ts:25-77",
     "backend/services/stripe.ts:35-62",
     "backend/services/stockService.ts:58-71",
+    "backend/services/journalPosting.ts:212-355",
+    "backend/services/shiftCloseService.ts:96-106",
+    "backend/validation/schemas.ts:824-836",
     "backend/services/accounting.ts:149-156",
     "backend/services/accounting.ts:303-332",
     "backend/services/accounting.ts:405-423",
@@ -96,6 +100,7 @@
   "procurement_receipts_threshold_comment": "La recepción formal agrega procurementReceipts completo 158/158: identidad de evento, cantidades/costos exactos, lotes y payload canónico. Gate F2A oficial: 3402 instrumentados, 3382 puntuables, 3371 killed + 4 timeout = 3375 detectados, 7 sobrevivientes equivalentes históricos, 0 NoCoverage y 20 ignored preexistentes de IR_TABLE. Score exacto 3375/3382 = 99.79302188054405%; piso TRUNCADO a 99.79, nunca redondeado hacia arriba.",
   "account_lock_threshold_comment": "La realineación protege exactamente los seis cuerpos puros actuales de accounting y agrega canonicalJournalAccountLockOrder (7/7). procurementMatch queda 310/310 al cubrir también la carga fresca de helpers concisos. Gate oficial: 3414 instrumentados, 3394 puntuables, 3383 killed + 4 timeout = 3387 detectados, 7 sobrevivientes equivalentes históricos, 0 NoCoverage y los mismos 20 ignored de IR_TABLE. Score exacto 3387/3394 = 99.79375368296995%; el piso truncado permanece 99.79 y no baja.",
   "procurement_phase_two_b_threshold_comment": "Fase 2B amplía la red sin ignores nuevos: procurementReceipts 269/269; batchWarehouseLedger 165/165; batchWarehouseReadiness 496/496; manualBatchMovements 112/112; purchaseOrderCloseShort 157/157; stockTransferCommand 160/160; returnService 258/258 entre Decimal/idempotencia y restauración de lotes. procurementMatch conserva 310/310 y accounting 184/184. Gate oficial: 4834 instrumentados, 4814 puntuables, 4803 killed + 4 timeout = 4807 detectados, 7 sobrevivientes equivalentes históricos, 0 NoCoverage y los mismos 20 ignored de IR_TABLE. Score exacto 4807/4814 = 99.85459077690071%; el piso se TRUNCA a 99.85, nunca se redondea hacia arriba.",
+  "cash_close_journal_threshold_comment": "PR-01 agrega 192/192 mutantes detectados en su corrida dirigida: journalPosting 175/175, identidad legacy 9/9 y payload canónico de cierre 8/8; 0 survived, timeout, NoCoverage o ignores nuevos. El umbral global permanece en el baseline histórico 99.85 hasta completar una corrida normal sobre el worktree integrado; no se infiere un score combinado ni se baja el piso a partir de una corrida parcial.",
   "thresholds": {
     "high": 99.85,
     "low": 99.85,

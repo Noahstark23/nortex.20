@@ -83,7 +83,8 @@ describe('integración estructural del subledger de CxP', () => {
     it('materializa saldo y fecha pagada al crear la compra', () => {
         expect(purchaseRoute).toContain('total: totalAmount.toFixed(2)');
         expect(purchaseRoute).toContain("balanceDue: paymentMethod === 'CASH' ? '0.00' : totalAmount.toFixed(2)");
-        expect(purchaseRoute).toContain("paidAt: paymentMethod === 'CASH' ? new Date() : null");
+        expect(purchaseRoute).toContain('paidAt: settledNow');
+        expect(purchaseRoute).toContain('settledAt: settledNow');
         expect(purchaseRoute).toContain("status: paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING_PAYMENT'");
     });
 

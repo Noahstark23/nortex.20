@@ -50,10 +50,11 @@ describe('matriz de autorizacion de ventas medidas y operaciones relacionadas', 
         }
     });
 
-    it('la busqueda de devolucion conserva el mismo minimo privilegio que crearla', () => {
-        expect(runGuard(RETURN_SEARCH_ROLES, 'OWNER').next).toHaveBeenCalledOnce();
-        expect(runGuard(RETURN_SEARCH_ROLES, 'ADMIN').next).toHaveBeenCalledOnce();
-        for (const role of ['MANAGER', 'CASHIER', 'EMPLOYEE', 'VENDEDOR', 'VIEWER', 'ACCOUNTANT']) {
+    it('la busqueda de devolucion permite prepararla en caja sin abrirla a roles de solo lectura', () => {
+        for (const role of ['OWNER', 'ADMIN', 'MANAGER', 'CASHIER']) {
+            expect(runGuard(RETURN_SEARCH_ROLES, role).next).toHaveBeenCalledOnce();
+        }
+        for (const role of ['EMPLOYEE', 'VENDEDOR', 'VIEWER', 'ACCOUNTANT']) {
             expect(runGuard(RETURN_SEARCH_ROLES, role).res.statusCode).toBe(403);
         }
     });

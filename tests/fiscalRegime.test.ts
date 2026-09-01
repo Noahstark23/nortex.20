@@ -215,7 +215,7 @@ describe('asientos por régimen fiscal', () => {
             settledRefund: 114,
             refundMethod: 'CASH',
         })).toThrowError(
-            'creditReduction + settledRefund debe reconstruir exactamente el total de la devolución',
+            'creditReduction + settledRefund + storeCreditRestoration debe reconstruir exactamente el total de la devolución',
         );
     });
 

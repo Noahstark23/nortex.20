@@ -655,7 +655,7 @@ describe('deploy schema preflight', () => {
 
         await applyDeploySchemaPreflight({ query, execute }, { info, warn: vi.fn() });
 
-        expect(query).toHaveBeenCalledTimes(6);
+        expect(query).toHaveBeenCalledTimes(8);
         expect(execute).not.toHaveBeenCalled();
         expect(info).toHaveBeenCalledWith(expect.stringContaining('Warehouse aún no existe'));
     });

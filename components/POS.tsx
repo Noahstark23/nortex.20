@@ -27,6 +27,8 @@ import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
+import { StoreCreditPaymentOption } from './pos/StoreCreditPaymentOption';
+import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
 import { buildPostSalePrintCash } from '../utils/postSalePrintCash';
@@ -381,6 +383,7 @@ interface Customer {
     phone?: string;
     creditLimit: number;
     currentDebt: number;
+    storeCreditBalance?: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
 }
@@ -427,6 +430,7 @@ interface CompletedSale {
     // termina el cobro: por eso la pantalla de éxito nunca mostraba el vuelto.
     cashReceived?: string;
     usdReceived?: string;
+    storeCreditApplied?: number;
 }
 
 interface ScalePreviewResponse {
@@ -943,6 +947,15 @@ const POS: React.FC = () => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
     }), [token]);
+    const storeCreditCheckout = useStoreCreditCheckout(token, headers, showToast);
+    const { useStoreCredit, setUseStoreCredit, sourceReturnId: storeCreditSourceReturnId } = storeCreditCheckout;
+
+    useEffect(() => {
+        const customer = storeCreditCheckout.exchangeCustomer;
+        if (!customer) return;
+        setCustomerList((current) => current.some((item) => item.id === customer.id) ? current : [customer, ...current]);
+        setSelectedCustomer(customer); setCustomerSearch(customer.name);
+    }, [storeCreditCheckout.exchangeCustomer]);
 
     const fetchCustomerSuggestions = useCallback(async (query: string) => {
         if (!token) return;
@@ -2995,6 +3008,7 @@ const POS: React.FC = () => {
                 phone: body.phone || undefined,
                 creditLimit: Number(body.creditLimit ?? 0),
                 currentDebt: Number(body.currentDebt ?? 0),
+                storeCreditBalance: Number(body.storeCreditBalance ?? 0),
                 isBlocked: Boolean(body.isBlocked),
                 isWholesale: Boolean(body.isWholesale),
             };
@@ -3301,6 +3315,9 @@ const POS: React.FC = () => {
     // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
     // fantasma en todos los arqueos y fiado registrado 15% por debajo.
     const grandTotalD = discountedTotalD;
+    const availableStoreCreditD = Decimal.max(0, toDecimal(selectedCustomer?.storeCreditBalance ?? 0));
+    const storeCreditAppliedD = useStoreCredit ? Decimal.min(availableStoreCreditD, grandTotalD).toDecimalPlaces(2) : new Decimal(0);
+    const amountDueD = grandTotalD.minus(storeCreditAppliedD).toDecimalPlaces(2);
     // El backend redondea total y exento a centavos antes del desglose. Este
     // espejo evita que una venta medida offline imprima un IVA distinto por un
     // centavo cuando finalmente sincronice.
@@ -3330,7 +3347,8 @@ const POS: React.FC = () => {
     // texto dejaría el chip apagado según cómo se haya escrito el monto.
     const chipActivo = (monto: Decimal): boolean =>
         cashReceived !== '' && toDecimal(cashReceived).equals(monto);
-    const cashPaymentValidation = validateCashReceived(cashReceived, grandTotalD);
+    const cashPaymentValidation = amountDueD.isZero() ? { ok: true as const, received: new Decimal(0), total: new Decimal(0), change: new Decimal(0) }
+        : validateCashReceived(cashReceived, amountDueD);
 
     // Teclado táctil del modal de efectivo, con la misma sanitización del input.
     const teclaEfectivo = (tecla: string) => {
@@ -3392,8 +3410,16 @@ const POS: React.FC = () => {
         // visual. Este guard ocurre antes del lock, la cola offline y el POST:
         // ningún acceso (botón, Enter o código futuro) puede registrar efectivo
         // vacío o insuficiente saltándose la pantalla de vuelto.
-        if (method === 'CASH') {
-            const cashValidation = validateCashReceived(cashReceived, grandTotalD);
+        if (storeCreditAppliedD.greaterThan(0) && !navigator.onLine) {
+            showToast({
+                tone: 'warning',
+                title: 'El saldo a favor requiere conexión',
+                message: 'Conectate para verificar el balance actual del cliente antes de cobrar.',
+            });
+            return;
+        }
+        if (method === 'CASH' && amountDueD.greaterThan(0)) {
+            const cashValidation = validateCashReceived(cashReceived, amountDueD);
             if (cashValidation.ok === false) {
                 setShowCashPreModal(true);
                 setShowMobileCart(true);
@@ -3474,6 +3500,8 @@ const POS: React.FC = () => {
             employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
             globalDiscount: globalDiscountD.toString(),
             fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+            storeCreditAmount: storeCreditAppliedD.toFixed(2),
+            storeCreditSourceReturnId,
             items: saleItems.map(({ name: _name, ...item }) => item),
         });
         const attempt = checkoutAttemptFor(
@@ -3495,6 +3523,8 @@ const POS: React.FC = () => {
             globalDiscount: globalDiscountNum,
             employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
             fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+            storeCreditAmount: storeCreditAppliedD.toFixed(2),
+            ...(storeCreditSourceReturnId ? { storeCreditSourceReturnId } : {}),
         };
         trackEvent('real_sale_submit_attempted', {
             source: firstSaleMode ? 'first_sale' : 'pos',
@@ -3669,11 +3699,13 @@ const POS: React.FC = () => {
                 vatAmountAtSale: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
+                storeCreditApplied: storeCreditAppliedD.toNumber(),
             });
             setShowCashPreModal(false);
             setShowPaymentOptions(false);
             checkoutAttemptRef.current = null;
             setCashReceived('');
+            storeCreditCheckout.clear();
             trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
             trackFirstRealSale();
             if (measuredLines > 0) {
@@ -3696,7 +3728,7 @@ const POS: React.FC = () => {
                 error?.name === 'TimeoutError' ||
                 error?.name === 'AbortError' ||
                 error instanceof TypeError; // fetch: "Failed to fetch"
-            if (isNetworkFailure) {
+            if (isNetworkFailure && storeCreditAppliedD.isZero()) {
                 try {
                     await queueSaleOffline();
                     return;
@@ -3735,7 +3767,9 @@ const POS: React.FC = () => {
 
     const vueltoDeLaVenta = useMemo(() => {
         if (!completedSale || !efectivoRecibidoDeLaVenta) return null;
-        const vuelto = efectivoRecibidoDeLaVenta.minus(toDecimal(completedSale.grandTotal));
+        const efectivoCobrado = toDecimal(completedSale.grandTotal)
+            .minus(completedSale.storeCreditApplied ?? 0);
+        const vuelto = efectivoRecibidoDeLaVenta.minus(efectivoCobrado);
         // Pago justo (o insuficiente, p. ej. abono en efectivo): no hay vuelto
         // que mostrar y NO se inventa uno negativo.
         if (vuelto.lessThanOrEqualTo(0)) return null;
@@ -4264,7 +4298,7 @@ const POS: React.FC = () => {
     if (shiftLoading) return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin" /> Cargando Sistema...</div>;
 
     return (
-        <div className="flex h-full bg-surface-950 relative">
+        <div className="nx-app-shell nx-dark-context flex h-full bg-surface-950 relative">
 
             {manualMeasuredProduct && (
                 <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="manual-measure-title">
@@ -4386,19 +4420,15 @@ const POS: React.FC = () => {
             )}
 
             {/* HEADER BAR */}
-            <div className={`absolute top-0 right-0 left-0 border-b border-white/[0.06] flex justify-between items-center gap-4 z-10 text-slate-100 ${guidedSimpleMode
+            <div className={`nx-dark-chrome absolute top-0 right-0 left-0 border-b border-white/[0.06] flex justify-between items-center gap-4 z-10 text-slate-100 ${guidedSimpleMode
                 ? 'h-16 bg-surface-950 px-4 lg:px-6'
                 : 'h-14 bg-surface-900 px-6'}`}>
                 <div className="font-bold text-slate-100 flex items-center gap-3 shrink-0 min-w-0">
                     {guidedSimpleMode ? (
                         <>
-                            <span className="text-[15px] font-black tracking-[-0.03em] text-white">
-                                nortex<span className="text-brand">.</span>
-                            </span>
-                            <span className="h-5 w-px bg-white/[0.10]" aria-hidden="true" />
                             <span className="min-w-0">
-                                <span className="block text-xs font-bold text-slate-100 leading-tight">
-                                    {firstSaleMode ? 'Primera venta' : 'Caja'}
+                                <span className="block text-sm font-semibold tracking-[-0.02em] text-slate-100 leading-tight">
+                                    {firstSaleMode ? 'Primera venta' : 'Nueva venta'}
                                 </span>
                                 <span className="block max-w-[210px] truncate text-[11px] font-medium text-slate-500 leading-tight">
                                     {tenantPrintDetails.tenantName}
@@ -4594,15 +4624,13 @@ const POS: React.FC = () => {
                                                 <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
                                             </button>
                                         )}
-                                        {!guidedSimpleMode && (
-                                            <button
-                                                onClick={() => { setShowReturnModal(true); setShowCashActions(false); }}
-                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
-                                            >
-                                                <RefreshCw size={16} className="text-slate-400 shrink-0" />
-                                                <span>Devolución de producto</span>
-                                            </button>
-                                        )}
+                                        <button
+                                            onClick={() => { setShowCashActions(false); window.location.assign('/app/sales'); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <RefreshCw size={16} className="text-slate-400 shrink-0" />
+                                            <span>Ventas y devoluciones</span>
+                                        </button>
                                         <button
                                             onClick={() => { openHeldCarts(); setShowCashActions(false); }}
                                             className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
@@ -5775,19 +5803,19 @@ const POS: React.FC = () => {
 
             {/* LEFT: PRODUCTS */}
             <div className={`w-full flex-1 flex flex-col overflow-hidden ${guidedSimpleMode
-                ? 'mt-16 p-4 lg:px-6 lg:py-5 mb-0'
+                ? 'nx-light-context nx-catalog-surface mt-16 p-4 text-slate-950 lg:px-6 lg:py-5 mb-0'
                 : 'mt-14 p-4 lg:p-6 mb-16 lg:mb-0'}`}>
                 {firstSaleMode && (
                     <div className="mb-4 rounded-card border border-brand/25 bg-brand-soft px-4 py-3.5 sm:px-5">
                         <div className="flex items-start justify-between gap-4">
                             <div>
-                                <p className="text-sm font-bold text-slate-100">Primera venta real</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Al terminar se actualizan caja e inventario.</p>
+                                <p className={`text-sm font-bold ${guidedSimpleMode ? 'text-slate-950' : 'text-slate-100'}`}>Primera venta real</p>
+                                <p className={`text-xs mt-0.5 ${guidedSimpleMode ? 'text-slate-600' : 'text-slate-400'}`}>Al terminar se actualizan caja e inventario.</p>
                             </div>
                             <button
                                 type="button"
                                 onClick={() => navigate('/demo?source=first_sale')}
-                                className="hidden sm:inline-flex min-h-tap px-3 rounded-control text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] items-center gap-2 shrink-0"
+                                className={`nx-fluid-press hidden sm:inline-flex min-h-tap px-3 rounded-control text-xs font-semibold items-center gap-2 shrink-0 ${guidedSimpleMode ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'}`}
                             >
                                 <PlayCircle size={16} /> Practicar
                             </button>
@@ -5808,12 +5836,12 @@ const POS: React.FC = () => {
                                         <span className={`relative z-[1] flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold ${done
                                             ? 'border-brand bg-brand text-brand-on'
                                             : current
-                                                ? 'border-brand bg-surface-900 text-brand ring-4 ring-brand/10'
-                                                : 'border-white/[0.12] bg-surface-900 text-slate-500'}`}
+                                                ? `border-brand ${guidedSimpleMode ? 'bg-white' : 'bg-surface-900'} text-brand ring-4 ring-brand/10`
+                                                : `${guidedSimpleMode ? 'border-slate-300 bg-white' : 'border-white/[0.12] bg-surface-900'} text-slate-500`}`}
                                         >
                                             {done ? <Check size={13} strokeWidth={3} /> : item.step}
                                         </span>
-                                        <span className={`mt-2 text-[11px] font-semibold ${done || current ? 'text-slate-200' : 'text-slate-500'}`}>{item.label}</span>
+                                        <span className={`mt-2 text-[11px] font-semibold ${done || current ? (guidedSimpleMode ? 'text-slate-800' : 'text-slate-200') : 'text-slate-500'}`}>{item.label}</span>
                                     </li>
                                 );
                             })}
@@ -5821,7 +5849,7 @@ const POS: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => navigate('/demo?source=first_sale')}
-                            className="sm:hidden mt-3 min-h-tap w-full rounded-control text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] inline-flex items-center justify-center gap-2"
+                            className={`nx-fluid-press sm:hidden mt-3 min-h-tap w-full rounded-control text-xs font-semibold inline-flex items-center justify-center gap-2 ${guidedSimpleMode ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'}`}
                         >
                             <PlayCircle size={16} /> Practicar sin guardar
                         </button>
@@ -5839,9 +5867,9 @@ const POS: React.FC = () => {
                                 type="text"
                                 autoFocus
                                 placeholder={guidedSimpleMode ? 'Escaneá o buscá un producto' : 'Buscar o escanear'}
-                                className={`w-full h-pay pl-11 pr-4 rounded-control border focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 text-slate-100 font-medium transition-colors ${guidedSimpleMode
-                                    ? 'bg-surface-950 border-white/[0.10] placeholder:text-slate-500'
-                                    : 'bg-surface-900 border-white/[0.06]'}`}
+                                className={`w-full h-pay pl-11 pr-4 rounded-control border focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 font-medium transition-colors ${guidedSimpleMode
+                                    ? 'bg-white border-slate-200 text-slate-950 placeholder:text-slate-500 shadow-sm'
+                                    : 'bg-surface-900 border-white/[0.06] text-slate-100'}`}
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 onKeyDown={handleSearchKeyDown}
@@ -5934,7 +5962,7 @@ const POS: React.FC = () => {
                         /* pb-24 debajo de `lg`: la barra de la venta es fija y ahora
                            está siempre, así que sin colchón taparía la última fila
                            de productos y la línea que declara el recorte. */
-                        <div className="flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
+                        <div className="nx-catalog-plane flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
                             <CajaNicaCatalog
                                 products={cajaProducts}
                                 totalProducts={cajaCatalogResult.total}
@@ -6046,7 +6074,7 @@ const POS: React.FC = () => {
                     aria-label={cart.length > 0
                         ? `Revisar venta, ${cart.reduce((a, b) => a + b.quantity, 0)} productos, total ${formatMoney(grandTotal)}`
                         : 'Abrir la venta actual, todavía sin productos'}
-                    className={`w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
+                    className={`nx-fluid-press w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
                         ? 'bg-brand text-brand-on shadow-premium animate-in slide-in-from-bottom duration-300'
                         : 'bg-surface-900/95 backdrop-blur-sm border border-white/[0.08] text-slate-400'}`}
                 >
@@ -6066,8 +6094,8 @@ const POS: React.FC = () => {
 
             {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
             <div className={`
-          fixed inset-0 z-50 bg-surface-900 lg:static lg:z-auto lg:border-l lg:border-white/[0.06] flex flex-col transition-all duration-300
-          ${guidedSimpleMode ? 'lg:mt-16 lg:w-[38%] lg:min-w-[420px] lg:max-w-[560px]' : 'lg:mt-14 lg:w-96 lg:shadow-xl'}
+          nx-dark-context nx-ticket-surface fixed inset-0 z-50 bg-surface-900 lg:static lg:z-auto lg:border lg:border-white/[0.06] flex flex-col transition-[transform,opacity] duration-200 ease-nx
+          ${guidedSimpleMode ? 'lg:mt-16 lg:mr-3 lg:mb-3 lg:w-[38%] lg:min-w-[420px] lg:max-w-[560px] lg:rounded-card' : 'lg:mt-14 lg:w-96 lg:shadow-xl'}
           ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
       `}>
                 <div className={`border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
@@ -7257,7 +7285,15 @@ const POS: React.FC = () => {
                             <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowPaymentOptions(false); }} />
                         </div>
                         <div className="p-4 space-y-2">
+                            {selectedCustomer && <StoreCreditPaymentOption available={availableStoreCreditD.toNumber()} applied={storeCreditAppliedD.toNumber()}
+                                amountDue={amountDueD.toNumber()} selected={useStoreCredit} disabled={processing} onToggle={() => setUseStoreCredit((current) => !current)} />}
                             <p className="text-sm font-semibold text-slate-300 px-1 pb-1">{guidedSimpleMode ? 'Otros medios de pago' : '¿Cómo pagó?'}</p>
+                            {amountDueD.isZero() && <button
+                                type="button"
+                                onClick={() => handleCheckout('TRANSFER')}
+                                disabled={processing}
+                                className="w-full h-pay rounded-control bg-emerald-600 px-4 font-black text-white disabled:opacity-50"
+                            >Confirmar usando saldo a favor</button>}
                             {!guidedSimpleMode && <button
                                 type="button"
                                 autoFocus
@@ -7326,7 +7362,8 @@ const POS: React.FC = () => {
                             <div className="w-10 h-10 rounded-pill bg-brand-soft text-brand flex items-center justify-center"><Banknote size={20} /></div>
                             <div>
                                 <h2 id="cash-payment-title" className="text-base font-bold text-slate-100">Efectivo</h2>
-                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(grandTotal)}</p>
+                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(amountDueD)}</p>
+                                {storeCreditAppliedD.greaterThan(0) && <p className="mt-1 text-xs text-emerald-300">Saldo aplicado: {formatMoney(storeCreditAppliedD)}</p>}
                             </div>
                             <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowCashPreModal(false); }} className="ml-auto" />
                         </div>
@@ -7365,10 +7402,10 @@ const POS: React.FC = () => {
                                     {toDecimal(usdAmount).greaterThan(0) && (
                                         <div className="bg-blue-500/10 px-3 py-2 rounded-lg border border-blue-500/20 text-sm">
                                             <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate))}</span></div>
-                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(grandTotal) && (
+                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(amountDueD) && (
                                                 <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal))}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)))}</span></div>
+                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(amountDueD))}</span></div>
+                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(amountDueD.div(exchangeRate)))}</span></div>
                                                 </>
                                             )}
                                         </div>
@@ -7390,15 +7427,15 @@ const POS: React.FC = () => {
                                             no se depende solo del color para decir cuál es. */}
                                         <button
                                             type="button"
-                                            onClick={() => setCashReceived(grandTotalD.toFixed(2))}
-                                            aria-pressed={chipActivo(grandTotalD)}
-                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(grandTotalD)
+                                            onClick={() => setCashReceived(amountDueD.toFixed(2))}
+                                            aria-pressed={chipActivo(amountDueD)}
+                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(amountDueD)
                                                 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
                                                 : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
                                         >
                                             Monto exacto
                                         </button>
-                                        {denominacionesSugeridas(grandTotalD).map(monto => (
+                                        {denominacionesSugeridas(amountDueD).map(monto => (
                                             <button
                                                 key={monto.toFixed(2)}
                                                 type="button"
@@ -7420,7 +7457,7 @@ const POS: React.FC = () => {
                                             autoFocus
                                             aria-label="Efectivo recibido en córdobas"
                                             className="w-full pl-10 pr-4 py-3 border border-white/10 rounded-lg text-xl font-bold text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono tabular-nums"
-                                            placeholder={grandTotal.toFixed(2)}
+                                            placeholder={amountDueD.toFixed(2)}
                                             value={cashReceived}
                                             onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
                                         />
@@ -7452,19 +7489,19 @@ const POS: React.FC = () => {
                                             Limpiar
                                         </button>
                                     </div>
-                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
+                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(amountDueD) && (
                                         <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
                                             <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
                                             <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(cashReceived).minus(grandTotal))}
+                                                {formatMoney(toDecimal(cashReceived).minus(amountDueD))}
                                             </p>
                                         </div>
                                     )}
-                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
+                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(amountDueD) && (
                                         <div className="bg-red-500/10 px-4 py-3 rounded-control border border-red-500/20 text-center">
                                             <p className="text-xs font-bold text-red-400 uppercase tracking-widest">Falta</p>
                                             <p className="text-3xl font-black text-red-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}
+                                                {formatMoney(amountDueD.minus(toDecimal(cashReceived)))}
                                             </p>
                                         </div>
                                     )}
@@ -7485,7 +7522,7 @@ const POS: React.FC = () => {
                                     className="flex-1 h-touch rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
                                 >
                                     {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                                    {processing ? 'Registrando…' : `Cobrar ${formatMoney(grandTotal)}`}
+                                    {processing ? 'Registrando…' : amountDueD.isZero() ? 'Confirmar con saldo' : `Cobrar ${formatMoney(amountDueD)}`}
                                 </button>
                             </div>
                         </div>

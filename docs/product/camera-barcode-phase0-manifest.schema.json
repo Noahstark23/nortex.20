@@ -1,0 +1,581 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://somosnortex.com/schemas/camera-barcode-phase0-manifest.schema.json",
+  "title": "Nortex Camera Barcode Phase 0 Evidence Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "protocolVersion",
+    "normalizationVersion",
+    "studyId",
+    "studyStatus",
+    "createdDate",
+    "dataClassification",
+    "privacy",
+    "samples",
+    "environments",
+    "scenarios",
+    "runs"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "protocolVersion": { "const": "phase0-v1" },
+    "normalizationVersion": { "const": "barcode-input-v1" },
+    "studyId": { "$ref": "#/$defs/id" },
+    "studyStatus": {
+      "enum": ["TEMPLATE", "IN_PROGRESS", "COMPLETE"]
+    },
+    "createdDate": { "type": "string", "format": "date" },
+    "dataClassification": {
+      "enum": ["REPO_SAFE_SYNTHETIC", "LOCAL_FIELD_REDACTED"]
+    },
+    "privacy": { "$ref": "#/$defs/privacy" },
+    "samples": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/sample" }
+    },
+    "environments": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/environment" }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/scenario" }
+    },
+    "runs": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/run" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "dataClassification": { "const": "REPO_SAFE_SYNTHETIC" }
+        }
+      },
+      "then": {
+        "properties": {
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "provenance": { "const": "SYNTHETIC" },
+                "repoSafe": { "const": true }
+              },
+              "required": ["provenance", "repoSafe"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "studyStatus": { "const": "TEMPLATE" } }
+      },
+      "then": {
+        "properties": { "runs": { "type": "array", "maxItems": 0 } }
+      }
+    }
+  ],
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,63}$"
+    },
+    "nullableNonNegativeInteger": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "realPayloadsInRepo",
+        "rawFramesPersisted",
+        "customerDataAllowed",
+        "fingerprintAlgorithm"
+      ],
+      "properties": {
+        "realPayloadsInRepo": { "const": false },
+        "rawFramesPersisted": { "const": false },
+        "customerDataAllowed": { "const": false },
+        "fingerprintAlgorithm": { "const": "HMAC-SHA-256" }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sampleId",
+        "provenance",
+        "repoSafe",
+        "symbology",
+        "semanticClass",
+        "expectedOutcome",
+        "checksumExpectation",
+        "printSource",
+        "substrate",
+        "conditionTags",
+        "barcodeWidthMm",
+        "barcodeHeightMm",
+        "quietZoneClass",
+        "contrastClass",
+        "artifactRef"
+      ],
+      "properties": {
+        "sampleId": { "$ref": "#/$defs/id" },
+        "provenance": {
+          "enum": ["SYNTHETIC", "PUBLIC_TEST", "FIELD_EPHEMERAL"]
+        },
+        "repoSafe": { "type": "boolean" },
+        "symbology": {
+          "enum": [
+            "EAN_13",
+            "EAN_8",
+            "UPC_A",
+            "UPC_E",
+            "CODE_128",
+            "QR_CODE",
+            "DATA_MATRIX",
+            "GS1_DATABAR",
+            "GS1_128",
+            "ITF_14",
+            "SCALE_EAN_13",
+            "UNKNOWN"
+          ]
+        },
+        "semanticClass": {
+          "enum": [
+            "FIXED_PRODUCT",
+            "INTERNAL_SKU",
+            "SCALE_WEIGHT",
+            "SCALE_COUNT",
+            "SCALE_TOTAL_PRICE",
+            "NEGATIVE",
+            "UNKNOWN"
+          ]
+        },
+        "expectedOutcome": {
+          "enum": ["DECODE", "REJECT_INVALID", "UNSUPPORTED"]
+        },
+        "expectedValue": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "expectedFingerprint": {
+          "type": "string",
+          "pattern": "^hmac-sha256:[a-f0-9]{64}$"
+        },
+        "checksumExpectation": {
+          "enum": ["VALID", "INVALID", "NOT_APPLICABLE"]
+        },
+        "printSource": {
+          "enum": ["LASER", "THERMAL", "MANUFACTURER", "SCREEN", "OTHER"]
+        },
+        "substrate": {
+          "enum": ["MATTE_PAPER", "GLOSSY_PAPER", "PLASTIC", "SCREEN", "OTHER"]
+        },
+        "conditionTags": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "PRISTINE",
+              "WRINKLED",
+              "CURVED",
+              "LOW_CONTRAST",
+              "PARTIAL_DAMAGE",
+              "SMALL_PRINT",
+              "LARGE_PRINT"
+            ]
+          }
+        },
+        "barcodeWidthMm": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "barcodeHeightMm": {
+          "type": ["number", "null"],
+          "exclusiveMinimum": 0
+        },
+        "quietZoneClass": {
+          "enum": ["COMPLIANT", "TIGHT", "CLIPPED", "UNKNOWN"]
+        },
+        "contrastClass": {
+          "enum": ["HIGH", "MEDIUM", "LOW", "UNKNOWN"]
+        },
+        "artifactRef": {
+          "type": ["string", "null"],
+          "pattern": "^(artifacts/|\\.codex/audits/)[A-Za-z0-9._/-]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "repoSafe": { "const": true } } },
+          "then": {
+            "properties": { "expectedValue": true },
+            "required": ["expectedValue"],
+            "not": {
+              "properties": { "expectedFingerprint": true },
+              "required": ["expectedFingerprint"]
+            }
+          },
+          "else": {
+            "properties": { "expectedFingerprint": true },
+            "required": ["expectedFingerprint"],
+            "not": {
+              "properties": { "expectedValue": true },
+              "required": ["expectedValue"]
+            }
+          }
+        },
+        {
+          "if": { "properties": { "provenance": { "const": "FIELD_EPHEMERAL" } } },
+          "then": { "properties": { "repoSafe": { "const": false } } }
+        }
+      ]
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "environmentId",
+        "deviceTier",
+        "manufacturer",
+        "modelAlias",
+        "osName",
+        "osVersion",
+        "surface",
+        "browserName",
+        "browserVersion",
+        "engine",
+        "decoderName",
+        "decoderVersion",
+        "prototypeBuildId",
+        "cameraFacing",
+        "actualResolution",
+        "torchAvailable",
+        "secureContext",
+        "reportedFormats"
+      ],
+      "properties": {
+        "environmentId": { "$ref": "#/$defs/id" },
+        "deviceTier": {
+          "enum": [
+            "ANDROID_LOW",
+            "ANDROID_MID",
+            "IPHONE_MIN_SUPPORTED",
+            "IPHONE_CURRENT",
+            "DESKTOP_CONTROL"
+          ]
+        },
+        "manufacturer": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "modelAlias": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "osName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "osVersion": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "surface": {
+          "enum": ["BROWSER_TAB", "INSTALLED_PWA", "CAPACITOR_REMOTE", "KEYBOARD_WEDGE"]
+        },
+        "browserName": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "browserVersion": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "engine": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "decoderName": {
+          "enum": [
+            "KEYBOARD_WEDGE",
+            "ZXING_BROWSER",
+            "BARCODE_DETECTOR",
+            "CAPACITOR_BARCODE_SCANNER"
+          ]
+        },
+        "decoderVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "prototypeBuildId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "cameraFacing": {
+          "enum": ["ENVIRONMENT", "USER", "NOT_APPLICABLE"]
+        },
+        "actualResolution": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["width", "height"],
+              "properties": {
+                "width": { "type": "integer", "minimum": 1 },
+                "height": { "type": "integer", "minimum": 1 }
+              }
+            }
+          ]
+        },
+        "torchAvailable": { "type": "boolean" },
+        "secureContext": { "type": "boolean" },
+        "reportedFormats": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1, "maxLength": 64 }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "surface": { "const": "KEYBOARD_WEDGE" } } },
+          "then": {
+            "properties": {
+              "cameraFacing": { "const": "NOT_APPLICABLE" },
+              "decoderName": { "const": "KEYBOARD_WEDGE" },
+              "secureContext": { "const": false }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "decoderName": { "const": "KEYBOARD_WEDGE" } } },
+          "then": {
+            "properties": {
+              "surface": { "const": "KEYBOARD_WEDGE" },
+              "cameraFacing": { "const": "NOT_APPLICABLE" }
+            }
+          }
+        }
+      ]
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scenarioId",
+        "startState",
+        "permissionState",
+        "networkMode",
+        "distanceCm",
+        "angleDeg",
+        "orientationDeg",
+        "lightingBand",
+        "motion",
+        "torch",
+        "timeoutMs"
+      ],
+      "properties": {
+        "scenarioId": { "$ref": "#/$defs/id" },
+        "startState": { "enum": ["COLD", "WARM", "RESUME"] },
+        "permissionState": {
+          "enum": ["PROMPT", "GRANTED", "DENIED", "NOT_APPLICABLE"]
+        },
+        "networkMode": { "enum": ["ONLINE", "OFFLINE"] },
+        "distanceCm": { "type": "number", "minimum": 0 },
+        "angleDeg": { "type": "number", "minimum": 0, "maximum": 90 },
+        "orientationDeg": { "enum": [0, 90, 180, 270] },
+        "lightingBand": { "enum": ["BRIGHT", "NORMAL_INDOOR", "LOW", "GLARE"] },
+        "motion": { "enum": ["STILL", "HANDHELD", "FAST"] },
+        "torch": { "enum": ["OFF", "ON", "UNAVAILABLE"] },
+        "timeoutMs": { "type": "integer", "minimum": 1000, "maximum": 30000 }
+      }
+    },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "sampleId",
+        "environmentId",
+        "scenarioId",
+        "sequence",
+        "repetition",
+        "runDate",
+        "result",
+        "observedSymbology",
+        "observedLength",
+        "payloadMatchesExpected",
+        "checksumResult",
+        "cameraReadyMs",
+        "firstCandidateMs",
+        "firstCorrectMs",
+        "wrongCandidateCount",
+        "duplicateEmissionsWithin2s",
+        "cameraTrackStoppedAfterExit",
+        "fallbackUsed",
+        "fallbackSucceeded",
+        "failureCode",
+        "excluded",
+        "exclusionReason"
+      ],
+      "properties": {
+        "runId": { "$ref": "#/$defs/id" },
+        "sampleId": { "$ref": "#/$defs/id" },
+        "environmentId": { "$ref": "#/$defs/id" },
+        "scenarioId": { "$ref": "#/$defs/id" },
+        "sequence": { "type": "integer", "minimum": 1 },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "runDate": { "type": "string", "format": "date" },
+        "result": {
+          "enum": [
+            "DECODED_MATCH",
+            "DECODED_WRONG",
+            "NO_DECODE",
+            "UNSUPPORTED_FORMAT",
+            "PERMISSION_DENIED",
+            "CAMERA_ERROR",
+            "ABORTED"
+          ]
+        },
+        "observedSymbology": {
+          "type": ["string", "null"],
+          "maxLength": 64
+        },
+        "observedLength": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+        "payloadMatchesExpected": { "type": ["boolean", "null"] },
+        "checksumResult": { "enum": ["VALID", "INVALID", "NOT_APPLICABLE", "NOT_OBSERVED"] },
+        "cameraReadyMs": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+        "firstCandidateMs": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+        "firstCorrectMs": { "$ref": "#/$defs/nullableNonNegativeInteger" },
+        "wrongCandidateCount": { "type": "integer", "minimum": 0 },
+        "duplicateEmissionsWithin2s": { "type": "integer", "minimum": 0 },
+        "cameraTrackStoppedAfterExit": { "type": "boolean" },
+        "fallbackUsed": {
+          "enum": ["NONE", "MANUAL_INPUT", "FILE_CAPTURE", "KEYBOARD_WEDGE", "NATIVE"]
+        },
+        "fallbackSucceeded": { "type": ["boolean", "null"] },
+        "failureCode": {
+          "type": ["string", "null"],
+          "enum": [
+            null,
+            "PERMISSION_NOT_ALLOWED",
+            "CAMERA_NOT_FOUND",
+            "CAMERA_NOT_READABLE",
+            "SECURE_CONTEXT_REQUIRED",
+            "DECODER_UNAVAILABLE",
+            "FORMAT_UNSUPPORTED",
+            "TIMEOUT",
+            "LIFECYCLE_INTERRUPTED",
+            "OPERATOR_ABORTED",
+            "PROTOCOL_ERROR"
+          ]
+        },
+        "excluded": { "type": "boolean" },
+        "exclusionReason": {
+          "type": ["string", "null"],
+          "enum": [null, "PROTOCOL_DEVIATION", "EQUIPMENT_FAILURE", "DUPLICATE_RUN", "OTHER_PREDECLARED"]
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "result": { "const": "DECODED_MATCH" } } },
+          "then": {
+            "properties": {
+              "observedSymbology": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "observedLength": { "type": "integer", "minimum": 1 },
+              "payloadMatchesExpected": { "const": true },
+              "firstCorrectMs": { "type": "integer", "minimum": 0 },
+              "failureCode": { "const": null }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "result": { "const": "DECODED_WRONG" } } },
+          "then": {
+            "properties": {
+              "observedSymbology": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "observedLength": { "type": "integer", "minimum": 1 },
+              "payloadMatchesExpected": { "const": false },
+              "firstCorrectMs": { "const": null },
+              "wrongCandidateCount": { "type": "integer", "minimum": 1 },
+              "failureCode": { "const": null }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "result": {
+                "enum": [
+                  "NO_DECODE",
+                  "UNSUPPORTED_FORMAT",
+                  "PERMISSION_DENIED",
+                  "CAMERA_ERROR",
+                  "ABORTED"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "payloadMatchesExpected": { "const": null },
+              "firstCorrectMs": { "const": null }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "result": { "const": "NO_DECODE" } } },
+          "then": {
+            "properties": { "failureCode": { "const": "TIMEOUT" } }
+          }
+        },
+        {
+          "if": { "properties": { "result": { "const": "UNSUPPORTED_FORMAT" } } },
+          "then": {
+            "properties": { "failureCode": { "const": "FORMAT_UNSUPPORTED" } }
+          }
+        },
+        {
+          "if": { "properties": { "result": { "const": "PERMISSION_DENIED" } } },
+          "then": {
+            "properties": {
+              "failureCode": { "const": "PERMISSION_NOT_ALLOWED" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "result": { "const": "CAMERA_ERROR" } } },
+          "then": {
+            "properties": {
+              "failureCode": {
+                "enum": [
+                  "CAMERA_NOT_FOUND",
+                  "CAMERA_NOT_READABLE",
+                  "SECURE_CONTEXT_REQUIRED",
+                  "DECODER_UNAVAILABLE"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "result": { "const": "ABORTED" } } },
+          "then": {
+            "properties": {
+              "failureCode": {
+                "enum": ["LIFECYCLE_INTERRUPTED", "OPERATOR_ABORTED", "PROTOCOL_ERROR"]
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "fallbackUsed": { "const": "NONE" } } },
+          "then": {
+            "properties": { "fallbackSucceeded": { "const": null } }
+          },
+          "else": {
+            "properties": { "fallbackSucceeded": { "type": "boolean" } }
+          }
+        },
+        {
+          "if": { "properties": { "excluded": { "const": false } } },
+          "then": {
+            "properties": { "exclusionReason": { "const": null } }
+          },
+          "else": {
+            "properties": {
+              "exclusionReason": {
+                "enum": ["PROTOCOL_DEVIATION", "EQUIPMENT_FAILURE", "DUPLICATE_RUN", "OTHER_PREDECLARED"]
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

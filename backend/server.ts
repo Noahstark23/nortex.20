@@ -35,6 +35,7 @@ import { checkRole } from './middleware/checkRole';
 import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPolicy';
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
+import { isSameManaguaBusinessDay } from './lib/saleCorrections';
 import {
     pagarFacturaProveedorEnCaja,
     registrarSalidaDeCajaPorCompra,
@@ -42,6 +43,11 @@ import {
     MENSAJE_SIN_CAJA_ABIERTA,
 } from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
+import {
+    closeLegacyShift,
+    ShiftCloseError,
+    type ShiftCloseDatabase,
+} from './services/shiftCloseService';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
@@ -104,6 +110,7 @@ import syncRoutes from './routes/sync';
 import scaleLabelsRouter, { scaleDevicesRouter } from './routes/scaleLabels';
 import tenantCapabilitiesRouter from './routes/tenantCapabilities';
 import agentBankingRouter from './routes/agentBanking';
+import saleCorrectionsRouter from './routes/saleCorrections';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
@@ -170,6 +177,7 @@ import {
     RecordCountSchema,
     OpenShiftSchema,
     CloseShiftSchema,
+    canonicalizeCloseShiftPayload,
     CreateExpenseSchema,
     B2BOrderSchema,
     PayrollCalculateSchema,
@@ -450,6 +458,7 @@ app.use('/api/scale-labels', scaleLabelsRouter);
 app.use('/api/scale-devices', scaleDevicesRouter);
 app.use('/api/tenant/capabilities', tenantCapabilitiesRouter);
 app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
+app.use('/api', saleCorrectionsRouter); // Historial, aprobaciones, reembolsos e inspecciones de venta
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
@@ -3162,10 +3171,11 @@ app.post('/api/sales', authenticate, checkRole(POS_SALE_ROLES), async (req: any,
 // ==========================================
 
 // Search sale for return flow
-app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CancelSaleSchema), async (req: any, res: any) => {
+app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', 'CASHIER']), validate(CancelSaleSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const saleId = String(req.params.id);
     const motivo = textoUtil(req.body.motivo);
+    const correctionRequestId = String(req.body.correctionRequestId);
 
     try {
         const saleExists = await prisma.sale.findFirst({
@@ -3191,11 +3201,41 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                 include: {
                     items: { select: { id: true, productId: true, quantity: true, costAtSale: true } },
                     pedidos: { select: { id: true } },
+                    shift: { select: { status: true } },
                     _count: { select: { productReturns: true, payments: true } },
                 },
             });
             if (!sale) {
                 throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Factura no encontrada');
+            }
+            const correctionRequest = await tx.saleCorrectionRequest.findFirst({
+                where: {
+                    id: correctionRequestId,
+                    tenantId: authReq.tenantId!,
+                    saleId,
+                    kind: 'VOID',
+                },
+            });
+            if (
+                correctionRequest?.status === 'COMPLETED'
+                && textoUtil(correctionRequest.reason) === motivo
+                && (sale.status === ESTADO_ANULADA || sale.cancelledAt !== null)
+            ) {
+                return { id: saleId, status: ESTADO_ANULADA, motivo, idempotentReplay: true };
+            }
+            if (!correctionRequest || correctionRequest.status !== 'APPROVED' || textoUtil(correctionRequest.reason) !== motivo) {
+                throw new ReturnResolutionError(
+                    'APPROVED_CORRECTION_REQUIRED',
+                    409,
+                    'La anulación requiere una solicitud aprobada que coincida con este motivo',
+                );
+            }
+            if (!isSameManaguaBusinessDay(sale.createdAt) || sale.shift?.status !== 'OPEN') {
+                throw new ReturnResolutionError(
+                    'VOID_WINDOW_CLOSED',
+                    409,
+                    'La caja original ya cerró o la venta no es de hoy. Corregí mediante devolución o nota de crédito.',
+                );
             }
 
             let periodoCerrado = false;
@@ -3275,7 +3315,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                 }
             }
             const cancellationBatchPlans = new Map<string, ReturnBatchRestorationPlan>();
-            if (batchWarehouseLedgerMode !== 'OFF') {
+            {
                 const allocationRows = await tx.saleItemBatchAllocation.findMany({
                     where: {
                         tenantId: authReq.tenantId!,
@@ -3533,7 +3573,8 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
             // 3 · Bajar la deuda del cliente si era venta a crédito.
             let deudaAntes: string | null = null;
             let deudaDespues: string | null = null;
-            if (sale.customerId && plan.deudaAReversar.greaterThan(0)) {
+            const deudaAReversar = Decimal.min(plan.deudaAReversar, new Decimal(sale.balance.toString()));
+            if (sale.customerId && deudaAReversar.greaterThan(0)) {
                 const previo = await tx.customer.findFirst({
                     where: { id: sale.customerId, tenantId: authReq.tenantId! },
                     select: { currentDebt: true },
@@ -3544,7 +3585,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                     // puede dejar al cliente con deuda NEGATIVA (saldo a favor
                     // fantasma que después alguien cobra).
                     const nueva = Decimal.max(
-                        new Decimal(previo.currentDebt.toString()).minus(plan.deudaAReversar),
+                        new Decimal(previo.currentDebt.toString()).minus(deudaAReversar),
                         new Decimal(0)
                     ).toDecimalPlaces(2);
                     const act = await tx.customer.update({
@@ -3553,6 +3594,28 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                     });
                     deudaDespues = String(act.currentDebt);
                 }
+            }
+
+            const saldoFavorARestaurar = new Decimal(sale.storeCreditApplied?.toString() ?? 0);
+            if (saldoFavorARestaurar.greaterThan(0)) {
+                if (!sale.customerId) throw new ReturnResolutionError('STORE_CREDIT_CUSTOMER_REQUIRED', 409, 'La venta consumió saldo sin un cliente verificable');
+                await tx.$queryRaw`SELECT id FROM \`Customer\` WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId} FOR UPDATE`;
+                const customer = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    select: { storeCreditBalance: true },
+                });
+                if (!customer) throw new ReturnResolutionError('STORE_CREDIT_CUSTOMER_REQUIRED', 409, 'El cliente de la venta ya no está disponible');
+                const balanceAfter = new Decimal(customer.storeCreditBalance.toString()).plus(saldoFavorARestaurar).toDecimalPlaces(4);
+                const restoredCustomer = await tx.customer.updateMany({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    data: { storeCreditBalance: balanceAfter.toFixed(4) },
+                });
+                if (restoredCustomer.count !== 1) throw new ReturnResolutionError('STORE_CREDIT_CUSTOMER_REQUIRED', 409, 'No se pudo restaurar el saldo del cliente');
+                await tx.customerCreditEntry.create({ data: {
+                    tenantId: authReq.tenantId!, customerId: sale.customerId, saleId,
+                    type: 'VOID_RESTORE', amount: saldoFavorARestaurar.toFixed(4),
+                    balanceAfter: balanceAfter.toFixed(4), createdBy: authReq.userId!,
+                } });
             }
 
             // 4 · Asiento de REVERSIÓN: los mismos renglones de la venta con
@@ -3567,6 +3630,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                 {
                     fiscalRegime: sale.fiscalRegimeAtSale,
                     vatAmount: sale.vatAmountAtSale?.toString() ?? null,
+                    storeCreditApplied: sale.storeCreditApplied?.toString() ?? 0,
                 },
             );
             // Una anulación mueve inventario y dinero: si el asiento no puede
@@ -3601,7 +3665,9 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                         // arqueo del turno suma las ventas en efectivo desde las
                         // filas de Sale, así que excluir las anuladas YA lo
                         // revierte. Crear además un movimiento contaría doble.
-                        efectivoQueDejaDeContar: plan.efectivoAReversar.toString(),
+                        efectivoQueDejaDeContar: Decimal.max(
+                            plan.efectivoAReversar.minus(saldoFavorARestaurar), 0,
+                        ).toString(),
                         deudaAntes,
                         deudaDespues,
                         items: plan.lineas.map(l => ({
@@ -3611,6 +3677,14 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN']), v
                     }),
                 },
             });
+
+            const correctionCompleted = await tx.saleCorrectionRequest.updateMany({
+                where: { id: correctionRequest.id, tenantId: authReq.tenantId!, status: 'APPROVED' },
+                data: { status: 'COMPLETED', executedBy: authReq.userId!, executedAt: new Date() },
+            });
+            if (correctionCompleted.count !== 1) {
+                throw new ReturnResolutionError('CORRECTION_CONCURRENCY_CONFLICT', 409, 'La solicitud cambió mientras se anulaba la venta');
+            }
 
             return { id: saleId, status: ESTADO_ANULADA, motivo };
         });
@@ -3741,10 +3815,11 @@ app.get('/api/sales/search', authenticate, checkRole(RETURN_SEARCH_ROLES), async
 });
 
 // Process return
-app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateReturnSchema), async (req: any, res: any) => {
+app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', 'CASHIER']), validate(CreateReturnSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { clientEventId, saleId, items, reason, refundMethod: explicitRefundMethod } = req.body;
+    const { correctionRequestId, clientEventId, saleId, items, reason, refundMethod: explicitRefundMethod } = req.body;
     const payloadHash = buildReturnPayloadHash({
+        correctionRequestId,
         saleId,
         items,
         reason,
@@ -3786,6 +3861,18 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 return { productReturn: existingReturn, idempotentReplay: true };
             }
 
+            // Serializa el consecutivo por negocio. El lock de Tenant evita que
+            // dos devoluciones de ventas distintas obtengan el mismo número.
+            await tx.$queryRaw`
+                SELECT id FROM \`Tenant\`
+                WHERE id = ${authReq.tenantId}
+                FOR UPDATE`;
+            const lastReturnNumber = await tx.productReturn.aggregate({
+                where: { tenantId: authReq.tenantId, returnNumber: { not: null } },
+                _max: { returnNumber: true },
+            });
+            const returnNumber = (lastReturnNumber._max.returnNumber ?? 0) + 1;
+
             const sale = await tx.sale.findFirst({
                 where: { id: saleId, tenantId: authReq.tenantId },
                 include: {
@@ -3817,6 +3904,43 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
             });
             if (!sale) throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
 
+            const correctionRequest = await tx.saleCorrectionRequest.findFirst({
+                where: {
+                    id: correctionRequestId,
+                    tenantId: authReq.tenantId!,
+                    saleId,
+                    kind: 'RETURN',
+                    status: 'APPROVED',
+                },
+                include: { lines: true },
+            });
+            if (!correctionRequest || textoUtil(correctionRequest.reason) !== textoUtil(reason)) {
+                throw new ReturnResolutionError(
+                    'APPROVED_CORRECTION_REQUIRED',
+                    409,
+                    'La devolución requiere una solicitud aprobada que coincida con este motivo',
+                );
+            }
+            const approvedLines = new Map<string, { quantity: Decimal; disposition: string; id: string }>(correctionRequest.lines.map((line: any) => [
+                line.saleItemId,
+                { quantity: new Decimal(line.quantity.toString()), disposition: line.disposition, id: line.id },
+            ]));
+            if (items.length !== approvedLines.size) {
+                throw new ReturnResolutionError('CORRECTION_PAYLOAD_MISMATCH', 409, 'Las líneas no coinciden con la solicitud aprobada');
+            }
+            for (const requested of items) {
+                const approved = requested.saleItemId ? approvedLines.get(requested.saleItemId) : null;
+                if (!approved || !approved.quantity.equals(new Decimal(requested.quantity))) {
+                    throw new ReturnResolutionError('CORRECTION_PAYLOAD_MISMATCH', 409, 'Las cantidades no coinciden con la solicitud aprobada');
+                }
+            }
+            if (
+                correctionRequest.resolution === 'REFUND'
+                && correctionRequest.refundMethod !== explicitRefundMethod
+            ) {
+                throw new ReturnResolutionError('CORRECTION_PAYLOAD_MISMATCH', 409, 'El canal de reembolso no coincide con la aprobación');
+            }
+
             // ESPEJO de la guarda de anulación (DGI-5). La regla pura ya rechaza
             // ANULAR una venta que tiene devoluciones; este es el otro lado de la
             // misma moneda y sin él la anulación abriría un hueco que antes no
@@ -3841,7 +3965,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
             const [previousReturns, products, saleKardexLocations] = await Promise.all([
                 tx.productReturn.findMany({
                     where: { saleId, tenantId: authReq.tenantId },
-                    select: { items: true },
+                    select: { items: true, total: true },
                 }),
                 tx.product.findMany({
                     where: { tenantId: authReq.tenantId, id: { in: productIds } },
@@ -3949,7 +4073,12 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                         'La línea de venta ya no está disponible',
                     );
                 }
-                const batchRestoration = batchWarehouseLedgerMode === 'OFF'
+                const disposition = approvedLines.get(item.saleItemId)?.disposition ?? 'RESTOCK';
+                const requiresBatchTracking =
+                    productsById.get(item.productId)?.requiresBatchTracking === true
+                    || productsWithBatchKardex.has(item.productId)
+                    || (allocationsBySaleItem.get(item.saleItemId)?.length ?? 0) > 0;
+                const batchRestoration = disposition === 'RESTOCK' && batchWarehouseLedgerMode === 'OFF'
                     ? await restoreSaleItemBatchesForReturn(tx, {
                         tenantId: authReq.tenantId!,
                         saleItemId: item.saleItemId,
@@ -3961,17 +4090,14 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                         saleItem,
                         requestedQuantity: item.quantity,
                         sameProductLineCount: productLineCounts.get(item.productId) ?? 0,
-                        requiresBatchTracking:
-                            productsById.get(item.productId)?.requiresBatchTracking === true
-                            || productsWithBatchKardex.has(item.productId)
-                            || (allocationsBySaleItem.get(item.saleItemId)?.length ?? 0) > 0,
+                        requiresBatchTracking,
                         previousReturns,
                         allocations: allocationsBySaleItem.get(item.saleItemId) ?? [],
                         ledgerMode: batchWarehouseLedgerMode,
                     });
-                const restoredQuantity = batchRestoration.batchRestorations.reduce(
+                const restoredQuantity = (batchRestoration.batchRestorations as readonly { quantity: Decimal }[]).reduce(
                     (sum, restoration) => sum.plus(restoration.quantity),
-                    batchRestoration.aggregateOnlyQuantity,
+                    new Decimal(batchRestoration.aggregateOnlyQuantity),
                 );
                 if (!restoredQuantity.equals(item.quantity)) {
                     throw new ReturnResolutionError(
@@ -4002,6 +4128,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 refundUnitPrice: item.refundUnitPrice.toFixed(4),
                 lineTotal: item.lineTotal.toDecimalPlaces(2).toFixed(2),
                 ivaExento: item.ivaExento,
+                disposition: approvedLines.get(item.saleItemId)?.disposition ?? 'RESTOCK',
                 batchRestorationMode: batchRestoration.mode,
                 batchRestorations: batchRestoration.batchRestorations.map((restoration) => ({
                     batchId: restoration.batchId,
@@ -4030,7 +4157,27 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                     createdBy: authReq.userId,
                     clientEventId,
                     payloadHash,
+                    correctionRequestId: correctionRequest.id,
+                    returnNumber,
+                    resolution: correctionRequest.resolution ?? 'REFUND',
+                    refundStatus: 'NOT_REQUIRED',
                 }
+            });
+
+            await tx.productReturnItem.createMany({
+                data: resolved.items.map((item) => ({
+                    tenantId: authReq.tenantId!,
+                    productReturnId: productReturn.id,
+                    saleItemId: item.saleItemId,
+                    productId: item.productId,
+                    quantity: item.quantity.toFixed(4),
+                    refundUnitPrice: item.refundUnitPrice.toFixed(4),
+                    lineTotal: item.lineTotal.toFixed(4),
+                    costTotal: item.lineCost.toFixed(4),
+                    disposition: approvedLines.get(item.saleItemId)?.disposition ?? 'RESTOCK',
+                    productNameAtReturn: item.name,
+                    unitAtReturn: item.unit,
+                })),
             });
 
             // OFF queda byte-a-byte en su semántica anterior: ProductBatch se
@@ -4044,6 +4191,34 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                         || left.item.saleItemId.localeCompare(right.item.saleItemId),
                 );
             for (const { item, batchRestoration } of returnLinesInLockOrder) {
+                const approvedLine = approvedLines.get(item.saleItemId);
+                if (approvedLine?.disposition === 'QUARANTINE') {
+                    await tx.returnInspection.create({
+                        data: {
+                            tenantId: authReq.tenantId!,
+                            correctionLineId: approvedLine.id,
+                            productId: item.productId,
+                            quantity: item.quantity.toFixed(4),
+                            batchEvidence: {
+                                ledgerMode: batchWarehouseLedgerMode,
+                                requiresBatchTracking: productsById.get(item.productId)?.requiresBatchTracking === true,
+                                returnWarehouseId,
+                                aggregateOnlyQuantity: batchRestoration.aggregateOnlyQuantity.toString(),
+                                restorations: batchRestoration.batchRestorations.map((restoration) => ({
+                                    batchId: restoration.batchId,
+                                    batchNumber: restoration.batchNumber,
+                                    quantity: restoration.quantity.toString(),
+                                    ...('allocationId' in restoration ? {
+                                        allocationId: restoration.allocationId,
+                                        warehouseId: restoration.warehouseId,
+                                    } : {}),
+                                })),
+                            },
+                        },
+                    });
+                    continue;
+                }
+                if (approvedLine?.disposition === 'LOSS') continue;
                 if (batchWarehouseLedgerMode === 'OFF') {
                     const qty = item.quantity.toNumber();
                     const stockResult = await applyStockDelta(tx, {
@@ -4315,12 +4490,37 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 }
             }
 
-            const refundMethod = resolveReturnRefundMethod({
-                salePaymentMethod: sale.paymentMethod,
-                payments: sale.payments,
-                explicitRefundMethod,
-                settledRefund,
-            });
+            const resolution = correctionRequest.resolution ?? 'REFUND';
+            const storeCreditAppliedAtSale = new Decimal(sale.storeCreditApplied?.toString() ?? 0);
+            let storeCreditRestoration = new Decimal(0);
+            if (resolution === 'REFUND' && storeCreditAppliedAtSale.greaterThan(0)) {
+                const saleTotal = new Decimal(sale.total.toString());
+                const priorReturnedTotal = previousReturns.reduce(
+                    (sum: Decimal, previous: any) => sum.plus(new Decimal(previous.total?.toString() ?? 0)),
+                    new Decimal(0),
+                );
+                const priorRestored = await tx.customerCreditEntry.aggregate({
+                    where: { tenantId: authReq.tenantId!, saleId, type: 'SALE_RETURN_CREDIT' },
+                    _sum: { amount: true },
+                });
+                const restoredBefore = new Decimal(priorRestored._sum.amount?.toString() ?? 0);
+                const targetCumulative = Decimal.min(
+                    storeCreditAppliedAtSale,
+                    priorReturnedTotal.plus(resolved.total).mul(storeCreditAppliedAtSale).div(saleTotal),
+                ).toDecimalPlaces(2);
+                storeCreditRestoration = Decimal.max(targetCumulative.minus(restoredBefore), 0)
+                    .toDecimalPlaces(2);
+                storeCreditRestoration = Decimal.min(storeCreditRestoration, settledRefund);
+                settledRefund = settledRefund.minus(storeCreditRestoration).toDecimalPlaces(2);
+            }
+            const refundMethod = resolution === 'REFUND'
+                ? resolveReturnRefundMethod({
+                    salePaymentMethod: sale.paymentMethod,
+                    payments: sale.payments,
+                    explicitRefundMethod: correctionRequest.refundMethod as any,
+                    settledRefund,
+                })
+                : null;
 
             let cashMovementId: string | null = null;
             let refundShiftId: string | null = null;
@@ -4367,8 +4567,8 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 // bloquean para evitar invertir el orden Sale→Shift entre dos
                 // devoluciones concurrentes; una venta nueva omitida solo vuelve
                 // este guard más conservador, nunca permite sobregirar.
-                const cashSales: Array<{ total: any }> = await tx.$queryRaw`
-                    SELECT total FROM \`Sale\`
+                const cashSales: Array<{ total: any; storeCreditApplied: any }> = await tx.$queryRaw`
+                    SELECT total, storeCreditApplied FROM \`Sale\`
                     WHERE \`tenantId\` = ${authReq.tenantId}
                       AND shiftId = ${lockedShift.id}
                       AND paymentMethod = 'CASH'`;
@@ -4388,7 +4588,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                     initialCash: lockedShift.initialCash,
                     initialCashUsd: lockedShift.initialCashUsd,
                     cashSales: cashSales.reduce(
-                        (sum, cashSale) => sum.plus(new Decimal(cashSale.total.toString())),
+                        (sum, cashSale) => sum.plus(
+                            new Decimal(cashSale.total.toString()).minus(cashSale.storeCreditApplied?.toString() ?? 0),
+                        ),
                         new Decimal(0),
                     ),
                     movimientos: cashMovements.map((movement) => ({
@@ -4419,19 +4621,74 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                 refundShiftId = lockedShift.id;
             }
 
+            let customerCreditEntryId: string | null = null;
+            const customerCreditToAdd = resolution === 'STORE_CREDIT' || resolution === 'EXCHANGE'
+                ? settledRefund
+                : storeCreditRestoration;
+            if (customerCreditToAdd.greaterThan(0)) {
+                if (!sale.customerId) {
+                    throw new ReturnResolutionError('STORE_CREDIT_CUSTOMER_REQUIRED', 409, 'El saldo a favor requiere un cliente identificado');
+                }
+                const customer = await tx.customer.findFirst({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId! },
+                    select: { storeCreditBalance: true },
+                });
+                if (!customer) throw new ReturnResolutionError('STORE_CREDIT_CUSTOMER_REQUIRED', 409, 'El cliente ya no está disponible');
+                const balanceAfterCredit = new Decimal(customer.storeCreditBalance.toString()).plus(customerCreditToAdd).toDecimalPlaces(4);
+                const updatedCustomer = await tx.customer.updateMany({
+                    where: { id: sale.customerId, tenantId: authReq.tenantId!, storeCreditBalance: customer.storeCreditBalance },
+                    data: { storeCreditBalance: balanceAfterCredit.toFixed(4) },
+                });
+                if (updatedCustomer.count !== 1) throw new ReturnResolutionError('STORE_CREDIT_CONCURRENCY_CONFLICT', 409, 'El saldo a favor cambió; volvé a intentarlo');
+                const creditEntry = await tx.customerCreditEntry.create({ data: {
+                    tenantId: authReq.tenantId!, customerId: sale.customerId, productReturnId: productReturn.id,
+                    saleId,
+                    type: resolution === 'REFUND' ? 'SALE_RETURN_CREDIT' : 'RETURN_CREDIT',
+                    amount: customerCreditToAdd.toFixed(4), balanceAfter: balanceAfterCredit.toFixed(4), createdBy: authReq.userId!,
+                } });
+                customerCreditEntryId = creditEntry.id;
+            }
+
+            let refundRecordId: string | null = null;
+            if (settledRefund.greaterThan(0) && resolution === 'REFUND' && refundMethod) {
+                const refundRecord = await tx.returnRefund.create({ data: {
+                    tenantId: authReq.tenantId!, saleId, productReturnId: productReturn.id,
+                    correctionRequestId: correctionRequest.id, amount: settledRefund.toFixed(4), method: refundMethod,
+                    status: refundMethod === 'CASH' ? 'COMPLETED' : 'PENDING',
+                    ...(refundMethod === 'CASH' ? {
+                        externalReference: cashMovementId ?? 'CASH_DRAWER',
+                        evidenceNote: 'Reembolso entregado desde la caja abierta',
+                        completedBy: authReq.userId!, completedAt: new Date(),
+                    } : {}),
+                } });
+                refundRecordId = refundRecord.id;
+                await tx.productReturn.update({
+                    where: { id: productReturn.id },
+                    data: { refundStatus: refundMethod === 'CASH' ? 'COMPLETED' : 'PENDING' },
+                });
+            }
+
+            const restockCostTotal = resolved.items.reduce((sum, item) => (
+                approvedLines.get(item.saleItemId)?.disposition === 'RESTOCK'
+                    ? sum.plus(item.lineCost)
+                    : sum
+            ), new Decimal(0)).toDecimalPlaces(4);
+
             await recordReturn(
                 tx,
                 authReq.tenantId!,
                 authReq.userId!,
                 productReturn.id,
                 resolved.total.toNumber(),
-                resolved.costTotal.toNumber(),
+                restockCostTotal.toNumber(),
                 {
                     exemptTotal: resolved.exemptTotal,
                     fiscalRegime: sale.fiscalRegimeAtSale,
                     creditReduction,
                     settledRefund,
-                    refundMethod: refundMethod ?? 'CASH',
+                    storeCreditRestoration,
+                    refundMethod: resolution === 'REFUND' ? (refundMethod ?? 'CASH') : 'STORE_CREDIT',
+                    refundPending: resolution === 'REFUND' && refundMethod !== 'CASH' && settledRefund.greaterThan(0),
                 },
             );
 
@@ -4444,7 +4701,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                         saleId,
                         returnId: productReturn.id,
                         total: resolved.total.toFixed(2),
-                        costTotal: resolved.costTotal.toFixed(2),
+                        costTotal: restockCostTotal.toFixed(2),
                         exemptTotal: resolved.exemptTotal.toFixed(2),
                         fiscalRegime: normalizeFiscalRegime(sale.fiscalRegimeAtSale),
                         items: persistItems,
@@ -4457,10 +4714,21 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN']), validate(C
                         debtAfter,
                         cashMovementId,
                         refundShiftId,
+                        refundRecordId,
+                        customerCreditEntryId,
+                        storeCreditRestoration: storeCreditRestoration.toFixed(2),
                         warehouseId: returnWarehouseId,
                     }),
                 },
             });
+
+            const correctionCompleted = await tx.saleCorrectionRequest.updateMany({
+                where: { id: correctionRequest.id, tenantId: authReq.tenantId!, status: 'APPROVED' },
+                data: { status: 'COMPLETED', executedBy: authReq.userId!, executedAt: new Date() },
+            });
+            if (correctionCompleted.count !== 1) {
+                throw new ReturnResolutionError('CORRECTION_CONCURRENCY_CONFLICT', 409, 'La solicitud cambió mientras se procesaba la devolución');
+            }
 
             return { productReturn, idempotentReplay: false };
         });
@@ -4610,12 +4878,13 @@ app.post('/api/shifts/:id/tomar', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
 
         const ventasEfectivo = await prisma.sale.aggregate({
             where: { tenantId: authReq.tenantId!, shiftId: turno.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
-            _sum: { total: true },
+            _sum: { total: true, storeCreditApplied: true },
         });
         const efectivo = calcularEfectivoTurno({
             initialCash: turno.initialCash.toString(),
             initialCashUsd: turno.initialCashUsd == null ? 0 : turno.initialCashUsd.toString(),
-            cashSales: ventasEfectivo._sum.total?.toString() ?? 0,
+            cashSales: new Decimal(ventasEfectivo._sum.total?.toString() ?? 0)
+                .minus(ventasEfectivo._sum.storeCreditApplied?.toString() ?? 0),
             movimientos: turno.cashMovements.map((m: any) => ({
                 type: m.type,
                 amount: m.amount.toString(),
@@ -4835,162 +5104,35 @@ app.post('/api/shifts/open', authenticate, shiftOpenLimiter as any, validate(Ope
 });
 app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { declaredCash, declaredCashUsd, shiftId, auditNotes } = req.body;
+    if (!authReq.tenantId || !authReq.userId) {
+        return res.status(401).json({ error: 'Sesión inválida para cerrar caja' });
+    }
+
     try {
-        // Tenant isolation: shift debe pertenecer al tenant del token
-        const shift = await prisma.shift.findFirst({
-            where: { id: shiftId, tenantId: authReq.tenantId },  // tenant isolation
-            include: {
-                sales: true,
-                cashMovements: { where: { isVoided: false } },
-                employee: { select: { id: true, firstName: true, lastName: true, role: true } }
-            }
-        });
-        if (!shift) return res.status(404).json({ error: 'Turno no encontrado o no pertenece a tu empresa' });
+        const result = await closeLegacyShift(
+            prisma as unknown as ShiftCloseDatabase,
+            {
+                tenantId: authReq.tenantId,
+                userId: authReq.userId,
+                role: authReq.role,
+            },
+            req.body,
+        );
 
-        // Autorización: solo el dueño del turno puede cerrarlo, o un rol administrativo
-        // (force-close). Evita que un cajero cierre el turno de un colega con cifras
-        // fabricadas e incrimine con auditoría inmutable. Mismo patrón inline que /monitor.
-        const isAdminRole = ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '');
-        if (shift.userId !== authReq.userId && !isAdminRole) {
-            return res.status(403).json({ error: 'No autorizado a cerrar este turno.' });
+        // Logging después del commit: nunca alarga ni condiciona la transacción.
+        if (result.warning) {
+            console.warn(
+                `🚨 ${result.warning.alertType}: Diferencia C$${result.warning.difference} `
+                + `(umbral: C$${result.warning.threshold}) - Cajero: ${result.warning.cashierName}`,
+            );
         }
-
-        // ARQUEO DINÁMICO por moneda (Fase D): las ventas son siempre C$; los
-        // movimientos de caja se separan por currency. Antes se sumaban C$ y
-        // US$ como si fueran la misma unidad — eso era un bug de arqueo.
-        const cashSalesD = shift.sales
-            .filter((s: any) => s.paymentMethod === 'CASH')
-            .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
-        const cashSales = cashSalesD.toNumber();
-        const cardSales = shift.sales.filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT').reduce((sum: number, s: any) => sum + Number(s.total), 0);
-
-        // NX-03 — el arqueo usa LA MISMA función que la píldora del POS y el
-        // monitor de cajas (`calcularEfectivoTurno`, utils/margen.ts). Antes era
-        // una tercera copia de la fórmula, además sumada en float nativo: el
-        // `difference` que dispara la alerta de robo hormiga no puede arrastrar
-        // error binario ni discrepar de lo que el cajero vio en pantalla.
-        const efectivoArqueo = calcularEfectivoTurno({
-            initialCash: shift.initialCash.toString(),
-            initialCashUsd: shift.initialCashUsd == null ? 0 : shift.initialCashUsd.toString(),
-            cashSales: cashSalesD,
-            movimientos: shift.cashMovements.map((m: any) => ({
-                type: m.type,
-                amount: m.amount.toString(),
-                currency: m.currency,
-                category: m.category,
-            })),
-        });
-        // Manuales y de agente bancario van SEPARADOS en el desglose, pero los dos
-        // están adentro del efectivo esperado (son billetes en la gaveta).
-        const manualINs = efectivoArqueo.desglose.manualINs.toNumber();
-        const manualOUTs = efectivoArqueo.desglose.manualOUTs.toNumber();
-        const agentINs = efectivoArqueo.desglose.agentINs.toNumber();
-        const agentOUTs = efectivoArqueo.desglose.agentOUTs.toNumber();
-        const expectedCash = efectivoArqueo.efectivoNIO.toNumber();
-        const difference = new Decimal(declaredCash).minus(efectivoArqueo.efectivoNIO).toDecimalPlaces(2).toNumber();
-        const expectedUsd = efectivoArqueo.efectivoUSD.toNumber();
-        // Si no declaró dólares pero hubo movimiento USD, la diferencia se
-        // calcula contra 0 (faltante completo visible, no oculto).
-        const declaredUsd = declaredCashUsd !== undefined ? Number(declaredCashUsd) : 0;
-        const differenceUsd = declaredUsd - expectedUsd;
-        const huboUsd = expectedUsd !== 0 || declaredUsd !== 0 || Number(shift.initialCashUsd || 0) !== 0;
-
-        const cajeroName = shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar';
-
-        // Fetch tenant threshold for theft alert
-        const tenant = await prisma.tenant.findUnique({ where: { id: authReq.tenantId } });
-        const theftThreshold = tenant ? Number(tenant.theftAlertThreshold) : 500;
-
-        // Transacción: cerrar turno + crear audit log inmutable + alerta robo hormiga
-        const closedShift = await prisma.$transaction(async (tx: any) => {
-            const updated = await tx.shift.update({
-                where: { id: shiftId },
-                data: {
-                    endTime: new Date(),
-                    status: 'CLOSED',
-                    finalCashDeclared: declaredCash,
-                    systemExpectedCash: expectedCash,
-                    difference: difference,
-                    // Gaveta USD (Fase D): solo se persiste si hubo dólares.
-                    ...(huboUsd ? {
-                        finalCashDeclaredUsd: declaredUsd,
-                        systemExpectedUsd: expectedUsd,
-                        differenceUsd: differenceUsd,
-                    } : {}),
-                },
-                include: {
-                    employee: { select: { id: true, firstName: true, lastName: true, role: true } }
-                }
-            });
-
-            // AUDIT LOG INMUTABLE — rastro de cierre de caja
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId,
-                    userId: authReq.userId,
-                    action: 'SHIFT_CLOSED',
-                    details: JSON.stringify({
-                        esperado: expectedCash,
-                        declarado: Number(declaredCash),
-                        diferencia: difference,
-                        cajero: cajeroName,
-                        totalEfectivo: cashSales,
-                        totalTarjeta: cardSales,
-                        entradasManuales: manualINs,
-                        salidasManuales: manualOUTs,
-                        fondoInicial: Number(shift.initialCash),
-                        // Gaveta USD (Fase D):
-                        ...(huboUsd ? {
-                            usd: { esperado: expectedUsd, declarado: declaredUsd, diferencia: differenceUsd, fondoInicial: Number(shift.initialCashUsd || 0) },
-                        } : {}),
-                        totalVentas: shift.sales.length,
-                        totalMovimientos: shift.cashMovements.length,
-                        notasRevisor: auditNotes || 'Sin notas.'
-                    })
-                }
-            });
-
-            // 🚨 ALERTA ROBO HORMIGA — si la diferencia supera el umbral
-            if (Math.abs(difference) > theftThreshold) {
-                const alertType = difference < 0 ? 'THEFT_ALERT' : 'SURPLUS_ALERT';
-                await tx.auditLog.create({
-                    data: {
-                        tenantId: authReq.tenantId,
-                        userId: authReq.userId,
-                        action: alertType,
-                        details: JSON.stringify({
-                            tipo: difference < 0 ? '⚠️ FALTANTE EN CAJA' : '⚠️ SOBRANTE EN CAJA',
-                            diferencia: difference,
-                            esperado: expectedCash,
-                            declarado: Number(declaredCash),
-                            cajero: cajeroName,
-                            umbral: theftThreshold,
-                            turnoId: shiftId,
-                            fecha: new Date().toISOString()
-                        })
-                    }
-                });
-                console.warn(`🚨 ${alertType}: Diferencia C$${Math.abs(difference).toFixed(2)} (umbral: C$${theftThreshold}) - Cajero: ${cajeroName}`);
-            }
-
-            return updated;
-        });
-
-        res.json({
-            ...closedShift,
-            // NX-03: `manualINs`/`manualOUTs` son ahora estrictamente MANUALES;
-            // la corresponsalía va aparte (los dos ya están dentro de
-            // `systemExpectedCash`).
-            manualINs,
-            manualOUTs,
-            agentINs,
-            agentOUTs,
-            theftAlert: Math.abs(difference) > theftThreshold
-        });
-    } catch (e: any) {
-        console.error('Error closing shift:', e);
-        res.status(500).json({ error: e.message || 'Error cerrando caja' });
+        return res.json(result.body);
+    } catch (error: unknown) {
+        if (error instanceof ShiftCloseError) {
+            return res.status(error.httpStatus).json({ error: error.message });
+        }
+        console.error('Error closing shift:', error);
+        return res.status(500).json({ error: 'Error cerrando caja' });
     }
 });
 
@@ -5005,15 +5147,16 @@ app.get('/api/shifts/history', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
-                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, paymentMethod: true } }
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, storeCreditApplied: true, paymentMethod: true } }
             }
         });
 
         // Enriquecer con totales por método de pago
         const enriched = shifts.map((s: any) => {
-            const cashTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CASH').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
-            const cardTotal = s.sales.filter((sale: any) => sale.paymentMethod !== 'CASH' && sale.paymentMethod !== 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
-            const creditTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const tender = (sale: any) => Number(new Decimal(sale.total.toString()).minus(sale.storeCreditApplied?.toString() ?? 0));
+            const cashTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CASH').reduce((sum: number, sale: any) => sum + tender(sale), 0);
+            const cardTotal = s.sales.filter((sale: any) => sale.paymentMethod !== 'CASH' && sale.paymentMethod !== 'CREDIT').reduce((sum: number, sale: any) => sum + tender(sale), 0);
+            const creditTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CREDIT').reduce((sum: number, sale: any) => sum + tender(sale), 0);
             return {
                 id: s.id,
                 startTime: s.startTime,
@@ -5055,7 +5198,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true, email: true } },
-                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, paymentMethod: true, createdAt: true } },
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { id: true, total: true, storeCreditApplied: true, paymentMethod: true, createdAt: true } },
                 cashMovements: { where: { isVoided: false }, select: { id: true, type: true, amount: true, currency: true, category: true, description: true, createdAt: true } }
             },
             orderBy: { startTime: 'asc' }
@@ -5067,16 +5210,18 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             // binario de float.
             const cashSalesD = shift.sales
                 .filter((s: any) => s.paymentMethod === 'CASH')
-                .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+                .reduce((sum: Decimal, s: any) => sum.plus(
+                    new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0),
+                ), new Decimal(0));
             const cashSales = cashSalesD.toNumber();
             // Ventas tarjeta/transferencia
             const cardSales = shift.sales
                 .filter((s: any) => s.paymentMethod !== 'CASH' && s.paymentMethod !== 'CREDIT')
-                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+                .reduce((sum: number, s: any) => sum + Number(new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0)), 0);
             // Ventas crédito
             const creditSales = shift.sales
                 .filter((s: any) => s.paymentMethod === 'CREDIT')
-                .reduce((sum: number, s: any) => sum + Number(s.total), 0);
+                .reduce((sum: number, s: any) => sum + Number(new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0)), 0);
 
             // NX-03 — EL NÚMERO SAGRADO sale de `calcularEfectivoTurno`
             // (utils/margen.ts), LA MISMA función que alimenta la píldora del POS
@@ -5156,7 +5301,7 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
             include: {
                 employee: { select: { id: true, firstName: true, lastName: true, role: true } },
                 user: { select: { id: true, name: true } },
-                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, paymentMethod: true } }
+                sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, storeCreditApplied: true, paymentMethod: true } }
             }
         });
 
@@ -5165,9 +5310,10 @@ app.get('/api/shifts/monitor', authenticate, async (req: any, res: any) => {
         const theftThreshold = tenant ? Number(tenant.theftAlertThreshold) : 500;
 
         const closedHistory = closedShifts.map((s: any) => {
-            const cashTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CASH').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
-            const cardTotal = s.sales.filter((sale: any) => sale.paymentMethod !== 'CASH' && sale.paymentMethod !== 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
-            const creditTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CREDIT').reduce((sum: number, sale: any) => sum + Number(sale.total), 0);
+            const tender = (sale: any) => Number(new Decimal(sale.total.toString()).minus(sale.storeCreditApplied?.toString() ?? 0));
+            const cashTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CASH').reduce((sum: number, sale: any) => sum + tender(sale), 0);
+            const cardTotal = s.sales.filter((sale: any) => sale.paymentMethod !== 'CASH' && sale.paymentMethod !== 'CREDIT').reduce((sum: number, sale: any) => sum + tender(sale), 0);
+            const creditTotal = s.sales.filter((sale: any) => sale.paymentMethod === 'CREDIT').reduce((sum: number, sale: any) => sum + tender(sale), 0);
             const diff = s.difference ? Number(s.difference) : 0;
 
             return {
@@ -5222,6 +5368,10 @@ app.get('/api/audit-logs', authenticate, checkRole(['OWNER', 'ADMIN']), async (r
 app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { type, amount, currency, category, description } = req.body;
+    const cashMovementRouteError = (code: string, httpStatus: number, message: string): Error & {
+        code: string;
+        httpStatus: number;
+    } => Object.assign(new Error(message), { code, httpStatus });
 
     // Los pagos a proveedores pertenecen al subledger de CxP. El atajo
     // histórico de caja no tiene purchaseId, idempotencia ni los guards de
@@ -5247,7 +5397,7 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
             ? await prisma.shift.findFirst({
                 where: { id: turnoAbierto.id, tenantId: authReq.tenantId },
                 include: {
-                    sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, paymentMethod: true } },
+                    sales: { where: { status: { not: ESTADO_ANULADA } }, select: { total: true, storeCreditApplied: true, paymentMethod: true } },
                     cashMovements: { where: { isVoided: false } }
                 }
             })
@@ -5267,7 +5417,9 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
             const cashSalesTotal = movCurrency === 'NIO'
                 ? currentShift.sales
                     .filter((s: any) => s.paymentMethod === 'CASH')
-                    .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0))
+                    .reduce((sum: Decimal, s: any) => sum.plus(
+                        new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0),
+                    ), new Decimal(0))
                 : new Decimal(0);
             const fondo = movCurrency === 'NIO'
                 ? new Decimal(currentShift.initialCash.toString())
@@ -5301,18 +5453,37 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
 
         // C. TRANSACCIÓN: crear movimiento + auto-crear Expense si es salida
         const result = await prisma.$transaction(async (tx: any) => {
+            const lockedShiftRows: Array<{
+                id: string;
+                initialCash: unknown;
+                initialCashUsd: unknown;
+            }> = await tx.$queryRaw`
+                SELECT \`id\`, \`initialCash\`, \`initialCashUsd\`
+                  FROM \`Shift\`
+                 WHERE \`id\` = ${currentShift.id}
+                   AND \`tenantId\` = ${authReq.tenantId}
+                   AND \`status\` = 'OPEN'
+                 LIMIT 1
+                 FOR UPDATE
+            `;
+            if (lockedShiftRows.length !== 1) {
+                throw cashMovementRouteError(
+                    'NO_SHIFT',
+                    409,
+                    'CAJA CERRADA: El turno ya no está abierto para registrar movimientos',
+                );
+            }
+            const lockedShift = lockedShiftRows[0];
+
             // Revalidación race-safe del saldo para salidas: se bloquea la fila del turno
             // (FOR UPDATE) y se recalcula el efectivo disponible con decimal.js DENTRO de la
             // transacción, cerrando el TOCTOU de dos OUT concurrentes que sobregiran la caja.
             if (type === 'OUT') {
-                // Fase D: revalidación race-safe POR MONEDA (backticks MySQL —
-                // el raw anterior usaba comillas dobles estilo PostgreSQL).
-                await tx.$queryRaw`SELECT id FROM \`Shift\` WHERE id = ${currentShift.id} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
                 const movCurrency = currency || 'NIO';
-                const freshSales: Array<{ total: any }> = movCurrency === 'NIO'
+                const freshSales: Array<{ total: any; storeCreditApplied: any }> = movCurrency === 'NIO'
                     ? await tx.sale.findMany({
                         where: { shiftId: currentShift.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
-                        select: { total: true },
+                        select: { total: true, storeCreditApplied: true },
                     })
                     : [];
                 const freshMovements: Array<{ type: string; amount: any; currency: string | null }> = await tx.cashMovement.findMany({
@@ -5321,10 +5492,12 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
                 });
                 const mismaMoneda = (m: any) => (m.currency || 'NIO') === movCurrency;
                 const cashSalesTotal = freshSales
-                    .reduce((sum: Decimal, s: any) => sum.plus(new Decimal(s.total.toString())), new Decimal(0));
+                    .reduce((sum: Decimal, s: any) => sum.plus(
+                        new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0),
+                    ), new Decimal(0));
                 const fondo = movCurrency === 'NIO'
-                    ? new Decimal(currentShift.initialCash.toString())
-                    : new Decimal((currentShift.initialCashUsd ?? 0).toString());
+                    ? new Decimal(String(lockedShift.initialCash))
+                    : new Decimal(String(lockedShift.initialCashUsd ?? 0));
                 const totalINs = freshMovements
                     .filter((m) => m.type === 'IN' && mismaMoneda(m))
                     .reduce((sum: Decimal, m: any) => sum.plus(new Decimal(m.amount.toString())), new Decimal(0));
@@ -5415,6 +5588,9 @@ app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema)
         if (error instanceof PeriodLockedError) {
             return res.status(423).json({ error: error.message });
         }
+        if (error?.httpStatus) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
         const insufficient = error?.message?.includes('Saldo insuficiente');
         res.status(insufficient ? 400 : 500).json({ error: error.message || 'Error registrando movimiento de caja' });
     }
@@ -5496,7 +5672,7 @@ app.get('/api/cash-movements', authenticate, async (req: any, res: any) => {
                 where: { tenantId: authReq.tenantId, shiftId: turnoId, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
                 orderBy: { createdAt: 'desc' },
                 take: 200,
-                select: { id: true, total: true, invoiceNumber: true, createdAt: true },
+                select: { id: true, total: true, storeCreditApplied: true, invoiceNumber: true, createdAt: true },
             }),
         ]);
 
@@ -5506,7 +5682,7 @@ app.get('/api/cash-movements', authenticate, async (req: any, res: any) => {
             tenantId: authReq.tenantId,
             shiftId: turnoId,
             type: 'IN',
-            amount: new Decimal(s.total.toString()).toNumber(),
+            amount: new Decimal(s.total.toString()).minus(s.storeCreditApplied?.toString() ?? 0).toNumber(),
             currency: 'NIO',
             category: 'VENTA_EFECTIVO',
             description: s.invoiceNumber ? `Venta #${s.invoiceNumber}` : 'Venta en efectivo',
@@ -5563,7 +5739,7 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
         const [ventasEfectivo, gruposMovimientos] = await Promise.all([
             prisma.sale.aggregate({
                 where: { tenantId: authReq.tenantId, shiftId: shift.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
-                _sum: { total: true },
+                _sum: { total: true, storeCreditApplied: true },
             }),
             prisma.cashMovement.groupBy({
                 by: ['type', 'currency', 'category'],
@@ -5575,7 +5751,8 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
         const efectivo = calcularEfectivoTurno({
             initialCash: shift.initialCash.toString(),
             initialCashUsd: shift.initialCashUsd == null ? 0 : shift.initialCashUsd.toString(),
-            cashSales: ventasEfectivo._sum.total == null ? 0 : ventasEfectivo._sum.total.toString(),
+            cashSales: new Decimal(ventasEfectivo._sum.total?.toString() ?? 0)
+                .minus(ventasEfectivo._sum.storeCreditApplied?.toString() ?? 0),
             // Cada grupo entra como UN movimiento con el monto ya sumado: la
             // fórmula es una suma por bucket, así que agregar antes da idéntico.
             movimientos: gruposMovimientos.map((g: any) => ({
@@ -9186,6 +9363,10 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 // entrada; este guard evita persistir una línea sin snapshots si
                 // ese contrato cambiara accidentalmente.
                 if (!lineMoney) throw new Error('TOTAL_COMPRA_INCONSISTENTE');
+                const requiresTrackedBatchIdentity = (
+                    batchWarehouseLedgerMode === 'SHADOW'
+                    || batchWarehouseLedgerMode === 'ENFORCED'
+                ) && productsById.get(item.productId)?.requiresBatchTracking === true;
                 const {
                     baseQuantity,
                     lineNet: _lineNet,
@@ -9204,7 +9385,7 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                     // Toda línea directa recibe identidad server-side antes de los
                     // efectos físicos. Así incluso SKUs duplicados conservan una
                     // evidencia de bodega/lote/costo inequívoca para devoluciones.
-                    ...(!linkedPurchaseOrder ? { id: crypto.randomUUID() } : {}),
+                    ...(!linkedPurchaseOrder || requiresTrackedBatchIdentity ? { id: crypto.randomUUID() } : {}),
                     averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
                     totalCost: lineMoney.lineNet.toFixed(2),
                     taxAmountExact: lineMoney.lineTax.toFixed(2),

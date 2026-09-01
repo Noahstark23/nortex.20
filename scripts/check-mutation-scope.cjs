@@ -195,6 +195,14 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
+    // PR-01 protege toda la canalización pura de posting: normalización
+    // estricta string/Decimal, límites 18,4, balance, orden total y huella.
+    // Corrida dirigida: 175/175, sin NoCoverage, ignores ni sobrevivientes.
+    'backend/services/journalPosting.ts': 175,
+    // Identidad legacy tenant+turno y hash de intención: 9/9.
+    'backend/services/shiftCloseService.ts': 9,
+    // JSON canónico de cierre (NIO 2dp, USD 4dp, notas normalizadas): 8/8.
+    'backend/validation/schemas.ts': 8,
     // Asientos puros de venta, abonos, compra+PPV y devolución: 177/177, más
     // 7/7 del orden canónico de locks contables. La factura ligada a OC deja
     // Inventario al costo recibido y separa variación favorable/desfavorable
