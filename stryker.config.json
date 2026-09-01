@@ -27,6 +27,8 @@
   "concurrency": 2,
   "nicaLabor_comment": "nicaLabor.ts (motor de nómina del ERP) entra por CINCO rangos y no entero. Las constantes de nivel módulo corren al importar, antes de que `perTest` atribuya cobertura; por eso los StringLiteral de las cinco filas estáticas de IR_TABLE tienen una directiva Stryker acotada. No se ignora su estructura: el ArrayDeclaration (52-58) permanece mutado y prueba que una tabla vacía rompe los números oro. calendarDaysBetween (44-48) es la función pura extraída que ahora sostiene los cálculos de fechas y también queda dentro de la red. `calculateLaborLiability` (283-339) llama `new Date()` internamente y queda fuera: para volverlo determinista habría que inyectarle la fecha. Lo cubierto es IR_TABLE estructural (52-58), calendarDaysBetween (44-48), irAnualDeTabla (65-80), calculatePayroll (142-262) y calculateSettlement (368-451). OJO: estos rangos se desfasan con cualquier refactor que mueva las funciones.",
   "mutate_comment": "nicaTax arranca en la línea 25 para incluir IVA_FACTOR = IVA_RATE.plus(1) y termina en la 77 para cubrir completas las dos funciones puras: la aritmética del 15% es el número que esta red debe proteger, y los tests de desglose la matan. NO se incluyen las líneas 22-24 (IVA_RATE, ANTICIPO_IR_RATE, IMI_RATE): son inicialización de nivel módulo — corren al importar, antes de que `perTest` atribuya cobertura, así que sus mutantes sobrevivirían sin significado. Además ANTICIPO_IR_RATE e IMI_RATE solo se usan en generateMonthlyReport/generateAnnualIR (con Prisma, sin tests): son ZONA CIEGA declarada, no cobertura falsa.",
+  "sales_report_mutation_comment": "La aritmética crítica de reportes se extrajo a reportMoney.ts y entra completa, sin rangos ni ignores: Decimal, HALF_UP, IVA histórico, netos, utilidad, ticket, redondeo y prorrateo exacto de devoluciones. Corrida dirigida final contra tests/reportMoney.test.ts: 73 instrumentados, 73 killed, 0 survived, 0 timeout y 0 NoCoverage; score 100.00%. El umbral global permanece en 99.85% y no se muta salesReport.ts entero porque también contiene orquestación y parsers defensivos ajenos al núcleo monetario.",
+  "accounting_mutation_comment": "accounting.ts entra por los seis cuerpos puros actuales completos: orden canónico de locks, venta, abono de cliente, pago a proveedor, compra con PPV y devolución junto a su normalizador Decimal. Corrida dirigida: 185 instrumentados, 185 killed, 0 survived, 0 timeout y 0 NoCoverage; score 100.00%. Los rangos 581-666 y 930-978 reemplazan los rangos desfasados que habían caído sobre recordPurchase/infraestructura async.",
   "mutate": [
     "utils/money.ts",
     "utils/calc-laborales.ts",
@@ -48,6 +50,7 @@
     "utils/scaleLabels.ts",
     "utils/purchasePackaging.ts",
     "utils/measuredReportExport.ts",
+    "backend/lib/reportMoney.ts",
     "backend/lib/salesQuantityReport.ts",
     "backend/lib/purchaseOrderAvailability.ts",
     "backend/lib/purchaseMoney.ts",

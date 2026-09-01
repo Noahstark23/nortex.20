@@ -109,6 +109,11 @@ const PISO_MUTANTES = {
     'utils/purchasePackaging.ts': 117,
     // Serialización pura de filas para el XLSX de reportes medidos: 3/3.
     'utils/measuredReportExport.ts': 3,
+    // Núcleo monetario completo de reportes: Decimal/HALF_UP, IVA histórico,
+    // netos, utilidad, ticket, redondeo y prorrateo exacto de devoluciones.
+    // Corrida dirigida final: 73/73 killed, 0 survived, 0 timeout y
+    // 0 NoCoverage (100.00%), sin rangos ni ignores.
+    'backend/lib/reportMoney.ts': 73,
     // Agrupación exacta de cantidades vendidas: 67/67.
     'backend/lib/salesQuantityReport.ts': 67,
     // Saldo recibido aún facturable por producto: 16/16.
@@ -207,9 +212,9 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
-    // Asientos puros de venta, abonos, compra+PPV y devolución, más el orden
-    // canónico de locks contables: 185/185 en la realineación actual. La
-    // factura ligada a OC deja
+    // Asientos puros de venta, abonos, compra+PPV y devolución: 178/178, más
+    // 7/7 del orden canónico de locks contables; 185/185 en la realineación
+    // actual. La factura ligada a OC deja
     // Inventario al costo recibido y separa variación favorable/desfavorable
     // en 5.1.3, incluidos bordes CUOTA_FIJA.
     'backend/services/accounting.ts': 185,

@@ -2,10 +2,12 @@
 import 'fake-indexeddb/auto';
 import React from 'react';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cashMovementJournalLines } from '../backend/services/accounting';
+import { CATEGORIA_PAGO_PROVEEDOR } from '../backend/services/supplierPayment';
 import POS from '../components/POS';
 
 const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
@@ -119,6 +121,14 @@ describe('integración estructural del subledger de CxP', () => {
         expect(cashMovementRoute).not.toContain("category: category === 'PAGO_PROVEEDOR'");
     });
 
+    it('bloquea el atajo manual sin perder el significado contable histórico', () => {
+        expect(CATEGORIA_PAGO_PROVEEDOR).toBe('PAGO_PROVEEDOR');
+        expect(cashMovementJournalLines('OUT', CATEGORIA_PAGO_PROVEEDOR, 25)).toEqual([
+            { accountCode: '2.1.1', debit: 25, credit: 0 },
+            { accountCode: '1.1.1', debit: 0, credit: 25 },
+        ]);
+    });
+
     it('retira el pago manual del POS sin ocultar movimientos históricos', async () => {
         montarPosConPagoHistorico();
 
@@ -137,7 +147,9 @@ describe('integración estructural del subledger de CxP', () => {
         expect(paymentRoute.indexOf('seedChartOfAccounts')).toBeLessThan(
             paymentRoute.indexOf('executeSupplierPaymentTransaction'),
         );
-        expect(paymentRoute).toContain('error instanceof SupplierPaymentError');
+        expect(paymentRoute).toMatch(/error instanceof \w*SupplierPaymentError/u);
+        expect(paymentRoute).toContain('res.status(error.httpStatus)');
+        expect(paymentRoute).toContain('code: error.code');
         expect(paymentRoute).toContain('error instanceof PeriodLockedError');
         expect(paymentRoute).toContain("code: 'PERIOD_LOCKED'");
     });
@@ -145,7 +157,10 @@ describe('integración estructural del subledger de CxP', () => {
     it('materializa saldo y fecha pagada al crear la compra', () => {
         expect(purchaseRoute).toContain('total: totalAmount.toFixed(2)');
         expect(purchaseRoute).toContain("balanceDue: paymentMethod === 'CASH' ? '0.00' : totalAmount.toFixed(2)");
-        expect(purchaseRoute).toContain("const settledNow = paymentMethod === 'CASH' ? new Date() : null");
+        const settledNow = purchaseRoute.indexOf("const settledNow = paymentMethod === 'CASH' ? new Date() : null");
+        const purchaseCreate = purchaseRoute.indexOf('const purchase = await tx.purchase.create', settledNow);
+        expect(settledNow).toBeGreaterThan(0);
+        expect(purchaseCreate).toBeGreaterThan(settledNow);
         expect(purchaseRoute).toContain('paidAt: settledNow');
         expect(purchaseRoute).toContain('settledAt: settledNow');
         expect(purchaseRoute).toContain("status: paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING_PAYMENT'");

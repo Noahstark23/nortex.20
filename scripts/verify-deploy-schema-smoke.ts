@@ -34,6 +34,349 @@ function assert(condition: unknown, message: string): asserts condition {
     if (!condition) throw new Error(message);
 }
 
+interface DeployColumnShapeRow {
+    tableName: string;
+    columnName: string;
+    dataType: string;
+    columnType: string;
+    isNullable: string;
+    columnDefault: unknown;
+    extra: string;
+    generationExpression: string;
+}
+
+interface DeployIndexShapeRow {
+    tableName: string;
+    indexName: string;
+    nonUnique: number | bigint | string;
+    seqInIndex: number | bigint | string;
+    columnName: string;
+    subPart: number | bigint | string | null;
+    indexType: string;
+    isVisible: string;
+    expression: string | null;
+}
+
+interface DeployForeignKeyShapeRow {
+    tableName: string;
+    constraintName: string;
+    columnName: string;
+    referencedTableName: string;
+    referencedColumnName: string;
+    ordinalPosition: number | bigint | string;
+    deleteRule: string;
+    updateRule: string;
+}
+
+interface ExpectedDeployIndex {
+    tableName: string;
+    indexName: string;
+    unique: boolean;
+    columns: string[];
+}
+
+const EXPECTED_SHIFT_CLOSE_INDEXES: ExpectedDeployIndex[] = [
+    {
+        tableName: 'ShiftCloseReport',
+        indexName: 'PRIMARY',
+        unique: true,
+        columns: ['id'],
+    },
+    {
+        tableName: 'ShiftCloseReport',
+        indexName: 'ShiftCloseReport_shiftId_key',
+        unique: true,
+        columns: ['shiftId'],
+    },
+    {
+        tableName: 'ShiftCloseReport',
+        indexName: 'ShiftCloseReport_tenantId_folio_key',
+        unique: true,
+        columns: ['tenantId', 'folio'],
+    },
+    {
+        tableName: 'ShiftCloseReport',
+        indexName: 'ShiftCloseReport_tenantId_businessDate_idx',
+        unique: false,
+        columns: ['tenantId', 'businessDate'],
+    },
+    {
+        tableName: 'ShiftCloseReport',
+        indexName: 'ShiftCloseReport_tenantId_createdAt_idx',
+        unique: false,
+        columns: ['tenantId', 'createdAt'],
+    },
+    {
+        tableName: 'Shift',
+        indexName: 'Shift_tenantId_status_startTime_idx',
+        unique: false,
+        columns: ['tenantId', 'status', 'startTime'],
+    },
+    {
+        tableName: 'CashMovement',
+        indexName: 'CashMovement_tenantId_shiftId_isVoided_idx',
+        unique: false,
+        columns: ['tenantId', 'shiftId', 'isVoided'],
+    },
+    {
+        tableName: 'ProductReturn',
+        indexName: 'ProductReturn_tenantId_createdAt_idx',
+        unique: false,
+        columns: ['tenantId', 'createdAt'],
+    },
+    {
+        tableName: 'ProductReturn',
+        indexName: 'ProductReturn_tenantId_processedShiftId_createdAt_idx',
+        unique: false,
+        columns: ['tenantId', 'processedShiftId', 'createdAt'],
+    },
+    {
+        tableName: 'Sale',
+        indexName: 'Sale_tenantId_status_createdAt_idx',
+        unique: false,
+        columns: ['tenantId', 'status', 'createdAt'],
+    },
+    {
+        tableName: 'Sale',
+        indexName: 'Sale_tenantId_shiftId_status_idx',
+        unique: false,
+        columns: ['tenantId', 'shiftId', 'status'],
+    },
+];
+
+function assertIndexShape(rows: DeployIndexShapeRow[], expected: ExpectedDeployIndex): void {
+    const actual = rows
+        .filter(row => row.tableName === expected.tableName && row.indexName === expected.indexName)
+        .sort((left, right) => Number(left.seqInIndex) - Number(right.seqInIndex));
+    const label = `${expected.tableName}.${expected.indexName}`;
+
+    assert(actual.length === expected.columns.length, `${label} tiene ${actual.length}/${expected.columns.length} columnas.`);
+    assert(
+        actual.every(row => Number(row.nonUnique) === (expected.unique ? 0 : 1)),
+        `${label} tiene unicidad incorrecta.`,
+    );
+    assert(
+        actual.every((row, index) => Number(row.seqInIndex) === index + 1 && row.columnName === expected.columns[index]),
+        `${label} tiene columnas o secuencia incorrectas.`,
+    );
+    assert(actual.every(row => row.subPart === null), `${label} no debe usar índices parciales.`);
+    assert(actual.every(row => row.indexType.toUpperCase() === 'BTREE'), `${label} debe ser BTREE.`);
+    assert(actual.every(row => row.isVisible.toUpperCase() === 'YES'), `${label} debe ser visible.`);
+    assert(
+        actual.every(row => row.expression === null || row.expression === ''),
+        `${label} no debe usar expresiones.`,
+    );
+}
+
+async function verifyShiftCloseReportingUpgrade(): Promise<void> {
+    const tableRows = await prisma.$queryRaw<Array<{
+        tableName: string;
+        tableType: string;
+        engine: string | null;
+    }>>`
+        SELECT TABLE_NAME AS tableName, TABLE_TYPE AS tableType, ENGINE AS engine
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'ShiftCloseReport'
+    `;
+    assert(tableRows.length === 1, 'Falta la tabla ShiftCloseReport.');
+    assert(tableRows[0]?.tableType === 'BASE TABLE', 'ShiftCloseReport no es una tabla base.');
+    assert(tableRows[0]?.engine?.toUpperCase() === 'INNODB', 'ShiftCloseReport debe usar InnoDB.');
+
+    const columns = await prisma.$queryRaw<DeployColumnShapeRow[]>`
+        SELECT
+            TABLE_NAME AS tableName,
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND (
+            TABLE_NAME = 'ShiftCloseReport'
+            OR (TABLE_NAME = 'ProductReturn' AND COLUMN_NAME = 'processedShiftId')
+          )
+        ORDER BY TABLE_NAME, ORDINAL_POSITION
+    `;
+    const reportColumns = new Map(
+        columns
+            .filter(row => row.tableName === 'ShiftCloseReport')
+            .map(row => [row.columnName, row]),
+    );
+    const expectedReportColumns: Array<{
+        columnName: string;
+        columnType: string;
+        nullable: boolean;
+    }> = [
+        { columnName: 'id', columnType: 'varchar(191)', nullable: false },
+        { columnName: 'tenantId', columnType: 'varchar(191)', nullable: false },
+        { columnName: 'shiftId', columnType: 'varchar(191)', nullable: false },
+        { columnName: 'folio', columnType: 'varchar(191)', nullable: false },
+        { columnName: 'businessDate', columnType: 'varchar(10)', nullable: false },
+        { columnName: 'version', columnType: 'int', nullable: false },
+        { columnName: 'report', columnType: 'json', nullable: false },
+        { columnName: 'contentHash', columnType: 'varchar(64)', nullable: false },
+        { columnName: 'createdBy', columnType: 'varchar(191)', nullable: false },
+        { columnName: 'createdAt', columnType: 'datetime(3)', nullable: false },
+    ];
+    for (const expected of expectedReportColumns) {
+        const actual = reportColumns.get(expected.columnName);
+        assert(actual, `Falta ShiftCloseReport.${expected.columnName}.`);
+        assert(
+            actual.columnType.toLowerCase() === expected.columnType,
+            `ShiftCloseReport.${expected.columnName} tiene tipo ${actual.columnType}.`,
+        );
+        assert(
+            actual.isNullable.toUpperCase() === (expected.nullable ? 'YES' : 'NO'),
+            `ShiftCloseReport.${expected.columnName} tiene nulabilidad incorrecta.`,
+        );
+        assert(
+            actual.generationExpression === '',
+            `ShiftCloseReport.${expected.columnName} no debe ser una columna generada.`,
+        );
+    }
+    assert(String(reportColumns.get('version')?.columnDefault) === '1', 'ShiftCloseReport.version debe iniciar en 1.');
+    assert(
+        String(reportColumns.get('createdAt')?.columnDefault).toLowerCase() === 'current_timestamp(3)',
+        'ShiftCloseReport.createdAt debe usar CURRENT_TIMESTAMP(3).',
+    );
+    for (const columnName of ['id', 'tenantId', 'shiftId', 'folio', 'businessDate', 'report', 'contentHash', 'createdBy']) {
+        assert(
+            reportColumns.get(columnName)?.columnDefault === null,
+            `ShiftCloseReport.${columnName} no debe inventar un valor por default.`,
+        );
+    }
+
+    const processedShiftColumns = columns.filter(
+        row => row.tableName === 'ProductReturn' && row.columnName === 'processedShiftId',
+    );
+    assert(processedShiftColumns.length === 1, 'Falta ProductReturn.processedShiftId.');
+    const processedShiftColumn = processedShiftColumns[0];
+    assert(
+        processedShiftColumn?.dataType.toLowerCase() === 'varchar'
+            && processedShiftColumn.columnType.toLowerCase() === 'varchar(191)',
+        'ProductReturn.processedShiftId no coincide con VARCHAR(191).',
+    );
+    assert(processedShiftColumn?.isNullable.toUpperCase() === 'YES', 'ProductReturn.processedShiftId debe ser nullable.');
+    assert(processedShiftColumn?.columnDefault === null, 'ProductReturn.processedShiftId no debe tener default.');
+    assert(
+        processedShiftColumn?.extra === '' && processedShiftColumn.generationExpression === '',
+        'ProductReturn.processedShiftId tiene metadata inesperada.',
+    );
+
+    const foreignKeys = await prisma.$queryRaw<DeployForeignKeyShapeRow[]>`
+        SELECT
+            rc.TABLE_NAME AS tableName,
+            rc.CONSTRAINT_NAME AS constraintName,
+            kcu.COLUMN_NAME AS columnName,
+            kcu.REFERENCED_TABLE_NAME AS referencedTableName,
+            kcu.REFERENCED_COLUMN_NAME AS referencedColumnName,
+            kcu.ORDINAL_POSITION AS ordinalPosition,
+            rc.DELETE_RULE AS deleteRule,
+            rc.UPDATE_RULE AS updateRule
+        FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+        INNER JOIN information_schema.KEY_COLUMN_USAGE kcu
+          ON kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+         AND kcu.TABLE_NAME = rc.TABLE_NAME
+         AND kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND (
+            (rc.TABLE_NAME = 'ShiftCloseReport' AND kcu.COLUMN_NAME IN ('tenantId', 'shiftId'))
+            OR (rc.TABLE_NAME = 'ProductReturn' AND kcu.COLUMN_NAME = 'processedShiftId')
+          )
+        ORDER BY rc.TABLE_NAME, rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    `;
+    const expectedForeignKeys: Array<Omit<DeployForeignKeyShapeRow, 'ordinalPosition'>> = [
+        {
+            tableName: 'ShiftCloseReport',
+            constraintName: 'ShiftCloseReport_tenantId_fkey',
+            columnName: 'tenantId',
+            referencedTableName: 'Tenant',
+            referencedColumnName: 'id',
+            deleteRule: 'RESTRICT',
+            updateRule: 'CASCADE',
+        },
+        {
+            tableName: 'ShiftCloseReport',
+            constraintName: 'ShiftCloseReport_shiftId_fkey',
+            columnName: 'shiftId',
+            referencedTableName: 'Shift',
+            referencedColumnName: 'id',
+            deleteRule: 'RESTRICT',
+            updateRule: 'CASCADE',
+        },
+        {
+            tableName: 'ProductReturn',
+            constraintName: 'ProductReturn_processedShiftId_fkey',
+            columnName: 'processedShiftId',
+            referencedTableName: 'Shift',
+            referencedColumnName: 'id',
+            deleteRule: 'SET NULL',
+            updateRule: 'CASCADE',
+        },
+    ];
+    assert(foreignKeys.length === expectedForeignKeys.length, `El cierre Z tiene ${foreignKeys.length}/3 FKs verificadas.`);
+    const foreignKeysByName = new Map(foreignKeys.map(row => [row.constraintName, row]));
+    for (const expected of expectedForeignKeys) {
+        const actual = foreignKeysByName.get(expected.constraintName);
+        assert(actual, `Falta la FK ${expected.constraintName}.`);
+        assert(Number(actual.ordinalPosition) === 1, `${expected.constraintName} tiene cardinalidad inesperada.`);
+        assert(actual.tableName === expected.tableName, `${expected.constraintName} está en otra tabla.`);
+        assert(actual.columnName === expected.columnName, `${expected.constraintName} usa otra columna.`);
+        assert(
+            actual.referencedTableName === expected.referencedTableName
+                && actual.referencedColumnName === expected.referencedColumnName,
+            `${expected.constraintName} referencia otro destino.`,
+        );
+        assert(actual.deleteRule.toUpperCase() === expected.deleteRule, `${expected.constraintName} tiene ON DELETE incorrecto.`);
+        assert(actual.updateRule.toUpperCase() === expected.updateRule, `${expected.constraintName} tiene ON UPDATE incorrecto.`);
+    }
+
+    const indexes = await prisma.$queryRaw<DeployIndexShapeRow[]>`
+        SELECT
+            TABLE_NAME AS tableName,
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND (
+            (TABLE_NAME = 'ShiftCloseReport' AND INDEX_NAME IN (
+              'PRIMARY',
+              'ShiftCloseReport_shiftId_key',
+              'ShiftCloseReport_tenantId_folio_key',
+              'ShiftCloseReport_tenantId_businessDate_idx',
+              'ShiftCloseReport_tenantId_createdAt_idx'
+            ))
+            OR (TABLE_NAME = 'Shift' AND INDEX_NAME = 'Shift_tenantId_status_startTime_idx')
+            OR (TABLE_NAME = 'CashMovement' AND INDEX_NAME = 'CashMovement_tenantId_shiftId_isVoided_idx')
+            OR (TABLE_NAME = 'ProductReturn' AND INDEX_NAME IN (
+              'ProductReturn_tenantId_createdAt_idx',
+              'ProductReturn_tenantId_processedShiftId_createdAt_idx'
+            ))
+            OR (TABLE_NAME = 'Sale' AND INDEX_NAME IN (
+              'Sale_tenantId_status_createdAt_idx',
+              'Sale_tenantId_shiftId_status_idx'
+            ))
+          )
+        ORDER BY TABLE_NAME, INDEX_NAME, SEQ_IN_INDEX
+    `;
+    for (const expected of EXPECTED_SHIFT_CLOSE_INDEXES) assertIndexShape(indexes, expected);
+
+    const reportCounts = await prisma.$queryRaw<Array<{ reportCount: number | bigint }>>`
+        SELECT COUNT(*) AS reportCount FROM ShiftCloseReport
+    `;
+    assert(Number(reportCounts[0]?.reportCount ?? -1) === 0, 'El upgrade inventó snapshots de cierre Z históricos.');
+}
+
 async function readIndex(): Promise<WarehouseSellerIndexRow[]> {
     return prisma.$queryRaw<WarehouseSellerIndexRow[]>`
         SELECT
@@ -90,7 +433,7 @@ async function verifyProductReturnUpgrade(): Promise<void> {
         FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
-          AND COLUMN_NAME IN ('clientEventId', 'payloadHash')
+          AND COLUMN_NAME IN ('clientEventId', 'payloadHash', 'processedShiftId')
         ORDER BY COLUMN_NAME
     `;
     assert(
@@ -113,10 +456,12 @@ async function verifyProductReturnUpgrade(): Promise<void> {
         saleId: string;
         reason: string;
         total: unknown;
+        createdBy: string;
         clientEventId: string | null;
         payloadHash: string | null;
+        processedShiftId: string | null;
     }>>`
-        SELECT id, tenantId, saleId, reason, total, clientEventId, payloadHash
+        SELECT id, tenantId, saleId, reason, total, createdBy, clientEventId, payloadHash, processedShiftId
         FROM ProductReturn
         WHERE id IN ('product-return-deploy-legacy', 'product-return-deploy-duplicate')
         ORDER BY id
@@ -132,6 +477,10 @@ async function verifyProductReturnUpgrade(): Promise<void> {
             returns.every(row => row.payloadHash === null),
             'El preflight inventó hashes para devoluciones duplicadas.',
         );
+        assert(
+            returns.every(row => row.processedShiftId === null),
+            'El preflight atribuyó devoluciones históricas duplicadas a un turno.',
+        );
         assert(indexRows.length === 0, 'El índice de devoluciones no debía crearse con duplicados.');
         return;
     }
@@ -143,8 +492,10 @@ async function verifyProductReturnUpgrade(): Promise<void> {
     assert(legacyReturn?.saleId === 'sale-deploy-legacy', 'Cambió la venta de la devolución histórica.');
     assert(legacyReturn?.reason === 'Devolución histórica smoke', 'Cambió el motivo histórico.');
     assert(String(legacyReturn?.total) === '5', 'Cambió el total de la devolución histórica.');
+    assert(legacyReturn?.createdBy === 'user-deploy-smoke', 'Cambió el autor de la devolución histórica.');
     assert(legacyReturn?.clientEventId === null, 'El upgrade inventó clientEventId histórico.');
     assert(legacyReturn?.payloadHash === null, 'El upgrade inventó payloadHash histórico.');
+    assert(legacyReturn?.processedShiftId === null, 'El upgrade atribuyó la devolución histórica a un turno.');
     assert(
         inspectProductReturnIdempotencyIndex(indexRows) === 'valid',
         `${PRODUCT_RETURN_IDEMPOTENCY_INDEX} es incorrecto.`,
@@ -670,6 +1021,7 @@ async function main(): Promise<void> {
 
     const indexRows = await readIndex();
     await verifyStockCountUpgrade();
+    await verifyShiftCloseReportingUpgrade();
     await verifyProductReturnUpgrade();
     await verifyPaymentUpgrade();
     await verifyMeasuredExpansion();

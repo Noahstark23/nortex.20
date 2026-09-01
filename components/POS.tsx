@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useR
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, PlayCircle, House } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, PlayCircle, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
 import { EmptyState } from './ui/EmptyState';
 import { IconButton } from './ui/IconButton';
@@ -12,7 +12,6 @@ import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
 import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
 import { ToastViewport, useToast } from './ui/Toast';
-import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
 import { indexarProductos, buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
 import {
@@ -27,6 +26,12 @@ import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
+import POSCatalogAdminTools from './pos/POSCatalogAdminTools';
+import {
+    ShiftCloseReport,
+    resolveShiftCloseResult,
+    type ShiftCloseResult,
+} from './pos/ShiftCloseReport';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
 import { buildPostSalePrintCash } from '../utils/postSalePrintCash';
@@ -42,7 +47,6 @@ import {
     normalizeFiscalSettingsSnapshot,
     type FiscalSettingsSnapshot,
 } from '../utils/fiscalSettingsSnapshot';
-// xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
 import {
     generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced, recordOfflineSyncResults,
     getScaleContext, saveScaleContext,
@@ -731,7 +735,6 @@ const POS: React.FC = () => {
     const inlineCustomerSavingRef = useRef(false);
 
     const [showAddModal, setShowAddModal] = useState(false);
-    const [newProduct, setNewProduct] = useState({ name: '', sku: '', price: '', costPrice: '', stock: '', category: 'General' });
 
     // SHIFT STATE
     const [currentShift, setCurrentShift] = useState<Shift | null>(null);
@@ -758,7 +761,7 @@ const POS: React.FC = () => {
     const [declaredCash, setDeclaredCash] = useState('');
     // Fase D: dólares contados al cierre (solo se manda si hay algo que declarar)
     const [declaredCashUsd, setDeclaredCashUsd] = useState('');
-    const [shiftReport, setShiftReport] = useState<{ expected: number, diff: number } | null>(null);
+    const [shiftReport, setShiftReport] = useState<ShiftCloseResult | null>(null);
     const [shiftLoading, setShiftLoading] = useState(true);
 
     // UI State
@@ -847,10 +850,6 @@ const POS: React.FC = () => {
 
     // EXCEL IMPORT MODAL STATE
     const [showImportModal, setShowImportModal] = useState(false);
-    const [importData, setImportData] = useState<any[]>([]);
-    const [importProgress, setImportProgress] = useState<{ step: string; pct: number } | null>(null);
-    const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // 💰 CASH MOVEMENT STATE
     const [showCashModal, setShowCashModal] = useState<'IN' | 'OUT' | null>(null);
@@ -1823,14 +1822,16 @@ const POS: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({
                     shiftId: currentShift.id,
-                    declaredCash: parseFloat(declaredCash),
-                    ...(declaredCashUsd.trim() !== '' ? { declaredCashUsd: parseFloat(declaredCashUsd) } : {}),
+                    declaredCash: Number(toDecimal(declaredCash).toFixed(2)),
+                    ...(declaredCashUsd.trim() !== ''
+                        ? { declaredCashUsd: Number(toDecimal(declaredCashUsd).toFixed(2)) }
+                        : {}),
                 })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            setShiftReport({ expected: parseFloat(data.systemExpectedCash), diff: parseFloat(data.difference) });
+            setShiftReport(resolveShiftCloseResult(data, declaredCash));
             setCurrentShift(null);
         } catch (error: any) {
             showToast({
@@ -2867,7 +2868,7 @@ const POS: React.FC = () => {
                     if (showHeldCarts) { setShowHeldCarts(false); return; }
                     if (showQuickCreate) { if (!quickSaving) setShowQuickCreate(false); return; }
                     if (showAddModal) { setShowAddModal(false); return; }
-                    if (showImportModal) { closeImportModal(); return; }
+                    if (showImportModal) { setShowImportModal(false); return; }
                     if (showCloseShift) { setShowCloseShift(false); return; }
                     if (showMovementsList) { setShowMovementsList(false); return; }
                     if (showCashPreModal) { setShowCashPreModal(false); return; }
@@ -3109,165 +3110,6 @@ const POS: React.FC = () => {
         } finally {
             quickSavingRef.current = false;
             setQuickSaving(false);
-        }
-    };
-
-    // ==========================================
-    // EXCEL IMPORT
-    // ==========================================
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        setImportProgress({ step: 'Leyendo archivo...', pct: 10 });
-        setImportResult(null);
-
-        const reader = new FileReader();
-        reader.onload = async (evt) => {
-            try {
-                const XLSX = await import('xlsx');
-                const data = evt.target?.result;
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-                setImportProgress({ step: `${jsonData.length} filas leídas`, pct: 30 });
-
-                // Parser compartido (utils/importProducts.ts): sinónimos de
-                // encabezados nicas, dinero con "C$"/comas, códigos en notación
-                // científica y duplicados — mismo criterio que Inventario.
-                const parsed = parseWorkbookRows(jsonData as Record<string, unknown>[]);
-                const valid = parsed.rows.filter(r => r.valid).map(r => ({
-                    sku: r.data.sku,
-                    name: r.data.nombre,
-                    price: r.data.precio,
-                    cost: r.data.costo,
-                    stock: r.data.stock,
-                    minStock: r.data.minStock,
-                    category: r.data.categoria,
-                    unit: r.data.unidad,
-                    excelRow: r.excelRow,
-                }));
-                const skipped = parsed.rows.length - valid.length;
-                setImportData(valid);
-                setImportProgress({
-                    step: skipped > 0
-                        ? `${valid.length} productos listos (${skipped} filas con problemas — usá el importador de Inventario para ver el detalle)`
-                        : `${valid.length} productos válidos listos`,
-                    pct: 50,
-                });
-            } catch (err: any) {
-                setImportProgress({ step: `Error: ${err.message}`, pct: 0 });
-            }
-        };
-        reader.readAsBinaryString(file);
-    };
-
-    const executeImport = async () => {
-        if (importData.length === 0) return;
-
-        // En lotes de 200 (R2.7): un solo POST reventaba contra el tope de 500
-        // del server al final, con 0 productos cargados.
-        setImportProgress({ step: 'Enviando al servidor...', pct: 60 });
-
-        const result = await importInChunks(
-            importData,
-            async (chunk) => {
-                const res = await fetch('/api/products/bulk', {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ products: chunk })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-                return data;
-            },
-            (done, total) => setImportProgress({
-                step: `Importando… ${done} de ${total}`,
-                pct: 60 + Math.round((done / Math.max(1, total)) * 40),
-            }),
-        );
-
-        setImportProgress({ step: 'Completado', pct: 100 });
-        setImportResult({ created: result.created, updated: result.updated, errors: result.serverErrors });
-
-        // Refresh products list
-        fetchProducts();
-    };
-
-    const closeImportModal = () => {
-        setShowImportModal(false);
-        setImportData([]);
-        setImportProgress(null);
-        setImportResult(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-    };
-
-    // ==========================================
-    // LEGACY ADD (now creates in DB too)
-    // ==========================================
-    const handleCreateProduct = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const validated = validateQuickProductDraft({
-            name: newProduct.name,
-            sku: newProduct.sku,
-            price: newProduct.price,
-            cost: newProduct.costPrice,
-            stock: newProduct.stock,
-        }, `SKU-${Date.now().toString(36).toUpperCase()}`);
-        if ('errors' in validated) {
-            showToast({
-                tone: 'warning',
-                title: 'Revisá el producto',
-                message: Object.values(validated.errors)[0] || 'Hay datos inválidos.',
-            });
-            return;
-        }
-
-        try {
-            const res = await fetch('/api/products', {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    ...validated.payload,
-                    category: newProduct.category,
-                })
-            });
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                const failure = normalizeApiFailure(res.status, data, 'No pudimos guardar el producto.');
-                throw new Error(Object.values(failure.fields)[0] || failure.message);
-            }
-
-            const productToAdd: Product = {
-                id: data.id,
-                name: data.name,
-                sku: data.sku,
-                category: data.category || newProduct.category,
-                price: data.price,
-                costPrice: data.cost,
-                stock: data.stock,
-                ...mapApiProductImage(data),
-                wholesalePrice: data.wholesalePrice ?? null,
-                wholesaleMinQty: data.wholesaleMinQty ?? null,
-                packUnit: data.packUnit ?? null,
-                packSize: data.packSize ?? null,
-                packPrice: data.packPrice ?? null,
-                unit: data.unit ?? 'unidad',
-                saleMode: data.saleMode ?? 'COUNTED',
-                quantityStep: data.quantityStep ?? 1,
-            };
-            setProducts(prev => [productToAdd, ...prev]);
-            setShowAddModal(false);
-            setNewProduct({ name: '', sku: '', price: '', costPrice: '', stock: '', category: 'General' });
-        } catch (error: any) {
-            showToast({
-                tone: 'error',
-                title: 'No se pudo guardar el producto',
-                message: error?.message ? `Error: ${error.message}` : 'Reintentá en un momento.',
-            });
         }
     };
 
@@ -5343,10 +5185,15 @@ const POS: React.FC = () => {
 
             {showCloseShift && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby={shiftReport ? 'shift-close-report-title' : 'shift-close-form-title'}
+                        className={`bg-surface-900 rounded-xl shadow-2xl w-full overflow-hidden animate-in zoom-in duration-200 motion-reduce:animate-none ${shiftReport ? 'max-w-2xl' : 'max-w-md'}`}
+                    >
                         {!shiftReport ? (
                             <div className="p-8">
-                                <h2 className="text-xl font-bold text-slate-100 mb-1">Cierre de Caja (Ciego)</h2>
+                                <h2 id="shift-close-form-title" className="text-xl font-bold text-slate-100 mb-1">Cierre de Caja (Ciego)</h2>
                                 <p className="text-slate-500 text-sm mb-6">Contá el dinero físico e ingresalo abajo.</p>
                                 <form onSubmit={handleCloseShift}>
                                     <label className="text-xs font-mono font-bold text-slate-500">EFECTIVO CONTADO</label>
@@ -5386,93 +5233,17 @@ const POS: React.FC = () => {
                                 </form>
                             </div>
                         ) : (
-                            <div className="bg-surface-800/40">
-                                <div className="p-8 text-center border-b border-white/[0.06] bg-surface-900 text-slate-100">
-                                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${shiftReport.diff >= 0 ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
-                                        {shiftReport.diff >= 0 ? <Check size={32} /> : <AlertTriangle size={32} />}
-                                    </div>
-                                    <h2 className="text-2xl font-bold text-slate-100">Resumen de Cierre</h2>
-                                    <p className={`text-lg font-bold mt-2 ${shiftReport.diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                        {shiftReport.diff >= 0 ? 'Cuadre exitoso' : 'Discrepancia de efectivo'}
-                                    </p>
-                                </div>
-                                <div className="p-8 space-y-4">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Esperado (Sistema)</span>
-                                        <span className="font-bold nx-num">{formatMoney(shiftReport.expected)}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Declarado (Cajero)</span>
-                                        <span className="font-bold nx-num">{formatMoney(parseFloat(declaredCash))}</span>
-                                    </div>
-                                    <div className="border-t border-white/[0.06] pt-3 flex justify-between text-base text-slate-100">
-                                        <span className="font-bold text-slate-200">Diferencia</span>
-                                        <span className={`font-mono font-bold ${shiftReport.diff < 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                            {shiftReport.diff > 0 ? '+' : ''}{shiftReport.diff.toFixed(2)}
-                                        </span>
-                                    </div>
-                                    <button onClick={finishClose} className="w-full mt-6 py-3 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">
-                                        FINALIZAR TURNO
-                                    </button>
-                                </div>
-                            </div>
+                            <ShiftCloseReport
+                                result={shiftReport}
+                                token={localStorage.getItem('nortex_token')}
+                                onFinish={finishClose}
+                                onPreviewError={(message) => showToast({
+                                    tone: 'error',
+                                    title: 'No se pudo abrir el reporte',
+                                    message,
+                                })}
+                            />
                         )}
-                    </div>
-                </div>
-            )}
-
-            {/* ADD PRODUCT MODAL (Full) */}
-            {showAddModal && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] text-slate-100">
-                        <div className="p-5 border-b border-white/[0.04] flex justify-between items-center bg-surface-800/40 text-slate-100">
-                            <h3 className="font-bold text-slate-100 flex items-center gap-2">
-                                <PackagePlus size={20} className="text-nortex-500" /> Nuevo Producto
-                            </h3>
-                            <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-red-500 transition-colors">
-                                <X size={24} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleCreateProduct} className="p-6 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">NOMBRE DEL PRODUCTO *</label>
-                                    <input type="text" required {...validacionEs('Escribí el nombre del producto.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
-                                        placeholder="Ej. Taladro Percutor 500W" value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">SKU / CÓDIGO DE BARRAS</label>
-                                    <input type="text" className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
-                                        placeholder="Escaneá o escribí" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">CATEGORÍA</label>
-                                    <select className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-900"
-                                        value={newProduct.category} onChange={e => setNewProduct({ ...newProduct, category: e.target.value })} >
-                                        <option>General</option><option>Construcción</option><option>Ferretería</option><option>Herramientas</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">PRECIO VENTA *</label>
-                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el precio de venta.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
-                                        placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: sanitizeDecimalInput(e.target.value) })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">COSTO (COMPRA) *</label>
-                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el costo del producto.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-800/40 text-slate-100 font-mono tabular-nums"
-                                        placeholder="0.00" value={newProduct.costPrice} onChange={e => setNewProduct({ ...newProduct, costPrice: sanitizeDecimalInput(e.target.value) })} />
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">STOCK INICIAL *</label>
-                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el stock inicial (puede ser 0).')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
-                                        placeholder="0" value={newProduct.stock} onChange={e => setNewProduct({ ...newProduct, stock: sanitizeDecimalInput(e.target.value) })} />
-                                </div>
-                            </div>
-                            <button type="submit" className="btn-primary w-full py-3 flex items-center justify-center gap-2">
-                                <Save size={18} /> Guardar en Inventario
-                            </button>
-                        </form>
                     </div>
                 </div>
             )}
@@ -5634,141 +5405,6 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            {/* ==========================================
-          EXCEL IMPORT MODAL
-         ========================================== */}
-            {showImportModal && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06]">
-                        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 flex items-center justify-between">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <Upload size={18} /> Importar Productos (Excel/CSV)
-                            </h3>
-                            <button onClick={closeImportModal} className="text-white/80 hover:text-white">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        <div className="p-6 space-y-4">
-                            {/* Instructions */}
-                            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
-                                <p className="text-xs text-blue-300 font-medium mb-1">Columnas esperadas en el archivo:</p>
-                                <p className="text-[11px] text-blue-400 font-mono">Nombre | SKU | Precio | Costo | Stock | Categoria | Unidad</p>
-                                <p className="text-[10px] text-blue-400 mt-1">Acepta .xlsx y .csv. Los nombres de columna son flexibles (Nombre/name/producto, etc.)</p>
-                            </div>
-
-                            {/* File Input */}
-                            <div>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept=".xlsx,.xls,.csv"
-                                    onChange={handleFileUpload}
-                                    className="w-full text-sm text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-blue-500/15 file:text-blue-400 hover:file:bg-blue-200 file:cursor-pointer"
-                                />
-                            </div>
-
-                            {/* Progress Bar */}
-                            {importProgress && (
-                                <div>
-                                    <div className="flex justify-between text-xs mb-1">
-                                        <span className="text-slate-300 font-medium">{importProgress.step}</span>
-                                        <span className="text-slate-500">{importProgress.pct}%</span>
-                                    </div>
-                                    <div className="w-full bg-white/[0.06] rounded-full h-2.5 overflow-hidden">
-                                        <div
-                                            className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-500"
-                                            style={{ width: `${importProgress.pct}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Preview */}
-                            {importData.length > 0 && !importResult && (
-                                <div>
-                                    <p className="text-sm font-bold text-slate-200 mb-2">Vista previa ({importData.length} productos):</p>
-                                    <div className="max-h-40 overflow-y-auto border border-white/[0.06] rounded-lg">
-                                        <table className="w-full text-xs">
-                                            <thead className="bg-white/[0.04] sticky top-0">
-                                                <tr>
-                                                    <th className="text-left px-2 py-1.5 text-slate-300">SKU</th>
-                                                    <th className="text-left px-2 py-1.5 text-slate-300">Nombre</th>
-                                                    <th className="text-right px-2 py-1.5 text-slate-300">Precio</th>
-                                                    <th className="text-right px-2 py-1.5 text-slate-300">Stock</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/[0.04]">
-                                                {importData.slice(0, 10).map((row, i) => (
-                                                    <tr key={i} className="hover:bg-surface-800/40">
-                                                        <td className="px-2 py-1 font-mono text-slate-500">{row.sku}</td>
-                                                        <td className="px-2 py-1 text-slate-200">{row.name}</td>
-                                                        <td className="px-2 py-1 text-right text-slate-200">{row.price}</td>
-                                                        <td className="px-2 py-1 text-right text-slate-200">{row.stock}</td>
-                                                    </tr>
-                                                ))}
-                                                {importData.length > 10 && (
-                                                    <tr>
-                                                        <td colSpan={4} className="text-center py-1 text-slate-400 text-[10px]">
-                                                            ... y {importData.length - 10} mas
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <button
-                                        onClick={executeImport}
-                                        className="w-full mt-3 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold hover:from-blue-700 hover:to-indigo-700 shadow-lg flex items-center justify-center gap-2"
-                                    >
-                                        <Upload size={18} /> Importar {importData.length} Productos
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Results */}
-                            {importResult && (
-                                <div className="space-y-3">
-                                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-center">
-                                        <Check size={32} className="text-emerald-500 mx-auto mb-2" />
-                                        <p className="font-bold text-emerald-300">Importación Completada</p>
-                                        <div className="flex justify-center gap-6 mt-2">
-                                            <div>
-                                                <p className="text-2xl font-bold text-emerald-400">{importResult.created}</p>
-                                                <p className="text-[10px] text-emerald-400">Creados</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-blue-400">{importResult.updated}</p>
-                                                <p className="text-[10px] text-blue-400">Actualizados</p>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {importResult.errors.length > 0 && (
-                                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                                            <p className="text-xs font-bold text-red-400 mb-1">Errores ({importResult.errors.length}):</p>
-                                            <ul className="text-[10px] text-red-400 space-y-0.5 max-h-20 overflow-y-auto">
-                                                {importResult.errors.map((err, i) => (
-                                                    <li key={i}>{err}</li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )}
-
-                                    <button
-                                        onClick={closeImportModal}
-                                        className="w-full py-3 rounded-lg bg-slate-800 text-white font-bold hover:bg-slate-900"
-                                    >
-                                        Cerrar
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* LEFT: PRODUCTS */}
             <div className={`w-full flex-1 flex flex-col overflow-hidden ${guidedSimpleMode
                 ? 'nx-light-context nx-catalog-surface mt-16 p-4 text-slate-950 lg:px-6 lg:py-5 mb-0'
@@ -5854,22 +5490,19 @@ const POS: React.FC = () => {
                         <Zap size={18} />
                         <span>Rápido</span>
                     </button>}
-                    {/* Full Create */}
-                    {!guidedSimpleMode && <button
-                        onClick={() => setShowAddModal(true)}
-                        className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
-                        title="Crear producto completo"
-                    >
-                        <Plus size={18} /> Nuevo
-                    </button>}
-                    {/* Import */}
-                    {!guidedSimpleMode && <button
-                        onClick={() => setShowImportModal(true)}
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
-                        title="Importar desde Excel"
-                    >
-                        <Upload size={18} /> Excel
-                    </button>}
+                    <POSCatalogAdminTools
+                        guidedSimpleMode={guidedSimpleMode}
+                        headers={headers}
+                        showAddModal={showAddModal}
+                        showImportModal={showImportModal}
+                        onOpenAddModal={() => setShowAddModal(true)}
+                        onCloseAddModal={() => setShowAddModal(false)}
+                        onOpenImportModal={() => setShowImportModal(true)}
+                        onCloseImportModal={() => setShowImportModal(false)}
+                        onProductCreated={(product) => setProducts((previous) => [product, ...previous])}
+                        onProductsReload={fetchProducts}
+                        showToast={showToast}
+                    />
                 </div>
 
                 {/* ACCESO RÁPIDO A PRODUCTOS
