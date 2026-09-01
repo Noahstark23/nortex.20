@@ -22,8 +22,12 @@ import {
     inspectProcurementPhaseTwoCForeignKey,
     inspectProcurementPhaseTwoCIndex,
     inspectProductReturnClientEventIdColumn,
+    inspectProductReturnCorrectionRequestIdColumn,
+    inspectProductReturnCorrectionRequestIndex,
     inspectProductReturnIdempotencyIndex,
+    inspectProductReturnNumberIndex,
     inspectProductReturnPayloadHashColumn,
+    inspectProductReturnReturnNumberColumn,
     inspectRetencionSufridaClientEventIdColumn,
     inspectRetencionSufridaIdempotencyIndex,
     inspectRetencionSufridaPayloadHashColumn,
@@ -44,6 +48,8 @@ import {
     SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_FOREIGN_KEY,
     SALE_ITEM_BATCH_ALLOCATION_WAREHOUSE_INDEX,
     PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+    PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+    PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
     RETENCION_SUFRIDA_IDEMPOTENCY_INDEX,
     STOCK_COUNT_OPEN_WAREHOUSE_INDEX,
     STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX,
@@ -132,7 +138,11 @@ type Action =
 type ProductReturnAction =
     | 'column:clientEventId'
     | 'column:payloadHash'
-    | 'index:idempotency';
+    | 'column:correctionRequestId'
+    | 'column:returnNumber'
+    | 'index:idempotency'
+    | 'index:correctionRequest'
+    | 'index:returnNumber';
 
 type PaymentAction =
     | 'column:clientEventId'
@@ -313,14 +323,35 @@ const validProductReturnPayloadHashColumn: ProductReturnColumnRow = {
     characterMaximumLength: 64n,
 };
 
+const validProductReturnCorrectionRequestIdColumn: ProductReturnColumnRow = {
+    ...validColumn,
+};
+
+const validProductReturnReturnNumberColumn: ProductReturnColumnRow = {
+    ...validColumn,
+    dataType: 'int',
+    columnType: 'int',
+    characterMaximumLength: null,
+    characterSetName: null,
+    collationName: null,
+};
+
 class ProductReturnSchemaFake implements DeploySchemaClient {
     productReturnExists = true;
-    columns: Record<'clientEventId' | 'payloadHash', State> = {
+    columns: Record<'clientEventId' | 'payloadHash' | 'correctionRequestId' | 'returnNumber', State> = {
         clientEventId: 'missing',
         payloadHash: 'missing',
+        correctionRequestId: 'missing',
+        returnNumber: 'missing',
     };
-    index: State = 'missing';
-    duplicates: unknown[] = [];
+    indexes: Record<'idempotency' | 'correctionRequest' | 'returnNumber', State> = {
+        idempotency: 'missing',
+        correctionRequest: 'missing',
+        returnNumber: 'missing',
+    };
+    duplicateEvents: unknown[] = [];
+    duplicateCorrections: unknown[] = [];
+    duplicateReturnNumbers: unknown[] = [];
     raceWins = new Set<ProductReturnAction>();
     hardFailures = new Set<ProductReturnAction>();
     events: string[] = [];
@@ -328,18 +359,26 @@ class ProductReturnSchemaFake implements DeploySchemaClient {
     makeEverythingValid(): this {
         this.columns.clientEventId = 'valid';
         this.columns.payloadHash = 'valid';
-        this.index = 'valid';
+        this.columns.correctionRequestId = 'valid';
+        this.columns.returnNumber = 'valid';
+        this.indexes.idempotency = 'valid';
+        this.indexes.correctionRequest = 'valid';
+        this.indexes.returnNumber = 'valid';
         return this;
     }
 
     private columnRows(
-        columnName: 'clientEventId' | 'payloadHash',
+        columnName: 'clientEventId' | 'payloadHash' | 'correctionRequestId' | 'returnNumber',
     ): ProductReturnColumnRow[] {
         const state = this.columns[columnName];
         if (state === 'missing') return [];
         const valid = columnName === 'clientEventId'
             ? validProductReturnClientEventIdColumn
-            : validProductReturnPayloadHashColumn;
+            : columnName === 'payloadHash'
+                ? validProductReturnPayloadHashColumn
+                : columnName === 'correctionRequestId'
+                    ? validProductReturnCorrectionRequestIdColumn
+                    : validProductReturnReturnNumberColumn;
         return [{ ...(state === 'valid' ? valid : { ...valid, isNullable: 'NO' }) }];
     }
 
@@ -358,27 +397,60 @@ class ProductReturnSchemaFake implements DeploySchemaClient {
         if (text.includes('FROM information_schema.COLUMNS')
             && text.includes("TABLE_NAME = 'ProductReturn'")) {
             const columnName = values.find(value => (
-                value === 'clientEventId' || value === 'payloadHash'
+                value === 'clientEventId'
+                || value === 'payloadHash'
+                || value === 'correctionRequestId'
+                || value === 'returnNumber'
             ));
-            if (columnName === 'clientEventId' || columnName === 'payloadHash') {
+            if (columnName === 'clientEventId'
+                || columnName === 'payloadHash'
+                || columnName === 'correctionRequestId'
+                || columnName === 'returnNumber') {
                 return this.columnRows(columnName) as T;
             }
         }
-        if (text.includes('information_schema.STATISTICS')
-            && values.includes(PRODUCT_RETURN_IDEMPOTENCY_INDEX)) {
-            if (this.index === 'missing') return [] as T;
+        if (text.includes('information_schema.STATISTICS')) {
+            const definition = values.includes(PRODUCT_RETURN_IDEMPOTENCY_INDEX)
+                ? {
+                    state: this.indexes.idempotency,
+                    name: PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+                    columns: ['tenantId', 'clientEventId'],
+                }
+                : values.includes(PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX)
+                    ? {
+                        state: this.indexes.correctionRequest,
+                        name: PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+                        columns: ['correctionRequestId'],
+                    }
+                    : values.includes(PRODUCT_RETURN_NUMBER_UNIQUE_INDEX)
+                        ? {
+                            state: this.indexes.returnNumber,
+                            name: PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+                            columns: ['tenantId', 'returnNumber'],
+                        }
+                        : null;
+            if (!definition) throw new Error(`Índice inesperado en fake de ProductReturn: ${text}`);
+            if (definition.state === 'missing') return [] as T;
             const rows: ProductReturnIndexRow[] = exactIndexRows(
-                PRODUCT_RETURN_IDEMPOTENCY_INDEX,
-                ['tenantId', 'clientEventId'],
+                definition.name,
+                definition.columns,
                 true,
             );
-            return (this.index === 'valid'
+            return (definition.state === 'valid'
                 ? rows
                 : rows.map(row => ({ ...row, nonUnique: 1n }))) as T;
         }
         if (text.includes('GROUP BY tenantId, clientEventId')) {
-            this.events.push('query:safety:duplicates');
-            return this.duplicates as T;
+            this.events.push('query:safety:eventDuplicates');
+            return this.duplicateEvents as T;
+        }
+        if (text.includes('GROUP BY correctionRequestId')) {
+            this.events.push('query:safety:correctionDuplicates');
+            return this.duplicateCorrections as T;
+        }
+        if (text.includes('GROUP BY tenantId, returnNumber')) {
+            this.events.push('query:safety:returnNumberDuplicates');
+            return this.duplicateReturnNumbers as T;
         }
 
         throw new Error(`Query inesperada en fake de ProductReturn: ${text}`);
@@ -388,8 +460,16 @@ class ProductReturnSchemaFake implements DeploySchemaClient {
         const text = sqlText(statement);
         if (text.includes('ADD COLUMN `clientEventId`')) return 'column:clientEventId';
         if (text.includes('ADD COLUMN `payloadHash`')) return 'column:payloadHash';
+        if (text.includes('ADD COLUMN `correctionRequestId`')) return 'column:correctionRequestId';
+        if (text.includes('ADD COLUMN `returnNumber`')) return 'column:returnNumber';
         if (text.includes(`CREATE UNIQUE INDEX \`${PRODUCT_RETURN_IDEMPOTENCY_INDEX}\``)) {
             return 'index:idempotency';
+        }
+        if (text.includes(`CREATE UNIQUE INDEX \`${PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX}\``)) {
+            return 'index:correctionRequest';
+        }
+        if (text.includes(`CREATE UNIQUE INDEX \`${PRODUCT_RETURN_NUMBER_UNIQUE_INDEX}\``)) {
+            return 'index:returnNumber';
         }
         throw new Error(`DDL inesperado en fake de ProductReturn: ${text}`);
     }
@@ -397,7 +477,11 @@ class ProductReturnSchemaFake implements DeploySchemaClient {
     private apply(action: ProductReturnAction): void {
         if (action === 'column:clientEventId') this.columns.clientEventId = 'valid';
         if (action === 'column:payloadHash') this.columns.payloadHash = 'valid';
-        if (action === 'index:idempotency') this.index = 'valid';
+        if (action === 'column:correctionRequestId') this.columns.correctionRequestId = 'valid';
+        if (action === 'column:returnNumber') this.columns.returnNumber = 'valid';
+        if (action === 'index:idempotency') this.indexes.idempotency = 'valid';
+        if (action === 'index:correctionRequest') this.indexes.correctionRequest = 'valid';
+        if (action === 'index:returnNumber') this.indexes.returnNumber = 'valid';
     }
 
     async execute(statement: Prisma.Sql): Promise<number> {
@@ -948,6 +1032,21 @@ describe('ProductReturn deploy schema preflight', () => {
             ...validProductReturnPayloadHashColumn,
             isNullable: 'NO',
         }])).toBe('invalid');
+        expect(inspectProductReturnCorrectionRequestIdColumn([
+            validProductReturnCorrectionRequestIdColumn,
+        ])).toBe('valid');
+        expect(inspectProductReturnCorrectionRequestIdColumn([{
+            ...validProductReturnCorrectionRequestIdColumn,
+            characterMaximumLength: 128n,
+            columnType: 'varchar(128)',
+        }])).toBe('invalid');
+        expect(inspectProductReturnReturnNumberColumn([
+            validProductReturnReturnNumberColumn,
+        ])).toBe('valid');
+        expect(inspectProductReturnReturnNumberColumn([{
+            ...validProductReturnReturnNumberColumn,
+            columnType: 'bigint',
+        }])).toBe('invalid');
 
         const index = exactIndexRows(
             PRODUCT_RETURN_IDEMPOTENCY_INDEX,
@@ -962,6 +1061,16 @@ describe('ProductReturn deploy schema preflight', () => {
             { ...index[0], columnName: 'clientEventId' },
             { ...index[1], columnName: 'tenantId' },
         ])).toBe('invalid');
+        expect(inspectProductReturnCorrectionRequestIndex(exactIndexRows(
+            PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+            ['correctionRequestId'],
+            true,
+        ))).toBe('valid');
+        expect(inspectProductReturnNumberIndex(exactIndexRows(
+            PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+            ['tenantId', 'returnNumber'],
+            true,
+        ).reverse())).toBe('valid');
     });
 
     it('deja que db push cree ProductReturn cuando la tabla aún no existe', async () => {
@@ -975,20 +1084,39 @@ describe('ProductReturn deploy schema preflight', () => {
         expect(info).toHaveBeenCalledWith(expect.stringContaining('ProductReturn aún no existe'));
     });
 
-    it('crea solo las columnas nullable antes de validar y crear el unique', async () => {
+    it('crea todas las columnas nullable antes de validar y crear sus índices únicos', async () => {
         const db = new ProductReturnSchemaFake();
 
         await applyProductReturnSchemaPreflight(db, { info: vi.fn(), warn: vi.fn() });
 
-        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
-        expect(db.index).toBe('valid');
+        expect(db.columns).toEqual({
+            clientEventId: 'valid',
+            payloadHash: 'valid',
+            correctionRequestId: 'valid',
+            returnNumber: 'valid',
+        });
+        expect(db.indexes).toEqual({
+            idempotency: 'valid',
+            correctionRequest: 'valid',
+            returnNumber: 'valid',
+        });
         expect(db.events.filter(event => event.startsWith('execute:'))).toEqual([
             'execute:column:clientEventId',
             'execute:column:payloadHash',
+            'execute:column:correctionRequestId',
+            'execute:column:returnNumber',
             'execute:index:idempotency',
+            'execute:index:correctionRequest',
+            'execute:index:returnNumber',
         ]);
-        expect(db.events.indexOf('query:safety:duplicates')).toBeLessThan(
+        expect(db.events.indexOf('query:safety:eventDuplicates')).toBeLessThan(
             db.events.indexOf('execute:index:idempotency'),
+        );
+        expect(db.events.indexOf('query:safety:correctionDuplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:correctionRequest'),
+        );
+        expect(db.events.indexOf('query:safety:returnNumberDuplicates')).toBeLessThan(
+            db.events.indexOf('execute:index:returnNumber'),
         );
     });
 
@@ -1000,11 +1128,15 @@ describe('ProductReturn deploy schema preflight', () => {
 
         const partial = new ProductReturnSchemaFake().makeEverythingValid();
         partial.columns.payloadHash = 'missing';
-        partial.index = 'missing';
+        partial.columns.returnNumber = 'missing';
+        partial.indexes.idempotency = 'missing';
+        partial.indexes.returnNumber = 'missing';
         await applyProductReturnSchemaPreflight(partial, { info: vi.fn(), warn: vi.fn() });
         expect(partial.events.filter(event => event.startsWith('execute:'))).toEqual([
             'execute:column:payloadHash',
+            'execute:column:returnNumber',
             'execute:index:idempotency',
+            'execute:index:returnNumber',
         ]);
     });
 
@@ -1020,9 +1152,29 @@ describe('ProductReturn deploy schema preflight', () => {
             'ProductReturn.payloadHash',
         ],
         [
-            'índice homónimo incompatible',
-            (db: ProductReturnSchemaFake) => { db.index = 'invalid'; },
+            'correctionRequestId incompatible',
+            (db: ProductReturnSchemaFake) => { db.columns.correctionRequestId = 'invalid'; },
+            'ProductReturn.correctionRequestId',
+        ],
+        [
+            'returnNumber incompatible',
+            (db: ProductReturnSchemaFake) => { db.columns.returnNumber = 'invalid'; },
+            'ProductReturn.returnNumber',
+        ],
+        [
+            'índice de evento homónimo incompatible',
+            (db: ProductReturnSchemaFake) => { db.indexes.idempotency = 'invalid'; },
             PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+        ],
+        [
+            'índice de corrección homónimo incompatible',
+            (db: ProductReturnSchemaFake) => { db.indexes.correctionRequest = 'invalid'; },
+            PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+        ],
+        [
+            'índice de número homónimo incompatible',
+            (db: ProductReturnSchemaFake) => { db.indexes.returnNumber = 'invalid'; },
+            PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
         ],
     ])('falla cerrado ante %s', async (_label, arrange, message) => {
         const db = new ProductReturnSchemaFake().makeEverythingValid();
@@ -1037,8 +1189,8 @@ describe('ProductReturn deploy schema preflight', () => {
 
     it('falla cerrado ante duplicados no-null sin cambiar filas ni crear el índice', async () => {
         const db = new ProductReturnSchemaFake().makeEverythingValid();
-        db.index = 'missing';
-        db.duplicates = [{
+        db.indexes.idempotency = 'missing';
+        db.duplicateEvents = [{
             tenantId: 'tenant-1',
             clientEventId: 'return-event-1',
             duplicateCount: 2n,
@@ -1048,7 +1200,38 @@ describe('ProductReturn deploy schema preflight', () => {
             db,
             { info: vi.fn(), warn: vi.fn() },
         )).rejects.toThrow('clientEventId duplicado');
-        expect(db.index).toBe('missing');
+        expect(db.indexes.idempotency).toBe('missing');
+        expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
+    });
+
+    it.each([
+        [
+            'correctionRequestId',
+            (db: ProductReturnSchemaFake) => {
+                db.indexes.correctionRequest = 'missing';
+                db.duplicateCorrections = [{ correctionRequestId: 'correction-1', duplicateCount: 2n }];
+            },
+            'correctionRequestId duplicado',
+            'correctionRequest' as const,
+        ],
+        [
+            'returnNumber por tenant',
+            (db: ProductReturnSchemaFake) => {
+                db.indexes.returnNumber = 'missing';
+                db.duplicateReturnNumbers = [{ tenantId: 'tenant-1', returnNumber: 7, duplicateCount: 2n }];
+            },
+            'returnNumber duplicado por tenant',
+            'returnNumber' as const,
+        ],
+    ])('falla cerrado ante duplicados de %s', async (_label, arrange, message, indexName) => {
+        const db = new ProductReturnSchemaFake().makeEverythingValid();
+        arrange(db);
+
+        await expect(applyProductReturnSchemaPreflight(
+            db,
+            { info: vi.fn(), warn: vi.fn() },
+        )).rejects.toThrow(message);
+        expect(db.indexes[indexName]).toBe('missing');
         expect(db.events.some(event => event.startsWith('execute:'))).toBe(false);
     });
 
@@ -1057,15 +1240,19 @@ describe('ProductReturn deploy schema preflight', () => {
         const actions: ProductReturnAction[] = [
             'column:clientEventId',
             'column:payloadHash',
+            'column:correctionRequestId',
+            'column:returnNumber',
             'index:idempotency',
+            'index:correctionRequest',
+            'index:returnNumber',
         ];
         actions.forEach(action => db.raceWins.add(action));
         const warn = vi.fn();
 
         await applyProductReturnSchemaPreflight(db, { info: vi.fn(), warn });
 
-        expect(db.columns).toEqual({ clientEventId: 'valid', payloadHash: 'valid' });
-        expect(db.index).toBe('valid');
+        expect(Object.values(db.columns)).toEqual(['valid', 'valid', 'valid', 'valid']);
+        expect(Object.values(db.indexes)).toEqual(['valid', 'valid', 'valid']);
         expect(warn).toHaveBeenCalledTimes(actions.length);
     });
 

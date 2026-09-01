@@ -87,7 +87,7 @@
     "backend/services/stockService.ts:58-71",
     "backend/services/journalPosting.ts:212-355",
     "backend/services/legacyShiftCloseService.ts:96-106",
-    "backend/validation/schemas.ts:824-836",
+    "backend/validation/schemas.ts:830-842",
     "backend/validation/saleCorrectionSchemas.ts:21-35",
     "utils/posProductMapper.ts",
     "backend/services/accounting.ts:151-158",
@@ -115,9 +115,10 @@
   "release_scope_realign_comment": "El release de imágenes no cambia dinero, pero reveló dos rangos contables desplazados: 527-611 caía en el wrapper de nota de crédito/recordPurchase y cortaba buildPurchaseJournalLines; 876-924 caía en reversa/liquidación de agente y cortaba antes de returnMoney/buildReturnJournalLines. Se realinean a los cuerpos puros completos actuales 581-666 (compra+PPV) y 930-978 (devolución): la corrida dirigida mide 185/185 detectados, el piso contable sube de 184 a 185 y no hay ignores nuevos.",
   "purchase_sale_price_threshold_comment": "El precio de venta explícito en compras agrega 68/68 mutantes detectados: roles exactos, presencia de intent, Decimal persistible, duplicados y before/after. Sobre la base oficial 4807/4814, el gate proyectado queda 4875/4882 = 99.85661614092585%; truncado a dos decimales el piso permanece 99.85. No se agregaron ignores ni NoCoverage.",
   "pharmacy_safety_phase0_threshold_comment": "El bloque 0 de farmacia agrega cinco módulos puros nuevos al gate sin ignores: managuaBusinessDate 40/40; pharmacyExpiryAlerts 31/31; productBatchIdentity 41/41; productBatchHold 142/142; posProductMapper 46/46. Su corrida dirigida confirmó 5210 instrumentados, 20 ignored históricos, 5190 puntuables, 5186 killed + 4 timeout, 0 survived y 0 NoCoverage. El worktree consolidado conserva temporalmente el piso global 99.85 hasta medir juntos farmacia, cierres y asientos; el piso solo puede subir después de esa corrida canónica.",
+  "consolidated_release_threshold_comment": "La corrida consolidada midió 5617 mutantes instrumentados: 20 ignores históricos acotados, 5597 puntuables, 5593 killed + 4 timeout, 0 survived y 0 NoCoverage. Incluye los 8/8 mutantes del payload canónico de cierre después de realinear su rango a 830-842. Score exacto 100%; el piso sube a 100 y no puede bajar.",
   "thresholds": {
-    "high": 99.85,
-    "low": 99.85,
-    "break": 99.85
+    "high": 100,
+    "low": 100,
+    "break": 100
   }
 }

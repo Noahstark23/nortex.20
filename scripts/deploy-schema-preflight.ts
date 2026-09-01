@@ -7,6 +7,8 @@ export const STOCK_COUNT_WAREHOUSE_INDEX = 'StockCount_warehouseId_idx';
 export const STOCK_COUNT_TENANT_WAREHOUSE_STATUS_INDEX = 'StockCount_tenantId_warehouseId_status_idx';
 export const STOCK_COUNT_WAREHOUSE_FOREIGN_KEY = 'StockCount_warehouseId_fkey';
 export const PRODUCT_RETURN_IDEMPOTENCY_INDEX = 'ProductReturn_tenantId_clientEventId_key';
+export const PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX = 'ProductReturn_correctionRequestId_key';
+export const PRODUCT_RETURN_NUMBER_UNIQUE_INDEX = 'ProductReturn_tenantId_returnNumber_key';
 export const PAYMENT_IDEMPOTENCY_INDEX = 'Payment_saleId_clientEventId_key';
 export const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX = 'RetencionSufrida_tenantId_clientEventId_key';
 export const PURCHASE_INVOICE_UNIQUE_INDEX = 'Purchase_tenantId_supplierId_invoiceNumber_key';
@@ -56,7 +58,11 @@ const RETENCION_SUFRIDA_TABLE_SQL = Prisma.raw('`RetencionSufrida`');
 const PURCHASE_TABLE_SQL = Prisma.raw('`Purchase`');
 const CLIENT_EVENT_ID_COLUMN_SQL = Prisma.raw('`clientEventId`');
 const PAYLOAD_HASH_COLUMN_SQL = Prisma.raw('`payloadHash`');
+const CORRECTION_REQUEST_ID_COLUMN_SQL = Prisma.raw('`correctionRequestId`');
+const RETURN_NUMBER_COLUMN_SQL = Prisma.raw('`returnNumber`');
 const PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_clientEventId_key`');
+const PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX_SQL = Prisma.raw('`ProductReturn_correctionRequestId_key`');
+const PRODUCT_RETURN_NUMBER_UNIQUE_INDEX_SQL = Prisma.raw('`ProductReturn_tenantId_returnNumber_key`');
 const PAYMENT_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`Payment_saleId_clientEventId_key`');
 const RETENCION_SUFRIDA_IDEMPOTENCY_INDEX_SQL = Prisma.raw('`RetencionSufrida_tenantId_clientEventId_key`');
 const PURCHASE_INVOICE_UNIQUE_INDEX_SQL = Prisma.raw('`Purchase_tenantId_supplierId_invoiceNumber_key`');
@@ -205,6 +211,17 @@ interface InvalidOpenWarehouseKeyRow {
 interface DuplicateProductReturnEventRow {
     tenantId: string;
     clientEventId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicateProductReturnCorrectionRow {
+    correctionRequestId: string;
+    duplicateCount: number | bigint;
+}
+
+interface DuplicateProductReturnNumberRow {
+    tenantId: string;
+    returnNumber: number | bigint;
     duplicateCount: number | bigint;
 }
 
@@ -394,6 +411,32 @@ export function inspectProductReturnPayloadHashColumn(
     return inspectNullableVarcharColumn(rows, 64);
 }
 
+export function inspectProductReturnCorrectionRequestIdColumn(
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    return inspectNullableVarcharColumn(rows, 191);
+}
+
+export function inspectProductReturnReturnNumberColumn(
+    rows: ProductReturnColumnRow[],
+): SchemaObjectState {
+    if (rows.length === 0) return 'missing';
+    if (rows.length !== 1) return 'invalid';
+
+    const [column] = rows;
+    return column.dataType.toLowerCase() === 'int'
+        && column.columnType.toLowerCase() === 'int'
+        && column.isNullable.toUpperCase() === 'YES'
+        && column.characterMaximumLength === null
+        && column.characterSetName === null
+        && column.collationName === null
+        && column.columnDefault === null
+        && column.extra === ''
+        && column.generationExpression === ''
+        ? 'valid'
+        : 'invalid';
+}
+
 export function inspectPaymentClientEventIdColumn(
     rows: PaymentColumnRow[],
 ): SchemaObjectState {
@@ -513,6 +556,28 @@ export function inspectProductReturnIdempotencyIndex(
         rows,
         PRODUCT_RETURN_IDEMPOTENCY_INDEX,
         ['tenantId', 'clientEventId'],
+        true,
+    );
+}
+
+export function inspectProductReturnCorrectionRequestIndex(
+    rows: ProductReturnIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+        ['correctionRequestId'],
+        true,
+    );
+}
+
+export function inspectProductReturnNumberIndex(
+    rows: ProductReturnIndexRow[],
+): SchemaObjectState {
+    return inspectExactIndex(
+        rows,
+        PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+        ['tenantId', 'returnNumber'],
         true,
     );
 }
@@ -940,7 +1005,7 @@ async function readStockCountWarehouseForeignKey(
 
 async function readProductReturnColumn(
     db: DeploySchemaClient,
-    columnName: 'clientEventId' | 'payloadHash',
+    columnName: 'clientEventId' | 'payloadHash' | 'correctionRequestId' | 'returnNumber',
 ): Promise<ProductReturnColumnRow[]> {
     return db.query<ProductReturnColumnRow[]>(Prisma.sql`
         SELECT
@@ -981,8 +1046,12 @@ async function readProductReturnTenantIdColumn(
     `);
 }
 
-async function readProductReturnIdempotencyIndex(
+async function readProductReturnIndex(
     db: DeploySchemaClient,
+    indexName:
+        | typeof PRODUCT_RETURN_IDEMPOTENCY_INDEX
+        | typeof PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX
+        | typeof PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
 ): Promise<ProductReturnIndexRow[]> {
     return db.query<ProductReturnIndexRow[]>(Prisma.sql`
         SELECT
@@ -998,7 +1067,7 @@ async function readProductReturnIdempotencyIndex(
         FROM information_schema.STATISTICS
         WHERE TABLE_SCHEMA = DATABASE()
           AND TABLE_NAME = 'ProductReturn'
-          AND INDEX_NAME = ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}
+          AND INDEX_NAME = ${indexName}
         ORDER BY SEQ_IN_INDEX
     `);
 }
@@ -1605,15 +1674,62 @@ async function assertProductReturnEventsAreUnique(db: DeploySchemaClient): Promi
     );
 }
 
-type ProductReturnNullableColumn = 'clientEventId' | 'payloadHash';
+async function assertProductReturnCorrectionsAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateProductReturnCorrectionRow[]>(Prisma.sql`
+        SELECT correctionRequestId, COUNT(*) AS duplicateCount
+        FROM ${PRODUCT_RETURN_TABLE_SQL}
+        WHERE correctionRequestId IS NOT NULL
+        GROUP BY correctionRequestId
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.correctionRequestId} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay devoluciones con correctionRequestId duplicado; no se creará el índice único: ${detail}`,
+    );
+}
+
+async function assertProductReturnNumbersAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<DuplicateProductReturnNumberRow[]>(Prisma.sql`
+        SELECT tenantId, returnNumber, COUNT(*) AS duplicateCount
+        FROM ${PRODUCT_RETURN_TABLE_SQL}
+        WHERE returnNumber IS NOT NULL
+        GROUP BY tenantId, returnNumber
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => `${row.tenantId}/${String(row.returnNumber)} (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `Hay devoluciones con returnNumber duplicado por tenant; no se creará el índice único: ${detail}`,
+    );
+}
+
+type ProductReturnNullableColumn =
+    | 'clientEventId'
+    | 'payloadHash'
+    | 'correctionRequestId'
+    | 'returnNumber';
 
 function inspectProductReturnColumn(
     columnName: ProductReturnNullableColumn,
     rows: ProductReturnColumnRow[],
 ): SchemaObjectState {
-    return columnName === 'clientEventId'
-        ? inspectProductReturnClientEventIdColumn(rows)
-        : inspectProductReturnPayloadHashColumn(rows);
+    if (columnName === 'clientEventId') return inspectProductReturnClientEventIdColumn(rows);
+    if (columnName === 'payloadHash') return inspectProductReturnPayloadHashColumn(rows);
+    if (columnName === 'correctionRequestId') {
+        return inspectProductReturnCorrectionRequestIdColumn(rows);
+    }
+    return inspectProductReturnReturnNumberColumn(rows);
 }
 
 async function ensureProductReturnColumn(
@@ -1632,18 +1748,34 @@ async function ensureProductReturnColumn(
     }
 
     if (initialState === 'missing') {
-        const length = columnName === 'clientEventId' ? 128 : 64;
-        logger.info(`Aplicando DDL seguro: ProductReturn.${columnName} VARCHAR(${length}) NULL.`);
+        const columnType = columnName === 'clientEventId'
+            ? 'VARCHAR(128)'
+            : columnName === 'payloadHash'
+                ? 'VARCHAR(64)'
+                : columnName === 'correctionRequestId'
+                    ? 'VARCHAR(191)'
+                    : 'INTEGER';
+        logger.info(`Aplicando DDL seguro: ProductReturn.${columnName} ${columnType} NULL.`);
         try {
             if (columnName === 'clientEventId') {
                 await db.execute(Prisma.sql`
                     ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
                     ADD COLUMN ${CLIENT_EVENT_ID_COLUMN_SQL} VARCHAR(128) NULL
                 `);
-            } else {
+            } else if (columnName === 'payloadHash') {
                 await db.execute(Prisma.sql`
                     ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
                     ADD COLUMN ${PAYLOAD_HASH_COLUMN_SQL} VARCHAR(64) NULL
+                `);
+            } else if (columnName === 'correctionRequestId') {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
+                    ADD COLUMN ${CORRECTION_REQUEST_ID_COLUMN_SQL} VARCHAR(191) NULL
+                `);
+            } else {
+                await db.execute(Prisma.sql`
+                    ALTER TABLE ${PRODUCT_RETURN_TABLE_SQL}
+                    ADD COLUMN ${RETURN_NUMBER_COLUMN_SQL} INTEGER NULL
                 `);
             }
         } catch (error) {
@@ -1663,50 +1795,84 @@ async function ensureProductReturnColumn(
         );
     }
 
-    const tenantIdColumn = await readProductReturnTenantIdColumn(db);
-    if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
-        throw new UnsafeSchemaStateError(
-            `ProductReturn.${columnName} no usa el mismo charset/collation que ProductReturn.tenantId.`,
-        );
+    if (columnName !== 'returnNumber') {
+        const tenantIdColumn = await readProductReturnTenantIdColumn(db);
+        if (!columnsUseSameEncoding(finalColumn, tenantIdColumn)) {
+            throw new UnsafeSchemaStateError(
+                `ProductReturn.${columnName} no usa el mismo charset/collation que ProductReturn.tenantId.`,
+            );
+        }
     }
 }
 
-async function ensureProductReturnIdempotencyIndex(
+interface ProductReturnUniqueIndexDefinition {
+    name:
+        | typeof PRODUCT_RETURN_IDEMPOTENCY_INDEX
+        | typeof PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX
+        | typeof PRODUCT_RETURN_NUMBER_UNIQUE_INDEX;
+    statement: Prisma.Sql;
+    inspect(rows: ProductReturnIndexRow[]): SchemaObjectState;
+    assertUnique(db: DeploySchemaClient): Promise<void>;
+}
+
+const PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS: ProductReturnUniqueIndexDefinition[] = [
+    {
+        name: PRODUCT_RETURN_IDEMPOTENCY_INDEX,
+        statement: Prisma.sql`
+            CREATE UNIQUE INDEX ${PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL}
+            ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
+        `,
+        inspect: inspectProductReturnIdempotencyIndex,
+        assertUnique: assertProductReturnEventsAreUnique,
+    },
+    {
+        name: PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX,
+        statement: Prisma.sql`
+            CREATE UNIQUE INDEX ${PRODUCT_RETURN_CORRECTION_REQUEST_UNIQUE_INDEX_SQL}
+            ON ${PRODUCT_RETURN_TABLE_SQL}(${CORRECTION_REQUEST_ID_COLUMN_SQL})
+        `,
+        inspect: inspectProductReturnCorrectionRequestIndex,
+        assertUnique: assertProductReturnCorrectionsAreUnique,
+    },
+    {
+        name: PRODUCT_RETURN_NUMBER_UNIQUE_INDEX,
+        statement: Prisma.sql`
+            CREATE UNIQUE INDEX ${PRODUCT_RETURN_NUMBER_UNIQUE_INDEX_SQL}
+            ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${RETURN_NUMBER_COLUMN_SQL})
+        `,
+        inspect: inspectProductReturnNumberIndex,
+        assertUnique: assertProductReturnNumbersAreUnique,
+    },
+];
+
+async function ensureProductReturnUniqueIndex(
     db: DeploySchemaClient,
     logger: DeploySchemaLogger,
+    definition: ProductReturnUniqueIndexDefinition,
 ): Promise<void> {
-    const initialState = inspectProductReturnIdempotencyIndex(
-        await readProductReturnIdempotencyIndex(db),
-    );
+    const initialState = definition.inspect(await readProductReturnIndex(db, definition.name));
     if (initialState === 'invalid') {
         throw new UnsafeSchemaStateError(
-            `${PRODUCT_RETURN_IDEMPOTENCY_INDEX} existe con columnas u opciones incompatibles.`,
+            `${definition.name} existe con columnas u opciones incompatibles.`,
         );
     }
 
     if (initialState === 'missing') {
-        logger.info(`Aplicando DDL seguro: índice único ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}.`);
+        logger.info(`Aplicando DDL seguro: índice único ${definition.name}.`);
         try {
-            await db.execute(Prisma.sql`
-                CREATE UNIQUE INDEX ${PRODUCT_RETURN_IDEMPOTENCY_INDEX_SQL}
-                ON ${PRODUCT_RETURN_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${CLIENT_EVENT_ID_COLUMN_SQL})
-            `);
+            await db.execute(definition.statement);
         } catch (error) {
-            if (inspectProductReturnIdempotencyIndex(
-                await readProductReturnIdempotencyIndex(db),
-            ) !== 'valid') {
-                await assertProductReturnEventsAreUnique(db);
+            if (definition.inspect(await readProductReturnIndex(db, definition.name)) !== 'valid') {
+                await definition.assertUnique(db);
                 throw error;
             }
-            logger.warn(`${PRODUCT_RETURN_IDEMPOTENCY_INDEX} fue creado concurrentemente; definición verificada.`);
+            logger.warn(`${definition.name} fue creado concurrentemente; definición verificada.`);
         }
     }
 
-    if (inspectProductReturnIdempotencyIndex(
-        await readProductReturnIdempotencyIndex(db),
-    ) !== 'valid') {
+    if (definition.inspect(await readProductReturnIndex(db, definition.name)) !== 'valid') {
         throw new UnsafeSchemaStateError(
-            `No se pudo verificar la definición final de ${PRODUCT_RETURN_IDEMPOTENCY_INDEX}.`,
+            `No se pudo verificar la definición final de ${definition.name}.`,
         );
     }
 }
@@ -1722,10 +1888,20 @@ export async function applyProductReturnSchemaPreflight(
 
     await ensureProductReturnColumn(db, logger, 'clientEventId');
     await ensureProductReturnColumn(db, logger, 'payloadHash');
-    await assertProductReturnEventsAreUnique(db);
-    await ensureProductReturnIdempotencyIndex(db, logger);
-    await assertProductReturnEventsAreUnique(db);
-    logger.info('Preflight DDL verificado: idempotencia de ProductReturn lista sin alterar históricos.');
+    await ensureProductReturnColumn(db, logger, 'correctionRequestId');
+    await ensureProductReturnColumn(db, logger, 'returnNumber');
+    for (const definition of PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS) {
+        await definition.assertUnique(db);
+    }
+    for (const definition of PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS) {
+        await ensureProductReturnUniqueIndex(db, logger, definition);
+    }
+    for (const definition of PRODUCT_RETURN_UNIQUE_INDEX_DEFINITIONS) {
+        await definition.assertUnique(db);
+    }
+    logger.info(
+        'Preflight DDL verificado: idempotencia y numeración de ProductReturn listas sin alterar históricos.',
+    );
 }
 
 async function assertPaymentEventsAreUnique(db: DeploySchemaClient): Promise<void> {
