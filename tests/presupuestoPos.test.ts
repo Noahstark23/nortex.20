@@ -47,8 +47,8 @@ const POS = readFileSync(join(RAIZ, 'components/POS.tsx'), 'utf8');
  * es la mejor evidencia de por qué este archivo tiene que existir.
  */
 const PRESUPUESTO = {
-    lineas: 7730,
-    useState: 124,
+    lineas: 7363,
+    useState: 119,
 };
 
 describe('presupuesto de POS.tsx', () => {
@@ -125,7 +125,6 @@ const ACOPLADOS_HISTORICOS = [
     'posCustomerCreateAuthorization.test.ts',
     'quotationPosBridge.test.ts',
     'returnEndpointGuards.test.ts',
-    'supplierPaymentRoute.test.ts',
 ];
 
 /**

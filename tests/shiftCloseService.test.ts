@@ -96,7 +96,10 @@ describe('closeShiftWithReport', () => {
             sale: {
                 groupBy: vi.fn(async () => [{
                     paymentMethod: 'CASH',
-                    _sum: { total: decimal('115.00') },
+                    _sum: {
+                        total: decimal('115.00'),
+                        storeCreditApplied: decimal('40.00'),
+                    },
                     _count: { _all: 1 },
                 }]),
             },
@@ -149,6 +152,8 @@ describe('closeShiftWithReport', () => {
 
         expect(result.closeReport.report.summary.returnsTotal).toBe('10.00');
         expect(result.closeReport.report.summary.returnCount).toBe(1);
+        expect(result.closeReport.report.cash.expectedNio).toBe('175.00');
+        expect(result.closeReport.report.summary.grossSales).toBe('115.00');
         expect(result.closeReport.report.products).toEqual(expect.arrayContaining([
             expect.objectContaining({
                 productId: 'return-unallocated',
