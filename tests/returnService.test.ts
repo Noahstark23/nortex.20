@@ -94,6 +94,24 @@ describe('idempotencia de devoluciones', () => {
         );
     });
 
+    it('normaliza la aprobación y distingue dos expedientes autorizados', () => {
+        const normalized = buildReturnPayloadHash({
+            ...basePayload,
+            correctionRequestId: 'correction-001',
+        });
+        const withWhitespace = buildReturnPayloadHash({
+            ...basePayload,
+            correctionRequestId: '  correction-001  ',
+        });
+        const anotherApproval = buildReturnPayloadHash({
+            ...basePayload,
+            correctionRequestId: 'correction-002',
+        });
+
+        expect(withWhitespace).toBe(normalized);
+        expect(anotherApproval).not.toBe(normalized);
+    });
+
     it.each([null, undefined, 'f'.repeat(64)])(
         'clasifica hash previo %s como conflicto estable',
         (payloadHash) => {

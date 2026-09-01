@@ -191,7 +191,11 @@ const PISO_MUTANTES = {
     'backend/services/pedidoTrackingService.ts': 5,
     // Decimal/huella/conflicto idempotente (39) y restauración exacta de lotes
     // por allocation+bodega (219): 258/258 entre los tres rangos actuales.
-    'backend/services/returnService.ts': 258,
+    // Resolución de líneas + restauración lote/bodega + huella de idempotencia
+    // con expediente aprobado. 260/260 después de distinguir dos aprobaciones
+    // y normalizar espacios sin perder identidad.
+    'backend/services/returnService.ts': 260,
+    'backend/lib/saleCorrections.ts': 51,
     // nicaLabor.ts es el motor de nómina del ERP: lo que de verdad se le paga a un
     // trabajador (planilla, retención de IR, finiquito). Entró sin ninguna red —
     // el 95,59% histórico protegía utils/calc-laborales.ts, que es el ESPEJO
@@ -234,12 +238,14 @@ const PISO_MUTANTES = {
     'backend/services/legacyShiftCloseService.ts': 9,
     // JSON canónico de cierre (NIO 2dp, USD 4dp, notas normalizadas): 8/8.
     'backend/validation/schemas.ts': 8,
-    // Asientos puros de venta, abonos, compra+PPV y devolución: 178/178, más
-    // 7/7 del orden canónico de locks contables; 185/185 en la realineación
-    // actual. La factura ligada a OC deja
+    // Asientos puros de venta con crédito de tienda, abonos, pago a proveedor,
+    // compra+PPV y devolución: 205/205, más 7/7 del orden canónico de locks;
+    // 212/212 después de realinear los seis rangos integrados. La factura ligada a OC deja
     // Inventario al costo recibido y separa variación favorable/desfavorable
     // en 5.1.3, incluidos bordes CUOTA_FIJA.
-    'backend/services/accounting.ts': 185,
+    'backend/services/accounting.ts': 212,
+    // Reglas cruzadas RETURN/VOID: 50/50 sobre el superRefine autoritativo.
+    'backend/validation/saleCorrectionSchemas.ts': 50,
 };
 
 if (!fs.existsSync(REPORT)) {
