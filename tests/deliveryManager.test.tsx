@@ -254,7 +254,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         });
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
-            'El motorizado quedó asignado, pero no pudimos confirmar el despacho: No hay inventario suficiente.',
+            'El motorizado quedó asignado, pero no pudimos reservar inventario ni despachar: No hay inventario suficiente.',
         );
         const mutations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
         expect(mutations).toHaveLength(2);
@@ -264,6 +264,48 @@ describe('DeliveryManager — autoridad del servidor', () => {
             return (JSON.parse(String(init.body)) as { estado?: string }).estado === 'en_camino';
         })).toBe(false);
         await waitFor(() => expect(screen.getByLabelText('Motorizado')).toHaveValue('rider-1'));
+    });
+
+    it('conserva la reserva si el despacho falla después de preparar un pedido nuevo', async () => {
+        let serverOrder = { ...baseOrder };
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) return jsonResponse({ pedidos: [serverOrder] });
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [rider] });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                const payload = JSON.parse(String(init.body)) as { estado: string };
+                if (payload.estado === 'preparando') {
+                    serverOrder = { ...serverOrder, estado: 'preparando' };
+                    return jsonResponse({ pedido: serverOrder });
+                }
+                return jsonResponse({ error: 'El pedido cambió mientras se despachaba.' }, 409);
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+        fireEvent.change(await screen.findByLabelText('Motorizado'), {
+            target: { value: 'rider-1' },
+        });
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'El motorizado quedó asignado y el inventario reservado, pero no pudimos confirmar el despacho: El pedido cambió mientras se despachaba.',
+        );
+        expect(await screen.findByRole('button', { name: /Despachar/i })).toBeEnabled();
+        expect(screen.queryByText(/Cliente.*en camino/i)).not.toBeInTheDocument();
+        const statePayloads = fetchMock.mock.calls
+            .filter(([input, init]) => (
+                requestUrl(input) === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH'
+            ))
+            .map(([, init]) => JSON.parse(String(init?.body)) as { estado: string });
+        expect(statePayloads.map(({ estado }) => estado)).toEqual(['preparando', 'en_camino']);
     });
 
     it('distingue una asignación confirmada de un despacho rechazado', async () => {
@@ -293,7 +335,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         });
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
-            'El motorizado quedó asignado, pero no pudimos confirmar el despacho: El pedido fue procesado por otra operación.',
+            'El motorizado quedó asignado y el inventario reservado, pero no pudimos confirmar el despacho: El pedido fue procesado por otra operación.',
         );
         await waitFor(() => expect(screen.getByLabelText('Motorizado')).toHaveValue('rider-1'));
         expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(2);
@@ -414,6 +456,8 @@ describe('DeliveryManager — autoridad del servidor', () => {
         fireEvent.change(zoneInput, { target: { value: 'M' } });
         expect(registerButton).toBeDisabled();
         fireEvent.change(zoneInput, { target: { value: ' Managua sur ' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '12a4' } });
         expect(registerButton).toBeDisabled();
         fireEvent.change(pinInput, { target: { value: '123' } });
         expect(registerButton).toBeDisabled();
