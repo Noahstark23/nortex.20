@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
     hasPhoneCredentialConflict,
@@ -5,6 +7,8 @@ import {
     normalizeMotorizadoPhone,
     resolveUniqueDriverLogin,
 } from '../backend/services/motorizadoIdentity';
+
+const pedidosRoute = readFileSync(resolve(process.cwd(), 'backend/routes/pedidos.ts'), 'utf8');
 
 describe('motorizadoIdentity', () => {
     it('normaliza el telefono a solo digitos', () => {
@@ -47,9 +51,31 @@ describe('motorizadoIdentity', () => {
         ])).toEqual({ driver: null, ambiguous: true });
     });
 
-    it('expone un select seguro sin pinHash', () => {
-        expect((motorizadoSafeSelect as Record<string, boolean>).pinHash).toBeUndefined();
-        expect(motorizadoSafeSelect.nombre).toBe(true);
-        expect(motorizadoSafeSelect.telefono).toBe(true);
+    it('expone solo los campos operativos necesarios para asignar entregas', () => {
+        expect(Object.keys(motorizadoSafeSelect).sort()).toEqual([
+            'activo',
+            'calificacionPromedio',
+            'id',
+            'nombre',
+            'telefono',
+            'tipoFlota',
+            'vehiculoPlaca',
+            'zonaCobertura',
+        ]);
+
+        const select = motorizadoSafeSelect as Record<string, boolean>;
+        expect(select.pinHash).toBeUndefined();
+        expect(select.cedula).toBeUndefined();
+        expect(select.kycNota).toBeUndefined();
+        expect(select.fotoCedulaUrl).toBeUndefined();
+        expect(select.fotoVehiculoUrl).toBeUndefined();
+        expect(select.walletId).toBeUndefined();
+        expect(select.walletBalance).toBeUndefined();
+        expect(select.tenantId).toBeUndefined();
+    });
+
+    it('reutiliza el select operativo y no serializa el modelo completo en pedidos', () => {
+        expect(pedidosRoute).not.toMatch(/motorizado:\s*true/);
+        expect(pedidosRoute.match(/motorizado:\s*\{ select: motorizadoSafeSelect \}/g)).toHaveLength(2);
     });
 });

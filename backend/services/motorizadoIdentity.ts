@@ -2,22 +2,13 @@ export const normalizeMotorizadoPhone = (raw: string): string => raw.replace(/\D
 
 export const motorizadoSafeSelect = {
     id: true,
-    tenantId: true,
     tipoFlota: true,
     nombre: true,
     telefono: true,
     zonaCobertura: true,
     activo: true,
-    walletId: true,
     calificacionPromedio: true,
     vehiculoPlaca: true,
-    createdAt: true,
-    cedula: true,
-    kycStatus: true,
-    kycNota: true,
-    fotoCedulaUrl: true,
-    fotoVehiculoUrl: true,
-    walletBalance: true,
 } as const;
 
 export interface MotorizadoPhoneCredentialRecord {

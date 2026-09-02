@@ -26,6 +26,7 @@ import {
     PUBLIC_PEDIDO_TRACKING_SELECT,
     toPublicPedidoTrackingDto,
 } from '../services/pedidoTrackingService.js';
+import { motorizadoSafeSelect } from '../services/motorizadoIdentity.js';
 
 const router = express.Router();
 
@@ -243,7 +244,7 @@ router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res
         const pedidos = await prisma.pedido.findMany({
             where: { tenantId: authReq.tenantId },
             include: {
-                motorizado: true,
+                motorizado: { select: motorizadoSafeSelect },
                 items: {
                     include: {
                         producto: {
@@ -271,7 +272,7 @@ router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, 
         const pedido = await prisma.pedido.findFirst({
             where: { id, tenantId: authReq.tenantId },
             include: {
-                motorizado: true,
+                motorizado: { select: motorizadoSafeSelect },
                 items: {
                     include: {
                         producto: true
