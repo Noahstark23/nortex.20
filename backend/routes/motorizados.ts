@@ -6,6 +6,11 @@ import bcrypt from 'bcryptjs';
 import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import {
+    hasPhoneCredentialConflict,
+    motorizadoSafeSelect,
+    normalizeMotorizadoPhone,
+} from '../services/motorizadoIdentity';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -30,6 +35,7 @@ router.get('/', authenticate, async (req: any, res: any) => {
                     { tipoFlota: 'NORTEX', kycStatus: 'APROBADO', activo: true }
                 ]
             },
+            select: motorizadoSafeSelect,
             orderBy: {
                 tipoFlota: 'asc' // NORTEX (freelance) primero o PROPIA primero
             }
@@ -45,33 +51,62 @@ router.get('/', authenticate, async (req: any, res: any) => {
 // Registrar nuevo motorizado (por defecto es de la ferretería: PROPIA)
 router.post('/', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { nombre, telefono, zonaCobertura, pin } = req.body;
+    const { nombre, telefono, zonaCobertura, pin, vehiculoPlaca } = req.body;
+    const normalizedName = String(nombre ?? '').trim();
+    const normalizedPhone = normalizeMotorizadoPhone(String(telefono ?? ''));
+    const normalizedZone = String(zonaCobertura ?? '').trim();
+    const normalizedVehicle = vehiculoPlaca == null ? null : String(vehiculoPlaca).trim();
 
-    if (!nombre || !telefono || !zonaCobertura) {
+    if (!normalizedName || !normalizedPhone || !normalizedZone) {
         return res.status(400).json({ error: 'Faltan datos requeridos.' });
     }
-    if (pin !== undefined && !/^\d{4,6}$/.test(String(pin))) {
-        return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
+    if (normalizedName.length < 3 || normalizedName.length > 100) {
+        return res.status(400).json({ error: 'El nombre debe tener de 3 a 100 caracteres.' });
+    }
+    if (normalizedPhone.length < 8 || normalizedPhone.length > 15) {
+        return res.status(400).json({ error: 'Teléfono inválido. Usa de 8 a 15 dígitos.' });
+    }
+    if (normalizedZone.length < 2 || normalizedZone.length > 100) {
+        return res.status(400).json({ error: 'La zona de cobertura debe tener de 2 a 100 caracteres.' });
+    }
+    if (normalizedVehicle && normalizedVehicle.length > 20) {
+        return res.status(400).json({ error: 'La placa o descripción del vehículo no puede superar 20 caracteres.' });
+    }
+    if (!/^\d{4,6}$/.test(String(pin ?? ''))) {
+        return res.status(400).json({ error: 'El PIN es obligatorio y debe ser de 4 a 6 dígitos.' });
     }
 
     try {
-        // PIN opcional al crear flota propia: necesario para que el repartidor
-        // entre a su app con teléfono+PIN (el magic-link ya no existe).
-        const pinHash = pin !== undefined ? await bcrypt.hash(String(pin), 10) : null;
+        const conflictingDrivers = await prisma.motorizado.findMany({
+            where: { telefono: normalizedPhone, pinHash: { not: null } },
+            select: { id: true, pinHash: true },
+            take: 2,
+        });
+        if (hasPhoneCredentialConflict(conflictingDrivers)) {
+            return res.status(409).json({
+                error: 'Ya existe un repartidor con ese teléfono y PIN. Usá otro número o restablecé el acceso del actual.',
+            });
+        }
+
+        // Toda alta queda utilizable de inmediato en Driver App; los registros
+        // legacy sin PIN conservan el flujo de asignación/reset mediante PATCH.
+        const pinHash = await bcrypt.hash(String(pin), 10);
 
         const motorizado = await prisma.motorizado.create({
             data: {
                 tenantId: authReq.tenantId,
-                nombre,
-                telefono: String(telefono).replace(/\D/g, ''),
-                zonaCobertura,
+                nombre: normalizedName,
+                telefono: normalizedPhone,
+                zonaCobertura: normalizedZone,
+                vehiculoPlaca: normalizedVehicle || null,
                 tipoFlota: 'PROPIA',
                 activo: true,
                 pinHash,
                 // Flota propia: la confianza la pone el dueño que lo contrata —
                 // no pasa por el KYC de la Red NORTEX.
                 kycStatus: 'APROBADO'
-            }
+            },
+            select: motorizadoSafeSelect,
         });
         res.status(201).json({ message: 'Motorizado registrado con éxito.', motorizado });
     } catch (error) {
@@ -90,7 +125,8 @@ router.patch('/:id', authenticate, checkRole(ROLES_FLOTA), async (req: any, res:
     try {
         // Solo un dueño de ferretería puede editar SU propia flota
         const existing = await prisma.motorizado.findFirst({
-            where: { id, tenantId: authReq.tenantId }
+            where: { id, tenantId: authReq.tenantId },
+            select: { id: true, telefono: true },
         });
 
         if (!existing) {
@@ -105,12 +141,27 @@ router.patch('/:id', authenticate, checkRole(ROLES_FLOTA), async (req: any, res:
             if (!/^\d{4,6}$/.test(String(pin))) {
                 return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
             }
+            const conflictingDrivers = await prisma.motorizado.findMany({
+                where: {
+                    telefono: existing.telefono,
+                    pinHash: { not: null },
+                    NOT: { id: existing.id },
+                },
+                select: { id: true, pinHash: true },
+                take: 2,
+            });
+            if (hasPhoneCredentialConflict(conflictingDrivers, existing.id)) {
+                return res.status(409).json({
+                    error: 'Ese teléfono ya está vinculado a otro acceso de repartidor. Cambiá el número o restablecé la cuenta existente.',
+                });
+            }
             dataUpdate.pinHash = await bcrypt.hash(String(pin), 10);
         }
 
         const motorizado = await prisma.motorizado.update({
             where: { id },
-            data: dataUpdate
+            data: dataUpdate,
+            select: motorizadoSafeSelect,
         });
 
         res.json({ message: 'Motorizado actualizado.', motorizado });

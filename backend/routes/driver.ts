@@ -29,13 +29,15 @@ import {
     completePedidoDeliveryInTransaction,
     PedidoFulfillmentError,
 } from '../services/pedidoFulfillmentService.js';
+import {
+    hasPhoneCredentialConflict,
+    normalizeMotorizadoPhone,
+    resolveUniqueDriverLogin,
+} from '../services/motorizadoIdentity.js';
 
 const router = express.Router();
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-/** Normaliza a solo dígitos; acepta "8888-0000" o "505 8888 0000". */
-const normalizePhone = (raw: string): string => raw.replace(/\D/g, '');
 
 const registroLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
@@ -89,7 +91,7 @@ router.post('/registro', registroLimiter, async (req: any, res: any) => {
         return res.status(400).json({ error: parsed.error.issues.map(i => i.message).join(' | ') });
     }
     const data = parsed.data;
-    const telefono = normalizePhone(data.telefono);
+    const telefono = normalizeMotorizadoPhone(data.telefono);
     if (telefono.length < 8) {
         return res.status(400).json({ error: 'Teléfono inválido. Usa 8 dígitos.' });
     }
@@ -97,11 +99,12 @@ router.post('/registro', registroLimiter, async (req: any, res: any) => {
     try {
         // El teléfono es la identidad de login → único entre quienes tienen PIN.
         // (Chequeo a nivel de aplicación: un @unique en DB rompería datos legacy.)
-        const existing = await prisma.motorizado.findFirst({
+        const existing = await prisma.motorizado.findMany({
             where: { telefono, pinHash: { not: null } },
-            select: { id: true },
+            select: { id: true, pinHash: true },
+            take: 2,
         });
-        if (existing) {
+        if (hasPhoneCredentialConflict(existing)) {
             return res.status(409).json({ error: 'Ya existe un repartidor registrado con ese teléfono. Si es tuyo, inicia sesión.' });
         }
 
@@ -145,15 +148,26 @@ router.post('/login', loginLimiter, async (req: any, res: any) => {
     if (!parsed.success) {
         return res.status(400).json({ error: 'Teléfono y PIN requeridos.' });
     }
-    const telefono = normalizePhone(parsed.data.telefono);
+    const telefono = normalizeMotorizadoPhone(parsed.data.telefono);
 
     try {
-        const driver = await prisma.motorizado.findFirst({
+        const driverCandidates = await prisma.motorizado.findMany({
             where: { telefono, pinHash: { not: null } },
+            select: {
+                id: true,
+                nombre: true,
+                tipoFlota: true,
+                zonaCobertura: true,
+                activo: true,
+                kycStatus: true,
+                pinHash: true,
+            },
+            take: 2,
         });
+        const { driver, ambiguous } = resolveUniqueDriverLogin(driverCandidates);
 
         // Mensaje genérico: no revelamos si el teléfono existe.
-        if (!driver || !driver.pinHash || !(await bcrypt.compare(parsed.data.pin, driver.pinHash))) {
+        if (ambiguous || !driver || !driver.pinHash || !(await bcrypt.compare(parsed.data.pin, driver.pinHash))) {
             return res.status(401).json({ error: 'Teléfono o PIN incorrectos.' });
         }
         if (driver.tipoFlota === 'NORTEX' && driver.kycStatus !== 'APROBADO') {

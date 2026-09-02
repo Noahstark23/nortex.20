@@ -55,6 +55,30 @@ interface Driver {
     tipoFlota: string;
 }
 
+const DRIVER_DELIVERABLE_STATES = new Set(['en_tienda', 'en_ruta', 'en_camino', 'en_punto']);
+
+const getDriverDeliveryAction = (estado: string) => {
+    if (DRIVER_DELIVERABLE_STATES.has(estado)) {
+        return {
+            enabled: true,
+            label: 'Entregar y Cobrar',
+            icon: CheckCircle,
+        };
+    }
+    if (estado === 'preparando') {
+        return {
+            enabled: false,
+            label: 'Esperando en Ferretería',
+            icon: Clock,
+        };
+    }
+    return {
+        enabled: false,
+        label: 'Esperando preparación',
+        icon: Clock,
+    };
+};
+
 interface Liquidacion {
     pedidosEntregados: number;
     totalCobrado: number;
@@ -765,22 +789,23 @@ const DriverView: React.FC = () => {
 
                             {/* ── Botón de Entrega ── */}
                             <div className="px-5 pb-5">
-                                {order.estado === 'preparando' ? (
-                                    <button
-                                        disabled
-                                        className="nx-fluid-press min-h-tap w-full py-5 rounded-2xl font-black text-base uppercase tracking-wider bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-2"
-                                    >
-                                        <Clock size={20} /> Esperando en Ferretería
-                                    </button>
-                                ) : (
-                                    <button
-                                        onClick={() => handleDeliverTap(order)}
-                                        disabled={!!processingId}
-                                        className="nx-driver-primary nx-fluid-press min-h-tap w-full py-5 rounded-2xl font-black text-lg uppercase tracking-wider bg-brand text-brand-on shadow-xl shadow-emerald-200 hover:bg-brand-hover flex items-center justify-center gap-2"
-                                    >
-                                        <CheckCircle size={24} /> Entregar y Cobrar
-                                    </button>
-                                )}
+                                {(() => {
+                                    const action = getDriverDeliveryAction(order.estado);
+                                    const ActionIcon = action.icon;
+                                    return (
+                                        <button
+                                            onClick={action.enabled ? () => handleDeliverTap(order) : undefined}
+                                            disabled={!action.enabled || !!processingId}
+                                            className={`nx-fluid-press min-h-tap w-full py-5 rounded-2xl font-black text-base uppercase tracking-wider flex items-center justify-center gap-2 ${
+                                                action.enabled
+                                                    ? 'nx-driver-primary bg-brand text-brand-on shadow-xl shadow-emerald-200 hover:bg-brand-hover'
+                                                    : 'bg-slate-100 text-slate-400 cursor-not-allowed'
+                                            }`}
+                                        >
+                                            <ActionIcon size={action.enabled ? 24 : 20} /> {action.label}
+                                        </button>
+                                    );
+                                })()}
                             </div>
                         </div>
                     ))

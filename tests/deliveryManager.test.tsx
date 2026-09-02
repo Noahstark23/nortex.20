@@ -75,11 +75,11 @@ afterEach(() => {
 
 describe('DeliveryManager — autoridad del servidor', () => {
     it('preserva la versión optimista mientras el polling trae un estado anterior', () => {
-        const current = [{ ...baseOrder, estado: 'preparando' }];
+        const current = [{ ...baseOrder, estado: 'preparando', motorizadoId: 'rider-1' }];
         const staleServer = [{ ...baseOrder, estado: 'pendiente' }];
 
-        expect(mergePendingOrders(staleServer, current, new Set(['pedido-1']))[0].estado)
-            .toBe('preparando');
+        expect(mergePendingOrders(staleServer, current, new Set(['pedido-1']))[0])
+            .toMatchObject({ estado: 'preparando', motorizadoId: 'rider-1' });
         expect(mergePendingOrders(staleServer, current, new Set())[0].estado)
             .toBe('pendiente');
     });
@@ -193,7 +193,8 @@ describe('DeliveryManager — autoridad del servidor', () => {
                 return jsonResponse({ pedido: serverOrder });
             }
             if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
-                serverOrder = { ...serverOrder, estado: 'en_camino' };
+                const { estado } = JSON.parse(String(init.body)) as { estado: string };
+                serverOrder = { ...serverOrder, estado };
                 return jsonResponse({ pedido: serverOrder });
             }
             throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
@@ -209,14 +210,102 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(screen.queryByRole('button', { name: /Despachar/i })).not.toBeInTheDocument();
 
         const mutations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
-        expect(mutations).toHaveLength(2);
+        expect(mutations).toHaveLength(3);
         expect(requestUrl(mutations[0][0])).toBe('/api/v1/pedidos/pedido-1/motorizado');
         expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({ motorizadoId: 'rider-1' });
         expect(requestUrl(mutations[1][0])).toBe('/api/v1/pedidos/pedido-1/estado');
         expect(JSON.parse(String(mutations[1][1]?.body))).toEqual({
+            estado: 'preparando',
+            nota: 'Motorizado asignado — inventario reservado antes del despacho.',
+        });
+        expect(requestUrl(mutations[2][0])).toBe('/api/v1/pedidos/pedido-1/estado');
+        expect(JSON.parse(String(mutations[2][1]?.body))).toEqual({
             estado: 'en_camino',
             nota: 'Motorizado asignado — pedido despachado.',
         });
+    });
+
+    it('no despacha si falla la reserva de inventario después de asignar', async () => {
+        let serverOrder = { ...baseOrder };
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) return jsonResponse({ pedidos: [serverOrder] });
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [rider] });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                const payload = JSON.parse(String(init.body)) as { estado: string };
+                if (payload.estado !== 'preparando') {
+                    throw new Error(`Despacho inseguro inesperado: ${payload.estado}`);
+                }
+                return jsonResponse({ error: 'No hay inventario suficiente.' }, 422);
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+        fireEvent.change(await screen.findByLabelText('Motorizado'), {
+            target: { value: 'rider-1' },
+        });
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'El motorizado quedó asignado, pero no pudimos reservar inventario ni despachar: No hay inventario suficiente.',
+        );
+        const mutations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
+        expect(mutations).toHaveLength(2);
+        expect(JSON.parse(String(mutations[1][1]?.body))).toMatchObject({ estado: 'preparando' });
+        expect(mutations.some(([, init]) => {
+            if (init?.method !== 'PATCH' || !init.body) return false;
+            return (JSON.parse(String(init.body)) as { estado?: string }).estado === 'en_camino';
+        })).toBe(false);
+        await waitFor(() => expect(screen.getByLabelText('Motorizado')).toHaveValue('rider-1'));
+    });
+
+    it('conserva la reserva si el despacho falla después de preparar un pedido nuevo', async () => {
+        let serverOrder = { ...baseOrder };
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) return jsonResponse({ pedidos: [serverOrder] });
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [rider] });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                const payload = JSON.parse(String(init.body)) as { estado: string };
+                if (payload.estado === 'preparando') {
+                    serverOrder = { ...serverOrder, estado: 'preparando' };
+                    return jsonResponse({ pedido: serverOrder });
+                }
+                return jsonResponse({ error: 'El pedido cambió mientras se despachaba.' }, 409);
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+        fireEvent.change(await screen.findByLabelText('Motorizado'), {
+            target: { value: 'rider-1' },
+        });
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'El motorizado quedó asignado y el inventario reservado, pero no pudimos confirmar el despacho: El pedido cambió mientras se despachaba.',
+        );
+        expect(await screen.findByRole('button', { name: /Despachar/i })).toBeEnabled();
+        expect(screen.queryByText(/Cliente.*en camino/i)).not.toBeInTheDocument();
+        const statePayloads = fetchMock.mock.calls
+            .filter(([input, init]) => (
+                requestUrl(input) === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH'
+            ))
+            .map(([, init]) => JSON.parse(String(init?.body)) as { estado: string });
+        expect(statePayloads.map(({ estado }) => estado)).toEqual(['preparando', 'en_camino']);
     });
 
     it('distingue una asignación confirmada de un despacho rechazado', async () => {
@@ -246,10 +335,56 @@ describe('DeliveryManager — autoridad del servidor', () => {
         });
 
         expect(await screen.findByRole('alert')).toHaveTextContent(
-            'El motorizado quedó asignado, pero no pudimos confirmar el despacho: El pedido fue procesado por otra operación.',
+            'El motorizado quedó asignado y el inventario reservado, pero no pudimos confirmar el despacho: El pedido fue procesado por otra operación.',
         );
         await waitFor(() => expect(screen.getByLabelText('Motorizado')).toHaveValue('rider-1'));
         expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(2);
+    });
+
+    it('evita dos cadenas de despacho ante cambios rápidos del selector', async () => {
+        let serverOrder = { ...baseOrder, estado: 'preparando' };
+        let resolveAssignment!: (response: Response) => void;
+        const assignmentResponse = new Promise<Response>((resolve) => {
+            resolveAssignment = resolve;
+        });
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) return jsonResponse({ pedidos: [serverOrder] });
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [rider] });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') {
+                return assignmentResponse;
+            }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, motorizadoId: 'rider-1', estado: 'en_camino' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+        const riderSelect = await screen.findByLabelText('Motorizado');
+        fireEvent.change(riderSelect, { target: { value: 'rider-1' } });
+        fireEvent.change(riderSelect, { target: { value: 'rider-1' } });
+
+        await waitFor(() => {
+            expect(fetchMock.mock.calls.filter(([input, init]) => (
+                requestUrl(input) === '/api/v1/pedidos/pedido-1/motorizado'
+                && init?.method === 'PATCH'
+            ))).toHaveLength(1);
+        });
+
+        serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+        resolveAssignment(jsonResponse({ pedido: serverOrder }));
+
+        expect(await screen.findByText('Motorizado asignado y pedido despachado correctamente.')).toBeVisible();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(fetchMock.mock.calls.filter(([input, init]) => (
+            requestUrl(input) === '/api/v1/pedidos/pedido-1/motorizado'
+            && init?.method === 'PATCH'
+        ))).toHaveLength(1);
     });
 
     it('obedece la asignación canónica del servidor aunque difiera de la solicitada', async () => {
@@ -316,6 +451,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         const nameInput = screen.getByLabelText('Nombre completo *');
         expect(screen.getByLabelText('Teléfono / WhatsApp *')).toBeVisible();
         expect(screen.getByLabelText('Zona de cobertura *')).toBeVisible();
+        expect(screen.getByLabelText('PIN de acceso *')).toBeVisible();
         expect(screen.getByLabelText('Placa / vehículo (opcional)')).toBeVisible();
         await waitFor(() => expect(nameInput).toHaveFocus());
         fireEvent.change(nameInput, { target: { value: 'Dato temporal' } });
@@ -353,6 +489,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         const nameInput = screen.getByLabelText('Nombre completo *');
         const phoneInput = screen.getByLabelText('Teléfono / WhatsApp *');
         const zoneInput = screen.getByLabelText('Zona de cobertura *');
+        const pinInput = screen.getByLabelText('PIN de acceso *');
         const vehicleInput = screen.getByLabelText('Placa / vehículo (opcional)');
 
         expect(registerButton).toBeDisabled();
@@ -365,6 +502,12 @@ describe('DeliveryManager — autoridad del servidor', () => {
         fireEvent.change(zoneInput, { target: { value: 'M' } });
         expect(registerButton).toBeDisabled();
         fireEvent.change(zoneInput, { target: { value: ' Managua sur ' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '12a4' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '123' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '1234' } });
         fireEvent.change(vehicleInput, { target: { value: ' M 123456 ' } });
         expect(registerButton).toBeEnabled();
 
@@ -379,6 +522,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
                 nombre: 'Juan Pérez',
                 telefono: '8888-0000',
                 zonaCobertura: 'Managua sur',
+                pin: '1234',
                 vehiculoPlaca: 'M 123456',
             });
         });
@@ -392,6 +536,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(screen.getByLabelText('Nombre completo *')).toHaveValue('');
         expect(screen.getByLabelText('Teléfono / WhatsApp *')).toHaveValue('');
         expect(screen.getByLabelText('Zona de cobertura *')).toHaveValue('');
+        expect(screen.getByLabelText('PIN de acceso *')).toHaveValue('');
         expect(screen.getByLabelText('Placa / vehículo (opcional)')).toHaveValue('');
         expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled();
     });
@@ -423,6 +568,9 @@ describe('DeliveryManager — autoridad del servidor', () => {
         fireEvent.change(screen.getByLabelText('Zona de cobertura *'), {
             target: { value: 'Masaya urbana' },
         });
+        fireEvent.change(screen.getByLabelText('PIN de acceso *'), {
+            target: { value: '5678' },
+        });
 
         const registerButton = screen.getByRole('button', { name: 'Registrar' });
         expect(registerButton).toBeEnabled();
@@ -441,6 +589,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
             nombre: 'María López',
             telefono: '7777-2222',
             zonaCobertura: 'Masaya urbana',
+            pin: '5678',
         });
     });
 });

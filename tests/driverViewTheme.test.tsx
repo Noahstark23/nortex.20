@@ -349,6 +349,37 @@ describe('DriverView: tema y accesibilidad de sesión', () => {
         expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(false);
     });
 
+    it('no ofrece entregar pedidos solo asignados hasta que entren a un estado entregable', async () => {
+        localStorage.setItem(DRIVER_TOKEN_KEY, 'token-driver-asignado');
+        const fetchMock = vi.fn().mockResolvedValue(response({
+            driver: { id: 'driver-asignado', nombre: 'Repartidor Asignado QA', tipoFlota: 'PROPIA' },
+            orders: [{
+                id: 'order-assigned',
+                clienteNombre: 'Cliente Pendiente',
+                clienteTelefono: '88880000',
+                direccionEntrega: 'Dirección de prueba',
+                estado: 'asignado',
+                total: 95,
+                items: [{ id: 'item-1', cantidad: 1, producto: { name: 'Producto de prueba' } }],
+            }],
+            liquidacionDiaria: {
+                pedidosEntregados: 0,
+                totalCobrado: 0,
+                comisionesGanadas: 0,
+                netoADepositarA_Tienda: 0,
+            },
+        }));
+        vi.stubGlobal('fetch', fetchMock);
+
+        renderDriver();
+        await settleAsyncWork();
+
+        const disabledAction = screen.getByRole('button', { name: 'Esperando preparación' });
+        expect(disabledAction).toBeDisabled();
+        fireEvent.click(disabledAction);
+        expect(screen.queryByRole('alertdialog', { name: 'Confirmar Entrega' })).toBeNull();
+    });
+
     it('no reusa la billetera del repartidor anterior cuando cambia la sesión', async () => {
         localStorage.setItem(DRIVER_TOKEN_KEY, 'token-driver-a');
         const walletA = createDeferred<Response>();

@@ -27,6 +27,7 @@ import {
     completePedidoDeliveryInTransaction,
     isCompletePedidoReservationRelease,
     lockPedidoForFulfillment,
+    reservePedidoInTransaction,
     validatePedidoReservationTotals,
 } from '../backend/services/pedidoFulfillmentService';
 
@@ -141,7 +142,13 @@ describe('fulfillment autoritativo de Pedido', () => {
         const updateMany = vi.fn()
             .mockResolvedValueOnce({ count: 1 })
             .mockResolvedValueOnce({ count: 0 });
-        const tx = { $queryRaw: pedidoLockMock(), pedido: { updateMany } } as any;
+        const tx = {
+            $queryRaw: pedidoLockMock(),
+            pedido: {
+                updateMany,
+                findFirst: vi.fn().mockResolvedValue({ estado: 'entregado', facturaId: 'sale-a' }),
+            },
+        } as any;
 
         await claimPedidoDelivery(tx, { pedidoId: 'pedido-a', tenantId: 'tenant-a' });
         await expect(claimPedidoDelivery(tx, {
@@ -180,7 +187,7 @@ describe('fulfillment autoritativo de Pedido', () => {
             locked = false;
             waiters.shift()?.();
         };
-        let estado = 'pendiente';
+        let estado = 'preparando';
         const transaction = () => ({
             $queryRaw: vi.fn(async () => {
                 await acquire();
@@ -188,10 +195,14 @@ describe('fulfillment autoritativo de Pedido', () => {
             }),
             pedido: {
                 updateMany: vi.fn(async () => {
-                    if (estado !== 'pendiente') return { count: 0 };
+                    if (estado !== 'preparando') return { count: 0 };
                     estado = 'entregado';
                     return { count: 1 };
                 }),
+                findFirst: vi.fn(async () => ({
+                    estado,
+                    facturaId: estado === 'entregado' ? 'sale-a' : null,
+                })),
             },
         }) as any;
         const firstTx = transaction();
@@ -209,6 +220,175 @@ describe('fulfillment autoritativo de Pedido', () => {
         expect(await second).toMatchObject({ code: 'PEDIDO_ALREADY_PROCESSED', httpStatus: 409 });
         release();
     });
+
+    it.each(['preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto'])(
+        'permite reclamar entrega desde %s con tenant y estado en el mismo update condicional',
+        async (estado) => {
+            const updateMany = vi.fn(async ({ where }) => ({
+                count: where.estado.in.includes(estado) ? 1 : 0,
+            }));
+            const tx = {
+                $queryRaw: pedidoLockMock(),
+                pedido: { updateMany, findFirst: vi.fn() },
+            } as any;
+
+            await claimPedidoDelivery(tx, { pedidoId: 'pedido-a', tenantId: 'tenant-a' });
+
+            expect(updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'pedido-a',
+                    tenantId: 'tenant-a',
+                    facturaId: null,
+                    estado: {
+                        in: ['preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto'],
+                    },
+                },
+                data: { estado: 'entregado', entregadoAt: expect.any(Date) },
+            });
+            expect(tx.pedido.findFirst).not.toHaveBeenCalled();
+        },
+    );
+
+    it.each(['pendiente', 'asignado'])(
+        'rechaza entrega directa desde %s sin facturar ni cambiar el estado',
+        async (estado) => {
+            const tx = {
+                $queryRaw: pedidoLockMock(),
+                pedido: {
+                    updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+                    findFirst: vi.fn().mockResolvedValue({ estado, facturaId: null }),
+                },
+            } as any;
+
+            await expect(claimPedidoDelivery(tx, {
+                pedidoId: 'pedido-a',
+                tenantId: 'tenant-a',
+            })).rejects.toMatchObject({
+                code: 'PEDIDO_INVALID_STATE_TRANSITION',
+                httpStatus: 409,
+            });
+
+            expect(tx.pedido.findFirst).toHaveBeenCalledWith({
+                where: { id: 'pedido-a', tenantId: 'tenant-a' },
+                select: { estado: true, facturaId: true },
+            });
+        },
+    );
+
+    it('complete falla antes de facturar si un cliente intenta entregar un pedido pendiente', async () => {
+        const tx = {
+            $queryRaw: pedidoLockMock(),
+            pedido: {
+                updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+                findFirst: vi.fn().mockResolvedValue({ estado: 'pendiente', facturaId: null }),
+            },
+            sale: { create: vi.fn() },
+            payment: { create: vi.fn() },
+        } as any;
+
+        await expect(completePedidoDeliveryInTransaction(tx, {
+            pedidoId: 'pedido-a',
+            tenantId: 'tenant-a',
+            actorUserId: 'user-a',
+            source: 'DELIVERY_DASHBOARD',
+        })).rejects.toMatchObject({
+            code: 'PEDIDO_INVALID_STATE_TRANSITION',
+            httpStatus: 409,
+        });
+        expect(tx.sale.create).not.toHaveBeenCalled();
+        expect(tx.payment.create).not.toHaveBeenCalled();
+    });
+
+    it.each(['pendiente', 'asignado'])(
+        'reserva stock solo al preparar desde %s',
+        async (estado) => {
+            const pedido = {
+                id: 'pedido-a',
+                tenantId: 'tenant-a',
+                estado,
+                facturaId: null,
+                items: [],
+            };
+            const updateMany = vi.fn(async ({ where }) => ({
+                count: where.estado.in.includes(estado) ? 1 : 0,
+            }));
+            const tx = {
+                $queryRaw: pedidoLockMock(),
+                pedido: {
+                    findFirst: vi.fn().mockResolvedValue(pedido),
+                    updateMany,
+                    findFirstOrThrow: vi.fn().mockResolvedValue({ ...pedido, estado: 'preparando' }),
+                },
+                trackingEvento: { create: vi.fn().mockResolvedValue({}) },
+                kardexMovement: {
+                    count: vi.fn().mockResolvedValue(0),
+                    create: vi.fn(),
+                },
+                product: { findMany: vi.fn().mockResolvedValue([]) },
+                tenant: { findUnique: vi.fn().mockResolvedValue({ allowNegativeStock: false }) },
+                auditLog: { create: vi.fn() },
+            } as any;
+
+            await reservePedidoInTransaction(tx, {
+                pedidoId: 'pedido-a',
+                tenantId: 'tenant-a',
+                userId: 'user-a',
+            });
+
+            expect(tx.pedido.updateMany).toHaveBeenCalledWith({
+                where: {
+                    id: 'pedido-a',
+                    tenantId: 'tenant-a',
+                    facturaId: null,
+                    estado: { in: ['pendiente', 'asignado'] },
+                },
+                data: { estado: 'preparando' },
+            });
+            expect(tx.trackingEvento.create).toHaveBeenCalledTimes(1);
+        },
+    );
+
+    it('conserva el error idempotente al volver a preparar un pedido preparado', async () => {
+        const tx = {
+            $queryRaw: pedidoLockMock(),
+            pedido: {
+                findFirst: vi.fn().mockResolvedValue({
+                    id: 'pedido-a', tenantId: 'tenant-a', estado: 'preparando', facturaId: null, items: [],
+                }),
+                updateMany: vi.fn(),
+            },
+        } as any;
+
+        await expect(reservePedidoInTransaction(tx, {
+            pedidoId: 'pedido-a', tenantId: 'tenant-a', userId: 'user-a',
+        })).rejects.toMatchObject({ code: 'PEDIDO_ALREADY_PREPARED', httpStatus: 409 });
+        expect(tx.pedido.updateMany).not.toHaveBeenCalled();
+    });
+
+    it.each(['en_tienda', 'en_ruta', 'en_camino', 'en_punto'])(
+        'rechaza volver a preparar desde %s sin tocar inventario',
+        async (estado) => {
+            applyStockDeltaMock.mockClear();
+            const tx = {
+                $queryRaw: pedidoLockMock(),
+                pedido: {
+                    findFirst: vi.fn().mockResolvedValue({
+                        id: 'pedido-a', tenantId: 'tenant-a', estado, facturaId: null, items: [],
+                    }),
+                    updateMany: vi.fn(),
+                },
+            } as any;
+
+            await expect(reservePedidoInTransaction(tx, {
+                pedidoId: 'pedido-a', tenantId: 'tenant-a', userId: 'user-a',
+            })).rejects.toMatchObject({
+                code: 'PEDIDO_INVALID_STATE_TRANSITION',
+                httpStatus: 409,
+            });
+            expect(tx.pedido.updateMany).not.toHaveBeenCalled();
+            expect(applyStockDeltaMock).not.toHaveBeenCalled();
+        },
+    );
 
     it('falla cerrado si el row-lock no encuentra pedido dentro del tenant', async () => {
         const tx = { $queryRaw: vi.fn().mockResolvedValue([]) } as any;
