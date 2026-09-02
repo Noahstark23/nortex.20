@@ -25,7 +25,10 @@ import {
 import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
 import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
+import { PosCashSheet } from './pos/PosCashSheet';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
+import { PosPaymentSheet } from './pos/PosPaymentSheet';
+import { PosTicketShell } from './pos/PosTicketShell';
 import { StoreCreditPaymentOption } from './pos/StoreCreditPaymentOption';
 import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
 import POSCatalogAdminTools from './pos/POSCatalogAdminTools';
@@ -76,7 +79,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
-import { suggestNioCashAmounts as denominacionesSugeridas, validateCashReceived } from '../utils/posCash';
+import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductForPos, mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
@@ -217,12 +220,13 @@ const TarjetaProducto = React.memo<{
     onAgregar: (p: Product) => void;
 }>(({ product, bloqueada, onAgregar }) => (
     <button
+        type="button"
         onClick={() => onAgregar(product)}
         aria-disabled={bloqueada || undefined}
         title={bloqueada ? 'Sin existencia. Tocá para cargar stock.' : undefined}
-        className={`h-32 bg-surface-900 border rounded-card px-3 py-2 transition-colors text-left flex flex-col justify-between text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 ${bloqueada
+        className={`nx-fluid-press h-32 bg-surface-900 border rounded-card px-3 py-2 transition-colors text-left flex flex-col justify-between text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 ${bloqueada
             ? 'border-danger/25 opacity-70 hover:border-danger/50 hover:bg-danger-soft cursor-pointer'
-            : 'border-white/[0.06] hover:bg-surface-800 hover:border-brand/50 active:scale-[0.98]'}`}
+            : 'border-white/[0.06] hover:bg-surface-800 hover:border-brand/50'}`}
     >
         <div className="min-w-0 flex items-center gap-2">
             <ProductImage
@@ -940,7 +944,6 @@ const POS: React.FC = () => {
     const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
     const [reconciliationOfflineCount, setReconciliationOfflineCount] = useState(0);
     const [syncingOffline, setSyncingOffline] = useState(false);
-
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
@@ -955,7 +958,6 @@ const POS: React.FC = () => {
         setCustomerList((current) => current.some((item) => item.id === customer.id) ? current : [customer, ...current]);
         setSelectedCustomer(customer); setCustomerSearch(customer.name);
     }, [storeCreditCheckout.exchangeCustomer]);
-
     const fetchCustomerSuggestions = useCallback(async (query: string) => {
         if (!token) return;
         try {
@@ -2794,6 +2796,12 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
+            const paymentSheetShortcut = ['F2', 'F4', 'F7', 'F8', 'F9'].includes(e.key) || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'k' || e.key === 'Enter'));
+            if ((showPaymentOptions || showCashPreModal) && paymentSheetShortcut) {
+                e.preventDefault();
+                return;
+            }
+
             // Alternativas sin Fn para laptops; Ctrl/Cmd+P queda libre para imprimir.
             if (e.ctrlKey || e.metaKey) {
                 const key = e.key.toLowerCase();
@@ -3135,6 +3143,9 @@ const POS: React.FC = () => {
     const availableStoreCreditD = Decimal.max(0, toDecimal(selectedCustomer?.storeCreditBalance ?? 0));
     const storeCreditAppliedD = useStoreCredit ? Decimal.min(availableStoreCreditD, grandTotalD).toDecimalPlaces(2) : new Decimal(0);
     const amountDueD = grandTotalD.minus(storeCreditAppliedD).toDecimalPlaces(2);
+    const cashPaymentValidation = amountDueD.isZero()
+        ? { ok: true as const, received: new Decimal(0), total: new Decimal(0), change: new Decimal(0) }
+        : validateCashReceived(cashReceived, amountDueD);
     // El backend redondea total y exento a centavos antes del desglose. Este
     // espejo evita que una venta medida offline imprima un IVA distinto por un
     // centavo cuando finalmente sincronice.
@@ -3159,23 +3170,6 @@ const POS: React.FC = () => {
     const tax = taxD.toDecimalPlaces(2).toNumber();
     const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
     const globalDiscountNum = globalDiscountD.toNumber();
-    // ¿El chip de denominación es el que está cargado? Se compara por VALOR con
-    // Decimal, no por string: '500' y '500.00' son el mismo billete, y comparar
-    // texto dejaría el chip apagado según cómo se haya escrito el monto.
-    const chipActivo = (monto: Decimal): boolean =>
-        cashReceived !== '' && toDecimal(cashReceived).equals(monto);
-    const cashPaymentValidation = amountDueD.isZero() ? { ok: true as const, received: new Decimal(0), total: new Decimal(0), change: new Decimal(0) }
-        : validateCashReceived(cashReceived, amountDueD);
-
-    // Teclado táctil del modal de efectivo, con la misma sanitización del input.
-    const teclaEfectivo = (tecla: string) => {
-        setCashReceived(previous => {
-            if (tecla === 'LIMPIAR') return '';
-            if (tecla === 'BORRAR') return previous.slice(0, -1);
-            return sanitizeDecimalInput(previous + tecla);
-        });
-    };
-
     // El menú que rodea al POS necesita saber si hay una venta abierta para
     // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
     // el carrito sigue en pantalla hasta "Nueva venta", pero salir ahí no
@@ -4406,7 +4400,7 @@ const POS: React.FC = () => {
                                         // largo junto a `medirMenuCaja`). El alto máximo es para
                                         // que en un teléfono acostado el menú no se salga por
                                         // abajo sin poder alcanzarse.
-                                        className="fixed w-64 max-h-[calc(100vh-5rem)] overflow-y-auto bg-surface-800 border border-white/[0.08] rounded-card shadow-premium z-checkout animate-fade-in-up"
+                                        className="fixed w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto bg-surface-800 border border-white/[0.08] rounded-card shadow-premium z-checkout animate-fade-in-up"
                                     >
                                         <button
                                             onClick={() => { setShowCashModal('IN'); setCashCategory(''); setShowCashActions(false); }}
@@ -4543,9 +4537,9 @@ const POS: React.FC = () => {
 
             {/* SCANNER FEEDBACK TOAST */}
             {lastScanFeedback && (
-                <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl font-bold text-sm animate-in fade-in slide-in-from-top duration-200 flex items-center gap-2 ${lastScanFeedback.type === 'success'
-                    ? 'bg-emerald-500 text-white'
-                    : 'bg-red-500 text-white'
+                <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl font-bold text-sm flex items-center gap-2 ${lastScanFeedback.type === 'success'
+                    ? 'bg-brand text-brand-on'
+                    : 'bg-red-700 text-white'
                     }`}>
                     <ScanBarcode size={18} />
                     {lastScanFeedback.message}
@@ -4554,7 +4548,7 @@ const POS: React.FC = () => {
             {/* --- CASH MOVEMENT MODAL --- */}
             {showCashModal && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6">
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-3">
                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center ${showCashModal === 'IN' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
@@ -4573,7 +4567,6 @@ const POS: React.FC = () => {
                                 <X size={20} />
                             </button>
                         </div>
-
                         <form onSubmit={handleCashMovement} noValidate className="space-y-4">
                             {/* Category - Quick Select Buttons */}
                             <div>
@@ -4584,7 +4577,7 @@ const POS: React.FC = () => {
                                             key={cat.value}
                                             type="button"
                                             onClick={() => setCashCategory(cat.value)}
-                                            className={`text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-all ${cashCategory === cat.value
+                                            className={`nx-fluid-press min-h-tap text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-colors ${cashCategory === cat.value
                                                 ? showCashModal === 'IN'
                                                     ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 font-bold'
                                                     : 'border-amber-500 bg-amber-500/10 text-amber-400 font-bold'
@@ -4597,7 +4590,6 @@ const POS: React.FC = () => {
                                 </div>
                                 {errorMovimiento.categoria && <p className="text-xs text-danger mt-2">{errorMovimiento.categoria}</p>}
                             </div>
-
                             {/* Amount */}
                             <div>
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto (C$)</label>
@@ -4613,7 +4605,6 @@ const POS: React.FC = () => {
                                 />
                                 {errorMovimiento.monto && <p className="text-xs text-danger mt-2">{errorMovimiento.monto}</p>}
                             </div>
-
                             {/* Description */}
                             <div>
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Descripción</label>
@@ -4639,7 +4630,7 @@ const POS: React.FC = () => {
                                 // el error en español debajo del campo. Un botón muerto
                                 // no explica qué falta.
                                 disabled={cashMovementLoading}
-                                className={`w-full py-3.5 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${showCashModal === 'IN'
+                                className={`nx-fluid-press min-h-tap w-full py-3.5 rounded-xl font-bold text-white transition-colors flex items-center justify-center gap-2 ${showCashModal === 'IN'
                                     ? 'bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300'
                                     : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300'
                                     }`}
@@ -4658,7 +4649,7 @@ const POS: React.FC = () => {
             {/* --- 🏦 AGENTE BANCARIO MODAL --- */}
             {showAgentModal && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6 max-h-[90dvh] overflow-y-auto">
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full flex items-center justify-center bg-sky-500/15 text-sky-400">
@@ -4696,7 +4687,7 @@ const POS: React.FC = () => {
                                 <button
                                     onClick={handleCreateAgreement}
                                     disabled={agentLoading || !newAgreementName.trim()}
-                                    className="w-full py-3 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-all"
+                                    className="nx-fluid-press min-h-tap w-full py-3 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-colors"
                                 >
                                     {agentLoading ? 'Creando...' : 'Crear convenio'}
                                 </button>
@@ -4730,7 +4721,7 @@ const POS: React.FC = () => {
                                                 key={op.value}
                                                 type="button"
                                                 onClick={() => updateAgentData({ operation: op.value })}
-                                                className={`text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-all ${agentData.operation === op.value
+                                                className={`nx-fluid-press min-h-tap text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-colors ${agentData.operation === op.value
                                                     ? op.dir === 'IN'
                                                         ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 font-bold'
                                                         : 'border-amber-500 bg-amber-500/10 text-amber-400 font-bold'
@@ -4753,14 +4744,14 @@ const POS: React.FC = () => {
                                         <button
                                             type="button"
                                             onClick={() => updateAgentData({ currency: 'NIO' })}
-                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'NIO' ? 'border-sky-500 bg-sky-500/10 text-sky-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
+                                            className={`nx-fluid-press min-h-tap text-sm px-3 py-2 rounded-lg border-2 font-bold transition-colors ${agentData.currency === 'NIO' ? 'border-sky-500 bg-sky-500/10 text-sky-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
                                         >
                                             C$ Córdobas
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => updateAgentData({ currency: 'USD' })}
-                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'USD' ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
+                                            className={`nx-fluid-press min-h-tap text-sm px-3 py-2 rounded-lg border-2 font-bold transition-colors ${agentData.currency === 'USD' ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
                                         >
                                             US$ Dólares
                                         </button>
@@ -4836,7 +4827,7 @@ const POS: React.FC = () => {
                                 <button
                                     type="submit"
                                     disabled={agentLoading || !agentData.agreementId || !agentData.amount}
-                                    className="w-full py-3.5 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-all flex items-center justify-center gap-2"
+                                    className="nx-fluid-press min-h-tap w-full py-3.5 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-colors flex items-center justify-center gap-2"
                                 >
                                     {agentLoading ? (
                                         <><Loader2 className="animate-spin" size={18} /> Registrando...</>
@@ -4852,7 +4843,7 @@ const POS: React.FC = () => {
 
             {/* --- MOVEMENTS LIST DROPDOWN --- */}
             {showMovementsList && currentShift && (
-                <div className="absolute top-14 right-4 z-40 w-80 bg-surface-900 rounded-xl shadow-2xl border border-white/[0.06] max-h-80 overflow-y-auto animate-in slide-in-from-top duration-200">
+                <div className="absolute top-14 right-4 z-40 w-80 bg-surface-900 rounded-xl shadow-2xl border border-white/[0.06] max-h-80 overflow-y-auto">
                     <div className="p-3 border-b border-white/[0.04] flex justify-between items-center sticky top-0 bg-surface-900">
                         <h3 className="text-sm font-bold text-slate-200">Movimientos del Turno</h3>
                         <button onClick={() => setShowMovementsList(false)} className="text-slate-400 hover:text-slate-300"><X size={16} /></button>
@@ -4926,7 +4917,7 @@ const POS: React.FC = () => {
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="held-carts-title"
-                        className="w-full sm:max-w-md max-h-[calc(100dvh-3rem)] sm:max-h-[min(680px,calc(100dvh-2rem))] bg-surface-900 rounded-t-card sm:rounded-card shadow-premium border border-white/[0.08] overflow-hidden flex flex-col animate-in slide-in-from-bottom sm:fade-in duration-200"
+                        className="w-full sm:max-w-md max-h-[calc(100dvh-3rem)] sm:max-h-[min(680px,calc(100dvh-2rem))] bg-surface-900 rounded-t-card sm:rounded-card shadow-premium border border-white/[0.08] overflow-hidden flex flex-col"
                         onClick={e => e.stopPropagation()}
                     >
                     <div className="px-5 py-4 border-b border-white/[0.06] flex justify-between items-start gap-3 bg-surface-900">
@@ -5489,9 +5480,9 @@ const POS: React.FC = () => {
                         {guidedSimpleMode && <p className="mt-2 px-1 text-xs text-slate-500">Código, nombre o SKU</p>}
                     </div>
                     {/* Quick Create */}
-                    {!guidedSimpleMode && <button
+                    {!guidedSimpleMode && <button type="button"
                         onClick={openQuickCreate}
-                        className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all"
+                        className="nx-fluid-press min-h-tap bg-amber-400 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-colors"
                         title="Producto Rápido"
                     >
                         <Zap size={18} />
@@ -5527,8 +5518,9 @@ const POS: React.FC = () => {
                             {filteredProducts.slice(0, 5).map(product => (
                                 <button
                                     key={`top-${product.id}`}
+                                    type="button"
                                     onClick={() => agregarDesdeGrilla(product)}
-                                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-nortex-500 p-3 rounded-xl text-center active:scale-95 transition-all flex flex-col items-center justify-center gap-1 h-24 shadow-[0_0_15px_rgba(0,0,0,0.1)] group"
+                                    className="nx-fluid-press bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-nortex-500 p-3 rounded-xl text-center transition-colors flex flex-col items-center justify-center gap-1 h-24 shadow-[0_0_15px_rgba(0,0,0,0.1)] group"
                                 >
                                     <Package size={24} className="text-blue-400 group-hover:text-blue-300 transition-colors mb-1" />
                                     <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{product.name}</span>
@@ -5683,7 +5675,7 @@ const POS: React.FC = () => {
                         ? `Revisar venta, ${cart.reduce((a, b) => a + b.quantity, 0)} productos, total ${formatMoney(grandTotal)}`
                         : 'Abrir la venta actual, todavía sin productos'}
                     className={`nx-fluid-press w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
-                        ? 'bg-brand text-brand-on shadow-premium animate-in slide-in-from-bottom duration-300'
+                        ? 'bg-brand text-brand-on shadow-premium'
                         : 'bg-surface-900/95 backdrop-blur-sm border border-white/[0.08] text-slate-400'}`}
                 >
                     <div className="flex items-center gap-2 min-w-0">
@@ -5700,14 +5692,13 @@ const POS: React.FC = () => {
                 </button>
             </div>
 
-            {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
-            <div className={`
-          nx-dark-context nx-ticket-surface fixed inset-0 z-50 bg-surface-900 lg:static lg:z-auto lg:border lg:border-white/[0.06] flex flex-col transition-[transform,opacity] duration-200 ease-nx
-          ${guidedSimpleMode ? 'lg:mt-16 lg:mr-3 lg:mb-3 lg:w-[38%] lg:min-w-[420px] lg:max-w-[560px] lg:rounded-card' : 'lg:mt-14 lg:w-96 lg:shadow-xl'}
-          ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
-      `}>
+            {/* Ticket: FluidSheet en movil; el selector de pago es la única capa modal activa. */}
+            <PosTicketShell
+                open={showMobileCart && !showPaymentOptions && !showCashPreModal} onOpen={() => setShowMobileCart(true)} onClose={() => setShowMobileCart(false)}
+                guidedSimpleMode={guidedSimpleMode} labelledBy="pos-ticket-title"
+            >
                 <div className={`border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
-                    <h2 className="font-bold text-slate-100 flex items-center gap-2">
+                    <h2 id="pos-ticket-title" className="font-bold text-slate-100 flex items-center gap-2">
                         {!guidedSimpleMode && <ShoppingCart size={20} />}
                         {guidedSimpleMode ? 'Venta actual' : 'Ticket'}
                         {guidedSimpleMode && (
@@ -5728,7 +5719,7 @@ const POS: React.FC = () => {
                             </button>
                         )}
                         {/* Mobile Close Button */}
-                        <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-2 bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
+                        <button type="button" onClick={() => setShowMobileCart(false)} data-fluid-sheet-initial-focus className="lg:hidden w-11 h-11 flex items-center justify-center bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
                             <ArrowDownCircle size={24} />
                         </button>
                     </div>
@@ -5802,7 +5793,7 @@ const POS: React.FC = () => {
                             placeholder="Buscar cliente"
                             className={guidedSimpleMode
                                 ? 'w-full h-touch pl-16 pr-10 text-sm font-semibold border border-white/[0.08] rounded-control outline-none focus:border-brand focus:ring-2 focus:ring-brand/30 bg-surface-800/40 text-slate-100 placeholder:text-slate-500 transition-colors'
-                                : 'w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-brand rounded-xl outline-none focus:border-brand-hover focus:ring-4 focus:ring-brand/20 bg-brand/5 text-slate-100 placeholder:text-slate-500 placeholder:font-medium transition-all shadow-sm'}
+                                : 'w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-brand rounded-xl outline-none focus:border-brand-hover focus:ring-4 focus:ring-brand/20 bg-brand/5 text-slate-100 placeholder:text-slate-500 placeholder:font-medium transition-[border-color,box-shadow,background-color] shadow-sm'}
                             value={selectedCustomer ? selectedCustomer.name : customerSearch}
                             onChange={(e) => {
                                 setCustomerSearch(e.target.value);
@@ -5980,7 +5971,7 @@ const POS: React.FC = () => {
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
                                     <div
-                                        className="bg-blue-500 h-full transition-all"
+                                        className="bg-blue-500 h-full transition-[width]"
                                         style={{ width: `${customerCreditUsagePct(selectedCustomer.creditLimit, selectedCustomer.currentDebt)}%` }}
                                     />
                                 </div>
@@ -6411,7 +6402,7 @@ const POS: React.FC = () => {
                             }}
                             title={!currentShift ? 'Abrí la caja para poder cobrar' : undefined}
                             disabled={processing || cart.length === 0}
-                            className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
+                            className="nx-fluid-press h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
                             <Banknote size={22} strokeWidth={2.5} className="shrink-0" />
                             <span className="flex flex-col items-start leading-tight min-w-0">
@@ -6436,7 +6427,7 @@ const POS: React.FC = () => {
                             }}
                             title={!currentShift ? 'Abrí la caja para poder cobrar' : undefined}
                             disabled={processing}
-                            className={`h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors border ${
+                            className={`nx-fluid-press h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 transition-colors border ${
                                 isCreditBlocked
                                     ? 'bg-transparent text-slate-400 border-white/[0.06] hover:bg-white/[0.04]'
                                     : 'bg-transparent text-slate-100 border-slate-700 hover:bg-white/[0.04]'
@@ -6476,19 +6467,19 @@ const POS: React.FC = () => {
                         </div>
                     )}
                 </div>
-            </div>
+            </PosTicketShell>
 
             {/* =============================== */}
             {/* 🔄 RETURNS MODAL                */}
             {/* =============================== */}
             {showReturnModal && (
                 <div
-                    className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+                    className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="return-modal-title"
                 >
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] max-h-[90vh] flex flex-col">
+                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] max-h-[90dvh] flex flex-col">
                         <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 flex items-center justify-between">
                             <h3 id="return-modal-title" className="text-lg font-bold text-white flex items-center gap-2"><RefreshCw size={20} /> Devolución de Producto</h3>
                             <button onClick={resetReturnFlow} className="text-white/80 hover:text-white" aria-label="Cerrar devolución"><X size={20} /></button>
@@ -6775,7 +6766,7 @@ const POS: React.FC = () => {
             {/* 🔴 CREDIT THERMOMETER PANEL       */}
             {/* =============================== */}
             {showCreditPanel && selectedCustomer && creditInfo && (
-                <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-white/[0.06]">
                         <div className={`px-6 py-4 text-center ${creditInfo.color === 'red' ? 'bg-gradient-to-r from-red-500 to-rose-600' :
                             creditInfo.color === 'yellow' ? 'bg-gradient-to-r from-amber-400 to-orange-500' :
@@ -6797,7 +6788,7 @@ const POS: React.FC = () => {
                                     <span className="font-bold text-slate-100">{formatMoney(creditInfo.currentDebt)}</span>
                                 </div>
                                 <div className="w-full bg-white/[0.06] h-3 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full transition-all duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
+                                    <div className={`h-full rounded-full transition-[width] duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
                                         }`} style={{ width: `${Math.min(creditInfo.debtPct, 100)}%` }} />
                                 </div>
                                 <div className="flex justify-between text-[10px] mt-1">
@@ -6850,7 +6841,7 @@ const POS: React.FC = () => {
                                     <button
                                         onClick={handleCreditOverride}
                                         disabled={creditOverridePin.length !== 4}
-                                        className="w-full py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 text-sm"
+                                        className="nx-fluid-press min-h-tap w-full py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 text-sm"
                                     >
                                         <ShieldAlert size={16} /> Autorizar Override
                                     </button>
@@ -6880,17 +6871,17 @@ const POS: React.FC = () => {
             )}
 
             {/* =============================== */}
-            {/* POST-SALE SUCCESS MODAL         */}
+            {/* PAYMENT METHOD SHEET            */}
             {/* =============================== */}
-            {showPaymentOptions && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { if (!processing) setShowPaymentOptions(false); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="payment-title" aria-busy={processing} className="bg-surface-900 border border-white/[0.08] rounded-t-card sm:rounded-card shadow-premium w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+            <PosPaymentSheet
+                open={showPaymentOptions} onClose={() => setShowPaymentOptions(false)} labelledBy="payment-title" busy={processing}
+            >
                         <div className="px-5 py-4 border-b border-white/[0.06] flex items-start justify-between gap-3">
                             <div>
-                                <p className="text-xs font-semibold text-slate-500">Total a cobrar</p>
+                                <p className="text-xs font-semibold text-slate-400">Total a cobrar</p>
                                 <h2 id="payment-title" className="text-3xl font-extrabold text-slate-100 mt-1 nx-num">{formatMoney(grandTotal)}</h2>
                             </div>
-                            <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowPaymentOptions(false); }} />
+                            <IconButton icon={<X size={16} />} label="Cerrar" disabled={processing} onClick={() => { if (!processing) setShowPaymentOptions(false); }} />
                         </div>
                         <div className="p-4 space-y-2">
                             {selectedCustomer && <StoreCreditPaymentOption available={availableStoreCreditD.toNumber()} applied={storeCreditAppliedD.toNumber()}
@@ -6900,11 +6891,11 @@ const POS: React.FC = () => {
                                 type="button"
                                 onClick={() => handleCheckout('TRANSFER')}
                                 disabled={processing}
-                                className="w-full h-pay rounded-control bg-emerald-600 px-4 font-black text-white disabled:opacity-50"
+                                className="nx-fluid-press w-full h-pay rounded-control bg-brand px-4 font-black text-brand-on hover:bg-brand-hover disabled:opacity-50"
                             >Confirmar usando saldo a favor</button>}
                             {!guidedSimpleMode && <button
                                 type="button"
-                                autoFocus
+                                data-fluid-sheet-initial-focus
                                 onClick={openCashCheckout}
                                 disabled={processing}
                                 className="w-full h-pay px-4 rounded-control bg-brand text-brand-on font-bold flex items-center gap-3 hover:bg-brand-hover transition-colors disabled:opacity-50"
@@ -6913,7 +6904,7 @@ const POS: React.FC = () => {
                             </button>}
                             <button
                                 type="button"
-                                autoFocus={guidedSimpleMode}
+                                data-fluid-sheet-initial-focus={guidedSimpleMode || undefined}
                                 onClick={() => handleCheckout('TRANSFER')}
                                 disabled={processing}
                                 className="w-full h-pay px-4 rounded-control border border-white/[0.08] text-slate-100 font-bold flex items-center gap-3 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
@@ -6951,195 +6942,52 @@ const POS: React.FC = () => {
                                 {processing ? <Loader2 size={19} className="animate-spin" /> : <Wallet size={19} />}
                                 {processing ? 'Registrando venta…' : selectedCustomer ? 'Fiado' : 'Fiado · elegir cliente'}
                             </button>
-                            <p className="text-xs text-slate-500 text-center pt-2">
+                            <p className="text-xs text-slate-400 text-center pt-2">
                                 {guidedSimpleMode
                                     ? 'Volvé al ticket para cobrar en efectivo y confirmar el vuelto.'
                                     : 'En efectivo confirmás el monto recibido. Los demás métodos se registran al elegirlos.'}
                             </p>
                         </div>
-                    </div>
-                </div>
-            )}
+            </PosPaymentSheet>
             {/* =============================== */}
             {/* 💵 PRE-SALE CASH MODAL          */}
             {/* =============================== */}
             {showCashPreModal && !guidedSimpleMode && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => { if (!processing) setShowCashPreModal(false); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="cash-payment-title" aria-busy={processing} className="bg-surface-900 rounded-t-card sm:rounded-card shadow-premium w-full max-w-sm overflow-hidden border border-white/[0.08]" onClick={e => e.stopPropagation()}>
-                        <div className="p-5 border-b border-white/[0.06] flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-pill bg-brand-soft text-brand flex items-center justify-center"><Banknote size={20} /></div>
-                            <div>
-                                <h2 id="cash-payment-title" className="text-base font-bold text-slate-100">Efectivo</h2>
-                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(amountDueD)}</p>
-                                {storeCreditAppliedD.greaterThan(0) && <p className="mt-1 text-xs text-emerald-300">Saldo aplicado: {formatMoney(storeCreditAppliedD)}</p>}
-                            </div>
-                            <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowCashPreModal(false); }} className="ml-auto" />
-                        </div>
-                        <div className="p-5 space-y-4">
-                            {/* USD toggle */}
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs text-slate-500 font-semibold">Efectivo recibido</label>
-                                <button
-                                    onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
-                                    className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/[0.04] text-slate-500 border-white/[0.06] hover:border-blue-300'}`}
-                                >
-                                    {payingInUSD ? 'USD' : '¿Paga en USD?'}
-                                </button>
-                            </div>
-
-                            {payingInUSD ? (
-                                <div className="space-y-2">
-                                    <div className="relative">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 font-bold text-sm">$</span>
-                                        <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            autoFocus
-                                            aria-label="Monto recibido en dólares"
-                                            className="w-full pl-8 pr-4 py-3 border border-blue-300 rounded-lg text-xl font-bold text-slate-100 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-500/10 font-mono tabular-nums"
-                                            placeholder="0.00"
-                                            value={usdAmount}
-                                            onChange={e => {
-                                                const s = sanitizeDecimalInput(e.target.value);
-                                                setUsdAmount(s);
-                                                setCashReceived(s === '' ? '' : toDecimal(s).mul(exchangeRate).toFixed(2));
-                                            }}
-                                        />
-                                    </div>
-                                    <div className="text-xs text-blue-400 text-center font-medium">Tasa: 1 USD = {formatMoney(exchangeRate)} NIO</div>
-                                    {toDecimal(usdAmount).greaterThan(0) && (
-                                        <div className="bg-blue-500/10 px-3 py-2 rounded-lg border border-blue-500/20 text-sm">
-                                            <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate))}</span></div>
-                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(amountDueD) && (
-                                                <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(amountDueD))}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(amountDueD.div(exchangeRate)))}</span></div>
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ) : (
-                                <>
-                                    {/* Denominaciones derivadas del total (nunca fijas):
-                                        ver `denominacionesSugeridas` — ninguna puede
-                                        resultar en un pago menor al total. */}
-                                    <div className="flex gap-2 flex-wrap">
-                                        {/* P1-5/P1-2 — El estilo del chip se DERIVA de lo
-                                            que hay escrito. Antes el verde de "Monto exacto"
-                                            estaba hardcodeado: al tocar C$500 el input pasaba
-                                            a 500 y el cambio salía bien, pero "Monto exacto"
-                                            seguía resaltado y C$500 apagado — la pantalla
-                                            mentía sobre lo que estaba seleccionado.
-                                            El activo se distingue por BORDE además de color:
-                                            no se depende solo del color para decir cuál es. */}
-                                        <button
-                                            type="button"
-                                            onClick={() => setCashReceived(amountDueD.toFixed(2))}
-                                            aria-pressed={chipActivo(amountDueD)}
-                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(amountDueD)
-                                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
-                                                : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
-                                        >
-                                            Monto exacto
-                                        </button>
-                                        {denominacionesSugeridas(amountDueD).map(monto => (
-                                            <button
-                                                key={monto.toFixed(2)}
-                                                type="button"
-                                                onClick={() => setCashReceived(monto.toFixed(2))}
-                                                aria-pressed={chipActivo(monto)}
-                                                className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(monto)
-                                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
-                                                    : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
-                                            >
-                                                {formatMoney(monto, 'NIO', { decimals: 0 })}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="relative">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
-                                        <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            autoFocus
-                                            aria-label="Efectivo recibido en córdobas"
-                                            className="w-full pl-10 pr-4 py-3 border border-white/10 rounded-lg text-xl font-bold text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono tabular-nums"
-                                            placeholder={amountDueD.toFixed(2)}
-                                            value={cashReceived}
-                                            onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
-                                        />
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-1.5">
-                                        {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '00'].map(key => (
-                                            <button
-                                                key={key}
-                                                type="button"
-                                                onClick={() => teclaEfectivo(key)}
-                                                className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-100 text-xl font-bold font-mono tabular-nums transition-colors active:scale-[0.97]"
-                                            >
-                                                {key}
-                                            </button>
-                                        ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => teclaEfectivo('BORRAR')}
-                                            aria-label="Borrar el último dígito"
-                                            className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97] flex items-center justify-center"
-                                        >
-                                            <ArrowRight size={20} className="rotate-180" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => teclaEfectivo('LIMPIAR')}
-                                            className="h-14 col-span-2 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97]"
-                                        >
-                                            Limpiar
-                                        </button>
-                                    </div>
-                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(amountDueD) && (
-                                        <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
-                                            <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
-                                            <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(cashReceived).minus(amountDueD))}
-                                            </p>
-                                        </div>
-                                    )}
-                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(amountDueD) && (
-                                        <div className="bg-red-500/10 px-4 py-3 rounded-control border border-red-500/20 text-center">
-                                            <p className="text-xs font-bold text-red-400 uppercase tracking-widest">Falta</p>
-                                            <p className="text-3xl font-black text-red-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(amountDueD.minus(toDecimal(cashReceived)))}
-                                            </p>
-                                        </div>
-                                    )}
-                                </>
-                            )}
-
-                            <div className="flex gap-3 pt-1">
-                                <button
-                                    onClick={() => setShowCashPreModal(false)}
-                                    disabled={processing}
-                                    className="flex-1 py-3 rounded-xl border border-white/[0.06] text-slate-300 font-bold hover:bg-surface-800/40 transition-colors disabled:opacity-50"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={() => handleCheckout('CASH')}
-                                    disabled={processing || !cashPaymentValidation.ok}
-                                    className="flex-1 h-touch rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                    {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                                    {processing ? 'Registrando…' : amountDueD.isZero() ? 'Confirmar con saldo' : `Cobrar ${formatMoney(amountDueD)}`}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+                <PosCashSheet
+                    open={showCashPreModal}
+                    processing={processing}
+                    amountDue={amountDueD}
+                    storeCreditApplied={storeCreditAppliedD}
+                    exchangeRate={toDecimal(exchangeRate)}
+                    payingInUSD={payingInUSD}
+                    usdAmount={usdAmount}
+                    cashReceived={cashReceived}
+                    validation={cashPaymentValidation}
+                    onClose={() => setShowCashPreModal(false)}
+                    onTogglePayingInUSD={() => {
+                        setPayingInUSD(!payingInUSD);
+                        setUsdAmount('');
+                        setCashReceived('');
+                    }}
+                    onUsdAmountChange={(value) => {
+                        setUsdAmount(value);
+                        if (value.trim() === '' || value === '.') {
+                            setCashReceived('');
+                            return;
+                        }
+                        try {
+                            setCashReceived(toDecimal(value).mul(exchangeRate).toFixed(2));
+                        } catch {
+                            setCashReceived('');
+                        }
+                    }}
+                    onCashReceivedChange={setCashReceived}
+                    onConfirm={() => handleCheckout('CASH')}
+                />
             )}
 
             {completedSale && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
                     <div role="dialog" aria-modal="true" aria-labelledby="completed-sale-title" className="bg-surface-900 rounded-card shadow-premium w-full max-w-md overflow-hidden border border-white/[0.08]">
 
                         {/* Header - Success */}
@@ -7224,7 +7072,7 @@ const POS: React.FC = () => {
                                             <div className="mt-2">
                                                 <div className="h-2 rounded-full bg-white/10 overflow-hidden">
                                                     <div
-                                                        className={`h-full transition-all duration-700 ${complete ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                                        className={`h-full transition-[width] duration-700 ${complete ? 'bg-amber-400' : 'bg-emerald-500'}`}
                                                         style={{ width: `${progress}%` }}
                                                     />
                                                 </div>
@@ -7326,7 +7174,7 @@ const POS: React.FC = () => {
 
             {/* SCAN FEEDBACK TOAST */}
             {lastScanFeedback && (
-                <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full font-bold shadow-2xl z-50 animate-in slide-in-from-bottom-5 ${lastScanFeedback.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full font-bold shadow-2xl z-50 ${lastScanFeedback.type === 'success' ? 'bg-brand text-brand-on' : 'bg-red-700 text-white'}`}>
                     {lastScanFeedback.message}
                 </div>
             )}

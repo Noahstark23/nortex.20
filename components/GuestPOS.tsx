@@ -581,7 +581,7 @@ const GuestPOS: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setCatalogDensity('cards')}
-                        className={`nx-fluid-press rounded-[8px] px-3 py-2 text-sm font-semibold transition-colors ${
+                        className={`nx-fluid-press min-h-tap rounded-[8px] px-3 py-2 text-sm font-semibold transition-colors ${
                           catalogDensity === 'cards'
                             ? 'bg-brand text-brand-on'
                             : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'
@@ -592,7 +592,7 @@ const GuestPOS: React.FC = () => {
                       <button
                         type="button"
                         onClick={() => setCatalogDensity('dense')}
-                        className={`nx-fluid-press rounded-[8px] px-3 py-2 text-sm font-semibold transition-colors ${
+                        className={`nx-fluid-press min-h-tap rounded-[8px] px-3 py-2 text-sm font-semibold transition-colors ${
                           catalogDensity === 'dense'
                             ? 'bg-brand text-brand-on'
                             : 'text-slate-500 hover:bg-slate-100 hover:text-slate-950'
@@ -673,13 +673,13 @@ const GuestPOS: React.FC = () => {
                           <button
                             type="button"
                             onClick={() => addToCart(product)}
-                            className="nx-fluid-press mt-auto flex min-h-tap w-full items-center justify-center gap-2 rounded-control text-sm font-semibold text-brand transition-colors hover:bg-brand/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                            className="nx-fluid-press mt-auto flex min-h-tap w-full items-center justify-center gap-2 rounded-control text-sm font-semibold text-brand-800 transition-colors hover:bg-brand/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
                             aria-label={`Agregar ${product.name} a la venta`}
                           >
                             {quantity
                               ? `Agregar otro · ${quantity} en venta`
                               : 'Agregar'}
-                            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-brand">
+                            <span className="flex h-7 w-7 items-center justify-center rounded-full border border-brand-800">
                               <Plus aria-hidden="true" size={18} />
                             </span>
                           </button>
@@ -801,7 +801,7 @@ const GuestPOS: React.FC = () => {
                         type="button"
                         onClick={clearCart}
                         disabled={cart.length === 0}
-                        className="nx-fluid-press flex min-h-tap items-center gap-2 rounded-control px-2 text-sm font-medium text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:opacity-40"
+                        className="nx-fluid-press flex min-h-tap min-w-tap items-center justify-center gap-2 rounded-control px-2 text-sm font-medium text-slate-400 transition-colors hover:bg-white/[0.04] hover:text-red-400 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:opacity-40"
                         aria-label="Vaciar venta"
                       >
                         <Trash2 aria-hidden="true" size={20} />

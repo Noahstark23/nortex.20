@@ -4,7 +4,10 @@ import {
   BookOpen, ShoppingCart, Package, PlayCircle, ArrowRight, Sparkles,
   Banknote, Users, Calculator, Truck, HandCoins, Scale,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
+import ModuleHeader from './ui/ModuleHeader';
 import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
+import { clearOnboardingFlags, currentOnboardingStorageKeys } from '../utils/onboardingStorage';
 
 /**
  * Centro de Ayuda / Tutoriales.
@@ -20,6 +23,45 @@ interface QuickGuide {
   title: string;
   steps: string[];
 }
+
+interface InteractiveTutorial {
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  destination: string;
+  tone: 'info' | 'positive' | 'warning' | 'neutral';
+}
+
+const TUTORIALS: InteractiveTutorial[] = [
+  {
+    icon: ShoppingCart,
+    title: 'Cómo hacer una venta',
+    description: 'Un recorrido guiado por el Punto de Venta: del carrito al ticket.',
+    destination: '/app/pos?tour=pos',
+    tone: 'info',
+  },
+  {
+    icon: Package,
+    title: 'Cómo cargar inventario',
+    description: 'Te muestro dónde agregar productos y cómo buscarlos.',
+    destination: '/app/inventory?tour=inv',
+    tone: 'positive',
+  },
+  {
+    icon: HandCoins,
+    title: 'Cómo cobrar el fiado',
+    description: 'Quién te debe, qué cobrar primero y cómo registrar los abonos.',
+    destination: '/app/receivables?tour=fiado',
+    tone: 'warning',
+  },
+  {
+    icon: Truck,
+    title: 'Cómo registrar compras',
+    description: 'Registrá la mercadería que entra para conocer tu ganancia real.',
+    destination: '/app/purchases?tour=compras',
+    tone: 'neutral',
+  },
+];
 
 const GUIDES: QuickGuide[] = [
   {
@@ -99,8 +141,7 @@ const HelpCenter: React.FC = () => {
   const navigate = useNavigate();
 
   const reshowChecklist = () => {
-    localStorage.removeItem('nortex_onb_welcome');
-    localStorage.removeItem('nortex_onb_dismissed');
+    clearOnboardingFlags(localStorage, currentOnboardingStorageKeys());
     // Recargamos para que el OnboardingHub (montado en Layout) lo vuelva a leer.
     // A la pantalla de inicio del ROL (antes: siempre /app/dashboard, que para
     // un cajero no es su pantalla).
@@ -114,131 +155,80 @@ const HelpCenter: React.FC = () => {
   };
 
   return (
-    <div className="p-6 h-full overflow-y-auto bg-surface-800/40 text-slate-100">
-      <header className="mb-8 flex items-start justify-between gap-4 flex-wrap">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-nortex-900 text-white rounded-2xl flex items-center justify-center">
-            <BookOpen size={24} />
-          </div>
-          <div>
-            <h1 className="text-3xl font-bold text-slate-100">Ayuda y Tutoriales</h1>
-            <p className="text-slate-500">Aprendé a usar Nortex paso a paso.</p>
-          </div>
-        </div>
-        <button
-          onClick={reshowChecklist}
-          className="flex items-center gap-2 px-4 py-2.5 bg-nortex-accent/15 hover:bg-nortex-accent/30 text-slate-100 font-bold rounded-xl transition-colors"
-        >
-          <Sparkles size={18} /> Ver mis primeros pasos
-        </button>
-      </header>
+    <div className="nx-workspace mx-auto h-full w-full max-w-[1600px] overflow-y-auto p-4 sm:p-6 lg:p-8">
+      <ModuleHeader
+        className="mb-8"
+        icon={<BookOpen size={20} aria-hidden="true" />}
+        title="Ayuda y Tutoriales"
+        subtitle="Aprendé a usar Nortex paso a paso."
+        actions={(
+          <button
+            type="button"
+            onClick={reshowChecklist}
+            className="nx-fluid-press nx-tone-positive-bg nx-tone-positive flex min-h-tap items-center gap-2 rounded-control px-4 py-2.5 font-bold transition-colors hover:brightness-[0.98]"
+          >
+            <Sparkles size={18} aria-hidden="true" /> Ver mis primeros pasos
+          </button>
+        )}
+      />
 
       {/* TUTORIALES INTERACTIVOS */}
-      <section className="mb-10">
-        <h2 className="text-lg font-bold text-slate-100 mb-4 flex items-center gap-2">
-          <PlayCircle size={20} className="text-nortex-accent" /> Tutoriales interactivos
+      <section className="mb-10" aria-labelledby="help-center-tutorials-title">
+        <h2 id="help-center-tutorials-title" className="nx-canvas-text mb-4 flex items-center gap-2 text-lg font-bold">
+          <PlayCircle size={20} className="nx-tone-positive" aria-hidden="true" /> Tutoriales interactivos
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <button
-            onClick={() => navigate('/app/pos?tour=pos')}
-            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-blue-500/15 text-blue-400 rounded-xl flex items-center justify-center">
-                <ShoppingCart size={20} />
-              </div>
-              <h3 className="font-bold text-slate-100">Cómo hacer una venta</h3>
-            </div>
-            <p className="text-sm text-slate-500 mb-3">
-              Un recorrido guiado por el Punto de Venta: del carrito al ticket.
-            </p>
-            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
-              Iniciar tutorial <ArrowRight size={16} />
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigate('/app/inventory?tour=inv')}
-            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-emerald-500/15 text-emerald-400 rounded-xl flex items-center justify-center">
-                <Package size={20} />
-              </div>
-              <h3 className="font-bold text-slate-100">Cómo cargar inventario</h3>
-            </div>
-            <p className="text-sm text-slate-500 mb-3">
-              Te muestro dónde agregar productos y cómo buscarlos.
-            </p>
-            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
-              Iniciar tutorial <ArrowRight size={16} />
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigate('/app/receivables?tour=fiado')}
-            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-amber-500/15 text-amber-400 rounded-xl flex items-center justify-center">
-                <HandCoins size={20} />
-              </div>
-              <h3 className="font-bold text-slate-100">Cómo cobrar el fiado</h3>
-            </div>
-            <p className="text-sm text-slate-500 mb-3">
-              Quién te debe, qué cobrar primero y cómo registrar los abonos.
-            </p>
-            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
-              Iniciar tutorial <ArrowRight size={16} />
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigate('/app/purchases?tour=compras')}
-            className="text-left bg-surface-900 border border-white/[0.06] hover:border-nortex-accent rounded-2xl p-5 shadow-sm hover:shadow-md transition-all group"
-          >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="w-10 h-10 bg-indigo-500/15 text-indigo-400 rounded-xl flex items-center justify-center">
-                <Truck size={20} />
-              </div>
-              <h3 className="font-bold text-slate-100">Cómo registrar compras</h3>
-            </div>
-            <p className="text-sm text-slate-500 mb-3">
-              Registrá la mercadería que entra para conocer tu ganancia real.
-            </p>
-            <span className="text-sm font-bold text-slate-100 flex items-center gap-1 group-hover:gap-2 transition-all">
-              Iniciar tutorial <ArrowRight size={16} />
-            </span>
-          </button>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {TUTORIALS.map((tutorial) => {
+            const TutorialIcon = tutorial.icon;
+            return (
+              <button
+                key={tutorial.destination}
+                type="button"
+                onClick={() => navigate(tutorial.destination)}
+                className="nx-fluid-press nx-canvas-card nx-canvas-text group min-h-tap p-5 text-left transition-colors hover:bg-[var(--nx-canvas-subtle)] hover:border-[var(--nx-positive-border)]"
+              >
+                <div className="mb-2 flex items-center gap-3">
+                  <div className={`nx-tone-${tutorial.tone}-bg nx-tone-${tutorial.tone} flex h-10 w-10 shrink-0 items-center justify-center rounded-control`}>
+                    <TutorialIcon size={20} aria-hidden="true" />
+                  </div>
+                  <h3 className="nx-canvas-text font-bold">{tutorial.title}</h3>
+                </div>
+                <p className="nx-canvas-muted mb-3 text-sm">{tutorial.description}</p>
+                <span className="nx-canvas-text flex items-center gap-1 text-sm font-bold">
+                  Iniciar tutorial <ArrowRight size={16} className="transition-transform group-hover:translate-x-0.5" aria-hidden="true" />
+                </span>
+              </button>
+            );
+          })}
         </div>
       </section>
 
       {/* GUÍAS RÁPIDAS */}
-      <section>
-        <h2 className="text-lg font-bold text-slate-100 mb-4 flex items-center gap-2">
-          <HandCoins size={20} className="text-nortex-accent" /> Guías rápidas
+      <section aria-labelledby="help-center-guides-title">
+        <h2 id="help-center-guides-title" className="nx-canvas-text mb-4 flex items-center gap-2 text-lg font-bold">
+          <HandCoins size={20} className="nx-tone-positive" aria-hidden="true" /> Guías rápidas
         </h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {GUIDES.map((g) => (
-            <div key={g.title} className="bg-surface-900 border border-white/[0.06] rounded-2xl p-5 shadow-sm">
-              <div className="flex items-center gap-3 mb-3">
-                <div className="w-9 h-9 bg-white/[0.04] text-slate-300 rounded-lg flex items-center justify-center">
+            <article key={g.title} className="nx-canvas-card p-5">
+              <div className="mb-3 flex items-center gap-3">
+                <div className="nx-tone-neutral-bg nx-tone-neutral flex h-9 w-9 shrink-0 items-center justify-center rounded-control" aria-hidden="true">
                   {g.icon}
                 </div>
-                <h3 className="font-bold text-slate-100 text-sm">{g.title}</h3>
+                <h3 className="nx-canvas-text text-sm font-bold">{g.title}</h3>
               </div>
               <ol className="space-y-1.5">
                 {g.steps.map((s, i) => (
-                  <li key={i} className="text-sm text-slate-300 flex gap-2">
-                    <span className="text-nortex-accent font-bold shrink-0">{i + 1}.</span>
+                  <li key={i} className="nx-canvas-muted flex gap-2 text-sm">
+                    <span className="nx-tone-positive shrink-0 font-bold">{i + 1}.</span>
                     <span>{s}</span>
                   </li>
                 ))}
               </ol>
-            </div>
+            </article>
           ))}
         </div>
-        <p className="text-xs text-slate-400 mt-6">
+        <p className="nx-canvas-faint mt-6 text-xs">
           ¿Necesitás más detalle? El <span className="font-semibold">Manual de Nortex</span> cubre cada módulo
           paso a paso, con las notas fiscales de Nicaragua.
         </p>

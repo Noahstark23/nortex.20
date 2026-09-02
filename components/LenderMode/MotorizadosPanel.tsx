@@ -269,16 +269,17 @@ const MotorizadosPanel: React.FC = () => {
                 </div>
 
                 {/* Paso 2: Ingresar Monto */}
-                <div className={!selectedLoan ? 'opacity-30 pointer-events-none' : ''}>
+                <div aria-disabled={!selectedLoan}>
                     <label className="block text-sm font-medium text-slate-400 mb-2">2. Efectivo Recibido</label>
                     <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl text-slate-500">$</span>
                         <input
                             type="number"
+                            disabled={!selectedLoan}
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
                             placeholder="0.00"
-                            className="w-full bg-slate-800 border border-slate-700 rounded-xl py-4 pl-12 pr-4 text-3xl font-bold text-white focus:outline-none focus:border-nortex-accent"
+                            className="w-full bg-slate-800 border border-slate-700 rounded-xl py-4 pl-12 pr-4 text-3xl font-bold text-white focus:outline-none focus:border-nortex-accent disabled:cursor-not-allowed disabled:opacity-60"
                         />
                     </div>
                 </div>

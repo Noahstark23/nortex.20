@@ -61,5 +61,8 @@ describe('recorrido de activación', () => {
         expect(onboarding).toContain('aria-expanded={open}');
         expect(onboarding).toContain('aria-controls="onboarding-steps-panel"');
         expect(onboarding).toContain('id="onboarding-steps-panel"');
+        expect(onboarding).toContain('bottom-[calc(5rem+env(safe-area-inset-bottom))]');
+        expect(onboarding).toContain('lg:bottom-6');
+        expect(onboarding).not.toContain('top-[4.5rem] right-4 lg:right-6');
     });
 });

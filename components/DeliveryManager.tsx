@@ -1,46 +1,158 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-    Package, Truck, CheckCircle, Clock, MapPin, Phone, ChevronRight,
-    Plus, X, Copy, Check, Link2, Loader2, User, AlertCircle
+    Truck, Phone, Plus, X, Check, Link2, Loader2, User, AlertCircle
 } from 'lucide-react';
-import { formatMoney } from '../utils/money';
+import DeliveryKanban, {
+    getNextDeliveryState,
+    type DeliveryOrder,
+    type DeliveryRider,
+    type DeliveryVisibleState,
+} from './delivery/DeliveryKanban';
+import FluidSheet from './ui/FluidSheet';
 
-interface Pedido {
-    id: string;
-    clienteNombre: string;
-    clienteTelefono: string;
-    direccionEntrega: string;
-    estado: string;
-    total: number;
-    createdAt: string;
-    motorizadoId?: string;
-    motorizado?: {
-        id: string;
-        nombre: string;
-        telefono: string;
-        tipoFlota: string;
-    };
-    items?: Array<{ cantidad: number; producto: { name: string } }>;
-}
+type Pedido = DeliveryOrder;
+type Motorizado = DeliveryRider;
 
-interface Motorizado {
-    id: string;
+interface RiderForm {
     nombre: string;
-    telefono?: string;
-    tipoFlota: string;
-    activo?: boolean;
+    telefono: string;
+    zonaCobertura: string;
+    vehiculoPlaca: string;
 }
 
-const COLUMNAS = [
-    { id: 'pendiente',  title: 'Nuevos',     icon: <Clock       size={16} />, color: 'border-amber-500/20   bg-amber-500/10',   badge: 'bg-amber-500/15   text-amber-400'   },
-    { id: 'preparando', title: 'Preparando', icon: <Package     size={16} />, color: 'border-blue-500/20    bg-blue-500/10',    badge: 'bg-blue-500/15    text-blue-400'    },
-    { id: 'en_camino',  title: 'En Camino',  icon: <Truck       size={16} />, color: 'border-purple-500/20  bg-purple-500/10',  badge: 'bg-purple-500/15  text-purple-400'  },
-    { id: 'entregado',  title: 'Entregados', icon: <CheckCircle size={16} />, color: 'border-emerald-500/20 bg-emerald-500/10', badge: 'bg-emerald-500/15 text-emerald-400' },
-];
+const EMPTY_RIDER_FORM: RiderForm = {
+    nombre: '',
+    telefono: '',
+    zonaCobertura: '',
+    vehiculoPlaca: '',
+};
 
-const ESTADO_SIGUIENTE: Record<string, string> = {
-    pendiente: 'preparando',
-    preparando: 'en_camino',
+const getRiderFormError = (form: RiderForm): string | null => {
+    const nombre = form.nombre.trim();
+    const telefono = form.telefono.trim();
+    const zonaCobertura = form.zonaCobertura.trim();
+    const phoneDigits = telefono.replace(/\D/g, '');
+
+    if (nombre.length < 3) return 'Ingresá el nombre completo del motorizado.';
+    if (nombre.length > 100) return 'El nombre no puede superar 100 caracteres.';
+    if (phoneDigits.length < 8 || phoneDigits.length > 15) {
+        return 'Ingresá un teléfono o WhatsApp válido de 8 a 15 dígitos.';
+    }
+    if (telefono.length > 32) return 'El teléfono no puede superar 32 caracteres.';
+    if (zonaCobertura.length < 2) return 'Ingresá la zona de cobertura del motorizado.';
+    if (zonaCobertura.length > 100) return 'La zona de cobertura no puede superar 100 caracteres.';
+    if (form.vehiculoPlaca.trim().length > 20) {
+        return 'La placa o descripción del vehículo no puede superar 20 caracteres.';
+    }
+    return null;
+};
+
+const DELIVERY_PAGE_SIZE = 200;
+const MAX_DELIVERY_PAGES = 5;
+const MAX_VISIBLE_ORDERS = DELIVERY_PAGE_SIZE * MAX_DELIVERY_PAGES;
+
+interface PedidoPageInfo {
+    page?: number;
+    limit?: number;
+    hasMore?: boolean;
+    nextPage?: number | null;
+}
+
+interface PedidoListResponse {
+    pedidos?: Pedido[];
+    pageInfo?: PedidoPageInfo;
+}
+
+interface PedidoPageLoadResult {
+    pedidos: Pedido[] | null;
+    warning: string;
+}
+
+const loadPedidoPages = async (
+    token: string | null,
+    isCurrentRequest: () => boolean,
+): Promise<PedidoPageLoadResult | null> => {
+    const pedidosById = new Map<string, Pedido>();
+    let page = 1;
+
+    try {
+        for (let loadedPages = 0; loadedPages < MAX_DELIVERY_PAGES; loadedPages += 1) {
+            const response = await fetch(
+                `/api/v1/pedidos?page=${page}&limit=${DELIVERY_PAGE_SIZE}`,
+                { headers: { Authorization: `Bearer ${token}` } },
+            );
+            if (!isCurrentRequest()) return null;
+            if (!response.ok) {
+                throw new Error(`El servidor rechazó la página ${page} de pedidos.`);
+            }
+
+            const body = await response.json() as PedidoListResponse;
+            if (!isCurrentRequest()) return null;
+            const pageOrders = Array.isArray(body.pedidos) ? body.pedidos : [];
+            pageOrders.forEach((pedido) => {
+                if (!pedidosById.has(pedido.id)) pedidosById.set(pedido.id, pedido);
+            });
+
+            // Compatibilidad: el contrato anterior no incluía pageInfo y representaba
+            // una sola lista completa. No inferimos más páginas a partir del tamaño.
+            if (!body.pageInfo || body.pageInfo.hasMore !== true) {
+                return { pedidos: [...pedidosById.values()], warning: '' };
+            }
+
+            if (loadedPages === MAX_DELIVERY_PAGES - 1) {
+                return {
+                    pedidos: [...pedidosById.values()],
+                    warning: `Hay más pedidos en el servidor. Por seguridad cargamos solo las primeras ${MAX_DELIVERY_PAGES} páginas (máximo ${MAX_VISIBLE_ORDERS.toLocaleString('en-US')}); el resto no está visible en este tablero.`,
+                };
+            }
+
+            const requestedNextPage = body.pageInfo.nextPage;
+            page = Number.isInteger(requestedNextPage) && Number(requestedNextPage) > page
+                ? Number(requestedNextPage)
+                : page + 1;
+        }
+    } catch (error) {
+        console.error('DeliveryManager pedidos pagination error:', error);
+        if (!isCurrentRequest()) return null;
+        return {
+            pedidos: null,
+            warning: 'No pudimos cargar todas las páginas de pedidos. Conservamos la última vista completa e intentaremos actualizarla nuevamente.',
+        };
+    }
+
+    return { pedidos: [...pedidosById.values()], warning: '' };
+};
+
+interface PedidoResponse {
+    pedido?: Pedido;
+    error?: string;
+}
+
+const readResponseBody = async (response: Response): Promise<PedidoResponse> => {
+    try {
+        return await response.json() as PedidoResponse;
+    } catch {
+        return {};
+    }
+};
+
+export const mergePendingOrders = (
+    serverOrders: Pedido[],
+    currentOrders: Pedido[],
+    pendingIds: ReadonlySet<string>,
+): Pedido[] => {
+    if (pendingIds.size === 0) return serverOrders;
+
+    const currentById = new Map(currentOrders.map((pedido) => [pedido.id, pedido]));
+    const serverIds = new Set(serverOrders.map((pedido) => pedido.id));
+    const merged = serverOrders.map((pedido) => (
+        pendingIds.has(pedido.id) ? currentById.get(pedido.id) ?? pedido : pedido
+    ));
+
+    currentOrders.forEach((pedido) => {
+        if (pendingIds.has(pedido.id) && !serverIds.has(pedido.id)) merged.push(pedido);
+    });
+    return merged;
 };
 
 const DeliveryManager: React.FC = () => {
@@ -52,413 +164,544 @@ const DeliveryManager: React.FC = () => {
 
     // Modal: nuevo motorizado
     const [showNewRider, setShowNewRider] = useState(false);
-    const [riderForm, setRiderForm]       = useState({ nombre: '', telefono: '', vehiculo: '' });
+    const [riderForm, setRiderForm]       = useState<RiderForm>(EMPTY_RIDER_FORM);
     const [savingRider, setSavingRider]   = useState(false);
     const [riderError, setRiderError]     = useState('');
 
     // UI feedback
     const [copiedId, setCopiedId]         = useState<string | null>(null);
     const [assigningId, setAssigningId]   = useState<string | null>(null);
+    const [movingId, setMovingId]         = useState<string | null>(null);
+    const [deliveryError, setDeliveryError] = useState('');
+    const [deliveryMessage, setDeliveryMessage] = useState('');
+    const [pedidoLoadWarning, setPedidoLoadWarning] = useState('');
 
-    useEffect(() => {
-        fetchData();
-        const interval = setInterval(fetchData, 15_000);
-        return () => clearInterval(interval);
+    const pedidosRef = useRef<Pedido[]>([]);
+    const pendingTransitionsRef = useRef(new Set<string>());
+    const assignmentInFlightRef = useRef<string | null>(null);
+    const dataEpochRef = useRef(0);
+
+    const updatePedidos = useCallback((updater: (current: Pedido[]) => Pedido[]) => {
+        setPedidos((current) => {
+            const next = updater(current);
+            pedidosRef.current = next;
+            return next;
+        });
     }, []);
 
-    const fetchData = async () => {
+    const fetchData = useCallback(async () => {
+        const requestEpoch = dataEpochRef.current;
+        const isCurrentRequest = () => requestEpoch === dataEpochRef.current;
         try {
-            const [pRes, mRes] = await Promise.all([
-                fetch('/api/v1/pedidos',     { headers: { Authorization: `Bearer ${token}` } }),
+            const [pedidoResult, mRes] = await Promise.all([
+                loadPedidoPages(token, isCurrentRequest),
                 fetch('/api/v1/motorizados', { headers: { Authorization: `Bearer ${token}` } }),
             ]);
-            if (pRes.ok) {
-                const d = await pRes.json();
-                setPedidos(d.pedidos ?? []);
+            if (!isCurrentRequest() || !pedidoResult) return;
+
+            setPedidoLoadWarning(pedidoResult.warning);
+            if (pedidoResult.pedidos) {
+                updatePedidos((current) => mergePendingOrders(
+                    pedidoResult.pedidos ?? [],
+                    current,
+                    pendingTransitionsRef.current,
+                ));
             }
             if (mRes.ok) {
-                const d = await mRes.json();
-                setMotorizados(d.motorizados ?? []);
+                const d = await mRes.json() as { motorizados?: Motorizado[] };
+                if (requestEpoch !== dataEpochRef.current) return;
+                setMotorizados(Array.isArray(d.motorizados) ? d.motorizados : []);
             }
         } catch (e) {
             console.error('DeliveryManager fetch error:', e);
         } finally {
             setLoading(false);
         }
-    };
+    }, [token, updatePedidos]);
 
-    const updateEstado = async (id: string, nuevoEstado: string) => {
-        await fetch(`/api/v1/pedidos/${id}/estado`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ estado: nuevoEstado, nota: `Movido a ${nuevoEstado} desde Torre de Control` }),
-        });
-        setPedidos(prev => prev.map(p => p.id === id ? { ...p, estado: nuevoEstado } : p));
+    useEffect(() => {
+        void fetchData();
+        const interval = setInterval(() => void fetchData(), 15_000);
+        return () => clearInterval(interval);
+    }, [fetchData]);
+
+    const updateEstado = async (
+        id: string,
+        nuevoEstado: DeliveryVisibleState,
+    ): Promise<boolean> => {
+        const current = pedidosRef.current.find((pedido) => pedido.id === id);
+        if (!current || getNextDeliveryState(current.estado) !== nuevoEstado) {
+            setDeliveryError('Ese cambio ya no está disponible. Actualizamos el tablero para evitar un estado incorrecto.');
+            void fetchData();
+            return false;
+        }
+        if (current.estado === 'preparando' && !current.motorizadoId) {
+            setDeliveryError('Asigná un motorizado antes de despachar el pedido.');
+            return false;
+        }
+        if (pendingTransitionsRef.current.size > 0 || assignmentInFlightRef.current) {
+            setDeliveryError('Esperá a que termine el cambio anterior antes de mover otro pedido.');
+            return false;
+        }
+
+        dataEpochRef.current += 1;
+        pendingTransitionsRef.current.add(id);
+        setMovingId(id);
+        setDeliveryError('');
+        setDeliveryMessage(`Moviendo el pedido de ${current.clienteNombre}…`);
+        updatePedidos((orders) => orders.map((pedido) => (
+            pedido.id === id ? { ...pedido, estado: nuevoEstado } : pedido
+        )));
+
+        let receivedResponse = false;
+        try {
+            const response = await fetch(`/api/v1/pedidos/${id}/estado`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                body: JSON.stringify({
+                    estado: nuevoEstado,
+                    nota: `Movido a ${nuevoEstado} desde Torre de Control`,
+                }),
+            });
+            receivedResponse = true;
+            const body = await readResponseBody(response);
+            if (!response.ok) {
+                throw new Error(body.error || 'El servidor rechazó el cambio de estado.');
+            }
+            if (!body.pedido || body.pedido.estado !== nuevoEstado) {
+                throw new Error('El servidor respondió sin confirmar el nuevo estado.');
+            }
+
+            updatePedidos((orders) => orders.map((pedido) => (
+                pedido.id === id
+                    ? {
+                        ...pedido,
+                        ...body.pedido,
+                        motorizado: body.pedido?.motorizado ?? pedido.motorizado,
+                        items: body.pedido?.items ?? pedido.items,
+                    }
+                    : pedido
+            )));
+            setDeliveryMessage(`Pedido de ${current.clienteNombre} actualizado correctamente.`);
+            return true;
+        } catch (error) {
+            updatePedidos((orders) => orders.map((pedido) => (
+                pedido.id === id ? { ...pedido, estado: current.estado } : pedido
+            )));
+            const detail = error instanceof Error ? error.message : 'No se pudo actualizar el pedido.';
+            setDeliveryError(receivedResponse
+                ? detail
+                : 'No pudimos confirmar el cambio. Restauramos la vista y estamos sincronizando con el servidor.');
+            setDeliveryMessage('');
+            return false;
+        } finally {
+            pendingTransitionsRef.current.delete(id);
+            setMovingId((activeId) => activeId === id ? null : activeId);
+            dataEpochRef.current += 1;
+            void fetchData();
+        }
     };
 
     const assignMotorizado = async (pedidoId: string, motorizadoId: string) => {
+        if (assignmentInFlightRef.current || pendingTransitionsRef.current.size > 0) {
+            setDeliveryError('Esperá a que termine el cambio anterior antes de asignar un motorizado.');
+            return;
+        }
+
+        assignmentInFlightRef.current = pedidoId;
+        dataEpochRef.current += 1;
         setAssigningId(pedidoId);
+        setDeliveryError('');
+        setDeliveryMessage('Asignando motorizado…');
         try {
             const res = await fetch(`/api/v1/pedidos/${pedidoId}/motorizado`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ motorizadoId }),
+                body: JSON.stringify({ motorizadoId: motorizadoId || null }),
             });
-            if (res.ok && motorizadoId) {
-                // Auto-avanzar a en_camino si no estaba ya en ese estado o posterior
-                const pedido = pedidos.find(p => p.id === pedidoId);
-                if (pedido && !['en_camino', 'entregado', 'cancelado'].includes(pedido.estado)) {
-                    await fetch(`/api/v1/pedidos/${pedidoId}/estado`, {
-                        method: 'PATCH',
-                        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                        body: JSON.stringify({ estado: 'en_camino', nota: 'Motorizado asignado — pedido despachado.' }),
-                    });
-                }
-                fetchData();
+            const body = await readResponseBody(res);
+            if (!res.ok || !body.pedido) {
+                throw new Error(body.error || 'No se pudo asignar el motorizado.');
             }
+            if (!Object.prototype.hasOwnProperty.call(body.pedido, 'motorizadoId')) {
+                throw new Error('El servidor respondió sin confirmar la asignación.');
+            }
+
+            const canonicalRiderId = body.pedido.motorizadoId ?? null;
+            const canonicalRider = body.pedido.motorizado ?? (canonicalRiderId
+                ? motorizados.find((candidate) => candidate.id === canonicalRiderId)
+                : undefined);
+            updatePedidos((orders) => orders.map((pedido) => (
+                pedido.id === pedidoId
+                    ? {
+                        ...pedido,
+                        ...body.pedido,
+                        motorizadoId: canonicalRiderId,
+                        motorizado: canonicalRider
+                            ? {
+                                id: canonicalRider.id,
+                                nombre: canonicalRider.nombre,
+                                telefono: canonicalRider.telefono,
+                                tipoFlota: canonicalRider.tipoFlota,
+                            }
+                            : null,
+                        items: body.pedido?.items ?? pedido.items,
+                    }
+                    : pedido
+            )));
+            setDeliveryMessage(canonicalRiderId
+                ? 'Motorizado asignado. El despacho sigue siendo un paso separado.'
+                : 'El servidor dejó el pedido sin motorizado.');
+        } catch (error) {
+            setDeliveryError(error instanceof Error ? error.message : 'No se pudo asignar el motorizado.');
+            setDeliveryMessage('');
         } finally {
-            setAssigningId(null);
+            assignmentInFlightRef.current = null;
+            setAssigningId((activeId) => activeId === pedidoId ? null : activeId);
+            dataEpochRef.current += 1;
+            void fetchData();
         }
     };
 
     const createMotorizado = async () => {
-        if (!riderForm.nombre.trim()) { setRiderError('El nombre es obligatorio.'); return; }
+        const validationError = getRiderFormError(riderForm);
+        if (validationError) {
+            setRiderError(validationError);
+            return;
+        }
+
+        const vehiculoPlaca = riderForm.vehiculoPlaca.trim();
+        const payload: {
+            nombre: string;
+            telefono: string;
+            zonaCobertura: string;
+            vehiculoPlaca?: string;
+        } = {
+            nombre: riderForm.nombre.trim(),
+            telefono: riderForm.telefono.trim(),
+            zonaCobertura: riderForm.zonaCobertura.trim(),
+        };
+        if (vehiculoPlaca) payload.vehiculoPlaca = vehiculoPlaca;
+
         setSavingRider(true);
         setRiderError('');
         try {
             const res = await fetch('/api/v1/motorizados', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({
-                    nombre: riderForm.nombre.trim(),
-                    telefono: riderForm.telefono.trim() || undefined,
-                    zonaCobertura: riderForm.vehiculo.trim() || undefined,
-                    tipoFlota: 'PROPIA',
-                }),
+                body: JSON.stringify(payload),
             });
             if (res.ok) {
                 setShowNewRider(false);
-                setRiderForm({ nombre: '', telefono: '', vehiculo: '' });
-                fetchData();
+                setRiderForm(EMPTY_RIDER_FORM);
+                setRiderError('');
+                setDeliveryError('');
+                setDeliveryMessage('Motorizado registrado correctamente.');
+                void fetchData();
             } else {
-                const d = await res.json();
-                setRiderError(d.error || 'Error al guardar motorizado.');
+                const body = await readResponseBody(res);
+                setRiderError(body.error || 'No se pudo registrar el motorizado. Intentá nuevamente.');
             }
         } catch {
-            setRiderError('Error de conexión.');
+            setRiderError('No pudimos conectar con el servidor. Revisá tu conexión e intentá nuevamente.');
         } finally {
             setSavingRider(false);
         }
     };
 
-    const copyDriverLink = (id: string) => {
-        const url = `${window.location.origin}/driver/${id}`;
-        navigator.clipboard.writeText(url).then(() => {
+    const copyDriverLogin = (id: string) => {
+        // El acceso ya no es un magic-link por motorizado. Compartimos solo la
+        // pantalla general y el servidor autentica con teléfono + PIN.
+        const url = `${window.location.origin}/driver`;
+        void navigator.clipboard.writeText(url).then(() => {
             setCopiedId(id);
             setTimeout(() => setCopiedId(null), 2500);
+        }).catch(() => {
+            setDeliveryError('No se pudo copiar el enlace. Revisá el permiso del portapapeles.');
         });
     };
+
+    const closeNewRider = () => {
+        if (savingRider) return;
+        setShowNewRider(false);
+        setRiderForm(EMPTY_RIDER_FORM);
+        setRiderError('');
+    };
+
+    const updateRiderField = (field: keyof RiderForm, value: string) => {
+        setRiderForm((current) => ({ ...current, [field]: value }));
+        if (riderError) setRiderError('');
+    };
+
+    const riderFormIsValid = getRiderFormError(riderForm) === null;
 
     const activeRiders  = motorizados.filter(m => m.activo !== false);
     const pendingCount  = pedidos.filter(p => p.estado === 'pendiente').length;
     const inRouteCount  = pedidos.filter(p => p.estado === 'en_camino').length;
-    const todayDelivered = pedidos.filter(p => p.estado === 'entregado').length;
+    const deliveredCount = pedidos.filter(p => p.estado === 'entregado').length;
 
     if (loading) {
         return (
-            <div className="h-full flex items-center justify-center">
-                <Loader2 className="animate-spin text-blue-500" size={36} />
+            <div className="nx-light-context nx-workspace flex h-full items-center justify-center bg-slate-50">
+                <Loader2 className="animate-spin text-brand" size={36} aria-label="Cargando entregas" />
             </div>
         );
     }
 
     return (
-        <div className="h-full flex flex-col overflow-hidden">
+        <div className="nx-light-context nx-workspace h-full overflow-x-hidden overflow-y-auto bg-slate-50 text-slate-950">
 
             {/* ── Top Bar ─────────────────────────────────────────── */}
-            <div className="flex-none px-6 py-4 border-b border-white/[0.06] bg-surface-900 flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h2 className="text-xl font-bold text-slate-100 flex items-center gap-2">
-                        <Truck className="text-blue-400" size={22} /> Torre de Control · Logística
+            <div className="nx-module-header sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 bg-white/80 px-4 py-4 backdrop-blur-xl sm:px-6">
+                <div className="min-w-0">
+                    <h2 className="flex items-center gap-2 text-xl font-bold text-slate-950">
+                        <Truck className="text-brand" size={22} aria-hidden="true" /> Torre de Control · Logística
                     </h2>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                        <span className="text-amber-400 font-semibold">{pendingCount} nuevos</span>
+                    <p className="mt-0.5 text-xs text-slate-600">
+                        <span className="font-semibold text-amber-700">{pendingCount} nuevos</span>
                         &nbsp;·&nbsp;
-                        <span className="text-purple-400 font-semibold">{inRouteCount} en ruta</span>
+                        <span className="font-semibold text-slate-700">{inRouteCount} en ruta</span>
                         &nbsp;·&nbsp;
-                        <span className="text-emerald-400 font-semibold">{todayDelivered} entregados hoy</span>
+                        <span className="font-semibold text-brand">{deliveredCount} entregados</span>
                     </p>
                 </div>
                 <button
-                    onClick={() => setShowNewRider(true)}
-                    className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2.5 rounded-xl font-bold text-sm hover:bg-blue-700 transition-all shadow-md shadow-blue-200 active:scale-95"
+                    type="button"
+                    onClick={() => {
+                        setRiderForm(EMPTY_RIDER_FORM);
+                        setRiderError('');
+                        setShowNewRider(true);
+                    }}
+                    className="nx-fluid-press flex min-h-tap items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on shadow-sm transition-colors hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                 >
-                    <Plus size={16} /> Agregar Motorizado
+                    <Plus size={16} aria-hidden="true" /> Agregar Motorizado
                 </button>
             </div>
 
             {/* ── Flota Activa (horizontal strip) ─────────────────── */}
             {activeRiders.length > 0 && (
-                <div className="flex-none px-6 py-3 bg-surface-800/40 border-b border-white/[0.06]">
-                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mb-2">
+                <section aria-label="Flota activa" className="border-b border-slate-200 bg-white/60 px-4 py-3 sm:px-6">
+                    <p className="mb-2 text-[10px] font-bold uppercase tracking-widest text-slate-500">
                         Flota Activa ({activeRiders.length})
                     </p>
-                    <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    <div className="flex flex-wrap gap-2 pb-1">
                         {activeRiders.map(m => (
-                            <div key={m.id} className="flex-none flex items-center gap-2.5 bg-surface-900 border border-white/[0.06] rounded-xl px-3 py-2 shadow-sm min-w-0">
-                                <div className="w-8 h-8 bg-blue-500/15 rounded-lg flex items-center justify-center flex-shrink-0">
-                                    <User size={16} className="text-blue-400" />
+                            <div key={m.id} className="flex min-w-0 flex-none items-center gap-2.5 rounded-card border border-slate-200 bg-white px-3 py-2 shadow-sm">
+                                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-control bg-brand-soft">
+                                    <User size={16} className="text-brand" aria-hidden="true" />
                                 </div>
                                 <div className="min-w-0">
-                                    <p className="text-sm font-bold text-slate-100 truncate max-w-[120px]">{m.nombre}</p>
+                                    <p className="max-w-[120px] truncate text-sm font-bold text-slate-950">{m.nombre}</p>
                                     {m.telefono && (
-                                        <p className="text-[11px] text-slate-400 truncate">{m.telefono}</p>
+                                        <p className="truncate text-[11px] text-slate-500">{m.telefono}</p>
                                     )}
                                 </div>
                                 <button
-                                    onClick={() => copyDriverLink(m.id)}
-                                    title="Copiar link del motorizado"
-                                    className={`ml-1 flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg transition-all flex-shrink-0 ${
+                                    type="button"
+                                    onClick={() => copyDriverLogin(m.id)}
+                                    title="Copiar login general de repartidores"
+                                    aria-label={`Copiar login de repartidores para ${m.nombre}`}
+                                    className={`nx-fluid-press ml-1 flex min-h-tap flex-shrink-0 items-center gap-1 rounded-control px-2.5 py-1.5 text-xs font-semibold transition-colors ${
                                         copiedId === m.id
-                                            ? 'bg-emerald-500/15 text-emerald-400'
-                                            : 'bg-white/[0.04] text-slate-300 hover:bg-blue-500/10 hover:text-blue-400'
+                                            ? 'bg-brand-soft text-brand'
+                                            : 'bg-slate-100 text-slate-700 hover:bg-brand-soft hover:text-brand'
                                     }`}
                                 >
-                                    {copiedId === m.id ? <><Check size={12} /> ¡Copiado!</> : <><Link2 size={12} /> Link</>}
+                                    {copiedId === m.id ? <><Check size={12} aria-hidden="true" /> ¡Copiado!</> : <><Link2 size={12} aria-hidden="true" /> Login</>}
                                 </button>
                             </div>
                         ))}
+                    </div>
+                </section>
+            )}
+
+            {pedidoLoadWarning && (
+                <div className="px-4 pt-4 sm:px-6">
+                    <div
+                        role="alert"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="rounded-control border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900"
+                    >
+                        {pedidoLoadWarning}
+                    </div>
+                </div>
+            )}
+
+            {(deliveryError || deliveryMessage) && (
+                <div className="px-4 pt-4 sm:px-6">
+                    <div
+                        role={deliveryError ? 'alert' : 'status'}
+                        aria-live={deliveryError ? 'assertive' : 'polite'}
+                        aria-atomic="true"
+                        className={`rounded-control border px-4 py-3 text-sm font-medium ${deliveryError
+                            ? 'border-red-200 bg-red-50 text-red-700'
+                            : 'border-brand/20 bg-brand-soft text-brand'}`}
+                    >
+                        {deliveryError || deliveryMessage}
                     </div>
                 </div>
             )}
 
             {/* ── Kanban Board ─────────────────────────────────────── */}
-            <div className="flex-1 overflow-x-auto overflow-y-hidden">
-                <div className="flex gap-4 p-6 h-full items-start min-w-max">
-                    {COLUMNAS.map(col => {
-                        const colPedidos = pedidos.filter(p => p.estado === col.id);
-                        return (
-                            <div key={col.id} className={`w-80 flex-none rounded-2xl border ${col.color} flex flex-col max-h-[calc(100vh-260px)]`}>
-                                {/* Column Header */}
-                                <div className="p-4 border-b border-white/50 flex justify-between items-center">
-                                    <h3 className="font-bold text-sm text-slate-200 flex items-center gap-2">
-                                        {col.icon} {col.title}
-                                    </h3>
-                                    <span className={`text-xs font-bold px-2 py-0.5 rounded-lg ${col.badge}`}>
-                                        {colPedidos.length}
-                                    </span>
-                                </div>
+            <main className="min-w-0">
+                <DeliveryKanban
+                    pedidos={pedidos}
+                    activeRiders={activeRiders}
+                    assigningId={assigningId}
+                    movingId={movingId}
+                    onAssign={assignMotorizado}
+                    onMove={updateEstado}
+                />
+            </main>
 
-                                {/* Cards */}
-                                <div className="flex-1 overflow-y-auto p-3 space-y-3 no-scrollbar">
-                                    {colPedidos.length === 0 ? (
-                                        <div className="text-center py-10 text-slate-400">
-                                            <div className="w-12 h-12 bg-white/60 rounded-2xl flex items-center justify-center mx-auto mb-3 opacity-50">
-                                                {col.icon}
-                                            </div>
-                                            <p className="text-xs font-medium">Sin pedidos aquí</p>
-                                        </div>
-                                    ) : (
-                                        colPedidos.map(pedido => (
-                                            <div key={pedido.id} className="bg-surface-900 rounded-2xl shadow-sm border border-slate-200/60 overflow-hidden hover:shadow-md transition-shadow">
-                                                {/* Card Header */}
-                                                <div className="px-4 py-2.5 bg-white/[0.03] border-b border-white/[0.04] flex justify-between items-center">
-                                                    <span className="font-bold text-slate-100 text-sm truncate max-w-[140px]">
-                                                        {pedido.clienteNombre}
-                                                    </span>
-                                                    <span className="font-black text-blue-400 text-sm ml-2 flex-shrink-0">
-                                                        {formatMoney(Number(pedido.total))}
-                                                    </span>
-                                                </div>
+            {/* ── Hoja: Nuevo Motorizado ───────────────────────────── */}
+            <FluidSheet
+                open={showNewRider}
+                onClose={closeNewRider}
+                labelledBy="new-rider-title"
+                className="nx-delivery-rider-sheet-root"
+                panelClassName="nx-delivery-rider-sheet nx-light-context"
+                closeOnBackdrop={!savingRider}
+                closeOnEscape={!savingRider}
+                dragToDismiss={!savingRider}
+            >
+                <form
+                    onSubmit={(event) => {
+                        event.preventDefault();
+                        void createMotorizado();
+                    }}
+                    className="nx-delivery-rider-sheet-content overflow-y-auto px-5 pb-5 sm:p-6"
+                >
+                    <div className="mb-5 flex items-center justify-between gap-4">
+                        <div>
+                            <h3 id="new-rider-title" className="text-lg font-bold text-slate-950">Registrar Motorizado</h3>
+                            <p className="mt-0.5 text-xs text-slate-500">Flota Propia del negocio</p>
+                        </div>
+                        <button
+                            type="button"
+                            aria-label="Cerrar"
+                            onClick={closeNewRider}
+                            disabled={savingRider}
+                            className="nx-fluid-press inline-flex min-h-tap min-w-tap items-center justify-center rounded-control p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-50"
+                        >
+                            <X size={18} aria-hidden="true" />
+                        </button>
+                    </div>
 
-                                                <div className="p-4 space-y-3">
-                                                    {/* Contacto */}
-                                                    <div className="flex gap-2">
-                                                        <a href={`tel:${pedido.clienteTelefono}`}
-                                                            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-400 transition-colors"
-                                                        >
-                                                            <Phone size={12} className="flex-shrink-0" />
-                                                            {pedido.clienteTelefono}
-                                                        </a>
-                                                    </div>
+                    <div className="space-y-4">
+                        <div>
+                            <label htmlFor="new-rider-name" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                                Nombre completo *
+                            </label>
+                            <input
+                                id="new-rider-name"
+                                data-fluid-sheet-initial-focus
+                                type="text"
+                                placeholder="Ej: Juan Pérez"
+                                value={riderForm.nombre}
+                                onChange={event => updateRiderField('nombre', event.target.value)}
+                                disabled={savingRider}
+                                required
+                                minLength={3}
+                                maxLength={100}
+                                className="min-h-tap w-full rounded-control border border-slate-300 bg-white px-4 py-3 text-slate-950 placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:opacity-60"
+                            />
+                        </div>
 
-                                                    {/* Dirección */}
-                                                    <div className="flex items-start gap-1.5 text-xs text-slate-500">
-                                                        <MapPin size={12} className="mt-0.5 flex-shrink-0 text-slate-400" />
-                                                        <span className="line-clamp-2 leading-relaxed">{pedido.direccionEntrega}</span>
-                                                    </div>
-
-                                                    {/* Items preview */}
-                                                    {pedido.items && pedido.items.length > 0 && (
-                                                        <div className="text-[11px] text-slate-400 space-y-0.5">
-                                                            {pedido.items.slice(0, 2).map((item, i) => (
-                                                                <div key={i}>· {item.cantidad}× {item.producto?.name}</div>
-                                                            ))}
-                                                            {pedido.items.length > 2 && (
-                                                                <div className="italic">+{pedido.items.length - 2} más</div>
-                                                            )}
-                                                        </div>
-                                                    )}
-
-                                                    {/* Asignar Motorizado */}
-                                                    {col.id !== 'entregado' && (
-                                                        <div>
-                                                            <label className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block mb-1">
-                                                                Motorizado
-                                                            </label>
-                                                            <div className="relative">
-                                                                <select
-                                                                    value={pedido.motorizadoId || ''}
-                                                                    onChange={e => assignMotorizado(pedido.id, e.target.value)}
-                                                                    disabled={assigningId === pedido.id || col.id === 'cancelado'}
-                                                                    className="w-full text-xs px-3 py-2 rounded-lg border border-white/[0.06] bg-surface-800/40 text-slate-200 focus:outline-none focus:border-blue-400 appearance-none disabled:opacity-60"
-                                                                >
-                                                                    <option value="">— Sin asignar —</option>
-                                                                    {activeRiders.map(m => (
-                                                                        <option key={m.id} value={m.id}>
-                                                                            {m.tipoFlota === 'NORTEX' ? '' : ''}{m.nombre}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
-                                                                {assigningId === pedido.id && (
-                                                                    <Loader2 size={12} className="absolute right-2 top-1/2 -translate-y-1/2 animate-spin text-blue-500" />
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    )}
-
-                                                    {/* Motorizado asignado badge */}
-                                                    {pedido.motorizado && (
-                                                        <div className="flex items-center gap-1.5 text-[11px] font-semibold text-purple-400 bg-purple-500/10 rounded-lg px-2.5 py-1.5">
-                                                            <Truck size={11} /> {pedido.motorizado.nombre}
-                                                        </div>
-                                                    )}
-                                                </div>
-
-                                                {/* Avance de estado */}
-                                                {ESTADO_SIGUIENTE[col.id] && (
-                                                    <div className="px-4 pb-4">
-                                                        <button
-                                                            onClick={() => updateEstado(pedido.id, ESTADO_SIGUIENTE[col.id])}
-                                                            className={`w-full py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-1.5 transition-all active:scale-[0.98] ${
-                                                                col.id === 'pendiente'
-                                                                    ? 'bg-blue-500/10 text-blue-400 hover:bg-blue-500/15'
-                                                                    : 'bg-purple-500/10 text-purple-400 hover:bg-purple-500/15'
-                                                            }`}
-                                                        >
-                                                            {col.id === 'pendiente' ? 'Iniciar Preparación' : 'Despachar'}
-                                                            <ChevronRight size={14} />
-                                                        </button>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        ))
-                                    )}
-                                </div>
+                        <div>
+                            <label htmlFor="new-rider-phone" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                                Teléfono / WhatsApp *
+                            </label>
+                            <div className="relative">
+                                <Phone size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" aria-hidden="true" />
+                                <input
+                                    id="new-rider-phone"
+                                    type="tel"
+                                    inputMode="tel"
+                                    placeholder="8888-0000"
+                                    value={riderForm.telefono}
+                                    onChange={event => updateRiderField('telefono', event.target.value)}
+                                    aria-describedby="new-rider-phone-help"
+                                    disabled={savingRider}
+                                    required
+                                    maxLength={32}
+                                    className="min-h-tap w-full rounded-control border border-slate-300 bg-white py-3 pl-9 pr-4 text-slate-950 placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:opacity-60"
+                                />
                             </div>
-                        );
-                    })}
-                </div>
-            </div>
+                            <p id="new-rider-phone-help" className="mt-1.5 text-xs text-slate-500">
+                                Usá de 8 a 15 dígitos; podés incluir +505, espacios o guiones.
+                            </p>
+                        </div>
 
-            {/* ── Modal: Nuevo Motorizado ──────────────────────────── */}
-            {showNewRider && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-                    <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" onClick={() => setShowNewRider(false)} />
-                    <div className="relative bg-surface-900 rounded-3xl shadow-2xl w-full max-w-sm p-6 animate-in zoom-in-95 duration-200">
-                        {/* Modal Header */}
-                        <div className="flex items-center justify-between mb-5">
-                            <div>
-                                <h3 className="text-lg font-bold text-white">Registrar Motorizado</h3>
-                                <p className="text-xs text-slate-400 mt-0.5">Flota Propia del negocio</p>
+                        <div>
+                            <label htmlFor="new-rider-zone" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                                Zona de cobertura *
+                            </label>
+                            <input
+                                id="new-rider-zone"
+                                type="text"
+                                placeholder="Ej: Managua sur"
+                                value={riderForm.zonaCobertura}
+                                onChange={event => updateRiderField('zonaCobertura', event.target.value)}
+                                disabled={savingRider}
+                                required
+                                minLength={2}
+                                maxLength={100}
+                                className="min-h-tap w-full rounded-control border border-slate-300 bg-white px-4 py-3 text-slate-950 placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:opacity-60"
+                            />
+                        </div>
+
+                        <div>
+                            <label htmlFor="new-rider-vehicle" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                                Placa / vehículo (opcional)
+                            </label>
+                            <input
+                                id="new-rider-vehicle"
+                                type="text"
+                                placeholder="Ej: M 123456 · Moto Honda"
+                                value={riderForm.vehiculoPlaca}
+                                onChange={event => updateRiderField('vehiculoPlaca', event.target.value)}
+                                disabled={savingRider}
+                                maxLength={20}
+                                className="min-h-tap w-full rounded-control border border-slate-300 bg-white px-4 py-3 font-mono uppercase text-slate-950 placeholder:font-sans placeholder:normal-case placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:opacity-60"
+                            />
+                        </div>
+
+                        {riderError && (
+                            <div role="alert" className="flex items-center gap-2 rounded-control border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                                <AlertCircle size={16} className="flex-shrink-0" aria-hidden="true" />
+                                {riderError}
                             </div>
-                            <button onClick={() => setShowNewRider(false)} className="p-1.5 rounded-xl hover:bg-white/[0.06] text-slate-400">
-                                <X size={18} />
+                        )}
+
+                        <div className="flex gap-3 pt-1">
+                            <button
+                                type="button"
+                                onClick={closeNewRider}
+                                disabled={savingRider}
+                                className="nx-fluid-press min-h-tap flex-1 rounded-control border border-slate-300 py-3 font-semibold text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-50"
+                            >
+                                Cancelar
+                            </button>
+                            <button
+                                type="submit"
+                                disabled={savingRider || !riderFormIsValid}
+                                className="nx-fluid-press flex min-h-tap flex-1 items-center justify-center gap-2 rounded-control bg-brand py-3 font-bold text-brand-on shadow-sm transition-colors hover:bg-brand-hover disabled:opacity-50"
+                            >
+                                {savingRider ? <Loader2 className="animate-spin" size={18} aria-hidden="true" /> : <Plus size={18} aria-hidden="true" />}
+                                {savingRider ? 'Guardando...' : 'Registrar'}
                             </button>
                         </div>
 
-                        <div className="space-y-4">
-                            {/* Nombre */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                                    Nombre completo *
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="Ej: Juan Pérez"
-                                    value={riderForm.nombre}
-                                    onChange={e => setRiderForm({ ...riderForm, nombre: e.target.value })}
-                                    autoFocus
-                                    className="bg-transparent w-full px-4 py-3 border border-white/[0.06] rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
-                                />
-                            </div>
-
-                            {/* Teléfono */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                                    Teléfono / WhatsApp
-                                </label>
-                                <div className="relative">
-                                    <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                                    <input
-                                        type="tel"
-                                        placeholder="8888-0000"
-                                        value={riderForm.telefono}
-                                        onChange={e => setRiderForm({ ...riderForm, telefono: e.target.value })}
-                                        className="bg-transparent w-full pl-9 pr-4 py-3 border border-white/[0.06] rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Vehículo / Placa */}
-                            <div>
-                                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-1.5">
-                                    Vehículo / Placa
-                                </label>
-                                <input
-                                    type="text"
-                                    placeholder="Ej: Moto Honda · M-123456"
-                                    value={riderForm.vehiculo}
-                                    onChange={e => setRiderForm({ ...riderForm, vehiculo: e.target.value })}
-                                    className="bg-transparent w-full px-4 py-3 border border-white/[0.06] rounded-xl text-slate-100 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
-                                />
-                            </div>
-
-                            {/* Error */}
-                            {riderError && (
-                                <div className="flex items-center gap-2 text-sm text-red-400 bg-red-500/10 border border-red-500/20 rounded-xl px-4 py-3">
-                                    <AlertCircle size={16} className="flex-shrink-0" />
-                                    {riderError}
-                                </div>
-                            )}
-
-                            {/* Botones */}
-                            <div className="flex gap-3 pt-1">
-                                <button
-                                    onClick={() => setShowNewRider(false)}
-                                    className="flex-1 py-3 border border-white/[0.06] rounded-xl text-slate-300 font-semibold hover:bg-surface-800/40 transition-all"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={createMotorizado}
-                                    disabled={savingRider || !riderForm.nombre.trim()}
-                                    className="flex-1 py-3 bg-blue-600 text-white rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200 active:scale-[0.98] flex items-center justify-center gap-2 disabled:opacity-50"
-                                >
-                                    {savingRider ? <Loader2 className="animate-spin" size={18} /> : <Plus size={18} />}
-                                    {savingRider ? 'Guardando...' : 'Registrar'}
-                                </button>
-                            </div>
-
-                            {/* Info tipoFlota */}
-                            <p className="text-[11px] text-slate-400 text-center">
-                                Se registrará como <strong>Flota Propia</strong> del negocio.
-                                Copia el link para enviárselo al conductor.
-                            </p>
-                        </div>
+                        <p className="text-center text-[11px] text-slate-500">
+                            La flota propia se registra con la zona donde realmente puede entregar.
+                            El conductor entra al login general con su teléfono y un PIN configurado;
+                            no existe un enlace privado por motorizado.
+                        </p>
                     </div>
-                </div>
-            )}
+                </form>
+            </FluidSheet>
 
             <style>{`
                 .no-scrollbar::-webkit-scrollbar { display: none; }

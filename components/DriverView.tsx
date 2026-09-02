@@ -1,14 +1,33 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import {
     Truck, MapPin, Phone, CheckCircle, Package, Clock,
-    Loader2, Navigation, MessageCircle, X, Wallet, AlertTriangle, Lock, LogOut
+    Loader2, Navigation, MessageCircle, X, Wallet, AlertTriangle, Lock, LogOut,
+    Moon, Sun,
 } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import {
+    bindDriverTheme,
+    clearDriverThemeScope,
+    nextDriverTheme,
+    persistDriverTheme,
+    readDriverTheme,
+    readPreAuthDriverTheme,
+    type DriverTheme,
+} from '../utils/driverTheme';
 
 // Sesión del repartidor: token firmado (teléfono+PIN). Reemplaza el
 // magic-link /driver/:id — cualquiera que reenviara ese link podía entrar.
 const DRIVER_TOKEN_KEY = 'nortex_driver_token';
+
+const restoreFocusOnNextFrame = (element: HTMLElement | null) => {
+    const restore = () => element?.focus();
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+        globalThis.requestAnimationFrame(restore);
+        return;
+    }
+    globalThis.setTimeout(restore, 0);
+};
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
@@ -57,6 +76,51 @@ interface WalletData {
     movimientos: WalletMovimiento[];
 }
 
+interface DriverThemeToggleProps {
+    theme: DriverTheme;
+    onToggle: () => void;
+}
+
+const DriverThemeToggle: React.FC<DriverThemeToggleProps> = ({ theme, onToggle }) => {
+    const isDark = theme === 'dark';
+    const currentModeLabel = isDark ? 'modo noche' : 'modo día';
+    const actionLabel = isDark ? 'Modo día' : 'Modo noche';
+    const Icon = isDark ? Sun : Moon;
+
+    return (
+        <button
+            type="button"
+            onClick={onToggle}
+            className="nx-theme-toggle nx-fluid-press"
+            aria-pressed={isDark}
+            aria-label={`${currentModeLabel} activo. Cambiar a ${actionLabel.toLowerCase()}`}
+            title={`Cambiar a ${actionLabel.toLowerCase()}`}
+        >
+            <Icon size={17} aria-hidden="true" />
+            <span className="nx-theme-toggle-label">{actionLabel}</span>
+        </button>
+    );
+};
+
+interface DriverThemeSurfaceProps {
+    theme: DriverTheme;
+    children: React.ReactNode;
+}
+
+const DriverThemeSurface: React.FC<DriverThemeSurfaceProps> = ({ theme, children }) => (
+    <div
+        className="nx-app-shell min-h-dvh"
+        data-nx-theme={theme}
+        data-testid="driver-theme-root"
+    >
+        <div className={`nx-driver-workspace min-h-dvh ${
+            theme === 'dark' ? 'nx-apple-dark-workspace' : 'nx-apple-light-workspace'
+        }`}>
+            {children}
+        </div>
+    </div>
+);
+
 // ─── Confirm Modal ─────────────────────────────────────────────────────────
 
 interface ConfirmDeliveryModalProps {
@@ -71,15 +135,21 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
 }) => (
     <div className="fixed inset-0 z-50 flex items-end justify-center p-0 sm:items-center sm:p-4">
         {/* Backdrop */}
-        <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onCancel} />
+        <div className="nx-overlay-backdrop absolute inset-0" onClick={onCancel} aria-hidden="true" />
 
         {/* Sheet */}
-        <div className="relative w-full sm:max-w-sm bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-700 overflow-hidden animate-in slide-in-from-bottom duration-300">
+        <div
+            className="nx-ticket-surface nx-dark-context relative w-full overflow-hidden rounded-t-3xl border border-slate-700 duration-300 sm:max-w-sm sm:rounded-3xl"
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="driver-confirm-title"
+            aria-describedby="driver-confirm-description"
+        >
 
             {/* Warning strip */}
-            <div className="bg-emerald-500 px-6 py-3 flex items-center gap-2">
-                <CheckCircle size={18} className="text-emerald-900" />
-                <span className="font-black text-emerald-900 text-sm uppercase tracking-widest">
+            <div className="bg-brand px-6 py-3 flex items-center gap-2 text-brand-on">
+                <CheckCircle size={18} aria-hidden="true" />
+                <span id="driver-confirm-title" className="font-black text-sm uppercase tracking-widest">
                     Confirmar Entrega
                 </span>
             </div>
@@ -98,7 +168,7 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
                     </p>
                 </div>
 
-                <p className="text-slate-400 text-sm leading-relaxed">
+                <p id="driver-confirm-description" className="text-slate-400 text-sm leading-relaxed">
                     ¿Confirmas que <strong className="text-white">recibiste este efectivo</strong>{' '}
                     y el cliente firmó de recibido?
                 </p>
@@ -120,11 +190,12 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
             </div>
 
             {/* Botones */}
-            <div className="px-6 pb-8 flex flex-col gap-3">
+            <div className="nx-sheet px-6 pb-8 flex flex-col gap-3">
                 <button
+                    type="button"
                     onClick={onConfirm}
                     disabled={isProcessing}
-                    className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg uppercase tracking-wide shadow-lg shadow-emerald-900/50 hover:bg-emerald-400 active:scale-[0.97] transition-all disabled:opacity-60 flex items-center justify-center gap-2"
+                    className="nx-driver-primary nx-fluid-press min-h-tap w-full bg-brand py-4 text-brand-on rounded-2xl font-black text-lg uppercase tracking-wide shadow-lg shadow-emerald-900/50 hover:bg-brand-hover flex items-center justify-center gap-2"
                 >
                     {isProcessing
                         ? <><Loader2 className="animate-spin" size={22} /> Procesando...</>
@@ -132,9 +203,11 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
                     }
                 </button>
                 <button
+                    type="button"
                     onClick={onCancel}
                     disabled={isProcessing}
-                    className="w-full py-3 border border-slate-600 text-slate-400 rounded-2xl font-semibold hover:bg-slate-800 transition-colors"
+                    autoFocus
+                    className="nx-fluid-press min-h-tap w-full py-3 border border-slate-600 text-slate-300 rounded-2xl font-semibold hover:bg-slate-800 transition-colors"
                 >
                     Cancelar
                 </button>
@@ -147,6 +220,9 @@ const ConfirmDeliveryModal: React.FC<ConfirmDeliveryModalProps> = ({
 
 const DriverView: React.FC = () => {
     const [token, setToken] = useState<string | null>(() => localStorage.getItem(DRIVER_TOKEN_KEY));
+    const [theme, setTheme] = useState<DriverTheme>(() => (
+        token ? readDriverTheme() : readPreAuthDriverTheme()
+    ));
 
     const [driver, setDriver]         = useState<Driver | null>(null);
     const [orders, setOrders]         = useState<Order[]>([]);
@@ -163,11 +239,25 @@ const DriverView: React.FC = () => {
     // Modal state
     const [confirmOrder, setConfirmOrder] = useState<Order | null>(null);
     const [processingId, setProcessingId] = useState<string | null>(null);
+    const confirmTriggerRef = useRef<HTMLElement | null>(null);
 
     // 💰 Wallet (solo Red NORTEX)
     const [wallet, setWallet] = useState<WalletData | null>(null);
     const [showWallet, setShowWallet] = useState(false);
     const [walletLoading, setWalletLoading] = useState(false);
+    const walletTriggerRef = useRef<HTMLButtonElement | null>(null);
+
+    useEffect(() => {
+        if (!token) clearDriverThemeScope();
+    }, [token]);
+
+    const toggleDriverTheme = useCallback(() => {
+        setTheme(currentTheme => {
+            const nextTheme = nextDriverTheme(currentTheme);
+            if (driver?.id) persistDriverTheme(driver.id, nextTheme);
+            return nextTheme;
+        });
+    }, [driver?.id]);
 
     const fetchWallet = useCallback(async () => {
         const t = localStorage.getItem(DRIVER_TOKEN_KEY);
@@ -177,23 +267,51 @@ const DriverView: React.FC = () => {
             const res = await fetch('/api/driver/me/wallet', {
                 headers: { Authorization: `Bearer ${t}` },
             });
-            if (res.ok) setWallet(await res.json());
+            if (res.ok) {
+                const nextWallet = await res.json();
+                if (localStorage.getItem(DRIVER_TOKEN_KEY) !== t) return;
+                setWallet(nextWallet);
+            }
         } catch { /* sin red — se reintenta al reabrir */ }
-        finally { setWalletLoading(false); }
+        finally {
+            if (localStorage.getItem(DRIVER_TOKEN_KEY) === t) {
+                setWalletLoading(false);
+            }
+        }
     }, []);
 
     const openWallet = () => {
+        setWallet(null);
         setShowWallet(true);
         fetchWallet();
     };
 
+    const closeWallet = useCallback(() => {
+        setShowWallet(false);
+        restoreFocusOnNextFrame(walletTriggerRef.current);
+    }, []);
+
+    const closeConfirmation = useCallback(() => {
+        if (processingId) return;
+        setConfirmOrder(null);
+        restoreFocusOnNextFrame(confirmTriggerRef.current);
+    }, [processingId]);
+
     const logout = useCallback(() => {
         localStorage.removeItem(DRIVER_TOKEN_KEY);
+        clearDriverThemeScope();
         setToken(null);
+        setTheme('light');
         setDriver(null);
         setOrders([]);
         setLiquidacion(null);
+        setWallet(null);
+        setShowWallet(false);
+        setWalletLoading(false);
+        setConfirmOrder(null);
+        setProcessingId(null);
         setError('');
+        setLoginError('');
         setLoading(false);
     }, []);
 
@@ -206,19 +324,30 @@ const DriverView: React.FC = () => {
             });
             if (res.ok) {
                 const data = await res.json();
+                if (localStorage.getItem(DRIVER_TOKEN_KEY) !== t) return;
+                if (data.driver?.id) {
+                    setTheme(currentTheme => bindDriverTheme(data.driver.id, currentTheme));
+                }
                 setDriver(data.driver);
                 setOrders(data.orders ?? []);
-                if (data.liquidacionDiaria) setLiquidacion(data.liquidacionDiaria);
+                setLiquidacion(data.liquidacionDiaria ?? null);
                 setError('');
-            } else if (res.status === 401 || res.status === 403) {
+            } else if (
+                (res.status === 401 || res.status === 403)
+                && localStorage.getItem(DRIVER_TOKEN_KEY) === t
+            ) {
                 logout(); // sesión expirada/cuenta inactiva → volver al login
-            } else {
+            } else if (localStorage.getItem(DRIVER_TOKEN_KEY) === t) {
                 setError('Error al cargar tus entregas.');
             }
         } catch {
-            setError('Error de conexión. Verifica tu internet.');
+            if (localStorage.getItem(DRIVER_TOKEN_KEY) === t) {
+                setError('Error de conexión. Verifica tu internet.');
+            }
         } finally {
-            setLoading(false);
+            if (localStorage.getItem(DRIVER_TOKEN_KEY) === t) {
+                setLoading(false);
+            }
         }
     }, [logout]);
 
@@ -228,6 +357,17 @@ const DriverView: React.FC = () => {
         const intv = setInterval(fetchOrders, 10_000);
         return () => clearInterval(intv);
     }, [token, fetchOrders]);
+
+    useEffect(() => {
+        if (!showWallet && !confirmOrder) return;
+        const closeOnEscape = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            if (showWallet) closeWallet();
+            if (confirmOrder) closeConfirmation();
+        };
+        document.addEventListener('keydown', closeOnEscape);
+        return () => document.removeEventListener('keydown', closeOnEscape);
+    }, [closeConfirmation, closeWallet, confirmOrder, showWallet]);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -245,6 +385,9 @@ const DriverView: React.FC = () => {
                 return;
             }
             localStorage.setItem(DRIVER_TOKEN_KEY, data.token);
+            if (data.driver?.id) {
+                setTheme(currentTheme => bindDriverTheme(data.driver.id, currentTheme));
+            }
             setToken(data.token);
             setLoading(true);
         } catch {
@@ -257,6 +400,9 @@ const DriverView: React.FC = () => {
     // Called when driver taps the big green button
     const handleDeliverTap = (order: Order) => {
         if (processingId) return; // guard: one operation at a time
+        confirmTriggerRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
         setConfirmOrder(order);
     };
 
@@ -315,44 +461,66 @@ const DriverView: React.FC = () => {
     // ── Login (sin sesión) ──
     if (!token) {
         return (
-            <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
+            <DriverThemeSurface theme={theme}>
+            <div className="relative min-h-dvh flex items-center justify-center p-6 pt-[calc(5rem+env(safe-area-inset-top))] pb-[calc(1.5rem+env(safe-area-inset-bottom))]">
+                <div className="fixed right-4 top-[calc(1rem+env(safe-area-inset-top))] z-30">
+                    <DriverThemeToggle theme={theme} onToggle={toggleDriverTheme} />
+                </div>
                 <div className="w-full max-w-sm">
                     <div className="text-center mb-8">
                         <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 flex items-center justify-center mx-auto mb-4">
-                            <Truck size={28} className="text-emerald-400" />
+                            <Truck size={28} className="text-emerald-400" aria-hidden="true" />
                         </div>
                         <h1 className="text-2xl font-black text-white">App de Repartidores</h1>
                         <p className="text-slate-400 text-sm mt-1">Entrá con tu teléfono y PIN</p>
                     </div>
 
-                    <form onSubmit={handleLogin} className="bg-slate-800 border border-slate-700 rounded-3xl p-6 space-y-4">
-                        <div className="relative">
-                            <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                            <input
-                                required
-                                type="tel"
-                                inputMode="numeric"
-                                placeholder="Teléfono (8888-0000)"
-                                value={loginPhone}
-                                onChange={e => setLoginPhone(e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3.5 rounded-2xl text-lg font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-600 placeholder:font-sans placeholder:text-base"
-                            />
+                    <form onSubmit={handleLogin} className="nx-driver-card rounded-3xl p-6 space-y-4">
+                        <div>
+                            <label htmlFor="driver-phone" className="mb-2 block text-sm font-bold text-slate-300">
+                                Teléfono
+                            </label>
+                            <div className="relative">
+                                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} aria-hidden="true" />
+                                <input
+                                    id="driver-phone"
+                                    required
+                                    type="tel"
+                                    inputMode="numeric"
+                                    autoComplete="tel"
+                                    placeholder="8888-0000"
+                                    value={loginPhone}
+                                    onChange={e => setLoginPhone(e.target.value)}
+                                    className="min-h-tap w-full bg-slate-900 border border-slate-700 text-slate-100 pl-10 pr-4 py-3.5 rounded-2xl text-lg font-mono focus:outline-none focus:border-emerald-500 placeholder:text-slate-500 placeholder:font-sans placeholder:text-base"
+                                />
+                            </div>
                         </div>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                            <input
-                                required
-                                type="password"
-                                inputMode="numeric"
-                                placeholder="PIN"
-                                value={loginPin}
-                                onChange={e => setLoginPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                                className="w-full bg-slate-900 border border-slate-700 text-white pl-10 pr-4 py-3.5 rounded-2xl text-2xl font-mono tracking-[0.5em] focus:outline-none focus:border-emerald-500 placeholder:text-slate-600 placeholder:tracking-normal placeholder:text-base"
-                            />
+                        <div>
+                            <label htmlFor="driver-pin" className="mb-2 block text-sm font-bold text-slate-300">
+                                PIN
+                            </label>
+                            <div className="relative">
+                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} aria-hidden="true" />
+                                <input
+                                    id="driver-pin"
+                                    required
+                                    type="password"
+                                    inputMode="numeric"
+                                    autoComplete="current-password"
+                                    placeholder="4 a 6 dígitos"
+                                    value={loginPin}
+                                    onChange={e => setLoginPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    className="min-h-tap w-full bg-slate-900 border border-slate-700 text-slate-100 pl-10 pr-4 py-3.5 rounded-2xl text-2xl font-mono tracking-[0.5em] focus:outline-none focus:border-emerald-500 placeholder:text-slate-500 placeholder:tracking-normal placeholder:text-base"
+                                />
+                            </div>
                         </div>
 
                         {loginError && (
-                            <div className="bg-red-500/10 border border-red-500/20 rounded-2xl px-4 py-3 text-red-400 text-sm text-center">
+                            <div
+                                className="bg-red-500/10 border border-red-500/20 rounded-2xl px-4 py-3 text-red-400 text-sm text-center"
+                                role="alert"
+                                aria-live="polite"
+                            >
                                 {loginError}
                             </div>
                         )}
@@ -360,7 +528,7 @@ const DriverView: React.FC = () => {
                         <button
                             type="submit"
                             disabled={loggingIn || loginPin.length < 4}
-                            className="w-full py-4 bg-emerald-500 text-white rounded-2xl font-black text-lg uppercase tracking-wide hover:bg-emerald-400 active:scale-[0.97] transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                            className="nx-driver-primary nx-fluid-press min-h-tap w-full py-4 bg-brand text-brand-on rounded-2xl font-black text-lg uppercase tracking-wide hover:bg-brand-hover flex items-center justify-center gap-2"
                         >
                             {loggingIn ? <Loader2 className="animate-spin" size={22} /> : <CheckCircle size={22} />}
                             {loggingIn ? 'Entrando...' : 'Entrar'}
@@ -369,63 +537,75 @@ const DriverView: React.FC = () => {
 
                     <p className="text-center text-sm text-slate-500 mt-6">
                         ¿Querés repartir con Nortex?{' '}
-                        <Link to="/repartidor/registro" className="text-emerald-400 font-bold hover:text-emerald-300">Registrate aquí</Link>
+                        <Link to="/repartidor/registro" className="nx-fluid-press inline-flex min-h-tap items-center text-emerald-400 font-bold hover:text-emerald-300">Registrate aquí</Link>
                     </p>
                 </div>
             </div>
+            </DriverThemeSurface>
         );
     }
 
     // ── Loading ──
     if (loading) {
         return (
-            <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center gap-4">
-                <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 flex items-center justify-center">
-                    <Truck size={28} className="text-emerald-400 animate-pulse" />
+            <DriverThemeSurface theme={theme}>
+            <div className="relative min-h-dvh flex flex-col items-center justify-center gap-4 px-6">
+                <div className="fixed right-4 top-[calc(1rem+env(safe-area-inset-top))] z-30">
+                    <DriverThemeToggle theme={theme} onToggle={toggleDriverTheme} />
                 </div>
-                <Loader2 className="animate-spin text-emerald-400" size={32} />
-                <p className="text-slate-500 text-sm">Cargando tus entregas...</p>
+                <div className="w-16 h-16 bg-emerald-500/10 rounded-2xl border border-emerald-500/20 flex items-center justify-center">
+                    <Truck size={28} className="text-emerald-400 animate-pulse" aria-hidden="true" />
+                </div>
+                <Loader2 className="animate-spin text-emerald-400" size={32} aria-hidden="true" />
+                <p className="text-slate-500 text-sm" role="status">Cargando tus entregas...</p>
             </div>
+            </DriverThemeSurface>
         );
     }
 
     // ── Error ──
     if (error || !driver) {
         return (
-            <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6">
-                <div className="bg-slate-800 border border-slate-700 rounded-3xl p-8 w-full max-w-sm text-center">
+            <DriverThemeSurface theme={theme}>
+            <div className="relative min-h-dvh flex items-center justify-center p-6 pt-[calc(5rem+env(safe-area-inset-top))]">
+                <div className="fixed right-4 top-[calc(1rem+env(safe-area-inset-top))] z-30">
+                    <DriverThemeToggle theme={theme} onToggle={toggleDriverTheme} />
+                </div>
+                <div className="nx-driver-card rounded-3xl p-8 w-full max-w-sm text-center">
                     <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-4">
-                        <AlertTriangle className="text-red-400" size={28} />
+                        <AlertTriangle className="text-red-400" size={28} aria-hidden="true" />
                     </div>
                     <h2 className="text-xl font-bold text-white mb-2">No pudimos cargar tus entregas</h2>
-                    <p className="text-slate-400 text-sm mb-6">{error || 'Intenta de nuevo en unos segundos.'}</p>
+                    <p className="text-slate-400 text-sm mb-6" role="alert">{error || 'Intenta de nuevo en unos segundos.'}</p>
                     <div className="flex gap-3">
-                        <button onClick={() => { setLoading(true); fetchOrders(); }} className="flex-1 py-3 bg-emerald-500 text-white rounded-2xl font-bold hover:bg-emerald-400 transition-colors">
+                        <button onClick={() => { setLoading(true); fetchOrders(); }} className="nx-fluid-press min-h-tap flex-1 py-3 bg-brand text-brand-on rounded-2xl font-bold hover:bg-brand-hover transition-colors">
                             Reintentar
                         </button>
-                        <button onClick={logout} className="flex-1 py-3 border border-slate-600 text-slate-400 rounded-2xl font-semibold hover:bg-slate-700 transition-colors">
+                        <button onClick={logout} className="nx-fluid-press min-h-tap flex-1 py-3 border border-slate-600 text-slate-300 rounded-2xl font-semibold hover:bg-slate-700 transition-colors">
                             Salir
                         </button>
                     </div>
                 </div>
             </div>
+            </DriverThemeSurface>
         );
     }
 
     const pendingCount = orders.length;
 
     return (
-        <div className="min-h-screen bg-slate-100 pb-28">
+        <DriverThemeSurface theme={theme}>
+        <div className="relative min-h-dvh pb-[calc(8rem+env(safe-area-inset-bottom))] sm:pb-32">
 
             {/* ── Sticky Header ─────────────────────────────────────── */}
-            <div className="sticky top-0 z-30 bg-slate-900 text-white px-5 pt-5 pb-4 rounded-b-3xl shadow-2xl">
+            <div className="nx-driver-chrome sticky top-0 z-30 px-5 pb-4 pt-[calc(1.25rem+env(safe-area-inset-top))] rounded-b-3xl">
                 <div className="flex items-center gap-3">
                     <div className="w-11 h-11 bg-emerald-500/20 border border-emerald-500/30 rounded-2xl flex items-center justify-center">
-                        <Truck size={22} className="text-emerald-400" />
+                        <Truck size={22} className="text-emerald-400" aria-hidden="true" />
                     </div>
                     <div className="flex-1 min-w-0">
-                        <h1 className="font-black text-lg leading-tight text-white truncate">{driver.nombre}</h1>
-                        <p className="text-slate-400 text-xs">
+                        <h1 className="nx-shell-text font-black text-lg leading-tight truncate">{driver.nombre}</h1>
+                        <p className="nx-shell-faint text-xs">
                             {driver.tipoFlota === 'NORTEX' ? 'Flota Nortex' : 'Flota Propia'}
                             {pendingCount > 0
                                 ? <> &nbsp;·&nbsp; <span className="text-amber-400 font-semibold">{pendingCount} entrega{pendingCount !== 1 ? 's' : ''} pendiente{pendingCount !== 1 ? 's' : ''}</span></>
@@ -433,21 +613,27 @@ const DriverView: React.FC = () => {
                             }
                         </p>
                     </div>
+                    <DriverThemeToggle theme={theme} onToggle={toggleDriverTheme} />
                     {driver.tipoFlota === 'NORTEX' && (
                         <button
+                            ref={walletTriggerRef}
                             onClick={openWallet}
+                            type="button"
                             title="Mi billetera"
-                            className="p-2.5 bg-amber-500/15 border border-amber-500/25 rounded-xl text-amber-400 hover:bg-amber-500/25 transition-colors flex-shrink-0"
+                            aria-label="Abrir mi billetera"
+                            className="nx-shell-control nx-fluid-press h-touch w-touch rounded-xl text-amber-400 hover:bg-amber-500/25 transition-colors flex flex-shrink-0 items-center justify-center"
                         >
-                            <Wallet size={18} />
+                            <Wallet size={18} aria-hidden="true" />
                         </button>
                     )}
                     <button
                         onClick={logout}
+                        type="button"
                         title="Cerrar sesión"
-                        className="p-2.5 bg-slate-800 border border-slate-700 rounded-xl text-slate-400 hover:text-red-400 hover:border-red-500/30 transition-colors flex-shrink-0"
+                        aria-label="Cerrar sesión"
+                        className="nx-shell-control nx-fluid-press h-touch w-touch rounded-xl text-slate-400 hover:text-red-400 hover:border-red-500/30 transition-colors flex flex-shrink-0 items-center justify-center"
                     >
-                        <LogOut size={18} />
+                        <LogOut size={18} aria-hidden="true" />
                     </button>
                 </div>
             </div>
@@ -456,7 +642,7 @@ const DriverView: React.FC = () => {
             <div className="px-4 pt-4 space-y-4 max-w-lg mx-auto">
 
                 {pendingCount === 0 ? (
-                    <div className="bg-white rounded-3xl p-10 text-center shadow-sm border border-slate-200 mt-6">
+                    <div className="nx-driver-card rounded-3xl p-10 text-center mt-6">
                         <div className="w-16 h-16 bg-emerald-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
                             <CheckCircle className="text-emerald-500" size={32} />
                         </div>
@@ -465,7 +651,7 @@ const DriverView: React.FC = () => {
                     </div>
                 ) : (
                     orders.map(order => (
-                        <div key={order.id} className="bg-white rounded-3xl overflow-hidden shadow-md border border-slate-200/60">
+                        <div key={order.id} className="nx-driver-card rounded-3xl overflow-hidden">
 
                             {/* Card color strip */}
                             <div className={`h-1.5 w-full ${order.estado === 'preparando' ? 'bg-blue-400' : 'bg-purple-500'}`} />
@@ -497,7 +683,7 @@ const DriverView: React.FC = () => {
                                     <div className="flex gap-2 mt-3">
                                         <a
                                             href={`tel:${order.clienteTelefono}`}
-                                            className="flex-1 flex items-center justify-center gap-2 bg-slate-900 text-white py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-transform"
+                                            className="nx-fluid-press min-h-tap flex-1 flex items-center justify-center gap-2 bg-sky-700 text-white py-3.5 rounded-2xl font-bold text-sm hover:bg-sky-800"
                                         >
                                             <Phone size={17} /> {order.clienteTelefono}
                                         </a>
@@ -505,7 +691,7 @@ const DriverView: React.FC = () => {
                                             href={waLink(order.clienteTelefono)}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="flex-1 flex items-center justify-center gap-2 bg-green-500 text-white py-3.5 rounded-2xl font-bold text-sm active:scale-95 transition-transform"
+                                            className="nx-fluid-press min-h-tap flex-1 flex items-center justify-center gap-2 bg-green-800 text-white py-3.5 rounded-2xl font-bold text-sm hover:bg-green-900"
                                         >
                                             <MessageCircle size={17} /> WhatsApp
                                         </a>
@@ -541,7 +727,7 @@ const DriverView: React.FC = () => {
                                             href={wazeUrl(order.direccionEntrega)}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="flex-1 flex items-center justify-center gap-1.5 bg-waze/10 border border-waze/30 text-waze py-2.5 rounded-xl font-bold text-xs active:scale-95 transition-transform hover:bg-waze/20"
+                                            className="nx-fluid-press min-h-tap flex-1 flex items-center justify-center gap-1.5 bg-waze/10 border border-waze/30 text-blue-800 py-2.5 rounded-xl font-bold text-xs hover:bg-waze/20"
                                         >
                                             <Navigation size={14} /> Waze
                                         </a>
@@ -549,7 +735,7 @@ const DriverView: React.FC = () => {
                                             href={mapsUrl(order.direccionEntrega)}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="flex-1 flex items-center justify-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 py-2.5 rounded-xl font-bold text-xs active:scale-95 transition-transform hover:bg-blue-100"
+                                            className="nx-fluid-press min-h-tap flex-1 flex items-center justify-center gap-1.5 bg-blue-50 border border-blue-200 text-blue-700 py-2.5 rounded-xl font-bold text-xs hover:bg-blue-100"
                                         >
                                             <MapPin size={14} /> Maps
                                         </a>
@@ -582,7 +768,7 @@ const DriverView: React.FC = () => {
                                 {order.estado === 'preparando' ? (
                                     <button
                                         disabled
-                                        className="w-full py-5 rounded-2xl font-black text-base uppercase tracking-wider bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-2"
+                                        className="nx-fluid-press min-h-tap w-full py-5 rounded-2xl font-black text-base uppercase tracking-wider bg-slate-100 text-slate-400 cursor-not-allowed flex items-center justify-center gap-2"
                                     >
                                         <Clock size={20} /> Esperando en Ferretería
                                     </button>
@@ -590,8 +776,7 @@ const DriverView: React.FC = () => {
                                     <button
                                         onClick={() => handleDeliverTap(order)}
                                         disabled={!!processingId}
-                                        className="w-full py-5 rounded-2xl font-black text-lg uppercase tracking-wider bg-emerald-500 text-white shadow-xl shadow-emerald-200 hover:bg-emerald-400 active:scale-[0.97] transition-all disabled:opacity-60 flex items-center justify-center gap-2"
-                                        style={{ WebkitTapHighlightColor: 'transparent' }}
+                                        className="nx-driver-primary nx-fluid-press min-h-tap w-full py-5 rounded-2xl font-black text-lg uppercase tracking-wider bg-brand text-brand-on shadow-xl shadow-emerald-200 hover:bg-brand-hover flex items-center justify-center gap-2"
                                     >
                                         <CheckCircle size={24} /> Entregar y Cobrar
                                     </button>
@@ -604,55 +789,58 @@ const DriverView: React.FC = () => {
 
             {/* ── FASE 3: Sticky Footer — Liquidación Diaria ─────────── */}
             {liquidacion && (liquidacion.pedidosEntregados > 0 || liquidacion.netoADepositarA_Tienda > 0) && (
-                <div className="fixed bottom-0 left-0 right-0 z-40 px-4 pb-4 pt-2 bg-gradient-to-t from-slate-900 via-slate-900/95 to-transparent">
-                    <div className="max-w-lg mx-auto bg-slate-800 border border-slate-700 rounded-3xl px-5 py-4 shadow-2xl">
-                        <div className="flex items-center justify-between gap-4">
+                <div className="nx-bottom-bar nx-driver-dock fixed bottom-0 left-0 right-0 z-40 px-4 pt-2">
+                    <div className="nx-driver-chrome max-w-lg mx-auto rounded-3xl px-3 py-3 sm:px-5 sm:py-4">
+                        <div className={`nx-driver-dock-grid grid items-center gap-2 sm:gap-3 ${
+                            liquidacion.comisionesGanadas > 0
+                                ? 'grid-cols-[auto_minmax(0,1fr)_auto]'
+                                : 'grid-cols-[auto_minmax(0,1fr)]'
+                        }`}>
                             {/* Viajes completados */}
-                            <div className="flex items-center gap-3">
-                                <div className="w-10 h-10 bg-emerald-500/15 border border-emerald-500/25 rounded-xl flex items-center justify-center flex-shrink-0">
-                                    <CheckCircle size={18} className="text-emerald-400" />
+                            <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+                                <div className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-xl border border-emerald-500/25 bg-emerald-500/15 sm:h-9 sm:w-9">
+                                    <CheckCircle size={16} className="text-emerald-400" aria-hidden="true" />
                                 </div>
-                                <div>
+                                <div className="min-w-0">
                                     <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-0.5">
                                         Viajes
                                     </p>
-                                    <p className="text-2xl font-black text-white leading-none">
+                                    <p className="nx-shell-text text-xl font-black leading-none tabular-nums sm:text-2xl">
                                         {liquidacion.pedidosEntregados}
                                     </p>
                                 </div>
                             </div>
 
-                            {/* Divisor */}
-                            <div className="w-px h-10 bg-slate-700 flex-shrink-0" />
-
                             {/* Efectivo a entregar */}
-                            <div className="flex items-center gap-3 flex-1 min-w-0">
-                                <div className="w-10 h-10 bg-amber-500/15 border border-amber-500/25 rounded-xl flex items-center justify-center flex-shrink-0">
-                                    <Wallet size={18} className="text-amber-400" />
-                                </div>
-                                <div className="min-w-0">
-                                    <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-0.5">
-                                        Entregar a Caja
-                                    </p>
-                                    <p className="text-2xl font-black text-amber-400 leading-none truncate">
-                                        {formatMoney(Number(liquidacion.netoADepositarA_Tienda))}
-                                    </p>
-                                </div>
+                            <div
+                                className="min-w-0 border-l border-slate-700 pl-2 sm:pl-3"
+                                aria-label="Efectivo a entregar a caja"
+                            >
+                                <p className="mb-0.5 whitespace-nowrap text-[10px] font-bold uppercase leading-none tracking-widest text-slate-400">
+                                    <span className="sm:hidden">A caja</span>
+                                    <span className="hidden sm:inline">Entregar a caja</span>
+                                </p>
+                                <p
+                                    className="whitespace-nowrap text-[clamp(.875rem,3.8vw,1.25rem)] font-black leading-none tabular-nums text-amber-400"
+                                    title={formatMoney(Number(liquidacion.netoADepositarA_Tienda))}
+                                >
+                                    {formatMoney(Number(liquidacion.netoADepositarA_Tienda))}
+                                </p>
                             </div>
 
                             {/* Ganancia del rider */}
                             {liquidacion.comisionesGanadas > 0 && (
-                                <>
-                                    <div className="w-px h-10 bg-slate-700 flex-shrink-0" />
-                                    <div className="text-right flex-shrink-0">
-                                        <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none mb-0.5">
-                                            Tu ganancia
-                                        </p>
-                                        <p className="text-xl font-black text-emerald-400 leading-none">
-                                            {formatMoney(Number(liquidacion.comisionesGanadas))}
-                                        </p>
-                                    </div>
-                                </>
+                                <div className="min-w-0 border-l border-slate-700 pl-2 text-right sm:pl-3">
+                                    <p className="mb-0.5 whitespace-nowrap text-[10px] font-bold uppercase leading-none tracking-widest text-slate-400">
+                                        Ganancia
+                                    </p>
+                                    <p
+                                        className="truncate text-[clamp(.85rem,3.7vw,1.25rem)] font-black leading-none tabular-nums text-emerald-400"
+                                        title={formatMoney(Number(liquidacion.comisionesGanadas))}
+                                    >
+                                        {formatMoney(Number(liquidacion.comisionesGanadas))}
+                                    </p>
+                                </div>
                             )}
                         </div>
                     </div>
@@ -662,14 +850,25 @@ const DriverView: React.FC = () => {
             {/* ── 💰 Wallet Sheet (Red NORTEX) ───────────────────────── */}
             {showWallet && (
                 <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4">
-                    <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowWallet(false)} />
-                    <div className="relative w-full sm:max-w-sm bg-slate-900 rounded-t-3xl sm:rounded-3xl shadow-2xl border border-slate-700 overflow-hidden max-h-[85vh] flex flex-col">
+                    <div className="nx-overlay-backdrop absolute inset-0" onClick={closeWallet} aria-hidden="true" />
+                    <div
+                        className="nx-driver-chrome nx-driver-wallet-sheet nx-sheet relative w-full sm:max-w-sm rounded-t-3xl sm:rounded-3xl overflow-hidden flex flex-col"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="driver-wallet-title"
+                    >
                         <div className="bg-amber-500 px-6 py-3 flex items-center justify-between">
-                            <span className="font-black text-amber-950 text-sm uppercase tracking-widest flex items-center gap-2">
-                                <Wallet size={16} /> Mi Billetera Nortex
+                            <span id="driver-wallet-title" className="font-black text-amber-950 text-sm uppercase tracking-widest flex items-center gap-2">
+                                <Wallet size={16} aria-hidden="true" /> Mi Billetera Nortex
                             </span>
-                            <button onClick={() => setShowWallet(false)} className="text-amber-900 hover:text-amber-950">
-                                <X size={20} />
+                            <button
+                                type="button"
+                                onClick={closeWallet}
+                                autoFocus
+                                aria-label="Cerrar billetera"
+                                className="nx-fluid-press min-h-tap min-w-tap flex items-center justify-center rounded-xl text-amber-950 hover:bg-amber-400"
+                            >
+                                <X size={20} aria-hidden="true" />
                             </button>
                         </div>
 
@@ -716,11 +915,12 @@ const DriverView: React.FC = () => {
                 <ConfirmDeliveryModal
                     order={confirmOrder}
                     onConfirm={confirmDelivery}
-                    onCancel={() => !processingId && setConfirmOrder(null)}
+                    onCancel={closeConfirmation}
                     isProcessing={processingId === confirmOrder.id}
                 />
             )}
         </div>
+        </DriverThemeSurface>
     );
 };
 

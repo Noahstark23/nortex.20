@@ -248,14 +248,14 @@ export default function POSCatalogAdminTools({
                 <>
                     <button
                         onClick={onOpenAddModal}
-                        className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
+                        className="nx-fluid-press min-h-tap bg-nortex-500 text-brand-on px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
                         title="Crear producto completo"
                     >
                         <Plus size={18} /> Nuevo
                     </button>
                     <button
                         onClick={onOpenImportModal}
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
+                        className="nx-fluid-press min-h-tap bg-gradient-to-r from-blue-600 to-indigo-600 text-brand-on px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
                         title="Importar desde Excel"
                     >
                         <Upload size={18} /> Excel
