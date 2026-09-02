@@ -2,12 +2,18 @@
 
 ## Estado
 
-- Candidato preparado en el PR `#199` sobre la base
-  `bc42bb0d22379227143f153442c90ad2b4f67ed3`; el SHA desplegado se valida desde
-  `/api/health` después del merge.
-- Producción permanece bloqueada.
-- La publicación a staging fue autorizada por el usuario el 2026-09-02; aún no
-  se considera verificada hasta que CI confirme el SHA exacto en ese ambiente.
+- Candidato preparado en los PR `#199` y `#200` sobre la base
+  `bc42bb0d22379227143f153442c90ad2b4f67ed3`.
+- **Staging verificado** el 2026-09-02 sobre
+  `b6adb7d6005c2feb9dca5531b93e7e9e007c96e2`. El job `deploy-staging` del run
+  `33681015333` disparó el webhook de Coolify y su paso `Verificar STAGING sano
+  y en el commit esperado` exigió `ok`, `db: up` y ese commit exacto en
+  `/api/health` antes de cerrar en verde (21:02:10Z → 21:06:18Z UTC). El
+  rollout tardó cuatro minutos en converger, dentro de la ventana de reintentos
+  de `scripts/verify-deployed-release.mjs`.
+- **Producción NO autorizada.** El job `deploy-production` del mismo run quedó
+  en `waiting` sobre el environment protegido desde las 21:06:20Z UTC. Requiere
+  la aprobación explícita del responsable, que no se otorgó en este ciclo.
 
 ## Por qué existe este ciclo
 
@@ -164,7 +170,10 @@ Resultado:
 ## Límites honestos
 
 - No se ejecutó login real ni creación de empresa con datos de negocio.
-- No se verificó staging ni producción; esta evidencia es local.
+- La evidencia visual de este informe sigue siendo local. Staging quedó
+  verificado por CI (salud, `db` y SHA exacto contra `/api/health`), no por una
+  pasada visual nueva sobre ese ambiente. Producción no se verificó porque no
+  fue autorizada.
 - El navegador integrado tenía una sesión previa en `127.0.0.1:4174`, por lo
   que la revisión pública se rehízo en un puerto limpio para evitar falsos
   negativos por redirección automática al app autenticado.
