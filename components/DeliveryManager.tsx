@@ -237,11 +237,13 @@ const DeliveryManager: React.FC = () => {
         }
 
         assignmentInFlightRef.current = pedidoId;
+        pendingTransitionsRef.current.add(pedidoId);
         dataEpochRef.current += 1;
         setAssigningId(pedidoId);
         setDeliveryError('');
         setDeliveryMessage('Asignando motorizado…');
         let assignmentConfirmed = false;
+        let reservationConfirmed = false;
         try {
             const res = await fetch(`/api/v1/pedidos/${pedidoId}/motorizado`, {
                 method: 'PATCH',
@@ -258,6 +260,7 @@ const DeliveryManager: React.FC = () => {
 
             const canonicalRiderId = body.pedido.motorizadoId ?? null;
             assignmentConfirmed = true;
+            reservationConfirmed = body.pedido.estado === 'preparando';
             const canonicalRider = body.pedido.motorizado ?? (canonicalRiderId
                 ? motorizados.find((candidate) => candidate.id === canonicalRiderId)
                 : undefined);
@@ -296,6 +299,7 @@ const DeliveryManager: React.FC = () => {
                 if (!reservationBody.pedido || reservationBody.pedido.estado !== 'preparando') {
                     throw new Error('El servidor respondió sin confirmar la reserva de inventario.');
                 }
+                reservationConfirmed = true;
 
                 updatePedidos((orders) => orders.map((pedido) => (
                     pedido.id === pedidoId
@@ -352,11 +356,14 @@ const DeliveryManager: React.FC = () => {
             }
         } catch (error) {
             const detail = error instanceof Error ? error.message : 'No se pudo asignar el motorizado.';
-            setDeliveryError(assignmentConfirmed
-                ? `El motorizado quedó asignado, pero no pudimos confirmar el despacho: ${detail}`
-                : detail);
+            setDeliveryError(!assignmentConfirmed
+                ? detail
+                : reservationConfirmed
+                    ? `El motorizado quedó asignado y el inventario reservado, pero no pudimos confirmar el despacho: ${detail}`
+                    : `El motorizado quedó asignado, pero no pudimos reservar inventario ni despachar: ${detail}`);
             setDeliveryMessage('');
         } finally {
+            pendingTransitionsRef.current.delete(pedidoId);
             assignmentInFlightRef.current = null;
             setAssigningId((activeId) => activeId === pedidoId ? null : activeId);
             dataEpochRef.current += 1;
@@ -376,11 +383,13 @@ const DeliveryManager: React.FC = () => {
             nombre: string;
             telefono: string;
             zonaCobertura: string;
+            pin: string;
             vehiculoPlaca?: string;
         } = {
             nombre: riderForm.nombre.trim(),
             telefono: riderForm.telefono.trim(),
             zonaCobertura: riderForm.zonaCobertura.trim(),
+            pin: riderForm.pin,
         };
         if (vehiculoPlaca) payload.vehiculoPlaca = vehiculoPlaca;
 
@@ -638,6 +647,31 @@ const DeliveryManager: React.FC = () => {
                                 maxLength={100}
                                 className="min-h-tap w-full rounded-control border border-slate-300 bg-white px-4 py-3 text-slate-950 placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:opacity-60"
                             />
+                        </div>
+
+                        <div>
+                            <label htmlFor="new-rider-pin" className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-600">
+                                PIN de acceso *
+                            </label>
+                            <input
+                                id="new-rider-pin"
+                                type="password"
+                                inputMode="numeric"
+                                autoComplete="new-password"
+                                pattern="[0-9]{4,6}"
+                                placeholder="4 a 6 dígitos"
+                                value={riderForm.pin}
+                                onChange={event => updateRiderField('pin', event.target.value)}
+                                aria-describedby="new-rider-pin-help"
+                                disabled={savingRider}
+                                required
+                                minLength={4}
+                                maxLength={6}
+                                className="min-h-tap w-full rounded-control border border-slate-300 bg-white px-4 py-3 font-mono tracking-[0.3em] text-slate-950 placeholder:font-sans placeholder:tracking-normal placeholder:text-slate-400 focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring disabled:opacity-60"
+                            />
+                            <p id="new-rider-pin-help" className="mt-1.5 text-xs text-slate-500">
+                                Compartilo de forma segura: lo usará junto con su teléfono para entrar a Driver.
+                            </p>
                         </div>
 
                         <div>
