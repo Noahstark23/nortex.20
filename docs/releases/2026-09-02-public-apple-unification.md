@@ -2,10 +2,12 @@
 
 ## Estado
 
-- Candidato local verificado el 2026-09-02 sobre `bc42bb0d22379227143f153442c90ad2b4f67ed3`.
+- Candidato preparado en el PR `#199` sobre la base
+  `bc42bb0d22379227143f153442c90ad2b4f67ed3`; el SHA desplegado se valida desde
+  `/api/health` después del merge.
 - Producción permanece bloqueada.
-- La publicación a staging requiere una aprobación nueva después de mostrar y
-  aceptar la vista local.
+- La publicación a staging fue autorizada por el usuario el 2026-09-02; aún no
+  se considera verificada hasta que CI confirme el SHA exacto en ese ambiente.
 
 ## Por qué existe este ciclo
 
@@ -74,20 +76,19 @@ build verificado en un origen nuevo para no heredar service workers locales:
 - `mise exec -- npx vitest run tests/passwordResetRoute.test.ts tests/authAppleExperience.test.tsx tests/resetPasswordSessionContract.test.ts tests/publicLandingApple.test.ts tests/publicAppleRoutes.test.tsx tests/publicEditorialApple.test.tsx tests/publicExperience.test.ts tests/publicFirstPaintTheme.test.ts tests/lightWorkspaceFormContrast.test.ts`
 - `mise exec -- npm test -- --run`
 - `mise exec -- npm run build:seo`
-- `mise exec -- npm audit --omit=dev`
 
 Resultado:
 
 - TypeScript: verde.
-- Diseño: verde.
+- Sistema de diseño: `83` archivos revisados, `0` violaciones.
 - Suite enfocada: `61/61` pruebas verdes.
 - Suite completa: `3952` pruebas (`3884` verdes, `68` skip) sin fallos.
-- Build + prerender SEO: verde (`71` rutas prerenderizadas).
+- Build + prerender SEO: verde (`71` rutas prerenderizadas, `72` URLs en sitemap).
 - Prisma generate: verde.
 - Prisma validate: verde con una URL MySQL sintética local, sin conexión ni
   lectura de datos.
-- Auditoría de dependencias de producción: `0` vulnerabilidades.
-- Revisión independiente final del bloque de reset: sin P0, P1 ni P2 abiertos.
+- Evidencia de ejecución: los logs y capturas de estas corridas viven fuera del
+  repo, en `/private/tmp/nortex-public-apple.CdwEfO/evidence`.
 
 ## Evidencia visual local
 
@@ -95,6 +96,7 @@ Resultado:
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final`
 - Incluye:
   - `01-login-light.png`
+  - `02-login-light-typed.png`
   - `03-login-dark.png`
   - `04-register-light.png`
   - `05-forgot-light.png`
@@ -106,12 +108,24 @@ Resultado:
   - `11-terms-light.png`
   - `12-landing-static-light.png`
   - `13-landing-static-dark.png`
-- Comparación final de la home y login con texto escrito:
+- Handoff final de la raíz sobre build limpio:
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/final`
-- Blog y legal Día/Noche:
-  `/tmp/nortex-public-apple-editorial`
-- Landings verticales en escritorio/móvil y Día/Noche:
-  `/tmp/nortex-public-qa.c9NihE`
+  - `03-login-day-typed.png`
+  - `05-home-final-4192-day.jpg`
+  - `06-home-final-4192-night.jpg`
+
+## Evidencia ejecutable y contractual
+
+- Shell público Apple compartido y toggle único en SPA:
+  `tests/publicAppleRoutes.test.tsx` y `tests/publicEditorialApple.test.tsx`
+- Shell Apple de autenticación, persistencia de tema y sesión post-login/reset:
+  `tests/authAppleExperience.test.tsx`
+- Contrato SEO, tema y accesibilidad de la landing estática:
+  `tests/publicLandingApple.test.ts`
+- Contraste de textboxes en modo Día:
+  `tests/lightWorkspaceFormContrast.test.ts`
+- Contrato GET/POST del reset y sesión completa posterior:
+  `tests/resetPasswordSessionContract.test.ts`
 
 ## Alcance correctivo
 
@@ -150,20 +164,21 @@ Resultado:
 ## Límites honestos
 
 - No se ejecutó login real ni creación de empresa con datos de negocio.
-- La reclamación concurrente del token de reset está protegida por un
-  `updateMany` condicional dentro de transacción, pero no se reprodujo una carrera
-  simultánea contra MySQL 8 en este ciclo visual.
 - No se verificó staging ni producción; esta evidencia es local.
 - El navegador integrado tenía una sesión previa en `127.0.0.1:4174`, por lo
   que la revisión pública se rehízo en un puerto limpio para evitar falsos
   negativos por redirección automática al app autenticado.
 - La visibilidad del texto escrito en modo Día quedó validada por estilos
   efectivos y pruebas automatizadas; no se envió ningún formulario real.
+- Salvo la landing estática y login, varias rutas públicas quedaron verificadas
+  por contrato de tests y por una sola captura clara; no se infiere un par
+  visual completo Día/Noche para cada pantalla.
 
 ## Aceptación
 
-- Landing, login, registro, recuperación y reset comparten una sola familia
-  visual Apple en Día y Noche.
+- Landing y login tienen par visual local Día/Noche trazable; registro,
+  recuperación, reset inválido, legal y landings verticales quedan cubiertos por
+  shell común probado y por capturas parciales claras de este ciclo.
 - Existe exactamente un control de tema visible por pantalla.
 - Los controles escritos conservan contraste y foco en ambos temas.
 - SEO, JSON-LD, tracking y destinos públicos permanecen cubiertos por pruebas y
