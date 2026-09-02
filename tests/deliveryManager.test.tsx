@@ -48,10 +48,6 @@ const isPedidosListGet = (url: string, init?: RequestInit): boolean => (
     requestPath(url) === '/api/v1/pedidos' && !init?.method
 );
 
-const requestPage = (url: string): number => Number(
-    new URL(url, 'http://nortex.test').searchParams.get('page') ?? '1',
-);
-
 const installReducedMotion = () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({
         matches: true,
@@ -88,30 +84,18 @@ describe('DeliveryManager — autoridad del servidor', () => {
             .toBe('pendiente');
     });
 
-    it('carga varias páginas, conserva el orden y deduplica pedidos por id', async () => {
-        const firstBoundaryOrder = orderForPage('pedido-limite', 'Cliente sin duplicar');
+    it('carga la lista completa del contrato vigente sin agregar paginación cliente', async () => {
+        const includedOrder = orderForPage('pedido-incluido', 'Cliente sin duplicar');
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = requestUrl(input);
             if (isPedidosListGet(url, init)) {
-                const page = requestPage(url);
-                if (page === 1) {
-                    return jsonResponse({
-                        pedidos: [
-                            orderForPage('pedido-pagina-1', 'Cliente primera página'),
-                            firstBoundaryOrder,
-                        ],
-                        pageInfo: { page: 1, limit: 200, hasMore: true, nextPage: 2 },
-                    });
-                }
-                if (page === 2) {
-                    return jsonResponse({
-                        pedidos: [
-                            { ...firstBoundaryOrder, clienteNombre: 'Duplicado tardío' },
-                            orderForPage('pedido-pagina-2', 'Cliente segunda página'),
-                        ],
-                        pageInfo: { page: 2, limit: 200, hasMore: false, nextPage: null },
-                    });
-                }
+                return jsonResponse({
+                    pedidos: [
+                        orderForPage('pedido-pagina-1', 'Cliente primera página'),
+                        includedOrder,
+                        orderForPage('pedido-pagina-2', 'Cliente segunda página'),
+                    ],
+                });
             }
             if (url === '/api/v1/motorizados' && !init?.method) {
                 return jsonResponse({ motorizados: [] });
@@ -125,51 +109,12 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(await screen.findByText('Cliente primera página')).toBeVisible();
         expect(screen.getByText('Cliente segunda página')).toBeVisible();
         expect(screen.getAllByText('Cliente sin duplicar')).toHaveLength(1);
-        expect(screen.queryByText('Duplicado tardío')).not.toBeInTheDocument();
 
         const listCalls = fetchMock.mock.calls.filter(([input, init]) => (
             isPedidosListGet(requestUrl(input), init)
         ));
-        expect(listCalls.map(([input]) => requestPage(requestUrl(input)))).toEqual([1, 2]);
-        listCalls.forEach(([input]) => {
-            expect(new URL(requestUrl(input), 'http://nortex.test').searchParams.get('limit'))
-                .toBe('200');
-        });
-    });
-
-    it('detiene la carga en cinco páginas y advierte que quedan pedidos fuera del tablero', async () => {
-        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-            const url = requestUrl(input);
-            if (isPedidosListGet(url, init)) {
-                const page = requestPage(url);
-                if (page < 1 || page > 5) {
-                    throw new Error(`Página fuera del límite: ${page}`);
-                }
-                return jsonResponse({
-                    pedidos: [orderForPage(`pedido-pagina-${page}`, `Cliente página ${page}`)],
-                    pageInfo: { page, limit: 200, hasMore: true, nextPage: page + 1 },
-                });
-            }
-            if (url === '/api/v1/motorizados' && !init?.method) {
-                return jsonResponse({ motorizados: [] });
-            }
-            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
-        });
-        vi.stubGlobal('fetch', fetchMock);
-
-        render(<DeliveryManager />);
-
-        expect(await screen.findByRole('alert')).toHaveTextContent(
-            /más pedidos en el servidor.*primeras 5 páginas.*máximo 1,000.*resto no está visible/i,
-        );
-        expect(screen.getByText('Cliente página 1')).toBeVisible();
-        expect(screen.getByText('Cliente página 5')).toBeVisible();
-
-        const listCalls = fetchMock.mock.calls.filter(([input, init]) => (
-            isPedidosListGet(requestUrl(input), init)
-        ));
-        expect(listCalls.map(([input]) => requestPage(requestUrl(input))))
-            .toEqual([1, 2, 3, 4, 5]);
+        expect(listCalls).toHaveLength(1);
+        expect(requestUrl(listCalls[0][0])).toBe('/api/v1/pedidos');
     });
 
     it('revierte el movimiento y muestra el error cuando el servidor rechaza la reserva', async () => {
@@ -233,7 +178,48 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(JSON.parse(String(patch?.[1]?.body))).toMatchObject({ estado: 'preparando' });
     });
 
-    it('asigna con un solo PATCH y deja el despacho como acción explícita separada', async () => {
+    it('asigna el motorizado y auto-despacha para preservar el flujo operativo de main', async () => {
+        let serverOrder = { ...baseOrder };
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) {
+                return jsonResponse({ pedidos: [serverOrder] });
+            }
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [rider] });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, estado: 'en_camino' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+        fireEvent.change(await screen.findByLabelText('Motorizado'), {
+            target: { value: 'rider-1' },
+        });
+
+        expect(await screen.findByText('Motorizado asignado y pedido despachado correctamente.')).toBeVisible();
+        expect(screen.queryByRole('button', { name: /Despachar/i })).not.toBeInTheDocument();
+
+        const mutations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
+        expect(mutations).toHaveLength(2);
+        expect(requestUrl(mutations[0][0])).toBe('/api/v1/pedidos/pedido-1/motorizado');
+        expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({ motorizadoId: 'rider-1' });
+        expect(requestUrl(mutations[1][0])).toBe('/api/v1/pedidos/pedido-1/estado');
+        expect(JSON.parse(String(mutations[1][1]?.body))).toEqual({
+            estado: 'en_camino',
+            nota: 'Motorizado asignado — pedido despachado.',
+        });
+    });
+
+    it('distingue una asignación confirmada de un despacho rechazado', async () => {
         let serverOrder = { ...baseOrder, estado: 'preparando' };
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = requestUrl(input);
@@ -247,6 +233,9 @@ describe('DeliveryManager — autoridad del servidor', () => {
                 serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
                 return jsonResponse({ pedido: serverOrder });
             }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                return jsonResponse({ error: 'El pedido fue procesado por otra operación.' }, 409);
+            }
             throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
         });
         vi.stubGlobal('fetch', fetchMock);
@@ -256,13 +245,11 @@ describe('DeliveryManager — autoridad del servidor', () => {
             target: { value: 'rider-1' },
         });
 
-        expect(await screen.findByText('Motorizado asignado. El despacho sigue siendo un paso separado.')).toBeVisible();
-        expect(await screen.findByRole('button', { name: /Despachar/i })).toBeEnabled();
-
-        const mutations = fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH');
-        expect(mutations).toHaveLength(1);
-        expect(requestUrl(mutations[0][0])).toBe('/api/v1/pedidos/pedido-1/motorizado');
-        expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({ motorizadoId: 'rider-1' });
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            'El motorizado quedó asignado, pero no pudimos confirmar el despacho: El pedido fue procesado por otra operación.',
+        );
+        await waitFor(() => expect(screen.getByLabelText('Motorizado')).toHaveValue('rider-1'));
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(2);
     });
 
     it('obedece la asignación canónica del servidor aunque difiera de la solicitada', async () => {
