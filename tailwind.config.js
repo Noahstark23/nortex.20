@@ -1,12 +1,16 @@
+import plugin from 'tailwindcss/plugin.js';
+
 /** @type {import('tailwindcss').Config} */
+
+import colors from 'tailwindcss/colors.js';
 
 // ============================================================================
 // NORTEX — Sistema de diseño (rediseño 2026)
 //
 // Estrategia (la misma palanca que ya usaba "Obsidian", ahora apuntando a los
 // tokens): en vez de tocar ~60 componentes, se REMAPEAN las primitivas que el
-// JSX ya usa. Ningún hex vive acá — todo sale de `nortex-tokens.css`, que es la
-// fuente única de verdad.
+// JSX ya usa. Los colores propios salen de `nortex-tokens.css`; las tres rampas
+// de compatibilidad usan directamente la paleta canónica de Tailwind.
 //
 // Por qué `rgb(var(--nx-*-rgb) / <alpha-value>)` y no `var(--nx-*)` directo:
 // la app usa el modificador de opacidad de Tailwind en 360 lugares
@@ -19,8 +23,8 @@
 //   rojo   = destructivo y dinero que SALE
 //   ámbar  = requiere atención
 //   neutro = todo lo demás (las cifras NO van coloreadas)
-// El arcoíris frío (blue/indigo/sky/cyan/violet/purple) colapsa al verde de
-// marca: así desaparece el morado/cian del look genérico sin tocar un componente.
+// Los aliases decorativos fríos colapsan al verde de marca. `sky` queda libre
+// para información y conserva la rampa oficial con contraste.
 // ============================================================================
 
 /** Helper: token de color con soporte de opacidad de Tailwind. */
@@ -62,8 +66,8 @@ const brand = {
     950: t('brand-950'),
 };
 
-// Semánticos. Escala completa para absorber los `red-*` / `amber-*` existentes
-// sin que aparezca un rojo o un ámbar fuera del sistema.
+// Semánticos de producto. Sus nombres son estables aunque las rampas genéricas
+// `red-*`, `amber-*` y `sky-*` mantengan el contrato oficial de Tailwind.
 const danger = {
     DEFAULT: t('danger'),
     soft: 'var(--nx-danger-soft)',
@@ -78,6 +82,62 @@ const warning = {
     400: t('warning'), 500: t('warning'), 600: t('warning'), 700: t('warning'),
     800: t('warning'), 900: t('warning'), 950: t('warning'),
 };
+const info = {
+    DEFAULT: colors.sky[600],
+    soft: colors.sky[50],
+    ...colors.sky,
+};
+
+const motionUtilities = plugin(({ addUtilities, theme }) => {
+    const enterDuration = theme('transitionDuration.200', '200ms');
+    const enterTiming = theme('transitionTimingFunction.nx', 'cubic-bezier(0.2, 0, 0, 1)');
+
+    addUtilities({
+        '.animate-in': {
+            '--tw-enter-opacity': '1',
+            '--tw-enter-scale': '1',
+            '--tw-enter-translate-x': '0',
+            '--tw-enter-translate-y': '0',
+            animationName: 'nx-enter',
+            animationDuration: `var(--tw-enter-duration, ${enterDuration})`,
+            animationTimingFunction: `var(--tw-enter-easing, ${enterTiming})`,
+            animationFillMode: 'both',
+        },
+        '.fade-in': {
+            '--tw-enter-opacity': '0',
+        },
+        '.zoom-in': {
+            '--tw-enter-scale': '.95',
+        },
+        '.zoom-in-95': {
+            '--tw-enter-scale': '.95',
+        },
+        '.slide-in-from-top': {
+            '--tw-enter-translate-y': '-0.75rem',
+        },
+        '.slide-in-from-top-2': {
+            '--tw-enter-translate-y': '-0.5rem',
+        },
+        '.slide-in-from-right': {
+            '--tw-enter-translate-x': '0.75rem',
+        },
+        '.slide-in-from-right-full': {
+            '--tw-enter-translate-x': '100%',
+        },
+        '.slide-in-from-bottom': {
+            '--tw-enter-translate-y': '0.75rem',
+        },
+        '.slide-in-from-bottom-2': {
+            '--tw-enter-translate-y': '0.5rem',
+        },
+        '.slide-in-from-bottom-5': {
+            '--tw-enter-translate-y': '1.25rem',
+        },
+        '.slide-in-from-bottom-full': {
+            '--tw-enter-translate-y': '100%',
+        },
+    });
+});
 
 export default {
     content: [
@@ -112,11 +172,15 @@ export default {
                 stone: neutral,
 
                 brand,
+                danger,
+                warning,
+                info,
 
-                // El arcoíris frío colapsa al verde de marca: sin morado, sin cian.
+                // Los aliases decorativos fríos restantes colapsan a la marca.
+                // `sky` conserva su rampa real para el significado informativo.
                 blue: brand,
                 indigo: brand,
-                sky: brand,
+                sky: colors.sky,
                 cyan: brand,
                 violet: brand,
                 purple: brand,
@@ -127,11 +191,13 @@ export default {
                 green: brand,
                 lime: brand,
 
-                // Semánticos de uso restringido.
-                red: danger,
+                // Compatibilidad Tailwind: estas rampas deben conservar contraste
+                // entre fondos suaves y texto intenso. La semántica de producto
+                // vive arriba en `danger`, `warning` e `info`.
+                red: colors.red,
                 rose: danger,
                 orange: warning,
-                amber: warning,
+                amber: colors.amber,
                 yellow: warning,
 
                 // Marcas de terceros: SOLO para el botón que abre esa app.
@@ -206,6 +272,18 @@ export default {
             },
             transitionTimingFunction: {
                 nx: 'cubic-bezier(0.2, 0, 0, 1)',
+                fluid: 'cubic-bezier(.2,0,0,1)',
+                'fluid-in': 'cubic-bezier(1,0,.8,1)',
+            },
+            transitionDuration: {
+                fast: '120ms',
+                slow: '180ms',
+                spring: '380ms',
+            },
+            // Puente declarativo para utilidades. El movimiento gestual sigue
+            // perteneciendo al motor rAF interrumpible; no se duplica aquí.
+            scale: {
+                press: '.985',
             },
             boxShadow: {
                 // Sombras suaves y difusas — nunca el shadow-md gris duro.
@@ -220,6 +298,16 @@ export default {
                     '0%':   { opacity: '0', transform: 'translateY(6px)' },
                     '100%': { opacity: '1', transform: 'translateY(0)' },
                 },
+                'nx-enter': {
+                    '0%': {
+                        opacity: 'var(--tw-enter-opacity)',
+                        transform: 'translate3d(var(--tw-enter-translate-x), var(--tw-enter-translate-y), 0) scale3d(var(--tw-enter-scale), var(--tw-enter-scale), 1)',
+                    },
+                    '100%': {
+                        opacity: '1',
+                        transform: 'translate3d(0, 0, 0) scale3d(1, 1, 1)',
+                    },
+                },
                 'nx-shimmer': {
                     '100%': { transform: 'translateX(100%)' },
                 },
@@ -230,5 +318,5 @@ export default {
             },
         },
     },
-    plugins: [],
+    plugins: [motionUtilities],
 }

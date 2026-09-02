@@ -485,7 +485,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                 {sessionHistory.map((product, index) => (
                                     <div
                                         key={index}
-                                        className="bg-surface-800/60 border border-surface-700 rounded-lg p-3 animate-in fade-in slide-in-from-top-2 duration-200"
+                                        className="bg-surface-800/60 border border-surface-700 rounded-lg p-3 duration-200"
                                     >
                                         <div className="flex items-start gap-2">
                                             <Check size={16} className="text-emerald-400 mt-0.5 shrink-0" />

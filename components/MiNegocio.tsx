@@ -169,34 +169,41 @@ const MiNegocio: React.FC = () => {
     const needsActivation = activation !== null && !activation.hasSale;
 
     const acciones = [
-        { label: 'Vender', desc: 'Cobrar en caja', path: '/app/pos', icon: ShoppingCart, principal: true },
-        { label: 'Cobrar fiado', desc: 'Quién te debe', path: '/app/receivables', icon: Wallet, principal: false },
-        { label: 'Agregar producto', desc: 'Meter mercadería', path: '/app/inventory?quick=1', icon: PackagePlus, principal: false },
-        { label: 'Mi plata', desc: 'Cómo va el negocio', path: '/app/dashboard', icon: LayoutGrid, principal: false },
-    ];
+        { label: 'Vender', desc: 'Cobrar en caja', path: '/app/pos', icon: ShoppingCart, principal: true, tone: 'positive' },
+        { label: 'Cobrar fiado', desc: 'Quién te debe', path: '/app/receivables', icon: Wallet, principal: false, tone: 'warning' },
+        { label: 'Agregar producto', desc: 'Meter mercadería', path: '/app/inventory?quick=1', icon: PackagePlus, principal: false, tone: 'neutral' },
+        { label: 'Mi plata', desc: 'Cómo va el negocio', path: '/app/dashboard', icon: LayoutGrid, principal: false, tone: 'info' },
+    ] as const;
+
+    const actionToneClass = {
+        positive: 'nx-tone-positive-bg nx-tone-positive',
+        warning: 'nx-tone-warning-bg nx-tone-warning',
+        neutral: 'nx-tone-neutral-bg nx-tone-neutral',
+        info: 'nx-tone-info-bg nx-tone-info',
+    } as const;
 
     return (
-        <div className="h-full overflow-y-auto custom-scrollbar bg-surface-950 p-4 sm:p-8">
+        <div className="nx-workspace h-full overflow-y-auto custom-scrollbar p-4 sm:p-8">
             <div className="max-w-3xl mx-auto">
                 {/* Saludo */}
                 <header className="mb-6">
-                    <h1 className="text-2xl sm:text-3xl font-extrabold text-white">
+                    <h1 className="nx-module-header nx-canvas-text text-2xl sm:text-3xl font-extrabold">
                         {businessName ? `¡Hola, ${businessName}!` : '¡Hola!'}
                     </h1>
-                    <p className="text-slate-400 capitalize mt-1">{hoy}</p>
+                    <p className="nx-canvas-muted capitalize mt-1">{hoy}</p>
                 </header>
 
                 {needsActivation && (
                     <section
                         aria-labelledby="first-sale-title"
-                        className="bg-surface-900 border border-white/[0.08] rounded-card p-5 sm:p-8 mb-8 shadow-premium"
+                        className="nx-canvas-card p-5 sm:p-8 mb-8"
                     >
                         <div className="max-w-2xl">
-                            <p className="text-emerald-400 text-sm font-bold mb-2">Empezá por lo importante</p>
-                            <h2 id="first-sale-title" className="text-2xl sm:text-3xl font-extrabold text-white leading-tight">
+                            <p className="nx-tone-positive text-sm font-bold mb-2">Empezá por lo importante</p>
+                            <h2 id="first-sale-title" className="nx-module-header nx-canvas-text text-2xl sm:text-3xl font-extrabold leading-tight">
                                 Hacé tu primera venta
                             </h2>
-                            <p className="text-slate-300 mt-3 leading-relaxed max-w-xl">
+                            <p className="nx-canvas-muted mt-3 leading-relaxed max-w-xl">
                                 Elegí un producto, cobrá y listo. Si todavía no cargaste ninguno, te pediremos solo el nombre y el precio.
                             </p>
 
@@ -204,7 +211,7 @@ const MiNegocio: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={startFirstSale}
-                                    className="min-h-[52px] w-full sm:w-auto inline-flex items-center justify-center gap-3 px-6 py-3 bg-emerald-600 border border-emerald-500 text-white font-extrabold rounded-control hover:bg-emerald-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-300 focus-visible:ring-offset-2 focus-visible:ring-offset-surface-900 active:scale-[0.98] transition-all"
+                                    className="nx-fluid-press min-h-[52px] w-full sm:w-auto inline-flex items-center justify-center gap-3 px-6 py-3 bg-brand border border-brand text-brand-on font-extrabold rounded-control hover:bg-brand-hover focus-visible:outline-none"
                                 >
                                     <ShoppingCart size={20} aria-hidden="true" />
                                     Registrar una venta real
@@ -213,14 +220,14 @@ const MiNegocio: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={startPracticeSale}
-                                    className="min-h-[52px] w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 text-slate-200 font-bold rounded-control border border-white/[0.08] hover:bg-white/[0.05] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/30 transition-colors"
+                                    className="nx-fluid-press nx-canvas-card nx-canvas-text min-h-[52px] w-full sm:w-auto inline-flex items-center justify-center gap-2 px-5 py-3 font-bold rounded-control hover:brightness-[0.98] focus-visible:outline-none"
                                 >
                                     <PlayCircle size={19} aria-hidden="true" />
                                     Practicar sin guardar datos
                                 </button>
                             </div>
 
-                            <p className="text-xs text-slate-500 mt-4">
+                            <p className="nx-canvas-faint text-xs mt-4">
                                 La venta real actualiza tu caja e inventario. La práctica no toca la información de tu negocio.
                             </p>
                         </div>
@@ -228,38 +235,40 @@ const MiNegocio: React.FC = () => {
                 )}
 
                 {needsActivation && (
-                    <div className="border-t border-white/[0.06] pt-7 mb-4">
-                        <h2 className="text-lg font-bold text-white">Tu negocio en un vistazo</h2>
-                        <p className="text-sm text-slate-400 mt-1">Estos datos se van a completar a medida que usás Nortex.</p>
+                    <div className="border-t border-[var(--nx-canvas-border)] pt-7 mb-4">
+                        <h2 className="nx-canvas-text text-lg font-bold">Tu negocio en un vistazo</h2>
+                        <p className="nx-canvas-muted text-sm mt-1">Estos datos se van a completar a medida que usás Nortex.</p>
                     </div>
                 )}
 
                 {/* El día en 3 números */}
                 <section aria-label="Resumen del día" className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
-                    <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
-                        <p className="text-slate-400 text-sm font-medium">Hoy vendí</p>
-                        <p className="text-2xl font-extrabold text-emerald-400 mt-1">{formatCordobas(nums.vendiHoy)}</p>
+                    <div className="nx-canvas-card p-5">
+                        <p className="nx-canvas-muted text-sm font-medium">Hoy vendí</p>
+                        <p className="nx-tone-positive text-2xl font-extrabold mt-1">{formatCordobas(nums.vendiHoy)}</p>
                     </div>
                     <button
+                        type="button"
                         onClick={() => navigate('/app/receivables')}
-                        className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5 text-left hover:border-amber-400/40 transition-colors"
+                        className="nx-fluid-press nx-canvas-card p-5 text-left hover:border-warning transition-colors"
                     >
-                        <p className="text-slate-400 text-sm font-medium">Me deben (fiado)</p>
-                        <p className="text-2xl font-extrabold text-amber-400 mt-1">{formatCordobas(nums.meDeben)}</p>
+                        <p className="nx-canvas-muted text-sm font-medium">Me deben (fiado)</p>
+                        <p className="nx-tone-warning text-2xl font-extrabold mt-1">{formatCordobas(nums.meDeben)}</p>
                     </button>
-                    <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
-                        <p className="text-slate-400 text-sm font-medium">En caja</p>
-                        <p className="text-2xl font-extrabold text-sky-400 mt-1">{formatCordobas(nums.enCaja)}</p>
+                    <div className="nx-canvas-card p-5">
+                        <p className="nx-canvas-muted text-sm font-medium">En caja</p>
+                        <p className="nx-tone-info text-2xl font-extrabold mt-1">{formatCordobas(nums.enCaja)}</p>
                     </div>
-                    <div className="bg-white/[0.03] border border-white/[0.06] rounded-2xl p-5">
-                        <p className="text-slate-400 text-sm font-medium">Ganancia de hoy</p>
-                        <p className="text-2xl font-extrabold text-white mt-1">{formatCordobas(nums.gananciaHoy)}</p>
+                    <div className="nx-canvas-card p-5">
+                        <p className="nx-canvas-muted text-sm font-medium">Ganancia de hoy</p>
+                        <p className="nx-tone-positive text-2xl font-extrabold mt-1">{formatCordobas(nums.gananciaHoy)}</p>
                         {/* Sin costos cargados la ganancia sale inflada: se avisa
                             y se ofrece el camino para arreglarlo (NX-01). */}
                         {lineasSinCosto > 0 && (
                             <button
+                                type="button"
                                 onClick={() => navigate('/app/inventory')}
-                                className="mt-2 text-left text-[11px] leading-snug text-amber-400 hover:text-amber-300 underline underline-offset-2"
+                                className="nx-fluid-press nx-tone-warning mt-2 min-h-tap rounded-control text-left text-[11px] leading-snug underline underline-offset-2"
                             >
                                 Ganancia estimada — faltan costos en {lineasSinCosto} producto{lineasSinCosto === 1 ? '' : 's'}
                             </button>
@@ -268,7 +277,7 @@ const MiNegocio: React.FC = () => {
                 </section>
 
                 {needsActivation && (
-                    <h2 className="text-base font-bold text-slate-300 mb-3">Otras cosas que podés hacer</h2>
+                    <h2 className="nx-canvas-text text-base font-bold mb-3">Otras cosas que podés hacer</h2>
                 )}
 
                 {/* Las 4 acciones del día — botones grandes, ícono + palabra */}
@@ -279,28 +288,29 @@ const MiNegocio: React.FC = () => {
                         return (
                             <button
                                 key={a.path}
+                                type="button"
                                 onClick={() => navigate(a.path)}
                                 className={`
-                                    flex items-center gap-4 p-6 rounded-2xl border text-left transition-all active:scale-[0.98] min-h-[96px]
+                                    nx-fluid-press flex items-center gap-4 p-6 rounded-card border text-left transition-colors min-h-[96px]
                                     ${isPrincipal
-                                        ? 'bg-emerald-600 border-emerald-500 text-white hover:bg-emerald-500 shadow-glow shadow-emerald-500/20'
-                                        : 'bg-white/[0.03] border-white/[0.08] text-white hover:bg-white/[0.06] hover:border-white/[0.16]'}
+                                        ? 'bg-brand border-brand text-brand-on hover:bg-brand-hover shadow-glow shadow-brand/20'
+                                        : 'nx-canvas-card nx-canvas-text hover:brightness-[0.98]'}
                                 `}
                             >
-                                <div className={`w-14 h-14 rounded-2xl flex items-center justify-center flex-shrink-0 ${isPrincipal ? 'bg-white/20' : 'bg-white/[0.06]'}`}>
-                                    <Icon size={28} />
+                                <div className={`w-14 h-14 rounded-control flex items-center justify-center flex-shrink-0 ${isPrincipal ? 'bg-brand-on/10 text-brand-on' : actionToneClass[a.tone]}`}>
+                                    <Icon size={28} aria-hidden="true" />
                                 </div>
                                 <div className="flex-1 min-w-0">
                                     <p className="font-extrabold text-lg leading-tight">{a.label}</p>
-                                    <p className={`text-sm mt-0.5 ${isPrincipal ? 'text-emerald-100' : 'text-slate-400'}`}>{a.desc}</p>
+                                    <p className={`text-sm mt-0.5 ${isPrincipal ? 'text-brand-on/80' : 'nx-canvas-muted'}`}>{a.desc}</p>
                                 </div>
-                                <ArrowRight size={20} className={isPrincipal ? 'text-emerald-200' : 'text-slate-500'} />
+                                <ArrowRight size={20} aria-hidden="true" className={isPrincipal ? 'text-brand-on/70' : 'nx-canvas-faint'} />
                             </button>
                         );
                     })}
                 </section>
 
-                <p className="text-slate-500 text-xs mt-8 text-center">
+                <p className="nx-canvas-faint text-xs mt-8 text-center">
                     ¿Buscás algo más? En la compu está en "Más opciones" del menú; en el teléfono, en el botón "Menú" de abajo.
                 </p>
             </div>

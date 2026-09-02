@@ -514,7 +514,7 @@ const RetailDashboard: React.FC = () => {
               Modo Prueba: Quedan <span className="font-bold">{daysLeftInTrial} días</span> gratis.
             </span>
           </div>
-          <button onClick={handleReactivate} className="nx-fluid-press h-touch rounded-control bg-yellow-500 px-4 text-sm font-semibold text-slate-950 shadow-sm hover:bg-yellow-600 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-600">
+          <button type="button" onClick={handleReactivate} className="nx-warning-cta nx-fluid-press h-touch rounded-control px-4 text-sm font-semibold shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-600">
             Activar plan Pro
           </button>
         </div>
@@ -532,8 +532,9 @@ const RetailDashboard: React.FC = () => {
             </div>
           </div>
           <button
+            type="button"
             onClick={handleReactivate}
-            className="nx-fluid-press h-touch shrink-0 rounded-control bg-amber-500 px-5 text-sm font-semibold text-slate-950 hover:bg-amber-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
+            className="nx-warning-cta nx-fluid-press h-touch shrink-0 rounded-control px-5 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
           >
             Activar plan
           </button>
@@ -760,7 +761,7 @@ const RetailDashboard: React.FC = () => {
           <div className="flex justify-between items-start mb-4">
             <div>
               <p className="nx-label text-slate-500">Saldo en billetera</p>
-              <h3 className="nx-num mt-1 text-kpi font-bold tracking-tight text-slate-950 transition-all duration-500">{formatMoney(tenantData.walletBalance)}</h3>
+              <h3 className="nx-num mt-1 text-kpi font-bold tracking-tight text-slate-950 transition-colors duration-500">{formatMoney(tenantData.walletBalance)}</h3>
             </div>
             <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-green-500/10 text-green-700"><DollarSign size={18} aria-hidden="true" /></span>
           </div>
@@ -794,7 +795,7 @@ const RetailDashboard: React.FC = () => {
           </div>
           {!historialInsuficiente && (
             <div className="mb-3 h-1.5 w-full overflow-hidden rounded-pill bg-slate-100" role="progressbar" aria-label="Nortex Score" aria-valuemin={0} aria-valuemax={850} aria-valuenow={creditScore ?? 0}>
-              <div className="h-full rounded-pill bg-brand transition-all duration-1000" style={{ width: `${((creditScore ?? 0) / 850) * 100}%` }}></div>
+              <div className="h-full rounded-pill bg-brand transition-[width] duration-1000" style={{ width: `${((creditScore ?? 0) / 850) * 100}%` }}></div>
             </div>
           )}
           {historialInsuficiente ? (
@@ -994,7 +995,7 @@ const RetailDashboard: React.FC = () => {
 
       {/* LENDING MODAL */}
       {showLoanModal && (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
@@ -1085,13 +1086,13 @@ const RetailDashboard: React.FC = () => {
 
       {/* FISCAL SETTINGS MODAL */}
       {showFiscalModal && (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
           <div
             role="dialog"
             aria-modal="true"
             aria-labelledby="fiscal-settings-title"
             aria-describedby="fiscal-settings-description"
-            className="w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto rounded-card border border-slate-200 bg-white shadow-2xl"
+            className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-card border border-slate-200 bg-white shadow-2xl"
           >
             <div className="relative overflow-hidden border-b border-slate-200 p-6">
               <button

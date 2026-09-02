@@ -1402,14 +1402,12 @@ export default function Inventory() {
     // (`<tr><td colSpan>` en la tabla, bloque suelto en las tarjetas). Declararlo
     // una vez evita que el teléfono termine con un vacío mudo mientras el
     // escritorio ofrece "Modo rápido".
-    const lightEmptyStateClass = '[&_h3]:!text-slate-950 [&_p]:!text-slate-600 [&_button.bg-transparent]:!border-slate-300 [&_button.bg-transparent]:!text-slate-800 [&_button.bg-transparent:hover]:!bg-slate-100 [&_button.bg-transparent:hover]:!text-slate-950 [&_button.mt-4]:!text-slate-600 [&_button.mt-4:hover]:!text-slate-950';
     const propsVacio: EmptyStateProps = productsError
         ? {
             mode: 'error',
             title: 'No pudimos cargar tu inventario',
             description: 'Puede ser tu conexión. Tus productos siguen ahí — reintentá.',
             action: { label: 'Reintentar', onClick: () => fetchProducts() },
-            className: lightEmptyStateClass,
         }
         : searchTerm
             ? {
@@ -1417,7 +1415,6 @@ export default function Inventory() {
                 title: 'No se encontraron resultados',
                 description: `Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.`,
                 action: { label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') },
-                className: lightEmptyStateClass,
             }
             : {
                 icon: <Package size={32} />,
@@ -1429,7 +1426,6 @@ export default function Inventory() {
                 secondaryAction: isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined,
                 linkAction: isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined,
                 errorText: seedError,
-                className: lightEmptyStateClass,
             };
 
     // La paginación vivía DENTRO del contenedor de la tabla. Al ocultar la tabla
@@ -1459,7 +1455,7 @@ export default function Inventory() {
                 cuadrado degradado azul→cian y los enlaces incrustados entre el
                 título y el subtítulo). */}
             <ModuleHeader
-                className="nx-module-header border-b border-slate-200 pb-5 [&_h1]:!text-slate-950 [&>div>div:first-child>div:first-child]:!border-slate-200 [&>div>div:first-child>div:first-child]:!bg-white [&>div>div:first-child>div:first-child]:!text-slate-700 [&>div>div:first-child>div:last-child>p]:!text-slate-600 [&_nav_a]:!border-slate-200 [&_nav_a]:!bg-white [&_nav_a]:!text-slate-700 [&_nav_a:hover]:!border-slate-300 [&_nav_a:hover]:!text-slate-950 [&_nav_a[aria-current=page]]:!border-brand [&_nav_a[aria-current=page]]:!bg-brand-soft [&_nav_a[aria-current=page]]:!text-slate-950"
+                className="border-b pb-5"
                 icon={<Shield size={20} />}
                 title={isBodeguero ? 'Existencias' : 'Mis Productos'}
                 subtitle={isBodeguero
@@ -1489,7 +1485,7 @@ export default function Inventory() {
                                     <button
                                         type="button"
                                         onClick={() => { setShowCreateModal(true); setShowDropdown(false); }}
-                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
+                                        className="nx-fluid-press w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
                                     >
                                         <Plus size={18} className="text-brand" />
                                         <div>
@@ -1501,7 +1497,7 @@ export default function Inventory() {
                                     <button
                                         type="button"
                                         onClick={() => { setShowQuickAddModal(true); setQuickAddSKU(''); setShowDropdown(false); }}
-                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
+                                        className="nx-fluid-press w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
                                     >
                                         <Zap size={18} className="text-orange-400" />
                                         <div>
@@ -1513,7 +1509,7 @@ export default function Inventory() {
                                     <button
                                         type="button"
                                         onClick={() => { setShowImportModal(true); setShowDropdown(false); }}
-                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
+                                        className="nx-fluid-press w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
                                     >
                                         <Upload size={18} className="text-emerald-400" />
                                         <div>
@@ -1679,7 +1675,7 @@ export default function Inventory() {
                 El botón "Quitar" existe porque una barra anclada sin salida es una
                 trampa: sin él, deseleccionar exige volver a tocar 20 casillas. */}
             {selectedProductIds.length > 0 && isOwner && (
-                <div className="nx-list-surface fixed bottom-[72px] left-4 right-4 z-30 mb-4 flex flex-col gap-3 border-brand/30 bg-white/95 p-3 shadow-xl backdrop-blur-sm animate-in fade-in slide-in-from-bottom-2 lg:static lg:bottom-auto lg:left-auto lg:right-auto lg:z-auto lg:flex-row lg:items-center lg:justify-between lg:shadow-sm lg:slide-in-from-top-2">
+                <div className="nx-list-surface fixed bottom-[72px] left-4 right-4 z-30 mb-4 flex flex-col gap-3 border-brand/30 bg-white/95 p-3 shadow-xl backdrop-blur-sm lg:static lg:bottom-auto lg:left-auto lg:right-auto lg:z-auto lg:flex-row lg:items-center lg:justify-between lg:shadow-sm">
                     <div className="flex items-center justify-between gap-3">
                         <div className="flex items-center gap-2 min-w-0">
                             <CheckSquare size={18} className="shrink-0 text-brand" />
@@ -1690,7 +1686,7 @@ export default function Inventory() {
                         <button
                             type="button"
                             onClick={() => setSelectedProductIds([])}
-                            className="min-h-tap shrink-0 text-sm text-slate-600 underline underline-offset-2 hover:text-slate-950 lg:hidden"
+                            className="nx-fluid-press min-h-tap shrink-0 text-sm text-slate-600 underline underline-offset-2 hover:text-slate-950 lg:hidden"
                         >
                             Quitar
                         </button>
@@ -2083,8 +2079,8 @@ export default function Inventory() {
                 MODAL: KARDEX (HISTORIAL DE AUDITORÍA)
                ========================================== */}
             {showKardexModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowKardexModal(false)}>
-                    <div className="nx-dark-context nx-ticket-surface w-full max-w-5xl max-h-[90vh] overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowKardexModal(false)}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-5xl max-h-[90dvh] overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Kardex Header */}
                         <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
@@ -2136,7 +2132,7 @@ export default function Inventory() {
                             {(kardexFrom || kardexTo) && (
                                 <button
                                     onClick={() => { setKardexFrom(''); setKardexTo(''); fetchKardex(selectedProduct.id, 1, '', ''); }}
-                                    className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
+                                    className="nx-fluid-press min-h-tap text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
                                 >
                                     Limpiar
                                 </button>
@@ -2147,7 +2143,7 @@ export default function Inventory() {
                         </div>
 
                         {/* Kardex Table — overflow-x: 6 columnas no caben en 360px */}
-                        <div className="overflow-y-auto overflow-x-auto max-h-[calc(90vh-250px)]">
+                        <div className="overflow-y-auto overflow-x-auto max-h-[calc(90dvh-250px)]">
                             {kardexLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16">
                                     <div className="mb-3 h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
@@ -2226,14 +2222,14 @@ export default function Inventory() {
                                     <button
                                         disabled={kardexPage <= 1 || kardexLoading}
                                         onClick={() => fetchKardex(selectedProduct.id, kardexPage - 1, kardexFrom, kardexTo)}
-                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                        className="nx-fluid-press min-h-tap px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
                                     >
                                         <ChevronLeft size={15} /> Anterior
                                     </button>
                                     <button
                                         disabled={kardexPage >= Math.ceil(kardexTotal / KARDEX_PAGE_SIZE) || kardexLoading}
                                         onClick={() => fetchKardex(selectedProduct.id, kardexPage + 1, kardexFrom, kardexTo)}
-                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                        className="nx-fluid-press min-h-tap px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
                                     >
                                         Siguiente <ChevronRight size={15} />
                                     </button>
@@ -2249,14 +2245,14 @@ export default function Inventory() {
                ========================================== */}
             {showAdjustModal && selectedProduct && (
                 <div
-                    className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
+                    className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
                     onClick={() => { if (!adjustSubmitting) setShowAdjustModal(false); }}
                 >
                     <div
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="inventory-adjust-title"
-                        className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[92vh] overflow-y-auto rounded-card shadow-2xl"
+                        className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-card shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Adjust Header */}
@@ -2357,7 +2353,7 @@ export default function Inventory() {
                                                     setAdjustForm(current => ({ ...current, type: opt.value as AdjustType }));
                                                     setAdjustError('');
                                                 }}
-                                                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isSelected
+                                                className={`nx-fluid-press min-h-tap flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isSelected
                                                     ? opt.selectedClass
                                                     : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600'
                                                     }`}
@@ -2451,14 +2447,14 @@ export default function Inventory() {
                                     type="button"
                                     disabled={adjustSubmitting}
                                     onClick={() => setShowAdjustModal(false)}
-                                    className="sm:w-auto px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    className="nx-fluid-press sm:w-auto px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={adjustSubmitting || adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady}
-                                    className={`flex-1 py-3 rounded-lg font-bold text-white transition-all ${adjustForm.type === 'ADJUST_LOSS'
+                                    className={`nx-fluid-press flex-1 py-3 rounded-lg font-bold text-white transition-colors ${adjustForm.type === 'ADJUST_LOSS'
                                         ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
                                         : 'bg-brand hover:bg-brand-hover disabled:bg-emerald-900'
                                         } disabled:opacity-50 disabled:cursor-not-allowed`}
@@ -2481,8 +2477,8 @@ export default function Inventory() {
                 MODAL: EDITAR PRODUCTO (solo datos comerciales)
                ========================================== */}
             {showEditModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowEditModal(false)}>
-                    <div className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowEditModal(false)}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Header */}
                         <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
@@ -2733,7 +2729,7 @@ export default function Inventory() {
                                 <button
                                     type="button"
                                     onClick={() => setShowEditModal(false)}
-                                    className="px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
+                                    className="nx-fluid-press px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
                                 >
                                     Cancelar
                                 </button>
@@ -2747,8 +2743,8 @@ export default function Inventory() {
                 MODAL: NUEVO PRODUCTO
                ========================================== */}
             {showCreateModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowCreateModal(false)}>
-                    <div className="nx-dark-context nx-ticket-surface w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowCreateModal(false)}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
                                 <Plus size={20} className="text-brand" />
@@ -3081,7 +3077,7 @@ export default function Inventory() {
                                 <button
                                     type="button"
                                     onClick={() => setShowCreateModal(false)}
-                                    className="px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
+                                    className="nx-fluid-press px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
                                 >
                                     Cancelar
                                 </button>
@@ -3120,8 +3116,8 @@ export default function Inventory() {
                 MODAL: BATCHES (LOTES)
                ========================================== */}
             {showBatchesModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => !batchSubmitting && !writeoffSubmitting && setShowBatchesModal(false)}>
-                    <div role="dialog" aria-modal="true" aria-label={`Lotes de ${selectedProduct.name}`} className="nx-dark-context nx-ticket-surface flex w-full max-w-3xl max-h-[90vh] flex-col overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => !batchSubmitting && !writeoffSubmitting && setShowBatchesModal(false)}>
+                    <div role="dialog" aria-modal="true" aria-label={`Lotes de ${selectedProduct.name}`} className="nx-dark-context nx-ticket-surface flex w-full max-w-3xl max-h-[90dvh] flex-col overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
                                 <div className="flex items-center gap-2">
@@ -3145,7 +3141,7 @@ export default function Inventory() {
                                             });
                                         }}
                                         disabled={batchWarehousesLoading || batchWarehouses.length === 0}
-                                        className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                        className="nx-fluid-press min-h-tap bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                                     >
                                         <Plus size={16} /> Agregar lote
                                     </button>
@@ -3212,7 +3208,7 @@ export default function Inventory() {
                                 <button
                                     type="submit"
                                     disabled={batchSubmitting || batchWarehousesLoading || !batchForm.warehouseId}
-                                    className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                                    className="nx-fluid-press min-h-tap bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                                 >
                                     {batchSubmitting ? 'Guardando...' : (<><Plus size={16} /> Sumar al stock</>)}
                                 </button>
@@ -3278,7 +3274,7 @@ export default function Inventory() {
                                 <button
                                     type="submit"
                                     disabled={writeoffSubmitting || !writeoffForm.warehouseId}
-                                    className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                                    className="nx-fluid-press min-h-tap bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold"
                                 >
                                     {writeoffSubmitting ? 'Registrando...' : 'Confirmar merma'}
                                 </button>
@@ -3339,7 +3335,7 @@ export default function Inventory() {
                                                         <td className="px-6 py-4 text-right">
                                                             <button
                                                                 onClick={() => openWriteoffBatch(batch)}
-                                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
+                                                                className={`nx-fluid-press min-h-tap px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
                                                                 title="Dar de baja este lote (merma)"
                                                             >
                                                                 Dar de baja
@@ -3361,7 +3357,7 @@ export default function Inventory() {
                 MODAL: EDICIÓN MASIVA (A2 — categoría / precio)
                ========================================== */}
             {showBulkEditModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBulkEditModal(false)}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowBulkEditModal(false)}>
                     <div className="nx-dark-context nx-ticket-surface w-full max-w-lg overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
@@ -3415,21 +3411,21 @@ export default function Inventory() {
                                     <button
                                         type="button"
                                         onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: '', priceValue: '' })}
-                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                        className={`nx-fluid-press min-h-tap px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
                                     >
                                         Sin cambio
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'set', priceValue: '' })}
-                                        className={`rounded-control border px-3 py-2 text-sm font-medium transition-colors ${bulkEditForm.priceMode === 'set' ? 'border-brand bg-brand text-brand-on' : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
+                                        className={`nx-fluid-press min-h-tap rounded-control border px-3 py-2 text-sm font-medium transition-colors ${bulkEditForm.priceMode === 'set' ? 'border-brand bg-brand text-brand-on' : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
                                     >
                                         Fijar C$
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'pct', priceValue: '' })}
-                                        className={`rounded-control border px-3 py-2 text-sm font-medium transition-colors ${bulkEditForm.priceMode === 'pct' ? 'border-brand bg-brand text-brand-on' : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
+                                        className={`nx-fluid-press min-h-tap rounded-control border px-3 py-2 text-sm font-medium transition-colors ${bulkEditForm.priceMode === 'pct' ? 'border-brand bg-brand text-brand-on' : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
                                     >
                                         Ajustar %
                                     </button>
@@ -3455,7 +3451,7 @@ export default function Inventory() {
                                 <button
                                     type="button"
                                     onClick={() => setShowBulkEditModal(false)}
-                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                    className="nx-fluid-press min-h-tap flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
                                 >
                                     Cancelar
                                 </button>

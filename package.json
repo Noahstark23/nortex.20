@@ -85,6 +85,6 @@
     "workbox-window": "^7.4.0"
   },
   "overrides": {
-    "qs": "6.15.3"
+    "qs": "6.16.0"
   }
 }

@@ -3,6 +3,11 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { CheckCircle2, Circle, X, Sparkles, PartyPopper, RefreshCw } from 'lucide-react';
 import { trackEvent } from '../utils/analytics';
 import { fetchOnboardingStatus, type OnboardingStatus, type OnboardingStepStatus } from '../utils/onboardingStatus';
+import {
+  currentOnboardingStorageKeys,
+  isOnboardingFlagSet,
+  setOnboardingFlag,
+} from '../utils/onboardingStorage';
 
 /**
  * OnboardingHub — onboarding guiado de activación.
@@ -16,9 +21,6 @@ import { fetchOnboardingStatus, type OnboardingStatus, type OnboardingStepStatus
  * localStorage, igual que el resto del estado de la app. Sin migraciones de BD.
  * Solo lo ven el Dueño/Admin (las tareas de configuración son de ese nivel).
  */
-
-const WELCOME_KEY = 'nortex_onb_welcome';
-const DISMISS_KEY = 'nortex_onb_dismissed';
 
 /** Lee el rol del usuario guardado, sin reventar si falta algo. */
 function readRole(): string {
@@ -35,6 +37,7 @@ const OnboardingHub: React.FC = () => {
   const location = useLocation();
   const isPos = location.pathname === '/app/pos';
   const role = React.useMemo(readRole, []);
+  const storageKeys = React.useMemo(currentOnboardingStorageKeys, []);
   const isEligible = role === 'OWNER' || role === 'ADMIN';
 
   const [data, setData] = React.useState<OnboardingStatus | null>(null);
@@ -43,7 +46,7 @@ const OnboardingHub: React.FC = () => {
   // 🎉 Cierre del loop "aha": cuando la primera venta se detecta en vivo.
   const [celebration, setCelebration] = React.useState<string | null>(null);
   const [dismissed, setDismissed] = React.useState(
-    () => localStorage.getItem(DISMISS_KEY) === '1'
+    () => isOnboardingFlagSet(localStorage, storageKeys?.dismissed)
   );
   // Estado anterior, para detectar transiciones (pasos que se completan en vivo).
   const prevStepsRef = React.useRef<Map<string, boolean> | null>(null);
@@ -76,10 +79,10 @@ const OnboardingHub: React.FC = () => {
       // Registramos la primera exposición al onboarding sin interrumpir al
       // usuario con un modal. El checklist queda disponible cuando lo necesite.
       // Guardamos la marca antes del evento para que un reintento no lo duplique.
-      const welcomeSeen = localStorage.getItem(WELCOME_KEY) === '1';
+      const welcomeSeen = isOnboardingFlagSet(localStorage, storageKeys?.welcome);
       const forced = new URLSearchParams(window.location.search).get('welcome') === '1';
       if ((forced || json.completed === 0) && !welcomeSeen && !json.allDone) {
-        localStorage.setItem(WELCOME_KEY, '1');
+        setOnboardingFlag(localStorage, storageKeys?.welcome);
         trackEvent('onboarding_shown', { forced });
       }
     } catch {
@@ -87,7 +90,7 @@ const OnboardingHub: React.FC = () => {
       // (botón de reintento) en vez de fingir que el onboarding no existe.
       setFetchFailed(true);
     }
-  }, []);
+  }, [storageKeys]);
 
   React.useEffect(() => {
     if (isEligible) void fetchStatus();
@@ -115,7 +118,7 @@ const OnboardingHub: React.FC = () => {
   if (!data) {
     if (!fetchFailed) return null; // cargando: sin parpadeos
     return (
-      <div className="fixed top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden">
+      <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-sticky print:hidden lg:bottom-6 lg:right-6">
         <button
           onClick={() => void fetchStatus(true)}
           className="flex items-center gap-2 px-4 py-3 bg-surface-900 border border-white/[0.08] text-slate-300 font-bold rounded-full shadow-xl hover:text-white transition-colors"
@@ -130,7 +133,7 @@ const OnboardingHub: React.FC = () => {
   if (data.allDone && !celebration) return null;
 
   const dismissChecklist = () => {
-    localStorage.setItem(DISMISS_KEY, '1');
+    setOnboardingFlag(localStorage, storageKeys?.dismissed);
     setDismissed(true);
     setOpen(false);
   };
@@ -146,7 +149,7 @@ const OnboardingHub: React.FC = () => {
     <>
       {/* ---------- 🎉 CELEBRACIÓN EN VIVO (primera venta) ---------- */}
       {celebration && (
-        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-toast max-w-md w-[calc(100vw-2rem)] print:hidden animate-in fade-in slide-in-from-top-2 duration-300 pointer-events-none [&>*]:pointer-events-auto">
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-toast max-w-md w-[calc(100vw-2rem)] print:hidden duration-300 pointer-events-none [&>*]:pointer-events-auto">
           <div className="bg-surface-900 border border-emerald-500/40 rounded-2xl shadow-2xl shadow-emerald-500/10 p-4 flex items-start gap-3">
             <PartyPopper size={24} className="text-emerald-400 shrink-0 mt-0.5" />
             <p className="text-sm text-slate-100 leading-relaxed flex-1">{celebration}</p>
@@ -158,16 +161,13 @@ const OnboardingHub: React.FC = () => {
       )}
 
       {/* ---------- LANZADOR + PANEL ---------- */}
-      {/* Anclado BAJO EL HEADER, no abajo a la derecha: ahí se superponía al
-          botón EFECTIVO del POS y cortaba el texto de CRÉDITO. La zona de cobro
-          es intocable — por eso z-sticky (10), por debajo de --nx-z-checkout (20).
-          Ningún flotante persistente puede vivir encima del cobro. */}
-      {/* En móvil baja a top-[8.5rem]: a 4.5rem quedaba impresa ENCIMA de la
-          barra de búsqueda y del botón "Agregar" del POS (auditoría de uso
-          real en 390px). En md+ vuelve a su lugar bajo el header. */}
-      {!isPos && <div className="fixed top-[8.5rem] md:top-[4.5rem] right-4 lg:right-6 z-sticky print:hidden flex flex-col items-end">
+      {/* Fuera del POS vive sobre la esquina inferior, dejando libre la franja
+          superior donde cada módulo coloca sus acciones principales. En móvil
+          sube por encima de la barra de navegación. El POS continúa excluido:
+          ningún flotante persistente puede cubrir el cobro. */}
+      {!isPos && <div className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] right-4 z-sticky flex flex-col items-end print:hidden lg:bottom-6 lg:right-6">
         {open && (
-          <div id="onboarding-steps-panel" className="order-2 mt-3 w-[22rem] max-w-[calc(100vw-2.5rem)] bg-surface-900 rounded-card shadow-2xl border border-white/[0.06] overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
+          <div id="onboarding-steps-panel" className="mb-3 w-[22rem] max-w-[calc(100vw-2.5rem)] overflow-hidden rounded-card border border-white/[0.06] bg-surface-900 shadow-2xl duration-200">
             <div className="bg-nortex-900 px-5 py-4 flex items-center justify-between">
               <div className="flex items-center gap-2 text-white">
                 <Sparkles size={18} className="text-nortex-accent" />
@@ -255,7 +255,7 @@ const OnboardingHub: React.FC = () => {
           }}
           aria-expanded={open}
           aria-controls="onboarding-steps-panel"
-          className="order-1 flex items-center gap-2 pl-4 pr-5 h-touch bg-surface-800 hover:bg-surface-700 text-white font-semibold rounded-pill shadow-premium border border-white/[0.08] transition-colors"
+          className="flex h-touch items-center gap-2 rounded-pill border border-white/[0.08] bg-surface-800 pl-4 pr-5 font-semibold text-white shadow-premium transition-colors hover:bg-surface-700"
         >
           <Sparkles size={18} className="text-nortex-accent" />
           {/* En móvil la píldora se encoge a ícono+contador: con el texto

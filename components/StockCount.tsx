@@ -724,7 +724,7 @@ export default function StockCount() {
                             aria-labelledby="stock-count-close-title"
                             aria-describedby="stock-count-close-description"
                             tabIndex={-1}
-                            className="bg-slate-800 rounded-2xl w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto shadow-2xl border border-slate-700"
+                            className="bg-slate-800 rounded-2xl w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl border border-slate-700"
                             onClick={(e) => e.stopPropagation()}
                         >
                             <div className="px-6 py-4 border-b border-slate-700 flex items-center gap-2">
@@ -944,7 +944,7 @@ export default function StockCount() {
             {/* Crear */}
             {showCreate && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowCreate(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-md max-h-[calc(100vh-2rem)] overflow-y-auto shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                    <div className="bg-slate-800 rounded-2xl w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
                         <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
                             <h2 className="text-lg font-bold text-white flex items-center gap-2"><Plus size={20} className="text-blue-400" /> Nueva toma física</h2>
                             <button aria-label="Cerrar" onClick={() => setShowCreate(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"><X size={20} /></button>

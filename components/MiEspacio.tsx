@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserCircle, CalendarDays, FileText, Loader2, Printer, Briefcase, Wallet, AlertTriangle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import ModuleHeader from './ui/ModuleHeader';
 
 interface MeProfile {
     id: string;
@@ -41,11 +42,18 @@ const C = (n: number) => formatMoney(n);
 const MESES = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
 const JORNADA: Record<string, string> = { DIURNA: 'Diurna (8h)', NOCTURNA: 'Nocturna (7h)', MIXTA: 'Mixta (7.5h)' };
 const LEAVE_LABELS: Record<string, string> = { UNPAID: 'Permiso sin goce', VACATION: 'Vacaciones', SICK: 'Incapacidad', MATERNITY: 'Maternidad' };
-const fmtD = (s: string) => new Date(s).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: '2-digit' });
+const formatCivilDate = (s: string, options: Intl.DateTimeFormatOptions = {}) =>
+    new Date(s).toLocaleDateString('es-NI', { timeZone: 'UTC', ...options });
+const fmtD = (s: string) => formatCivilDate(s, { day: '2-digit', month: 'short', year: '2-digit' });
+const sanitizeAdvanceAmount = (value: string) => {
+    const normalized = value.replace(/[^0-9.]/g, '');
+    const [whole, ...fraction] = normalized.split('.');
+    return fraction.length > 0 ? `${whole}.${fraction.join('')}` : whole;
+};
 const statusBadge = (s: string) =>
-    s === 'APPROVED' ? 'bg-emerald-500/15 text-emerald-300'
-        : s === 'REJECTED' ? 'bg-rose-500/15 text-rose-300'
-            : 'bg-amber-500/15 text-amber-300';
+    s === 'APPROVED' ? 'nx-tone-positive-bg nx-tone-positive'
+        : s === 'REJECTED' ? 'nx-tone-danger-bg nx-tone-danger'
+            : 'nx-tone-warning-bg nx-tone-warning';
 const statusText = (s: string) => s === 'APPROVED' ? 'Aprobada' : s === 'REJECTED' ? 'Rechazada' : 'Pendiente';
 
 const MiEspacio: React.FC = () => {
@@ -154,137 +162,201 @@ const MiEspacio: React.FC = () => {
         if (w) { w.document.write(html); w.document.close(); setTimeout(() => w.print(), 400); }
     };
 
-    const inputCls = 'w-full bg-white/[0.03] border border-white/[0.08] text-white px-3 py-2 rounded-xl text-sm focus:outline-none focus:border-brand placeholder:text-slate-600';
+    const inputCls = 'nx-canvas-text min-h-tap w-full rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] px-3 py-2 text-sm outline-none placeholder:text-[var(--nx-canvas-faint)] focus:border-brand focus:ring-2 focus:ring-brand-ring';
 
     if (loading) {
-        return <div className="h-full flex items-center justify-center bg-surface-950"><Loader2 className="animate-spin text-brand-300" /></div>;
+        return (
+            <div className="nx-workspace flex h-full items-center justify-center" role="status" aria-live="polite">
+                <Loader2 className="nx-tone-positive animate-spin" aria-hidden="true" />
+                <span className="sr-only">Cargando Mi Espacio…</span>
+            </div>
+        );
     }
 
     if (error || !profile) {
         return (
-            <div className="h-full overflow-y-auto bg-surface-950 p-6">
-                <div className="max-w-lg mx-auto panel-premium p-8 text-center mt-10">
-                    <AlertTriangle className="mx-auto text-amber-400 mb-3" size={32} />
-                    <h2 className="text-white font-bold text-lg">Mi Espacio</h2>
-                    <p className="text-slate-400 text-sm mt-2">{error || 'No se encontró tu expediente.'}</p>
+            <div className="nx-workspace h-full overflow-y-auto p-4 sm:p-6 lg:p-8">
+                <div className="mx-auto max-w-4xl">
+                    <ModuleHeader
+                        className="mb-6"
+                        icon={<UserCircle size={20} aria-hidden="true" />}
+                        title="Mi Espacio"
+                        subtitle="Tu información laboral, colillas y prestaciones."
+                    />
+                    <div role="alert" className="nx-canvas-card mx-auto mt-10 max-w-lg p-8 text-center">
+                        <div className="nx-tone-warning-bg nx-tone-warning mx-auto mb-4 flex h-14 w-14 items-center justify-center rounded-pill">
+                            <AlertTriangle size={28} aria-hidden="true" />
+                        </div>
+                        <h2 className="nx-canvas-text text-lg font-bold">No pudimos abrir tu expediente</h2>
+                        <p className="nx-canvas-muted mt-2 text-sm">{error || 'No se encontró tu expediente.'}</p>
+                    </div>
                 </div>
             </div>
         );
     }
 
     return (
-        <div className="h-full overflow-y-auto bg-surface-950 p-6 custom-scrollbar">
-            <div className="max-w-4xl mx-auto">
-                <header className="mb-6">
-                    <h1 className="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
-                        <UserCircle className="text-brand-300" /> Mi Espacio
-                    </h1>
-                    <p className="text-slate-400 text-sm mt-1">Tu información laboral, colillas y prestaciones.</p>
-                </header>
+        <div className="nx-workspace h-full overflow-y-auto p-4 sm:p-6 lg:p-8 custom-scrollbar">
+            <div className="mx-auto max-w-4xl">
+                <ModuleHeader
+                    className="mb-6"
+                    icon={<UserCircle size={20} aria-hidden="true" />}
+                    title="Mi Espacio"
+                    subtitle="Tu información laboral, colillas y prestaciones."
+                />
 
                 {/* Perfil + saldo de vacaciones */}
-                <div className="grid sm:grid-cols-3 gap-4 mb-6">
-                    <div className="panel-premium p-5 sm:col-span-2">
-                        <p className="text-white font-bold text-lg">{profile.name}</p>
-                        <p className="text-slate-400 text-sm flex items-center gap-1.5 mt-0.5"><Briefcase size={13} /> {profile.role} · {JORNADA[profile.jornada] || profile.jornada}</p>
-                        <div className="grid grid-cols-2 gap-3 mt-4 text-sm">
-                            <div><p className="text-[11px] uppercase tracking-wider text-slate-500">Cédula</p><p className="text-slate-200 font-mono">{profile.cedula || 'N/A'}</p></div>
-                            <div><p className="text-[11px] uppercase tracking-wider text-slate-500">N° INSS</p><p className="text-slate-200 font-mono">{profile.inss || 'N/A'}</p></div>
-                            <div><p className="text-[11px] uppercase tracking-wider text-slate-500">Ingreso</p><p className="text-slate-200">{new Date(profile.hireDate).toLocaleDateString('es-NI')}</p></div>
-                            <div><p className="text-[11px] uppercase tracking-wider text-slate-500">Antigüedad</p><p className="text-slate-200">{profile.antiguedadTexto}</p></div>
+                <section aria-label="Resumen laboral" className="mb-6 grid gap-4 sm:grid-cols-3">
+                    <div className="nx-canvas-card p-5 sm:col-span-2">
+                        <p className="nx-canvas-text text-lg font-bold">{profile.name}</p>
+                        <p className="nx-canvas-muted mt-0.5 flex items-center gap-1.5 text-sm"><Briefcase size={13} aria-hidden="true" /> {profile.role} · {JORNADA[profile.jornada] || profile.jornada}</p>
+                        <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                            <div><p className="nx-canvas-faint text-[11px] uppercase tracking-wider">Cédula</p><p className="nx-canvas-text font-mono">{profile.cedula || 'N/A'}</p></div>
+                            <div><p className="nx-canvas-faint text-[11px] uppercase tracking-wider">N° INSS</p><p className="nx-canvas-text font-mono">{profile.inss || 'N/A'}</p></div>
+                            <div><p className="nx-canvas-faint text-[11px] uppercase tracking-wider">Ingreso</p><p className="nx-canvas-text">{formatCivilDate(profile.hireDate)}</p></div>
+                            <div><p className="nx-canvas-faint text-[11px] uppercase tracking-wider">Antigüedad</p><p className="nx-canvas-text">{profile.antiguedadTexto}</p></div>
                         </div>
                     </div>
-                    <div className="panel-premium p-5 flex flex-col justify-center bg-emerald-500/5 border-emerald-500/20">
-                        <p className="text-[11px] uppercase tracking-wider text-slate-400 flex items-center gap-1.5"><CalendarDays size={13} className="text-emerald-400" /> Vacaciones acumuladas</p>
-                        <p className="text-3xl font-bold font-mono text-emerald-300 mt-1">{Number(profile.vacationDays).toFixed(1)}</p>
-                        <p className="text-xs text-slate-500">días disponibles</p>
+                    <div className="nx-canvas-card nx-tone-positive-bg flex flex-col justify-center p-5">
+                        <p className="nx-tone-positive flex items-center gap-1.5 text-[11px] uppercase tracking-wider"><CalendarDays size={13} aria-hidden="true" /> Vacaciones acumuladas</p>
+                        <p className="nx-tone-positive mt-1 font-mono text-3xl font-bold">{Number(profile.vacationDays).toFixed(1)}</p>
+                        <p className="nx-canvas-muted text-xs">días disponibles</p>
                     </div>
-                </div>
+                </section>
 
                 {/* Colillas */}
-                <div className="panel-premium p-0 overflow-hidden">
-                    <div className="px-5 py-4 border-b border-white/[0.06]">
-                        <h2 className="text-white font-semibold flex items-center gap-2"><FileText size={16} className="text-brand-300" /> Mis colillas</h2>
+                <section className="nx-canvas-card overflow-hidden" aria-labelledby="mi-espacio-payrolls-title">
+                    <div className="border-b border-[var(--nx-canvas-border)] px-5 py-4">
+                        <h2 id="mi-espacio-payrolls-title" className="nx-canvas-text flex items-center gap-2 font-semibold"><FileText size={16} className="nx-tone-positive" aria-hidden="true" /> Mis colillas</h2>
                     </div>
-                    <div className="overflow-x-auto custom-scrollbar">
-                        <table className="w-full text-sm">
-                            <thead>
-                                <tr className="text-[10px] uppercase tracking-wider text-slate-500 border-b border-white/[0.06]">
-                                    <th className="text-left font-semibold px-5 py-3">Período</th>
-                                    <th className="text-right font-semibold px-3 py-3">Devengado</th>
-                                    <th className="text-right font-semibold px-3 py-3">Neto</th>
-                                    <th className="text-center font-semibold px-3 py-3">Estado</th>
-                                    <th className="text-center font-semibold px-5 py-3">Colilla</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {payrolls.length === 0 ? (
-                                    <tr><td colSpan={5} className="px-5 py-8 text-center text-slate-500">Aún no tenés colillas registradas.</td></tr>
-                                ) : payrolls.map(p => (
-                                    <tr key={p.id} className="border-b border-white/[0.04] hover:bg-white/[0.02]">
-                                        <td className="px-5 py-3 text-white font-medium">{MESES[p.month - 1]} {p.year}</td>
-                                        <td className="px-3 py-3 text-right font-mono tabular-nums text-slate-300">{C(p.totalIncome)}</td>
-                                        <td className="px-3 py-3 text-right font-mono tabular-nums font-bold text-emerald-300">{C(p.netSalary)}</td>
-                                        <td className="px-3 py-3 text-center">
-                                            <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${p.status === 'PAGADO' ? 'bg-emerald-500/15 text-emerald-300' : 'bg-amber-500/15 text-amber-300'}`}>{p.status === 'PAGADO' ? 'Pagado' : 'Pendiente'}</span>
-                                        </td>
-                                        <td className="px-5 py-3 text-center">
-                                            <button onClick={() => printColilla(p)} className="text-brand-300 hover:text-white transition-colors" title="Imprimir colilla"><Printer size={16} /></button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                    {payrolls.length === 0 ? (
+                        <p role="status" className="nx-canvas-muted px-5 py-8 text-center text-sm">Aún no tenés colillas registradas.</p>
+                    ) : (
+                        <>
+                            <div className="divide-y divide-[var(--nx-canvas-border)] md:hidden">
+                                {payrolls.map(p => {
+                                    const period = `${MESES[p.month - 1]} ${p.year}`;
+                                    return (
+                                        <article key={p.id} className="p-4">
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div>
+                                                    <p className="nx-canvas-text font-semibold">{period}</p>
+                                                    <p className="nx-canvas-muted mt-1 text-xs">Devengado {C(p.totalIncome)}</p>
+                                                </div>
+                                                <span className={`rounded-pill px-2 py-1 text-[10px] font-semibold ${p.status === 'PAGADO' ? statusBadge('APPROVED') : statusBadge('PENDING')}`}>{p.status === 'PAGADO' ? 'Pagado' : 'Pendiente'}</span>
+                                            </div>
+                                            <div className="mt-3 flex items-center justify-between gap-3">
+                                                <div>
+                                                    <p className="nx-canvas-faint text-[10px] uppercase tracking-wider">Neto</p>
+                                                    <p className="nx-tone-positive font-mono font-bold tabular-nums">{C(p.netSalary)}</p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => printColilla(p)}
+                                                    className="nx-fluid-press nx-canvas-text flex h-touch w-touch items-center justify-center rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] transition-colors hover:bg-[var(--nx-canvas-subtle)]"
+                                                    aria-label={`Imprimir colilla de ${period}`}
+                                                >
+                                                    <Printer size={17} aria-hidden="true" />
+                                                </button>
+                                            </div>
+                                        </article>
+                                    );
+                                })}
+                            </div>
+                            <div className="hidden overflow-x-auto custom-scrollbar md:block">
+                                <table className="w-full text-sm">
+                                    <thead>
+                                        <tr className="nx-canvas-faint border-b border-[var(--nx-canvas-border)] text-[10px] uppercase tracking-wider">
+                                            <th className="px-5 py-3 text-left font-semibold">Período</th>
+                                            <th className="px-3 py-3 text-right font-semibold">Devengado</th>
+                                            <th className="px-3 py-3 text-right font-semibold">Neto</th>
+                                            <th className="px-3 py-3 text-center font-semibold">Estado</th>
+                                            <th className="px-5 py-3 text-center font-semibold">Colilla</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {payrolls.map(p => {
+                                            const period = `${MESES[p.month - 1]} ${p.year}`;
+                                            return (
+                                                <tr key={p.id} className="border-b border-[var(--nx-canvas-border)] transition-colors hover:bg-[var(--nx-canvas-subtle)]">
+                                                    <td className="nx-canvas-text px-5 py-3 font-medium">{period}</td>
+                                                    <td className="nx-canvas-muted px-3 py-3 text-right font-mono tabular-nums">{C(p.totalIncome)}</td>
+                                                    <td className="nx-tone-positive px-3 py-3 text-right font-mono font-bold tabular-nums">{C(p.netSalary)}</td>
+                                                    <td className="px-3 py-3 text-center">
+                                                        <span className={`rounded-pill px-2 py-1 text-[10px] font-semibold ${p.status === 'PAGADO' ? statusBadge('APPROVED') : statusBadge('PENDING')}`}>{p.status === 'PAGADO' ? 'Pagado' : 'Pendiente'}</span>
+                                                    </td>
+                                                    <td className="px-5 py-3 text-center">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => printColilla(p)}
+                                                            className="nx-fluid-press nx-canvas-text inline-flex h-touch w-touch items-center justify-center rounded-control transition-colors hover:bg-[var(--nx-canvas-subtle)]"
+                                                            aria-label={`Imprimir colilla de ${period}`}
+                                                        >
+                                                            <Printer size={16} aria-hidden="true" />
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </>
+                    )}
+                </section>
 
                 {/* Solicitudes */}
-                <div className="grid md:grid-cols-2 gap-4 mt-6">
-                    <form onSubmit={submitLeave} className="panel-premium p-5">
-                        <h3 className="text-white font-semibold mb-3">Solicitar ausencia</h3>
+                <section aria-label="Solicitudes laborales" className="mt-6 grid gap-4 md:grid-cols-2">
+                    <form onSubmit={submitLeave} className="nx-canvas-card p-5">
+                        <h2 className="nx-canvas-text mb-4 font-semibold">Solicitar ausencia</h2>
                         <div className="space-y-3">
-                            <select value={leaveForm.type} onChange={e => setLeaveForm({ ...leaveForm, type: e.target.value })} className={inputCls}>
+                            <label htmlFor="leave-type" className="nx-canvas-muted block text-xs font-medium">Tipo de ausencia</label>
+                            <select id="leave-type" value={leaveForm.type} onChange={e => setLeaveForm({ ...leaveForm, type: e.target.value })} className={inputCls}>
                                 <option value="VACATION">Vacaciones</option>
                                 <option value="UNPAID">Permiso sin goce</option>
                                 <option value="SICK">Incapacidad</option>
                                 <option value="MATERNITY">Maternidad</option>
                             </select>
                             <div className="grid grid-cols-2 gap-2">
-                                <input type="date" required value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className={`${inputCls} font-mono`} />
-                                <input type="date" required value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className={`${inputCls} font-mono`} />
+                                <label htmlFor="leave-start" className="nx-canvas-muted text-xs font-medium">Desde</label>
+                                <label htmlFor="leave-end" className="nx-canvas-muted text-xs font-medium">Hasta</label>
+                                <input id="leave-start" type="date" required value={leaveForm.startDate} onChange={e => setLeaveForm({ ...leaveForm, startDate: e.target.value })} className={`${inputCls} font-mono`} />
+                                <input id="leave-end" type="date" required value={leaveForm.endDate} onChange={e => setLeaveForm({ ...leaveForm, endDate: e.target.value })} className={`${inputCls} font-mono`} />
                             </div>
-                            <input value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Motivo (opcional)" className={inputCls} />
-                            <button type="submit" disabled={submitting} className="btn-primary w-full disabled:opacity-50">Enviar solicitud</button>
+                            <label htmlFor="leave-reason" className="nx-canvas-muted block text-xs font-medium">Motivo <span className="nx-canvas-faint font-normal">(opcional)</span></label>
+                            <input id="leave-reason" value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Contanos brevemente" className={inputCls} />
+                            <button type="submit" disabled={submitting} className="btn-primary nx-fluid-press min-h-tap w-full disabled:opacity-50">Enviar solicitud</button>
                         </div>
                     </form>
 
-                    <form onSubmit={submitAdvance} className="panel-premium p-5">
-                        <h3 className="text-white font-semibold mb-3">Solicitar adelanto</h3>
-                        <p className="text-xs text-slate-500 mb-3">Hasta el 30% de tu salario. Se descuenta de tu próxima nómina (5% de comisión).</p>
-                        <input inputMode="decimal" value={advAmount} onChange={e => setAdvAmount(e.target.value.replace(/[^0-9.]/g, ''))} placeholder="Monto C$" className={`${inputCls} font-mono`} />
-                        <button type="submit" disabled={submitting} className="btn-primary w-full mt-3 disabled:opacity-50">Solicitar adelanto</button>
+                    <form onSubmit={submitAdvance} className="nx-canvas-card p-5">
+                        <h2 className="nx-canvas-text font-semibold">Solicitar adelanto</h2>
+                        <p id="advance-help" className="nx-canvas-muted mb-4 mt-2 text-xs">Hasta el 30% de tu salario. Se descuenta de tu próxima nómina (5% de comisión).</p>
+                        <label htmlFor="advance-amount" className="nx-canvas-muted mb-2 block text-xs font-medium">Monto solicitado (C$)</label>
+                        <input id="advance-amount" inputMode="decimal" aria-describedby="advance-help" value={advAmount} onChange={e => setAdvAmount(sanitizeAdvanceAmount(e.target.value))} placeholder="0.00" className={`${inputCls} font-mono`} />
+                        <button type="submit" disabled={submitting} className="btn-primary nx-fluid-press mt-3 min-h-tap w-full disabled:opacity-50">Solicitar adelanto</button>
                     </form>
-                </div>
+                </section>
 
                 {/* Mis solicitudes */}
                 {(leaves.length > 0 || advances.length > 0) && (
-                    <div className="panel-premium p-5 mt-4">
-                        <h3 className="text-white font-semibold mb-3">Mis solicitudes</h3>
+                    <section className="nx-canvas-card mt-4 p-5" aria-labelledby="mi-espacio-requests-title">
+                        <h2 id="mi-espacio-requests-title" className="nx-canvas-text mb-3 font-semibold">Mis solicitudes</h2>
                         <div className="space-y-2">
                             {leaves.map(l => (
-                                <div key={l.id} className="flex items-center justify-between text-sm border-b border-white/[0.04] pb-2">
-                                    <span className="text-slate-300">{LEAVE_LABELS[l.type] || l.type} · <span className="font-mono text-xs text-slate-400">{fmtD(l.startDate)} → {fmtD(l.endDate)}</span></span>
-                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${statusBadge(l.status)}`}>{statusText(l.status)}</span>
+                                <div key={l.id} className="flex flex-col gap-2 border-b border-[var(--nx-canvas-border)] pb-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                                    <span className="nx-canvas-text">{LEAVE_LABELS[l.type] || l.type} · <span className="nx-canvas-muted font-mono text-xs">{fmtD(l.startDate)} → {fmtD(l.endDate)}</span></span>
+                                    <span className={`w-fit rounded-pill px-2 py-1 text-[10px] font-semibold ${statusBadge(l.status)}`}>{statusText(l.status)}</span>
                                 </div>
                             ))}
                             {advances.map(a => (
-                                <div key={a.id} className="flex items-center justify-between text-sm border-b border-white/[0.04] pb-2">
-                                    <span className="text-slate-300">Adelanto {C(a.amount)} <span className="text-slate-500 text-xs">(+{C(a.fee)} comisión)</span></span>
-                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-semibold ${statusBadge(a.status)}`}>{statusText(a.status === 'DEDUCTED' ? 'APPROVED' : a.status)}</span>
+                                <div key={a.id} className="flex flex-col gap-2 border-b border-[var(--nx-canvas-border)] pb-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+                                    <span className="nx-canvas-text">Adelanto {C(a.amount)} <span className="nx-canvas-muted text-xs">(+{C(a.fee)} comisión)</span></span>
+                                    <span className={`w-fit rounded-pill px-2 py-1 text-[10px] font-semibold ${statusBadge(a.status === 'DEDUCTED' ? 'APPROVED' : a.status)}`}>{statusText(a.status === 'DEDUCTED' ? 'APPROVED' : a.status)}</span>
                                 </div>
                             ))}
                         </div>
-                    </div>
+                    </section>
                 )}
             </div>
         </div>

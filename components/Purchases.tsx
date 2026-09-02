@@ -816,6 +816,10 @@ export default function Purchases() {
         ).slice(0, 8);
     }, [products, productSearch]);
 
+    const effectiveSelectedWarehouseId = selectedWarehouseId || (
+        warehouses.length === 1 ? warehouses[0].id : ''
+    );
+
     const addToCart = (product: Product) => {
         setCart(currentCart => {
             const existing = currentCart.find(c => c.productId === product.id);
@@ -1027,7 +1031,7 @@ export default function Purchases() {
 
         const errors: PurchaseFormErrors = {};
         if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
-        if (!selectedPO && !selectedWarehouseId) errors.warehouseId = 'Seleccioná la bodega donde entra la mercadería.';
+        if (!selectedPO && !effectiveSelectedWarehouseId) errors.warehouseId = 'Seleccioná la bodega donde entra la mercadería.';
         if (!invoiceNumber.trim()) errors.invoiceNumber = 'Ingresá el número de factura del proveedor.';
         if (!purchaseDate) errors.date = 'Ingresá la fecha de la factura.';
         else if (!isValidCalendarDateInput(purchaseDate)) errors.date = 'Ingresá una fecha de factura válida.';
@@ -1116,7 +1120,7 @@ export default function Purchases() {
                 signal: controller.signal,
                 body: JSON.stringify({
                     supplierId: selectedSupplier,
-                    warehouseId: selectedPO ? undefined : selectedWarehouseId || undefined,
+                    warehouseId: selectedPO ? undefined : effectiveSelectedWarehouseId || undefined,
                     invoiceNumber: invoiceNumber.trim(),
                     date: purchaseDate,
                     postingDate: purchaseDate,
@@ -1518,7 +1522,7 @@ export default function Purchases() {
                     >
                         <FileText size={16} /> Historial
                         {pendingPurchases.length > 0 && (
-                            <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingPurchases.length}</span>
+                            <span className="rounded-full bg-red-700 px-1.5 py-0.5 text-xs text-white">{pendingPurchases.length}</span>
                         )}
                     </button>
                     <button
@@ -1691,7 +1695,7 @@ export default function Purchases() {
                                                     <button
                                                         type="button"
                                                         onClick={() => openMatchResolution(match)}
-                                                        className="nx-fluid-press min-h-11 rounded-control bg-emerald-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-emerald-500"
+                                                        className="nx-fluid-press min-h-11 rounded-control bg-brand px-3 py-2 text-xs font-semibold text-brand-on shadow-sm hover:bg-brand-hover"
                                                     >
                                                         Resolver
                                                     </button>
@@ -1754,7 +1758,7 @@ export default function Purchases() {
                                             <label htmlFor="purchase-warehouse" className="mb-1.5 block text-sm font-medium text-slate-700">Bodega donde entrará la mercadería *</label>
                                             <select
                                                 id="purchase-warehouse"
-                                                value={selectedWarehouseId}
+                                                value={effectiveSelectedWarehouseId}
                                                 onChange={(e) => {
                                                     setSelectedWarehouseId(e.target.value);
                                                     setFormErrors(current => ({ ...current, warehouseId: undefined }));
@@ -2197,9 +2201,9 @@ export default function Purchases() {
 
                                 <button
                                     onClick={handleSubmit}
-                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !selectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
+                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !effectiveSelectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
                                     aria-busy={submitting}
-                                    className="nx-fluid-press nx-ticket-primary mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-control bg-emerald-500 py-3.5 text-base font-semibold text-white hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500"
+                                    className="nx-fluid-press nx-ticket-primary mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-control bg-brand py-3.5 text-base font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
                                 >
                                     {submitting ? (
                                         <>
@@ -2295,7 +2299,7 @@ export default function Purchases() {
                                                 {canPaySuppliers && !p.paymentHold && (
                                                     <button
                                                         onClick={() => handlePay(p)}
-                                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-emerald-500"
+                                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover"
                                                     >
                                                         <DollarSign size={16} /> Abonar
                                                     </button>
@@ -2506,7 +2510,7 @@ export default function Purchases() {
                             <div className="flex gap-2">
                                 <button type="button" onClick={() => setSelectedMatch(null)} className="nx-fluid-press min-h-11 rounded-control border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800">Cerrar</button>
                                 {canResolveMatches && selectedMatch.purchase.matchStatus === 'EXCEPTION' && (
-                                    <button type="button" onClick={() => openMatchResolution(selectedMatch.purchase)} className="nx-fluid-press min-h-11 rounded-control bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-400">Resolver diferencia</button>
+                                    <button type="button" onClick={() => openMatchResolution(selectedMatch.purchase)} className="nx-fluid-press min-h-11 rounded-control bg-brand px-4 py-2 text-sm font-semibold text-brand-on hover:bg-brand-hover">Resolver diferencia</button>
                                 )}
                             </div>
                         </div>
@@ -2550,7 +2554,7 @@ export default function Purchases() {
                         </div>
                         <div className="flex justify-end gap-3 border-t border-slate-700 px-5 py-4">
                             <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="nx-fluid-press min-h-11 rounded-control border border-slate-600 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">Volver</button>
-                            <button type="button" onClick={() => void resolveMatch()} disabled={resolvingMatch} className="nx-fluid-press inline-flex min-h-11 min-w-36 items-center justify-center gap-2 rounded-control bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-60">
+                            <button type="button" onClick={() => void resolveMatch()} disabled={resolvingMatch} className="nx-fluid-press inline-flex min-h-11 min-w-36 items-center justify-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-wait disabled:opacity-60">
                                 {resolvingMatch && <Loader2 size={16} className="animate-spin" />}
                                 {resolvingMatch ? 'Confirmando…' : 'Resolver y liberar'}
                             </button>
@@ -2692,7 +2696,7 @@ export default function Purchases() {
                                 onClick={() => void confirmPayment(false)}
                                 disabled={paying}
                                 aria-busy={paying}
-                                className="nx-fluid-press flex min-h-11 min-w-32 items-center justify-center gap-2 rounded-control bg-emerald-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-60"
+                                className="nx-fluid-press flex min-h-11 min-w-32 items-center justify-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-wait disabled:opacity-60"
                             >
                                 {paying && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
                                 {paying ? 'Registrando…' : 'Registrar abono'}
@@ -2707,7 +2711,7 @@ export default function Purchases() {
                ========================================== */}
             {showInvoiceModal && selectedPurchase && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowInvoiceModal(false)}>
-                    <div className="nx-light-context nx-canvas-card max-h-[90vh] w-full max-w-3xl overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                    <div className="nx-light-context nx-canvas-card max-h-[90dvh] w-full max-w-3xl overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Header */}
                         <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
                             <div>
@@ -2725,7 +2729,7 @@ export default function Purchases() {
                         </div>
 
                         {/* Invoice Preview */}
-                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+                        <div className="p-6 overflow-y-auto max-h-[calc(90dvh-200px)]">
                             {/* Company + Supplier Info */}
                             <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
                                 <div>
@@ -2862,7 +2866,7 @@ export default function Purchases() {
                                 </button>
                                 <button
                                     onClick={() => printInvoice('a4')}
-                                    className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500"
+                                    className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover"
                                 >
                                     <Printer size={16} /> Factura A4
                                 </button>
@@ -2871,7 +2875,7 @@ export default function Purchases() {
                                         type="button"
                                         onClick={() => handleOpenRetention(selectedPurchase.id)}
                                         disabled={openingRetentionId !== null}
-                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-violet-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
+                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {openingRetentionId === selectedPurchase.id
                                             ? <Loader2 size={16} className="animate-spin" />

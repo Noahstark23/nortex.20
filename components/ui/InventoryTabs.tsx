@@ -39,10 +39,8 @@ export const InventoryTabs: React.FC<{ className?: string }> = ({ className = ''
                         key={p.to}
                         to={p.to}
                         aria-current={activa ? 'page' : undefined}
-                        className={`inline-flex items-center min-h-tap px-3 rounded-control border text-xs font-semibold transition-colors ${
-                            activa
-                                ? 'bg-brand-soft border-brand text-slate-100'
-                                : 'bg-slate-800 border-slate-700 text-slate-300 hover:border-slate-600 hover:text-slate-100'
+                        className={`nx-module-tab nx-fluid-press inline-flex min-h-tap items-center rounded-control border px-3 text-xs font-semibold transition-colors ${
+                            activa ? 'nx-module-tab-active' : ''
                         }`}
                     >
                         {p.label}

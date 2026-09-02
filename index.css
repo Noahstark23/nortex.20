@@ -67,8 +67,16 @@
    FUNDACIÓN GLOBAL — SPATIAL COUNTER
    ========================================== */
 @layer base {
+  html,
   body {
-    @apply bg-surface-950 text-slate-100 antialiased selection:bg-brand selection:text-white;
+    /* La SPA es una superficie operativa: evita pull-to-refresh accidental
+       mientras una venta está en curso. Los contenedores internos conservan
+       su propio scroll. */
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    @apply bg-surface-950 text-slate-100 antialiased selection:bg-brand selection:text-brand-on;
     /* Ligaduras y variantes que hacen ver "caro" al tipo de letra */
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     /* ERP = números por todos lados: que SIEMPRE alineen en columna */
@@ -105,16 +113,16 @@
     @apply bg-white rounded-2xl border border-slate-100 shadow-premium-light;
   }
 
-  /* Botón primario de marca — táctil (active:scale) y con glow al hover */
+  /* Botón primario de marca — CTA semántico con glow y transición específica. */
   .btn-primary {
-    @apply bg-brand text-white font-semibold px-4 py-2 rounded-xl
-           transition-all duration-200 active:scale-[0.98]
+    @apply bg-brand text-brand-on font-semibold px-4 py-2 rounded-xl
+           transition-colors duration-200
            hover:bg-brand-hover hover:shadow-glow shadow-brand/30
            border border-transparent focus:outline-none focus:ring-2 focus:ring-brand/40;
   }
   .btn-ghost {
     @apply text-slate-300 font-medium px-4 py-2 rounded-xl border border-white/[0.06]
-           transition-all duration-200 active:scale-[0.98] hover:bg-white/[0.04] hover:text-white;
+           transition-colors duration-200 hover:bg-white/[0.04] hover:text-white;
   }
 
   /* Input sin caja gris: línea base + foco de marca */
@@ -126,16 +134,22 @@
 
   /* Estados como badges suaves, nunca texto plano */
   .badge-soft-success {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
-           bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+    background: var(--nx-positive-bg);
+    color: var(--nx-positive);
+    border-color: var(--nx-positive-border);
   }
   .badge-soft-warning {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
-           bg-amber-500/10 text-amber-400 border border-amber-500/20;
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+    background: var(--nx-warning-bg);
+    color: var(--nx-warning);
+    border-color: var(--nx-warning-border);
   }
   .badge-soft-danger {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
-           bg-red-500/10 text-red-400 border border-red-500/20;
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+    background: var(--nx-danger-bg);
+    color: var(--nx-danger);
+    border-color: var(--nx-danger-border);
   }
 
   /* ── Modal canónico (Fase 1 rediseño) ─────────────────────────────────
@@ -148,7 +162,7 @@
   }
   .modal-panel {
     @apply bg-surface-900 border border-white/[0.08] rounded-2xl shadow-premium
-           w-full max-w-md max-h-[90vh] overflow-y-auto;
+           w-full max-w-md max-h-[90dvh] overflow-y-auto;
   }
 
   /* Tablas densas: solo divisores horizontales tenues, números en mono */
@@ -167,25 +181,113 @@
      canvas claro. Estas clases son semánticas para poder migrar módulo por
      módulo sin alterar permisos, consultas ni operaciones de negocio. */
   .nx-app-shell {
-    background: var(--nx-chrome);
-    color: rgb(var(--nx-neutral-100-rgb));
+    background: var(--nx-canvas);
+    color: var(--nx-shell-text);
     isolation: isolate;
   }
 
+  /* App pública del repartidor: comparte los tokens Día/Noche del producto,
+     pero mantiene su preferencia aislada de la sesión ERP. El material usa
+     canvas y marca existentes; no introduce una tercera paleta. */
+  .nx-driver-workspace {
+    background:
+      radial-gradient(circle at 92% 0%, rgb(var(--nx-brand-rgb) / .10), transparent 32rem),
+      linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .44), transparent 28rem),
+      var(--nx-canvas);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-driver-card {
+    background:
+      linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .94), rgb(var(--nx-canvas-raised-rgb) / .84));
+    color: var(--nx-canvas-text);
+    border: 1px solid var(--nx-canvas-border);
+    box-shadow: var(--nx-shadow-subtle);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+    backdrop-filter: blur(24px) saturate(145%);
+  }
+
+  .nx-driver-primary:disabled {
+    background: var(--nx-canvas-subtle);
+    color: var(--nx-canvas-muted);
+    border: 1px solid var(--nx-canvas-border);
+    box-shadow: none;
+    opacity: 1;
+  }
+
+  .nx-driver-chrome {
+    background:
+      radial-gradient(circle at top left, rgb(255 255 255 / .14), transparent 38%),
+      linear-gradient(180deg, var(--nx-shell-highlight), transparent 44%),
+      var(--nx-shell);
+    color: var(--nx-shell-text);
+    border: 1px solid var(--nx-shell-border);
+    box-shadow: var(--nx-shell-shadow);
+    -webkit-backdrop-filter: blur(28px) saturate(155%);
+    backdrop-filter: blur(28px) saturate(155%);
+  }
+
+  .nx-driver-dock {
+    background: linear-gradient(
+      to top,
+      var(--nx-canvas) 0%,
+      rgb(var(--nx-canvas-rgb) / .94) 68%,
+      transparent 100%
+    );
+  }
+
+  .nx-driver-wallet-sheet {
+    max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top));
+  }
+
+  @media (max-width: 479px) {
+    .nx-driver-chrome .nx-theme-toggle {
+      width: var(--nx-tap-min);
+      padding-inline: 0;
+    }
+
+    .nx-driver-chrome .nx-theme-toggle-label {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .nx-driver-card {
+      background: var(--nx-canvas-raised);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    .nx-driver-chrome {
+      background: var(--nx-shell-solid);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
   .nx-sidebar {
-    background: var(--nx-glass-dark);
-    border-color: rgb(255 255 255 / .07);
-    box-shadow: 12px 0 40px rgb(3 7 18 / .16);
-    -webkit-backdrop-filter: blur(22px) saturate(140%);
-    backdrop-filter: blur(22px) saturate(140%);
+    background:
+      radial-gradient(circle at top left, rgb(255 255 255 / .18), transparent 34%),
+      radial-gradient(circle at 92% -8%, rgb(var(--nx-brand-rgb) / .16), transparent 30%),
+      linear-gradient(180deg, var(--nx-shell-highlight), transparent 36%),
+      var(--nx-shell);
+    border-color: var(--nx-shell-border);
+    box-shadow: var(--nx-shell-shadow);
+    -webkit-backdrop-filter: blur(32px) saturate(160%);
+    backdrop-filter: blur(32px) saturate(160%);
   }
 
   .nx-dark-chrome {
-    background: var(--nx-glass-dark);
-    color: rgb(var(--nx-neutral-100-rgb));
-    border-color: rgb(255 255 255 / .07);
-    -webkit-backdrop-filter: blur(18px) saturate(135%);
-    backdrop-filter: blur(18px) saturate(135%);
+    background:
+      radial-gradient(circle at top left, rgb(255 255 255 / .14), transparent 38%),
+      radial-gradient(circle at 88% -12%, rgb(var(--nx-brand-rgb) / .14), transparent 28%),
+      linear-gradient(180deg, var(--nx-shell-highlight), transparent 42%),
+      var(--nx-shell);
+    color: var(--nx-shell-text);
+    border-color: var(--nx-shell-border);
+    box-shadow: var(--nx-shell-shadow);
+    -webkit-backdrop-filter: blur(28px) saturate(155%);
+    backdrop-filter: blur(28px) saturate(155%);
   }
 
   .nx-workspace,
@@ -202,6 +304,87 @@
   .nx-module-header {
     font-family: var(--nx-font-display);
     letter-spacing: -.02em;
+    border-color: var(--nx-canvas-border);
+  }
+
+  .nx-module-header-sticky {
+    background: rgb(var(--nx-canvas-rgb) / .95);
+  }
+
+  .nx-module-header-icon,
+  .nx-module-context-link,
+  .nx-module-tab {
+    background: var(--nx-canvas-raised);
+    border-color: var(--nx-canvas-border);
+    color: var(--nx-canvas-muted);
+  }
+
+  .nx-module-context-link:hover,
+  .nx-module-tab:hover {
+    border-color: rgb(var(--nx-canvas-faint-rgb) / .72);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-module-tab-active,
+  .nx-module-tab-active:hover,
+  .nx-module-context-link[aria-current='page'],
+  .nx-module-context-link[aria-current='page']:hover {
+    background: var(--nx-positive-bg);
+    border-color: var(--nx-positive-border);
+    color: var(--nx-positive);
+  }
+
+  .nx-empty-state-icon {
+    background: var(--nx-positive-bg);
+    border-color: var(--nx-positive-border);
+    color: var(--nx-positive);
+  }
+
+  .nx-empty-action-secondary {
+    background: transparent;
+    border-color: var(--nx-canvas-border);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-empty-action-secondary:hover {
+    background: var(--nx-canvas-subtle);
+  }
+
+  .nx-empty-link {
+    color: var(--nx-canvas-muted);
+  }
+
+  .nx-empty-link:hover {
+    color: var(--nx-canvas-text);
+  }
+
+  /* El POS conserva su plano operativo oscuro aunque la preferencia general
+     esté en Día. Los aliases locales evitan que primitivas semánticas como
+     nx-label hereden tinta oscura de un canvas claro. */
+  .nx-pos-workspace {
+    --nx-canvas: var(--nx-ticket);
+    --nx-canvas-raised: var(--nx-ticket-raised);
+    --nx-canvas-subtle: var(--nx-ticket-raised);
+    --nx-canvas-border: rgb(255 255 255 / .16);
+    --nx-canvas-text: var(--nx-ticket-text);
+    --nx-canvas-muted: var(--nx-ticket-muted);
+    --nx-canvas-faint: var(--nx-ticket-faint);
+    --nx-canvas-rgb: var(--nx-ticket-rgb);
+    --nx-canvas-raised-rgb: var(--nx-ticket-raised-rgb);
+    --nx-canvas-subtle-rgb: var(--nx-ticket-raised-rgb);
+    --nx-canvas-border-rgb: 76 88 106;
+    --nx-canvas-text-rgb: 244 246 249;
+    --nx-canvas-muted-rgb: 211 220 231;
+    --nx-canvas-faint-rgb: 183 194 207;
+    --nx-text: var(--nx-ticket-text);
+    --nx-text-muted: var(--nx-ticket-muted);
+    --nx-text-faint: var(--nx-ticket-faint);
+    --nx-positive: var(--nx-ticket-positive);
+    --nx-positive-bg: rgb(var(--nx-ticket-raised-rgb) / .86);
+    --nx-positive-border: rgb(108 233 166 / .34);
+    --nx-warning: var(--nx-ticket-warning);
+    --nx-info: var(--nx-ticket-info);
+    --nx-danger: var(--nx-ticket-danger);
   }
 
   .nx-canvas-card,
@@ -272,6 +455,29 @@
 
   .nx-ticket-surface,
   .nx-ticket-dock {
+    /* `nx-ticket-surface` es una isla oscura intencional (recibo, cobro o
+       diálogo operativo). Reasignar aquí los aliases del canvas hace que el
+       bridge Día/Noche traduzca las clases heredadas dentro del ticket sin
+       aclarar su fondo ni convertir texto blanco en blanco sobre blanco. */
+    --nx-canvas: var(--nx-ticket);
+    --nx-canvas-raised: var(--nx-ticket);
+    --nx-canvas-subtle: var(--nx-ticket-raised);
+    --nx-canvas-border: rgb(255 255 255 / .12);
+    --nx-canvas-text: var(--nx-ticket-text);
+    --nx-canvas-muted: var(--nx-ticket-muted);
+    --nx-canvas-faint: var(--nx-ticket-faint);
+    --nx-canvas-rgb: var(--nx-ticket-rgb);
+    --nx-canvas-raised-rgb: var(--nx-ticket-rgb);
+    --nx-canvas-subtle-rgb: var(--nx-ticket-raised-rgb);
+    --nx-canvas-border-rgb: 76 88 106;
+    --nx-canvas-text-rgb: 244 246 249;
+    --nx-canvas-muted-rgb: 211 220 231;
+    --nx-canvas-faint-rgb: 183 194 207;
+    --nx-positive: var(--nx-ticket-positive);
+    --nx-warning: var(--nx-ticket-warning);
+    --nx-info: var(--nx-ticket-info);
+    --nx-danger: var(--nx-ticket-danger);
+    --nx-shadow-subtle: var(--nx-shadow-float);
     background: var(--nx-ticket);
     color: rgb(var(--nx-neutral-100-rgb));
     border-color: rgb(255 255 255 / .08);
@@ -302,20 +508,53 @@
     background: rgb(var(--nx-ticket-raised-rgb) / .72);
   }
 
-  /* Respuesta táctil inmediata. La transformación no se interpola con CSS:
-     los gestos continuos usan el motor rAF y pueden ser interrumpidos desde el
-     valor de presentación actual. */
-  .nx-fluid-press {
+  /* Cada lista/modal contiene su inercia. `custom-scrollbar` ya identifica
+     los scrolls operativos existentes, por lo que el arreglo cubre la app sin
+     obligar a reescribir cientos de nodos. */
+  .nx-scroll,
+  .nx-bottom-bar,
+  .nx-sheet,
+  .nx-pay-dock,
+  .custom-scrollbar,
+  .overflow-y-auto,
+  .overflow-auto,
+  [data-scroll-lock] {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .overflow-x-auto {
+    overscroll-behavior-x: contain;
+  }
+
+  /* El dock de cobro conserva al menos su padding normal y crece cuando iOS
+     expone el home indicator mediante viewport-fit=cover. */
+  .nx-bottom-bar,
+  .nx-sheet,
+  .nx-pay-dock,
+  .nx-ticket-dock {
+    padding-bottom: max(var(--nx-3), env(safe-area-inset-bottom));
+  }
+
+  /* Fallback táctil universal: baja en el mismo pointerdown y vuelve con la
+     curva fluida. Los gestos continuos usan `nx-fluid-engine`, cuyo motor rAF
+     sigue siendo interrumpible desde el valor de presentación actual. */
+  .nx-fluid-press,
+  .btn-primary,
+  .btn-ghost {
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
     user-select: none;
-    transition-property: background-color, border-color, color, box-shadow, opacity !important;
+    transition-property: background-color, border-color, color, box-shadow, opacity, transform !important;
     transition-duration: 120ms !important;
     transition-timing-function: cubic-bezier(.2, 0, 0, 1) !important;
   }
 
-  .nx-fluid-press:active:not(:disabled) {
+  .nx-fluid-press:active:not(:disabled),
+  .btn-primary:active:not(:disabled),
+  .btn-ghost:active:not(:disabled) {
     transform: scale(var(--nx-press-scale));
+    transition-duration: 0s !important;
   }
 
   /* Los controles conectados al motor rAF usan la propiedad individual
@@ -328,6 +567,474 @@
     outline: 2px solid var(--nx-brand-ring);
     outline-offset: 2px;
   }
+}
+
+/* ==========================================
+   CONTRATO DE APARIENCIA — SHELL Y TONOS
+   ==========================================
+   Estas primitivas viven fuera de las capas de Tailwind para que una utilidad
+   cromatica heredada no vuelva ilegible el texto al cambiar de apariencia.
+   Layout declara data-nx-theme; los componentes consumen intencion semantica. */
+.nx-shell-text { color: var(--nx-shell-text); }
+.nx-shell-muted { color: var(--nx-shell-muted); }
+.nx-shell-faint { color: var(--nx-shell-faint); }
+.nx-canvas-text { color: var(--nx-canvas-text); }
+.nx-canvas-muted { color: var(--nx-canvas-muted); }
+.nx-canvas-faint { color: var(--nx-canvas-faint); }
+
+.nx-pos-workspace [class~="text-slate-500"],
+.nx-pos-workspace [class~="text-slate-600"] {
+  color: var(--nx-ticket-faint);
+}
+
+/* CTA ámbar con tinta fija de alto contraste. No hereda el texto claro del
+   canvas nocturno, porque amarillo + blanco falla AA en botones pequeños. */
+.nx-warning-cta {
+  background: #FEC84B;
+  color: #1D2939;
+}
+
+.nx-warning-cta:hover {
+  background: #FEDF89;
+  color: #1D2939;
+}
+
+.nx-shell-border {
+  border-color: var(--nx-shell-border);
+}
+
+.nx-overlay-backdrop {
+  background: var(--nx-sheet-backdrop);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+}
+
+.nx-overlay-dialog {
+  background:
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .98), rgb(var(--nx-canvas-raised-rgb) / .92));
+  color: var(--nx-canvas-text);
+  border: 1px solid var(--nx-canvas-border);
+  box-shadow: var(--nx-shadow-float);
+}
+
+.nx-overlay-dialog-muted {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-overlay-dialog-secondary {
+  color: var(--nx-canvas-text);
+  background: rgb(var(--nx-canvas-subtle-rgb) / .88);
+  border: 1px solid var(--nx-canvas-border);
+}
+
+.nx-overlay-dialog-secondary:hover {
+  background: rgb(var(--nx-canvas-raised-rgb) / .98);
+}
+
+/* Hoja móvil continua: el transform y el backdrop los conduce FluidSheet con
+   el resorte rAF. CSS solo define material, geometría y preferencias visuales. */
+.nx-fluid-sheet-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--nx-z-modal);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  isolation: isolate;
+}
+
+.nx-fluid-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--nx-sheet-backdrop);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+  will-change: opacity;
+}
+
+.nx-fluid-sheet-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+  border: 1px solid var(--nx-shell-border);
+  border-bottom: 0;
+  border-radius: var(--nx-r-sheet) var(--nx-r-sheet) 0 0;
+  background:
+    linear-gradient(180deg, var(--nx-shell-highlight), transparent 42%),
+    var(--nx-shell);
+  color: var(--nx-shell-text);
+  box-shadow: var(--nx-shell-shadow);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(150%);
+  will-change: transform;
+}
+
+.nx-fluid-sheet-panel[data-size='full'] {
+  height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+}
+
+/* El POS conserva su ticket oscuro como superficie operativa. FluidSheet solo
+   aporta geometria y movimiento; esta clase restituye el material del ticket
+   por encima del material claro/oscuro del shell autenticado. */
+.nx-fluid-sheet-panel.nx-pos-ticket-sheet {
+  background: var(--nx-ticket);
+  color: rgb(var(--nx-neutral-100-rgb));
+  border-color: rgb(255 255 255 / .08);
+}
+
+.nx-fluid-sheet-panel.nx-mobile-menu-sheet {
+  background:
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .92) 0%, rgb(var(--nx-canvas-rgb) / .96) 100%);
+  color: var(--nx-canvas-text);
+  border-color: rgb(var(--nx-canvas-border-rgb) / .72);
+  box-shadow: var(--nx-shadow-float);
+}
+
+.nx-fluid-sheet-panel.nx-pos-payment-sheet {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / .035), transparent 42%),
+    var(--nx-ticket);
+  color: rgb(var(--nx-neutral-100-rgb));
+  border-color: rgb(255 255 255 / .08);
+}
+
+/* Registro de flota: la misma hoja fisica del shell, con material de canvas.
+   En movil nace desde abajo; en escritorio conserva la geometria de dialogo. */
+.nx-fluid-sheet-panel.nx-delivery-rider-sheet {
+  background:
+    linear-gradient(180deg, var(--nx-shell-highlight), transparent 42%),
+    var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-delivery-rider-sheet-content {
+  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-pos-payment-sheet-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-pos-payment-sheet-content.nx-pos-cash-sheet-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nx-pos-cash-sheet-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-pos-payment-sheet .nx-fluid-sheet-handle[data-drag-disabled] {
+  cursor: default;
+  touch-action: auto;
+  opacity: .42;
+}
+
+@media (min-width: 640px) {
+  .nx-pos-payment-sheet-root {
+    align-items: center;
+    padding: 1rem;
+  }
+
+  .nx-delivery-rider-sheet-root {
+    align-items: center;
+    padding: 1rem;
+  }
+
+  .nx-fluid-sheet-panel.nx-pos-payment-sheet {
+    width: 100%;
+    max-width: 24rem;
+    max-height: calc(100dvh - 2rem);
+    padding-bottom: 0;
+    border-bottom: 1px solid rgb(255 255 255 / .08);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-pos-payment-sheet > .nx-fluid-sheet-handle {
+    display: none;
+  }
+
+  .nx-fluid-sheet-panel.nx-delivery-rider-sheet {
+    width: 100%;
+    max-width: 24rem;
+    max-height: calc(100dvh - 2rem);
+    padding-bottom: 0;
+    border-bottom: 1px solid var(--nx-canvas-border);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-delivery-rider-sheet > .nx-fluid-sheet-handle {
+    display: none;
+  }
+}
+
+.nx-fluid-sheet-handle {
+  display: flex;
+  min-height: var(--nx-tap-min);
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-fluid-sheet-handle:active {
+  cursor: grabbing;
+}
+
+.nx-fluid-sheet-handle > span {
+  width: 36px;
+  height: 5px;
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-shell-faint);
+  opacity: .62;
+}
+
+.nx-shell-control,
+.nx-theme-toggle {
+  color: var(--nx-shell-text);
+  background: var(--nx-shell-raised);
+  border: 1px solid var(--nx-shell-border);
+  box-shadow: 0 8px 22px rgb(15 18 23 / .08), 0 1px 0 rgb(255 255 255 / .22);
+}
+
+.nx-shell-control:hover,
+.nx-theme-toggle:hover {
+  background: var(--nx-shell-hover);
+}
+
+.nx-shell-control:focus-visible,
+.nx-theme-toggle:focus-visible,
+.nx-shell-nav-item:focus-visible {
+  outline: 2px solid var(--nx-brand-ring);
+  outline-offset: 2px;
+}
+
+.nx-theme-toggle {
+  min-width: var(--nx-tap-min);
+  min-height: var(--nx-tap-min);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  border-radius: var(--nx-r-pill);
+  padding: 0 .85rem;
+  font-weight: var(--nx-fw-semi);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-theme-toggle-label {
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.nx-theme-toggle[aria-pressed='true'] {
+  color: var(--nx-shell-text);
+  background: var(--nx-shell-raised);
+  border-color: var(--nx-shell-border);
+  box-shadow: 0 8px 22px rgb(15 18 23 / .08), 0 1px 0 rgb(255 255 255 / .22);
+}
+
+.nx-shell-nav-item {
+  color: var(--nx-shell-muted);
+  background: linear-gradient(180deg, var(--nx-shell-item), transparent 130%);
+  border-color: var(--nx-shell-item-border);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .08);
+  transition: background var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-shell-nav-item :is(svg, span),
+.nx-shell-control > svg,
+.nx-theme-toggle > svg {
+  color: inherit;
+}
+
+.nx-shell-nav-item:hover {
+  color: var(--nx-shell-text);
+  background: linear-gradient(180deg, var(--nx-shell-hover), var(--nx-shell-item));
+  border-color: var(--nx-shell-border);
+}
+
+.nx-shell-nav-item[aria-current='page'],
+.nx-shell-nav-item-active {
+  color: var(--nx-positive);
+  background: var(--nx-shell-active);
+  border-color: var(--nx-positive-border);
+  box-shadow: 0 0 0 1px var(--nx-positive-border), 0 12px 24px rgb(var(--nx-brand-rgb) / .12), inset 0 1px 0 rgb(255 255 255 / .08);
+}
+
+.nx-mobile-menu-header,
+.nx-mobile-menu-footer {
+  background:
+    radial-gradient(circle at 100% 0%, rgb(var(--nx-brand-rgb) / .10), transparent 14rem),
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .94), rgb(var(--nx-canvas-raised-rgb) / .82));
+  color: var(--nx-canvas-text);
+}
+
+.nx-mobile-menu-item {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .86), rgb(var(--nx-canvas-raised-rgb) / .72));
+  border-color: rgb(var(--nx-canvas-border-rgb) / .86);
+  color: var(--nx-canvas-text);
+  box-shadow: 0 10px 28px rgb(15 18 23 / .08), 0 1px 2px rgb(15 18 23 / .04);
+}
+
+.nx-mobile-menu-item:hover {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .98), rgb(var(--nx-canvas-raised-rgb) / .82));
+  border-color: rgb(var(--nx-canvas-border-rgb) / 1);
+  color: var(--nx-canvas-text);
+}
+
+.nx-mobile-menu-item:not(.nx-shell-nav-item-active) {
+  color: var(--nx-canvas-text);
+}
+
+.nx-tone-positive { color: var(--nx-positive); }
+.nx-tone-warning { color: var(--nx-warning); }
+.nx-tone-info { color: var(--nx-info); }
+.nx-tone-danger { color: var(--nx-danger); }
+.nx-tone-neutral { color: var(--nx-neutral); }
+
+.nx-tone-positive-bg,
+.nx-tone-warning-bg,
+.nx-tone-info-bg,
+.nx-tone-danger-bg,
+.nx-tone-neutral-bg {
+  border: 1px solid;
+}
+
+.nx-tone-positive-bg { color: var(--nx-positive); background: var(--nx-positive-bg); border-color: var(--nx-positive-border); }
+.nx-tone-warning-bg { color: var(--nx-warning); background: var(--nx-warning-bg); border-color: var(--nx-warning-border); }
+.nx-tone-info-bg { color: var(--nx-info); background: var(--nx-info-bg); border-color: var(--nx-info-border); }
+.nx-tone-danger-bg { color: var(--nx-danger); background: var(--nx-danger-bg); border-color: var(--nx-danger-border); }
+.nx-tone-neutral-bg { color: var(--nx-neutral); background: var(--nx-neutral-bg); border-color: var(--nx-neutral-border); }
+
+.nx-tone-positive-border { border-color: var(--nx-positive-border); }
+.nx-tone-warning-border { border-color: var(--nx-warning-border); }
+.nx-tone-info-border { border-color: var(--nx-info-border); }
+.nx-tone-danger-border { border-color: var(--nx-danger-border); }
+.nx-tone-neutral-border { border-color: var(--nx-neutral-border); }
+
+/* Las primitivas de jerarquia pueden combinarse con un control sin que el
+   color base del control les gane por orden de cascada. */
+:is(.nx-shell-control, .nx-theme-toggle).nx-shell-text { color: var(--nx-shell-text); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-shell-muted { color: var(--nx-shell-muted); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-shell-faint { color: var(--nx-shell-faint); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-positive { color: var(--nx-positive); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-warning { color: var(--nx-warning); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-info { color: var(--nx-info); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-danger { color: var(--nx-danger); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-neutral { color: var(--nx-neutral); }
+
+/* Compatibilidad del shell mientras termina la adopcion de primitivas. El
+   scope es deliberadamente estrecho: nunca recolorea el canvas de trabajo ni
+   el texto sobre botones de negocio. */
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-white"],
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"]
+) {
+  color: var(--nx-shell-text);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-slate-300"],
+  [class~="text-slate-400"]
+) {
+  color: var(--nx-shell-muted);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) [class~="text-slate-500"] {
+  color: var(--nx-shell-faint);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-emerald-300"],
+  [class~="text-emerald-400"]
+) {
+  color: var(--nx-positive);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-red-300"],
+  [class~="text-red-400"]
+) {
+  color: var(--nx-danger);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="border-white/10"],
+  [class~="border-white/15"],
+  [class~="border-white/20"],
+  [class~="border-white/[0.04]"],
+  [class~="border-white/[0.06]"],
+  [class~="border-white/[0.07]"],
+  [class~="border-white/[0.08]"],
+  [class~="border-white/[0.10]"],
+  [class~="border-white/[0.12]"]
+) {
+  border-color: var(--nx-shell-border);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="bg-white/[0.03]"],
+  [class~="bg-white/[0.035]"],
+  [class~="bg-white/[0.04]"],
+  [class~="bg-white/[0.055]"],
+  [class~="bg-white/[0.06]"],
+  [class~="bg-white/[0.07]"],
+  [class~="bg-white/[0.08]"]
+) {
+  background-color: var(--nx-shell-raised);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="hover:bg-white/[0.035]"],
+  [class~="hover:bg-white/[0.04]"],
+  [class~="hover:bg-white/[0.055]"],
+  [class~="hover:bg-white/[0.06]"],
+  [class~="hover:bg-white/[0.07]"],
+  [class~="hover:bg-white/[0.08]"]
+):hover {
+  background-color: var(--nx-shell-hover);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) {
+  background:
+    radial-gradient(circle at top left, rgb(255 255 255 / .92), transparent 42%),
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .92), rgb(var(--nx-canvas-rgb) / .88)),
+    var(--nx-shell);
+  box-shadow: 0 22px 52px rgb(15 23 42 / .10), inset 0 1px 0 rgb(255 255 255 / .88);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) .nx-shell-nav-item {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .84), rgb(var(--nx-canvas-rgb) / .76));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .84);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) .nx-shell-nav-item:hover {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .98), rgb(var(--nx-canvas-raised-rgb) / .86));
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -343,25 +1050,44 @@
     scroll-behavior: auto !important;
   }
 
-  .nx-fluid-press {
+  .nx-fluid-press,
+  .btn-primary,
+  .btn-ghost,
+  .nx-theme-toggle,
+  .nx-shell-nav-item {
     transition-duration: 0ms !important;
   }
 
-  .nx-fluid-press:active:not(:disabled) {
+  .nx-fluid-press:active:not(:disabled),
+  .btn-primary:active:not(:disabled),
+  .btn-ghost:active:not(:disabled) {
     transform: none;
   }
 }
 
 @media (prefers-reduced-transparency: reduce) {
   .nx-sidebar,
-  .nx-dark-chrome {
-    background: var(--nx-chrome);
+  .nx-dark-chrome,
+  .nx-fluid-sheet-panel {
+    background: var(--nx-shell-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .nx-fluid-sheet-backdrop {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
 
   .nx-ticket-checkout {
     background: var(--nx-ticket);
+  }
+
+  .nx-mobile-menu-header,
+  .nx-mobile-menu-footer,
+  .nx-mobile-menu-item,
+  .nx-fluid-sheet-panel.nx-mobile-menu-sheet {
+    background: var(--nx-shell-solid);
   }
 }
 
@@ -377,9 +1103,618 @@
   .nx-dark-chrome,
   .nx-ticket-surface,
   .nx-ticket-dock {
-    border-color: rgb(255 255 255 / .28);
+    border-color: var(--nx-shell-muted);
+  }
+
+  .nx-shell-control,
+  .nx-theme-toggle,
+  .nx-shell-nav-item {
+    border-color: currentColor;
   }
 }
+
+/* ==========================================
+   CONTRATO VISUAL AUTENTICADO — APPLE/HIG LIGHT
+   ==========================================
+   El shell persistente usa material claro translucido y el trabajo operativo
+   un canvas calido/claro en TODAS las rutas autenticadas salvo POS, cuyo
+   ticket oscuro es una superficie funcional explicita. Esta capa traduce las
+   utilidades oscuras heredadas mientras cada módulo migra a las primitivas
+   semánticas `nx-workspace`, `nx-canvas-card` y `nx-list-surface`.
+
+   Importante: el puente vive en un único scope y no cambia marketing, páginas
+   públicas ni POS. No se deben añadir nuevas excepciones por pantalla. */
+.nx-apple-light-workspace {
+  color-scheme: light;
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-light-workspace .nx-dark-context:not(.nx-ticket-surface):not(.nx-ticket-dock) {
+  color-scheme: light;
+}
+
+/* Los tickets son islas oscuras deliberadas aun dentro del workspace Día.
+   Mantener el esquema oscuro evita controles nativos claros sobre su material. */
+.nx-apple-light-workspace :is(.nx-ticket-surface, .nx-ticket-dock).nx-dark-context {
+  color-scheme: dark;
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-surface-950"],
+  [class~="bg-surface-950/40"],
+  [class~="bg-surface-950/60"],
+  [class~="bg-surface-950/70"]
+) {
+  background-color: var(--nx-canvas);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-surface-900"],
+  [class~="bg-surface-900/60"],
+  [class~="bg-surface-900/70"],
+  [class~="bg-surface-900/80"],
+  [class~="bg-surface-900/90"],
+  [class~="bg-surface-900/95"]
+) {
+  background-color: var(--nx-canvas-raised);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-surface-800"],
+  [class~="bg-surface-800/40"],
+  [class~="bg-surface-800/60"],
+  [class~="bg-surface-700"],
+  [class~="bg-surface-700/60"]
+) {
+  background-color: var(--nx-canvas-subtle);
+}
+
+/* Variantes slate heredadas. Un backdrop `fixed` conserva su oscuridad; los
+   paneles contenidos dentro de él sí se convierten a superficie clara. */
+.nx-apple-light-workspace :is(
+  [class~="bg-slate-950"],
+  [class~="bg-slate-900"],
+  [class~="bg-slate-900/40"],
+  [class~="bg-slate-900/45"],
+  [class~="bg-slate-900/50"],
+  [class~="bg-slate-900/55"],
+  [class~="bg-slate-900/60"],
+  [class~="bg-slate-900/80"],
+  [class~="bg-slate-900/95"]
+):not([class~="fixed"]) {
+  background-color: var(--nx-canvas-raised);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-slate-800"],
+  [class~="bg-slate-800/40"],
+  [class~="bg-slate-800/50"],
+  [class~="bg-slate-800/60"],
+  [class~="bg-slate-800/70"],
+  [class~="bg-slate-800/80"],
+  [class~="bg-slate-800/90"],
+  [class~="bg-slate-700"],
+  [class~="bg-slate-700/50"],
+  [class~="bg-slate-700/60"],
+  [class~="bg-slate-700/70"]
+) {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-white/[0.02]"],
+  [class~="bg-white/[0.025]"],
+  [class~="bg-white/[0.03]"],
+  [class~="bg-white/[0.035]"],
+  [class~="bg-white/[0.04]"],
+  [class~="bg-white/[0.05]"],
+  [class~="bg-white/[0.06]"],
+  [class~="bg-white/[0.08]"],
+  [class~="bg-white/[0.10]"],
+  [class~="bg-white/[0.12]"]
+) {
+  background-color: var(--nx-canvas-raised);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-surface-950"]
+) {
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-slate-300"],
+  [class~="text-slate-400"],
+  [class~="text-slate-500"],
+  [class~="text-surface-300"],
+  [class~="text-surface-400"]
+) {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-surface-500"],
+  [class~="placeholder:text-slate-400"],
+  [class~="placeholder:text-slate-500"]
+) {
+  color: var(--nx-canvas-faint);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="placeholder:text-slate-400"],
+  [class~="placeholder:text-slate-500"]
+)::placeholder,
+.nx-apple-light-workspace .input-premium::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-apple-light-workspace :is(.nx-label, .nx-sku, .nx-barcode) {
+  color: var(--nx-canvas-muted);
+}
+
+/* Los títulos heredados usaban `text-white` porque antes vivían sobre un
+   lienzo negro. Solo se traduce jerarquía tipográfica; `text-white` en botones
+   y badges sólidos conserva su contraste. */
+.nx-apple-light-workspace :is(h1, h2, h3, h4, h5, h6)[class~="text-white"] {
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="border-white"],
+  [class~="border-white/10"],
+  [class~="border-white/15"],
+  [class~="border-white/20"],
+  [class~="border-white/[0.03]"],
+  [class~="border-white/[0.04]"],
+  [class~="border-white/[0.05]"],
+  [class~="border-white/[0.06]"],
+  [class~="border-white/[0.07]"],
+  [class~="border-white/[0.08]"],
+  [class~="border-white/[0.10]"],
+  [class~="border-white/[0.12]"],
+  [class~="border-slate-700"],
+  [class~="border-slate-800"],
+  [class~="border-surface-700"]
+) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="divide-white/[0.04]"],
+  [class~="divide-white/[0.06]"],
+  [class~="divide-white/[0.08]"],
+  [class~="divide-slate-700"],
+  [class~="divide-slate-700/30"],
+  [class~="divide-slate-700/50"],
+  [class~="divide-slate-700/60"],
+  [class~="divide-slate-700/70"]
+) > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-light-workspace :is(.panel-premium, .modal-panel, .nx-ticket-surface, .nx-dark-chrome) {
+  background: var(--nx-canvas-raised);
+  border-color: var(--nx-canvas-border);
+  color: var(--nx-canvas-text);
+  box-shadow: var(--nx-shadow-subtle);
+}
+
+.nx-apple-light-workspace :is(input, textarea, select, .input-premium) {
+  border-color: var(--nx-canvas-border);
+  color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+}
+
+.nx-apple-light-workspace :is(input, textarea, select)::placeholder,
+.nx-apple-light-workspace .input-premium::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-apple-light-workspace :is(input, textarea, select):-webkit-autofill {
+  -webkit-text-fill-color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+  box-shadow: 0 0 0 1000px var(--nx-canvas-raised) inset;
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:bg-surface-800/40"],
+  [class~="hover:bg-surface-800"],
+  [class~="hover:bg-white/[0.02]"],
+  [class~="hover:bg-white/[0.03]"],
+  [class~="hover:bg-white/[0.04]"],
+  [class~="hover:bg-white/[0.05]"],
+  [class~="hover:bg-white/[0.06]"],
+  [class~="hover:bg-white/[0.07]"],
+  [class~="hover:bg-white/[0.08]"]
+):hover {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-white"],
+  [class~="hover:text-slate-100"],
+  [class~="hover:text-slate-200"],
+  [class~="hover:text-slate-300"]
+):hover {
+  color: var(--nx-canvas-text);
+}
+
+/* Bloques oscuros de énfasis que se conservan dentro del workspace (p. ej.
+   un total de caja) mantienen contraste. No habilita rutas oscuras enteras. */
+.nx-apple-light-workspace [class~="bg-nortex-900"] :is(
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-slate-300"]
+) {
+  color: rgb(var(--nx-neutral-100-rgb));
+}
+
+/* Editor técnico explícito: una isla oscura por función (código), nunca el
+   fondo de una ruta ni una identidad cromática distinta. */
+.nx-apple-light-workspace .nx-code-surface {
+  background: var(--nx-chrome);
+  color: rgb(var(--nx-neutral-100-rgb));
+  color-scheme: dark;
+}
+
+.nx-apple-light-workspace .nx-code-surface :is(
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-slate-300"]
+) {
+  color: rgb(var(--nx-neutral-100-rgb));
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-nortex-800/30"],
+  [class~="bg-nortex-800/50"],
+  [class~="bg-nortex-800/80"]
+) {
+  background-color: var(--nx-canvas-raised);
+}
+
+/* Contraste de estados heredados sobre canvas claro. Los tonos dejan de
+   depender de que emerald-300/amber-300 fueran visibles sobre negro. */
+.nx-apple-light-workspace :is(
+  [class~="text-emerald-300"],
+  [class~="text-emerald-400"],
+  [class~="text-emerald-500"],
+  [class~="text-emerald-600"],
+  [class~="text-emerald-700"],
+  [class~="text-emerald-800"],
+  [class~="text-green-300"],
+  [class~="text-green-400"],
+  [class~="text-green-500"],
+  [class~="text-green-600"],
+  [class~="text-green-700"],
+  [class~="text-green-800"]
+) { color: var(--nx-positive); }
+
+/* `brand` es el relleno del CTA. Como tinta pequena sobre blanco no alcanza
+   contraste; en el canvas Dia se traduce al positivo accesible. */
+.nx-apple-light-workspace [class~="text-brand"] {
+  color: var(--nx-positive);
+}
+
+.nx-apple-light-workspace [class~="hover:text-brand"]:hover {
+  color: var(--nx-positive);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-amber-300"],
+  [class~="text-amber-400"],
+  [class~="text-amber-500"],
+  [class~="text-amber-600"],
+  [class~="text-amber-700"],
+  [class~="text-amber-800"],
+  [class~="text-yellow-300"],
+  [class~="text-yellow-400"],
+  [class~="text-yellow-500"],
+  [class~="text-yellow-600"],
+  [class~="text-yellow-700"],
+  [class~="text-yellow-800"]
+) { color: var(--nx-warning); }
+
+.nx-apple-light-workspace :is(
+  [class~="text-sky-300"],
+  [class~="text-sky-400"],
+  [class~="text-sky-500"],
+  [class~="text-sky-600"],
+  [class~="text-sky-700"],
+  [class~="text-sky-800"],
+  [class~="text-blue-300"],
+  [class~="text-blue-400"],
+  [class~="text-blue-500"],
+  [class~="text-blue-600"],
+  [class~="text-blue-700"],
+  [class~="text-blue-800"],
+  [class~="text-cyan-300"],
+  [class~="text-cyan-400"],
+  [class~="text-cyan-500"],
+  [class~="text-cyan-600"],
+  [class~="text-cyan-700"],
+  [class~="text-cyan-800"]
+) { color: var(--nx-info); }
+
+.nx-apple-light-workspace :is(
+  [class~="text-red-300"],
+  [class~="text-red-400"],
+  [class~="text-red-500"],
+  [class~="text-red-600"],
+  [class~="text-red-700"],
+  [class~="text-red-800"]
+) { color: var(--nx-danger); }
+
+/* ==========================================
+   CONTRATO VISUAL AUTENTICADO — APPLE/HIG DARK
+   ==========================================
+   La noche no es un filtro ni una segunda coleccion de pantallas. Este puente
+   traduce las utilidades claras heredadas al mismo vocabulario semantico; las
+   fotos, la marca y las superficies de ticket conservan su significado. */
+.nx-apple-dark-workspace {
+  color-scheme: dark;
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-dark-workspace.nx-light-context,
+.nx-apple-dark-workspace .nx-light-context {
+  color-scheme: dark;
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-slate-50"],
+  [class~="bg-surface-950"],
+  [class~="bg-surface-950/40"],
+  [class~="bg-surface-950/60"],
+  [class~="bg-surface-950/70"]
+) {
+  background-color: var(--nx-canvas);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-white"],
+  [class~="bg-white/60"],
+  [class~="bg-white/80"],
+  [class~="bg-white/90"],
+  [class~="bg-white/95"],
+  [class~="bg-surface-900"],
+  [class~="bg-surface-900/60"],
+  [class~="bg-surface-900/70"],
+  [class~="bg-surface-900/80"],
+  [class~="bg-surface-900/90"],
+  [class~="bg-surface-900/95"]
+) {
+  background-color: var(--nx-canvas-raised);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-slate-100"],
+  [class~="bg-slate-200"],
+  [class~="bg-surface-800"],
+  [class~="bg-surface-800/40"],
+  [class~="bg-surface-800/60"],
+  [class~="bg-surface-700"],
+  [class~="bg-surface-700/60"],
+  [class~="bg-white/[0.02]"],
+  [class~="bg-white/[0.025]"],
+  [class~="bg-white/[0.03]"],
+  [class~="bg-white/[0.035]"],
+  [class~="bg-white/[0.04]"],
+  [class~="bg-white/[0.05]"],
+  [class~="bg-white/[0.06]"],
+  [class~="bg-white/[0.08]"],
+  [class~="bg-white/[0.10]"],
+  [class~="bg-white/[0.12]"]
+) {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="text-black"],
+  [class~="text-slate-950"],
+  [class~="text-slate-900"],
+  [class~="text-slate-800"],
+  [class~="text-slate-700"],
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-surface-950"]
+) {
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="text-slate-300"],
+  [class~="text-slate-400"],
+  [class~="text-slate-500"],
+  [class~="text-surface-300"],
+  [class~="text-surface-400"]
+) {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="text-slate-600"],
+  [class~="text-surface-500"]
+) {
+  color: var(--nx-canvas-faint);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="placeholder:text-slate-400"],
+  [class~="placeholder:text-slate-500"],
+  [class~="placeholder:text-slate-600"]
+)::placeholder,
+.nx-apple-dark-workspace .input-premium::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-apple-dark-workspace :is(.nx-label, .nx-sku, .nx-barcode) {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="border-slate-100"],
+  [class~="border-slate-200"],
+  [class~="border-slate-300"],
+  [class~="border-white"],
+  [class~="border-white/10"],
+  [class~="border-white/15"],
+  [class~="border-white/20"],
+  [class~="border-white/[0.03]"],
+  [class~="border-white/[0.04]"],
+  [class~="border-white/[0.05]"],
+  [class~="border-white/[0.06]"],
+  [class~="border-white/[0.07]"],
+  [class~="border-white/[0.08]"],
+  [class~="border-white/[0.10]"],
+  [class~="border-white/[0.12]"],
+  [class~="border-surface-700"]
+) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="divide-slate-100"],
+  [class~="divide-slate-200"],
+  [class~="divide-slate-300"],
+  [class~="divide-white/[0.04]"],
+  [class~="divide-white/[0.06]"],
+  [class~="divide-white/[0.08]"]
+) > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-dark-workspace :is(.panel-premium, .panel-premium-light, .modal-panel, .nx-canvas-card, .nx-list-surface) {
+  background: var(--nx-canvas-raised);
+  border-color: var(--nx-canvas-border);
+  color: var(--nx-canvas-text);
+  box-shadow: var(--nx-shadow-subtle);
+}
+
+.nx-apple-dark-workspace :is(input, textarea, select, .input-premium) {
+  color: var(--nx-canvas-text);
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="hover:bg-white"],
+  [class~="hover:bg-slate-50"],
+  [class~="hover:bg-slate-100"],
+  [class~="hover:bg-surface-800/40"],
+  [class~="hover:bg-surface-800"]
+):hover {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="hover:text-slate-950"],
+  [class~="hover:text-slate-900"],
+  [class~="hover:text-slate-800"],
+  [class~="hover:text-white"]
+):hover {
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-emerald-50"],
+  [class~="bg-emerald-50/60"],
+  [class~="bg-emerald-50/70"],
+  [class~="bg-emerald-100"],
+  [class~="bg-green-50"],
+  [class~="bg-green-100"]
+) { background-color: var(--nx-positive-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-amber-50"],
+  [class~="bg-amber-50/60"],
+  [class~="bg-amber-50/70"],
+  [class~="bg-amber-100"],
+  [class~="bg-yellow-50"],
+  [class~="bg-yellow-100"]
+) { background-color: var(--nx-warning-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-sky-50"],
+  [class~="bg-sky-100"],
+  [class~="bg-blue-50"],
+  [class~="bg-blue-100"],
+  [class~="bg-cyan-50"],
+  [class~="bg-cyan-100"]
+) { background-color: var(--nx-info-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-red-50"],
+  [class~="bg-red-50/60"],
+  [class~="bg-red-50/70"],
+  [class~="bg-red-100"]
+) { background-color: var(--nx-danger-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-emerald-100"], [class~="border-emerald-200"],
+  [class~="border-green-100"], [class~="border-green-200"]
+) { border-color: var(--nx-positive-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-amber-100"], [class~="border-amber-200"],
+  [class~="border-yellow-100"], [class~="border-yellow-200"]
+) { border-color: var(--nx-warning-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-sky-100"], [class~="border-sky-200"],
+  [class~="border-blue-100"], [class~="border-blue-200"],
+  [class~="border-cyan-100"], [class~="border-cyan-200"]
+) { border-color: var(--nx-info-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-red-100"], [class~="border-red-200"]
+) { border-color: var(--nx-danger-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-emerald-300"], [class~="text-emerald-400"],
+  [class~="text-emerald-500"], [class~="text-emerald-600"],
+  [class~="text-emerald-700"], [class~="text-emerald-800"],
+  [class~="text-green-300"], [class~="text-green-400"],
+  [class~="text-green-500"], [class~="text-green-600"],
+  [class~="text-green-700"], [class~="text-green-800"]
+) { color: var(--nx-positive); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-amber-300"], [class~="text-amber-400"],
+  [class~="text-amber-500"], [class~="text-amber-600"],
+  [class~="text-amber-700"], [class~="text-amber-800"],
+  [class~="text-yellow-300"], [class~="text-yellow-400"],
+  [class~="text-yellow-500"], [class~="text-yellow-600"],
+  [class~="text-yellow-700"], [class~="text-yellow-800"]
+) { color: var(--nx-warning); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-sky-300"], [class~="text-sky-400"],
+  [class~="text-sky-500"], [class~="text-sky-600"],
+  [class~="text-sky-700"], [class~="text-sky-800"],
+  [class~="text-blue-300"], [class~="text-blue-400"],
+  [class~="text-blue-500"], [class~="text-blue-600"],
+  [class~="text-blue-700"], [class~="text-blue-800"],
+  [class~="text-cyan-300"], [class~="text-cyan-400"],
+  [class~="text-cyan-500"], [class~="text-cyan-600"],
+  [class~="text-cyan-700"], [class~="text-cyan-800"]
+) { color: var(--nx-info); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-red-300"], [class~="text-red-400"],
+  [class~="text-red-500"], [class~="text-red-600"],
+  [class~="text-red-700"], [class~="text-red-800"]
+) { color: var(--nx-danger); }
 
 /* ==========================================
    EXPERIENCIA PÚBLICA · LECTURA EDITORIAL

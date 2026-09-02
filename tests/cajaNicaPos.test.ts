@@ -104,7 +104,7 @@ describe('superficie de caja dentro del shell operativo', () => {
     it('mantiene el sidebar desktop y reserva la navegación móvil para otros módulos', () => {
         expect(layout).toContain("const isPosSurface = location.pathname === '/app/pos'");
         const desktopSidebar = between(layout, '{/* DESKTOP SIDEBAR */}', '{/* MOBILE BOTTOM NAV */}');
-        expect(desktopSidebar).toContain('<aside className="nx-sidebar hidden');
+        expect(desktopSidebar).toContain('<aside className="nx-sidebar nx-shell-border hidden');
         expect(desktopSidebar).toContain('lg:flex');
         expect(desktopSidebar).not.toContain("isPosSurface ? 'hidden'");
 
@@ -113,7 +113,9 @@ describe('superficie de caja dentro del shell operativo', () => {
         expect(layout).toContain("isPosSurface ? 'hidden' : 'hidden lg:flex'");
         expect(layout).toContain("isPosSurface ? 'hidden' : 'flex lg:hidden'");
         expect(layout).toContain('showMobileMenu && !isPosSurface');
-        expect(layout).toContain("isPosSurface ? 'mb-0' : 'mb-16 lg:mb-0'");
+        expect(layout).toContain("? 'nx-pos-workspace nx-dark-context mb-0 [color-scheme:dark]'");
+        expect(layout).toContain("? 'nx-apple-dark-workspace nx-dark-context");
+        expect(layout).toContain(": 'nx-apple-light-workspace nx-light-context");
         expect(layout).toContain('{!isPosSurface && <InstallPrompt />}');
     });
 });
