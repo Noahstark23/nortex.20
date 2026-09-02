@@ -75,11 +75,11 @@ afterEach(() => {
 
 describe('DeliveryManager — autoridad del servidor', () => {
     it('preserva la versión optimista mientras el polling trae un estado anterior', () => {
-        const current = [{ ...baseOrder, estado: 'preparando' }];
+        const current = [{ ...baseOrder, estado: 'preparando', motorizadoId: 'rider-1' }];
         const staleServer = [{ ...baseOrder, estado: 'pendiente' }];
 
-        expect(mergePendingOrders(staleServer, current, new Set(['pedido-1']))[0].estado)
-            .toBe('preparando');
+        expect(mergePendingOrders(staleServer, current, new Set(['pedido-1']))[0])
+            .toMatchObject({ estado: 'preparando', motorizadoId: 'rider-1' });
         expect(mergePendingOrders(staleServer, current, new Set())[0].estado)
             .toBe('pendiente');
     });
@@ -339,6 +339,52 @@ describe('DeliveryManager — autoridad del servidor', () => {
         );
         await waitFor(() => expect(screen.getByLabelText('Motorizado')).toHaveValue('rider-1'));
         expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(2);
+    });
+
+    it('evita dos cadenas de despacho ante cambios rápidos del selector', async () => {
+        let serverOrder = { ...baseOrder, estado: 'preparando' };
+        let resolveAssignment!: (response: Response) => void;
+        const assignmentResponse = new Promise<Response>((resolve) => {
+            resolveAssignment = resolve;
+        });
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) return jsonResponse({ pedidos: [serverOrder] });
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [rider] });
+            }
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') {
+                return assignmentResponse;
+            }
+            if (url === '/api/v1/pedidos/pedido-1/estado' && init?.method === 'PATCH') {
+                serverOrder = { ...serverOrder, motorizadoId: 'rider-1', estado: 'en_camino' };
+                return jsonResponse({ pedido: serverOrder });
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+        const riderSelect = await screen.findByLabelText('Motorizado');
+        fireEvent.change(riderSelect, { target: { value: 'rider-1' } });
+        fireEvent.change(riderSelect, { target: { value: 'rider-1' } });
+
+        await waitFor(() => {
+            expect(fetchMock.mock.calls.filter(([input, init]) => (
+                requestUrl(input) === '/api/v1/pedidos/pedido-1/motorizado'
+                && init?.method === 'PATCH'
+            ))).toHaveLength(1);
+        });
+
+        serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+        resolveAssignment(jsonResponse({ pedido: serverOrder }));
+
+        expect(await screen.findByText('Motorizado asignado y pedido despachado correctamente.')).toBeVisible();
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+        expect(fetchMock.mock.calls.filter(([input, init]) => (
+            requestUrl(input) === '/api/v1/pedidos/pedido-1/motorizado'
+            && init?.method === 'PATCH'
+        ))).toHaveLength(1);
     });
 
     it('obedece la asignación canónica del servidor aunque difiera de la solicitada', async () => {
