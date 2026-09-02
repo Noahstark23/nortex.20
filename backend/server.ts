@@ -129,6 +129,11 @@ import tenantCapabilitiesRouter from './routes/tenantCapabilities';
 import agentBankingRouter from './routes/agentBanking';
 import saleCorrectionsRouter from './routes/saleCorrections';
 import salesReportsRouter from './routes/salesReports.js';
+import {
+    createCompletePasswordResetHandler,
+    createValidatePasswordResetHandler,
+    type PasswordResetPrisma,
+} from './routes/passwordReset';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
@@ -1150,115 +1155,24 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
 });
 
 // GET /api/auth/reset-password/:token — Validar token
-app.get('/api/auth/reset-password/:token', async (req: any, res: any) => {
-    const { token } = req.params;
+const passwordResetPrisma = prisma as unknown as PasswordResetPrisma;
 
-    try {
-        const resetRecord = await prisma.passwordReset.findUnique({
-            where: { token },
-            include: { user: { select: { email: true, name: true } } }
-        });
-
-        if (!resetRecord) {
-            return res.status(404).json({ error: 'Link inválido o expirado.' });
-        }
-
-        if (resetRecord.used) {
-            return res.status(400).json({ error: 'Este link ya fue utilizado.' });
-        }
-
-        if (new Date() > resetRecord.expiresAt) {
-            return res.status(400).json({ error: 'Este link ha expirado. Solicita uno nuevo.' });
-        }
-
-        res.json({
-            valid: true,
-            email: resetRecord.user.email,
-            name: resetRecord.user.name,
-        });
-    } catch (error) {
-        console.error('Validate reset token error:', error);
-        res.status(500).json({ error: 'Error validando link.' });
-    }
-});
+app.get('/api/auth/reset-password/:token', createValidatePasswordResetHandler({
+    prisma: passwordResetPrisma,
+}));
 
 // POST /api/auth/reset-password/:token — Cambiar contraseña
 // Limitado: previene fuerza bruta del token de reseteo (= toma de cuenta).
-app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, validate(ResetPasswordSchema), async (req: any, res: any) => {
-    const { token } = req.params;
-    const { password } = req.body;
-
-    try {
-        if (!password || password.length < 6) {
-            return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
-        }
-
-        const resetRecord = await prisma.passwordReset.findUnique({
-            where: { token },
-            include: { user: true }
-        });
-
-        if (!resetRecord) {
-            return res.status(404).json({ error: 'Link inválido o expirado.' });
-        }
-
-        if (resetRecord.used) {
-            return res.status(400).json({ error: 'Este link ya fue utilizado.' });
-        }
-
-        if (new Date() > resetRecord.expiresAt) {
-            return res.status(400).json({ error: 'Este link ha expirado. Solicita uno nuevo.' });
-        }
-
-        // Hashear nueva contraseña y actualizar
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        await prisma.$transaction(async (tx: any) => {
-            await tx.user.update({
-                where: { id: resetRecord.userId },
-                data: { password: hashedPassword }
-            });
-
-            // Invalidar este token
-            await tx.passwordReset.update({
-                where: { id: resetRecord.id },
-                data: { used: true }
-            });
-
-            // Invalidar todos los tokens pendientes de este usuario
-            await tx.passwordReset.updateMany({
-                where: {
-                    userId: resetRecord.userId,
-                    used: false,
-                    id: { not: resetRecord.id }
-                },
-                data: { used: true }
-            });
-        });
-
-        // Auto-login
-        const jwtToken = signAuthToken({
-            userId: resetRecord.user.id,
-            tenantId: resetRecord.user.tenantId,
-            role: resetRecord.user.role,
-            email: resetRecord.user.email ?? undefined
-        });
-
-        res.json({
-            message: 'Contraseña actualizada exitosamente.',
-            token: jwtToken,
-            user: {
-                id: resetRecord.user.id,
-                email: resetRecord.user.email,
-                name: resetRecord.user.name,
-                role: resetRecord.user.role
-            }
-        });
-    } catch (error) {
-        console.error('Reset password error:', error);
-        res.status(500).json({ error: 'Error restableciendo contraseña.' });
-    }
-});
+app.post(
+    '/api/auth/reset-password/:token',
+    forgotPasswordLimiter,
+    validate(ResetPasswordSchema),
+    createCompletePasswordResetHandler({
+        prisma: passwordResetPrisma,
+        hashPassword: (password) => bcrypt.hash(password, 10),
+        signToken: signAuthToken,
+    }),
+);
 
 
 // ==========================================

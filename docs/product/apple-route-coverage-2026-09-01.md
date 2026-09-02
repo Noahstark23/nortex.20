@@ -43,7 +43,8 @@ describe el candidato local del 1 de septiembre de 2026.
   billetera, confirmación y vacío tienen evidencia local Día/Noche, pero la red de
   la sesión autenticada fue sintética e interceptada.
 - Marketing, autenticación general, legal, blog, catálogo, tracking y admin no
-  heredan `workspaceTheme`; siguen siendo un programa visual separado.
+  heredan `workspaceTheme`; requieren evidencia propia. El 2026-09-02 la
+  familia pública principal quedó auditada otra vez con capturas frescas.
 
 ## Rutas autenticadas `/app/*`
 
@@ -88,16 +89,57 @@ describe el candidato local del 1 de septiembre de 2026.
 | Ruta o familia | Estado | Observación |
 | --- | --- | --- |
 | `/driver`, `/driver/:id` | Separada con evidencia sólida local | Tema propio por repartidor; sesión autenticada visual con API sintética |
-| `/` y `/apple` | Separada | Marketing; `/apple` es referencia, no prueba del ERP autenticado |
-| `/register`, `/login`, `/forgot-password`, `/reset-password/:token` | Separada | Flujos de acceso con estilo propio; no heredan el botón del ERP |
+| `/` y `/apple` | Separada con evidencia parcial + contractual | `/` conserva la entrega estática SEO con captura Día/Noche en escritorio; `/apple` es un alias de compatibilidad de la misma home SPA y queda cubierto por contrato. Falta completar el par móvil Noche de la raíz. |
+| `/register`, `/login`, `/forgot-password`, `/reset-password/:token` | Separada con evidencia parcial + contractual | Login tiene captura Día/Noche; los demás flujos tienen captura Día y heredan el mismo `AuthShell` probado. Falta el par visual propio Noche de cada estado. |
 | `/demo` | Separada | Demo pública; no satisface aceptación del producto autenticado |
-| `/ferreterias`, `/farmacias`, `/nicaragua` | Separada | Landings SEO |
-| `/blog`, `/blog/categoria/:slug`, `/blog/:slug` | Separada | Contenido público |
-| `/privacy`, `/terms` | Separada | Legal |
+| `/ferreterias`, `/farmacias`, `/nicaragua` | Separada con evidencia sólida local | Landings SEO auditadas otra vez el 2026-09-02 con shell público Apple |
+| `/blog`, `/blog/categoria/:slug`, `/blog/:slug` | Separada con evidencia parcial + contractual | Contenido público sobre `BlogShell`; índice Día/Noche, categoría Día y artículo móvil Noche capturados. Faltan pares propios de categoría y artículo. |
+| `/privacy`, `/terms` | Separada con evidencia parcial + contractual | Legal sobre `BlogShell`; privacidad tiene escritorio Día/Noche y términos móvil Día/Noche. Falta el segundo viewport de cada ruta. |
 | `/pedidos/:slug`, `/catalog/:slug` | Separada | Catálogo público; patrones alias del mismo componente |
 | `/track/:pedidoId` | Separada | Tracking público |
 | `/repartidor/registro` | Separada | Registro de repartidor con estilo propio |
 | `/admin` | Separada | Consola administrativa fuera de `ProtectedApp` |
+
+## Evidencia pública del 2026-09-02
+
+- Login Día/Noche:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/01-login-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/03-login-dark.png`
+- Registro:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/04-register-light.png`
+- Recuperación y reset inválido:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/05-forgot-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/06-reset-invalid.png`
+- Landings SEO:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/07-ferreterias-light.png`,
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/08-farmacias-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/09-nicaragua-light.png`
+- Matriz vertical completa en escritorio/móvil y Día/Noche:
+  `/tmp/nortex-public-qa.c9NihE`
+- Legal:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/10-privacy-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/11-terms-light.png`
+- Blog/editorial Día/Noche:
+  `/tmp/nortex-public-apple-editorial/blog-light-desktop.png`,
+  `/tmp/nortex-public-apple-editorial/blog-dark-desktop.png`,
+  `/tmp/nortex-public-apple-editorial/category-light-desktop.png` y
+  `/tmp/nortex-public-apple-editorial/article-dark-mobile.png`
+- Landing estática real:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/12-landing-static-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/13-landing-static-dark.png`
+- Handoff final de la raíz sobre build limpio (`127.0.0.1:4192`):
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/final/05-home-final-4192-day.jpg`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/final/06-home-final-4192-night.jpg`
+
+La sesión pública se ejecutó en `127.0.0.1:4188` para evitar la redirección
+automática provocada por una sesión previa del browser sobre `127.0.0.1:4174`.
+No se ejecutaron credenciales reales ni mutaciones de negocio.
 
 ## Evidencia del cierre del menú
 

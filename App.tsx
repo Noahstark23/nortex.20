@@ -295,7 +295,21 @@ function RouteAnalytics() {
 function RouteFallback() {
   const { pathname } = useLocation();
 
-  if (pathname === '/blog' || pathname.startsWith('/blog/')) {
+  const usesPublicAppleShell = pathname === '/'
+    || pathname === '/apple'
+    || pathname === '/login'
+    || pathname === '/register'
+    || pathname === '/forgot-password'
+    || pathname.startsWith('/reset-password/')
+    || pathname === '/ferreterias'
+    || pathname === '/farmacias'
+    || pathname === '/nicaragua'
+    || pathname === '/privacy'
+    || pathname === '/terms'
+    || pathname === '/blog'
+    || pathname.startsWith('/blog/');
+
+  if (usesPublicAppleShell) {
     return (
       <div className="nx-public-loading" role="status" aria-live="polite">
         <img src="/icon-192.svg" alt="" className="h-8 w-8 rounded-control" aria-hidden="true" />
