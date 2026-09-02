@@ -17,6 +17,7 @@ interface RiderForm {
     nombre: string;
     telefono: string;
     zonaCobertura: string;
+    pin: string;
     vehiculoPlaca: string;
 }
 
@@ -24,6 +25,7 @@ const EMPTY_RIDER_FORM: RiderForm = {
     nombre: '',
     telefono: '',
     zonaCobertura: '',
+    pin: '',
     vehiculoPlaca: '',
 };
 
@@ -41,6 +43,7 @@ const getRiderFormError = (form: RiderForm): string | null => {
     if (telefono.length > 32) return 'El teléfono no puede superar 32 caracteres.';
     if (zonaCobertura.length < 2) return 'Ingresá la zona de cobertura del motorizado.';
     if (zonaCobertura.length > 100) return 'La zona de cobertura no puede superar 100 caracteres.';
+    if (!/^\d{4,6}$/.test(form.pin)) return 'Creá un PIN de acceso de 4 a 6 dígitos.';
     if (form.vehiculoPlaca.trim().length > 20) {
         return 'La placa o descripción del vehículo no puede superar 20 caracteres.';
     }
@@ -49,7 +52,7 @@ const getRiderFormError = (form: RiderForm): string | null => {
 
 interface PedidoListResponse {
     pedidos?: Pedido[];
-};
+}
 
 interface PedidoResponse {
     pedido?: Pedido;
@@ -276,11 +279,42 @@ const DeliveryManager: React.FC = () => {
                     }
                     : pedido
             )));
-            if (
-                canonicalRiderId
-                && !['en_camino', 'entregado', 'cancelado'].includes(body.pedido.estado)
-            ) {
-                setDeliveryMessage('Motorizado asignado; confirmando despacho…');
+            if (canonicalRiderId && body.pedido.estado === 'pendiente') {
+                setDeliveryMessage('Motorizado asignado; reservando inventario…');
+                const reservationResponse = await fetch(`/api/v1/pedidos/${pedidoId}/estado`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+                    body: JSON.stringify({
+                        estado: 'preparando',
+                        nota: 'Motorizado asignado — inventario reservado antes del despacho.',
+                    }),
+                });
+                const reservationBody = await readResponseBody(reservationResponse);
+                if (!reservationResponse.ok) {
+                    throw new Error(reservationBody.error || 'El servidor rechazó la reserva de inventario.');
+                }
+                if (!reservationBody.pedido || reservationBody.pedido.estado !== 'preparando') {
+                    throw new Error('El servidor respondió sin confirmar la reserva de inventario.');
+                }
+
+                updatePedidos((orders) => orders.map((pedido) => (
+                    pedido.id === pedidoId
+                        ? {
+                            ...pedido,
+                            ...reservationBody.pedido,
+                            motorizadoId: canonicalRiderId,
+                            motorizado: reservationBody.pedido?.motorizado
+                                ?? canonicalRider
+                                ?? pedido.motorizado,
+                            items: reservationBody.pedido?.items ?? pedido.items,
+                        }
+                        : pedido
+                )));
+                body.pedido = reservationBody.pedido;
+            }
+
+            if (canonicalRiderId && body.pedido.estado === 'preparando') {
+                setDeliveryMessage('Inventario reservado; confirmando despacho…');
                 const dispatchResponse = await fetch(`/api/v1/pedidos/${pedidoId}/estado`, {
                     method: 'PATCH',
                     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
