@@ -89,12 +89,12 @@ describe el candidato local del 1 de septiembre de 2026.
 | Ruta o familia | Estado | Observación |
 | --- | --- | --- |
 | `/driver`, `/driver/:id` | Separada con evidencia sólida local | Tema propio por repartidor; sesión autenticada visual con API sintética |
-| `/` y `/apple` | Separada con evidencia parcial + contractual | `/` conserva la entrega estática SEO con captura Día/Noche en escritorio; `/apple` es un alias de compatibilidad de la misma home SPA y queda cubierto por contrato. Falta completar el par móvil Noche de la raíz. |
-| `/register`, `/login`, `/forgot-password`, `/reset-password/:token` | Separada con evidencia parcial + contractual | Login tiene captura Día/Noche; los demás flujos tienen captura Día y heredan el mismo `AuthShell` probado. Falta el par visual propio Noche de cada estado. |
+| `/` y `/apple` | Separada con evidencia parcial + contractual | `/` conserva la entrega estática SEO con captura Día/Noche en escritorio; `/apple` es un alias de compatibilidad de la misma home SPA y queda cubierto por contrato. Falta completar el par móvil de la raíz y una captura propia de `/apple`. |
+| `/register`, `/login`, `/forgot-password`, `/reset-password/:token` | Separada con evidencia parcial + contractual | Login tiene captura Día/Noche. Registro, recuperación y reset inválido comparten `AuthShell` y pruebas propias, pero en este ciclo solo tienen captura clara. |
 | `/demo` | Separada | Demo pública; no satisface aceptación del producto autenticado |
-| `/ferreterias`, `/farmacias`, `/nicaragua` | Separada con evidencia sólida local | Landings SEO auditadas otra vez el 2026-09-02 con shell público Apple |
-| `/blog`, `/blog/categoria/:slug`, `/blog/:slug` | Separada con evidencia parcial + contractual | Contenido público sobre `BlogShell`; índice Día/Noche, categoría Día y artículo móvil Noche capturados. Faltan pares propios de categoría y artículo. |
-| `/privacy`, `/terms` | Separada con evidencia parcial + contractual | Legal sobre `BlogShell`; privacidad tiene escritorio Día/Noche y términos móvil Día/Noche. Falta el segundo viewport de cada ruta. |
+| `/ferreterias`, `/farmacias`, `/nicaragua` | Separada con evidencia parcial + contractual | Landings SEO auditadas otra vez el 2026-09-02 con shell público Apple. La cobertura Día/Noche del shell está en tests; las capturas frescas de este ciclo son claras. |
+| `/blog`, `/blog/categoria/:slug`, `/blog/:slug` | Separada con evidencia contractual | Contenido público sobre `BlogShell`, cubierto por pruebas de tema y navegación. Las capturas editoriales previas no forman parte de la carpeta trazable de este release. |
+| `/privacy`, `/terms` | Separada con evidencia parcial + contractual | Legal sobre `BlogShell`; cada ruta tiene una captura clara en Día y contrato compartido de tema. Faltan sus pares visuales Noche y móvil. |
 | `/pedidos/:slug`, `/catalog/:slug` | Separada | Catálogo público; patrones alias del mismo componente |
 | `/track/:pedidoId` | Separada | Tracking público |
 | `/repartidor/registro` | Separada | Registro de repartidor con estilo propio |
@@ -117,17 +117,10 @@ describe el candidato local del 1 de septiembre de 2026.
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/08-farmacias-light.png`
   y
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/09-nicaragua-light.png`
-- Matriz vertical completa en escritorio/móvil y Día/Noche:
-  `/tmp/nortex-public-qa.c9NihE`
 - Legal:
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/10-privacy-light.png`
   y
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/11-terms-light.png`
-- Blog/editorial Día/Noche:
-  `/tmp/nortex-public-apple-editorial/blog-light-desktop.png`,
-  `/tmp/nortex-public-apple-editorial/blog-dark-desktop.png`,
-  `/tmp/nortex-public-apple-editorial/category-light-desktop.png` y
-  `/tmp/nortex-public-apple-editorial/article-dark-mobile.png`
 - Landing estática real:
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/12-landing-static-light.png`
   y
@@ -136,103 +129,43 @@ describe el candidato local del 1 de septiembre de 2026.
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/final/05-home-final-4192-day.jpg`
   y
   `/private/tmp/nortex-public-apple.CdwEfO/evidence/final/06-home-final-4192-night.jpg`
+- Login claro con texto escrito en modo Día:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/02-login-light-typed.png`
+- Evidencia ejecutable y logs de este ciclo:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence`
 
 La sesión pública se ejecutó en `127.0.0.1:4188` para evitar la redirección
 automática provocada por una sesión previa del browser sobre `127.0.0.1:4174`.
 No se ejecutaron credenciales reales ni mutaciones de negocio.
 
-## Evidencia del cierre del menú
+## Evidencia autenticada del 2026-09-01
 
-- Escritorio Día:
-  `.codex/apple-route-matrix-audit-2026-09-01-cycle9/01-team-desktop-day-current.png`
-- Escritorio Noche:
-  `.codex/apple-route-matrix-audit-2026-09-01-cycle9/02-team-desktop-night-current.png`
-- Móvil Noche, contenido:
-  `.codex/apple-route-matrix-audit-2026-09-01-cycle9/03-team-mobile-night-closed.png`
-- Móvil Día, contenido:
-  `.codex/apple-route-matrix-audit-2026-09-01-cycle9/06-team-mobile-day-closed.png`
-- Menú móvil Noche:
-  `.codex/apple-route-matrix-audit-2026-09-01-cycle9/04-team-mobile-menu-night-current.png`
-- Menú móvil Día:
-  `.codex/apple-route-matrix-audit-2026-09-01-cycle9/05-team-mobile-menu-day-current.png`
+Las referencias antiguas a `.codex/apple-*-audit-*` son artefactos locales no
+versionados: permanecen en el workspace canónico del operador, pero no se copian
+a este worktree aislado ni forman parte del commit. Por tanto, sustentan el
+histórico de la auditoría, no una prueba reproducible desde Git ni una
+verificación del despliegue actual.
 
-La sesión fue autenticada local y solo se alternó el tema y se abrió/cerró el menú.
-No se pulsaron invitaciones, asistencia, cierre de sesión ni acciones de negocio.
+Se conservan los estados de cobertura de `/app/*` porque siguen respaldados por:
 
-## Evidencia del Centro de Ayuda
+- La declaración real de las `33` rutas autenticadas dentro de `ProtectedApp`
+  en `App.tsx`.
+- La compuerta estructural de `tests/appleWorkspaceContract.test.ts`, que exige
+  que todos los destinos autenticados permanezcan dentro de `Layout` y mantiene
+  `/app/pos` como única excepción operativa.
+- La compuerta de `tests/layoutThemeToggle.test.tsx`, que exige un solo control
+  conceptual por viewport y persistencia de tema por identidad.
+- Los contratos semánticos específicos de `tests/teamVisualSemantics.test.ts`,
+  `tests/helpCenterThemeContract.test.ts` y
+  `tests/contabilidadThemeContract.test.ts`.
+- Los recorridos sintéticos de `tests/helpCenter.test.tsx` y
+  `tests/contabilidadUx.test.tsx`.
 
-- Escritorio Día/Noche:
-  `.codex/apple-help-audit-2026-09-01-cycle10/08-desktop-day-after.png` y
-  `.codex/apple-help-audit-2026-09-01-cycle10/07-desktop-night-after.png`
-- Móvil Día/Noche:
-  `.codex/apple-help-audit-2026-09-01-cycle10/05-mobile-day-after.png` y
-  `.codex/apple-help-audit-2026-09-01-cycle10/06-mobile-night-after.png`
-
-## Evidencia de Mi Espacio
-
-- Antes, móvil Día con los valores ocultos:
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/07-mobile-day-forms-before.png`
-- Después, escritorio Día/Noche:
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/12-desktop-day-after.png` y
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/13-desktop-night-after.png`
-- Después, móvil Día/Noche:
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/09-mobile-day-after.png` y
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/15-mobile-night-after.png`
-- Formularios móviles Día/Noche:
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/11-mobile-day-forms-after.png`
-  y
-  `.codex/apple-miespacio-audit-2026-09-01-cycle11/16-mobile-night-forms-after.png`
-
-La medición antes/después vive en `08-metrics-day-before.json`,
-`10-metrics-mobile-day-after.json` y `14-metrics-night-after.json` del mismo
-directorio. El mínimo crítico de Día pasó de **1:1** a **5.40:1** en el conjunto
-muestreado y los siete controles propios del módulo pasaron de 35–39.5 px a
-44 px. La sesión local no envió solicitudes ni abrió una impresión real.
-- Medición de contraste de 84 muestras visibles por tema:
-  `.codex/apple-help-audit-2026-09-01-cycle10/09-contrast-after.json`
-- Medición móvil de los cinco controles del módulo:
-  `.codex/apple-help-audit-2026-09-01-cycle10/10-mobile-metrics-after.json`
-- Conteo del único control Día/Noche visible por viewport:
-  `.codex/apple-help-audit-2026-09-01-cycle10/11-theme-toggle-after.json`
-
-La sesión local solo alternó el botón visible Día/Noche, abrió y cerró el menú y
-desplazó la superficie. Los cuatro tutoriales conservaron sus destinos y se
-verificaron en jsdom; no se inició un tour ni se ejecutó una mutación de negocio.
-
-## Evidencia de Contabilidad
-
-- Antes, escritorio Día con contenido invisible sobre tarjetas claras:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/01-desktop-day-before.png`
-- Después, escritorio Día/Noche:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/19-desktop-day-after.png` y
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/18-desktop-night-after.png`
-- Antes/después del asiento manual móvil:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/08-mobile-day-asiento-before.png`
-  y
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/11c-mobile-day-asiento-fields-after.png`
-- Después, móvil Día/Noche:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/09-mobile-day-after.png` y
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/16-mobile-night-after.png`
-- Menú móvil Día/Noche con un único control global:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/13-mobile-menu-day-after.png`
-  y
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/14-mobile-menu-night-after.png`
-- Diálogo de decisión en escritorio Día/Noche:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/21-desktop-day-dialog-after.png`
-  y
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/22-desktop-night-dialog-after.png`
-- Foco visible de teclado en pestaña y selector mensual:
-  `.codex/apple-accounting-audit-2026-09-01-cycle12/25-keyboard-focus-after.json`
-
-Los textos críticos medidos pasaron de **1:1** en Día a **17.44:1**; en Noche
-quedaron en **13.88:1**. Todos los controles propios visibles quedaron en 44 px
-o más y no hubo desborde horizontal en 390 px ni en 1280 px. Los recorridos de
-las 11 pestañas están en `23-all-tabs-night-after.json` y
-`24-all-tabs-day-after.json`: cero targets menores de 44 px, cero controles fuera
-del canvas y cero alertas visibles en ambos temas. La sesión no confirmó asientos,
-declaraciones, retenciones, cierres, reaperturas, depreciaciones ni bajas de
-activos; esas conductas permanecieron bajo pruebas sintéticas y contratos de
-código, no bajo datos financieros reales.
+Por honestidad, los estados `Sólida` de `/app/*` describen el cierre local del
+ciclo anterior y no deben presentarse como evidencia fresca de este release.
+La promoción actual solo vuelve a verificar las superficies públicas incluidas
+en `/private/tmp/nortex-public-apple.CdwEfO/evidence`; staging exige además salud
+y contenido servidos desde el SHA exacto.
 
 ## Compuertas que sostienen el resultado
 
@@ -254,6 +187,18 @@ código, no bajo datos financieros reales.
   y barreras de las mutaciones contables.
 - `tests/contabilidadUx.test.tsx` mantiene diálogos accesibles, fechas civiles de
   Managua, autorización, idempotencia y confirmaciones previas a las mutaciones.
+
+## Corridas conocidas de este ciclo
+
+- `mise exec -- npm run check:design`: `83` archivos revisados, `0`
+  violaciones.
+- Suite pública/auth enfocada del 2026-09-02: `61/61` verdes.
+- `mise exec -- npm test -- --run`: `3952` pruebas totales, `3884` verdes y
+  `68` skip.
+- `mise exec -- npm run build:seo`: `71` rutas prerenderizadas y `72` URLs en
+  sitemap.
+- Los logs y capturas de estas corridas viven fuera del repo en
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence`.
 
 ## Regla para cerrar “todo Nortex”
 
