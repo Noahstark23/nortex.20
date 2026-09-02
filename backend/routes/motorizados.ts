@@ -72,27 +72,25 @@ router.post('/', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any
     if (normalizedVehicle && normalizedVehicle.length > 20) {
         return res.status(400).json({ error: 'La placa o descripción del vehículo no puede superar 20 caracteres.' });
     }
-    if (pin !== undefined && !/^\d{4,6}$/.test(String(pin))) {
-        return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
+    if (!/^\d{4,6}$/.test(String(pin ?? ''))) {
+        return res.status(400).json({ error: 'El PIN es obligatorio y debe ser de 4 a 6 dígitos.' });
     }
 
     try {
-        if (pin !== undefined) {
-            const conflictingDrivers = await prisma.motorizado.findMany({
-                where: { telefono: normalizedPhone, pinHash: { not: null } },
-                select: { id: true, pinHash: true },
-                take: 2,
+        const conflictingDrivers = await prisma.motorizado.findMany({
+            where: { telefono: normalizedPhone, pinHash: { not: null } },
+            select: { id: true, pinHash: true },
+            take: 2,
+        });
+        if (hasPhoneCredentialConflict(conflictingDrivers)) {
+            return res.status(409).json({
+                error: 'Ya existe un repartidor con ese teléfono y PIN. Usá otro número o restablecé el acceso del actual.',
             });
-            if (hasPhoneCredentialConflict(conflictingDrivers)) {
-                return res.status(409).json({
-                    error: 'Ya existe un repartidor con ese teléfono y PIN. Usá otro número o restablecé el acceso del actual.',
-                });
-            }
         }
 
-        // PIN opcional al crear flota propia: necesario para que el repartidor
-        // entre a su app con teléfono+PIN (el magic-link ya no existe).
-        const pinHash = pin !== undefined ? await bcrypt.hash(String(pin), 10) : null;
+        // Toda alta queda utilizable de inmediato en Driver App; los registros
+        // legacy sin PIN conservan el flujo de asignación/reset mediante PATCH.
+        const pinHash = await bcrypt.hash(String(pin), 10);
 
         const motorizado = await prisma.motorizado.create({
             data: {

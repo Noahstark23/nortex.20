@@ -671,21 +671,28 @@ estados, row-lock de asignación, singleton ni E2E MySQL en esta rama.
   `applyStockDelta` y Kardex. También protege estados terminales en el handler
   general. Este apartado no atribuye un AuditLog general a la reserva: el código
   actual solo lo escribe para condiciones específicas de reconciliación de lotes.
-- El backend **todavía no impone toda la matriz del kanban**: el handler general de
-  estado acepta transiciones no terminales amplias y por sí solo no rechaza
-  `pendiente → en_camino` ni exige motorizado para despachar. La secuencia segura del
-  candidato está coordinada por `DeliveryManager`, no constituye aún una invariante
-  completa del servidor.
-- `PATCH /api/v1/pedidos/:id/motorizado` verifica primero que el pedido pertenezca al
-  tenant y que el motorizado sea asignable, pero la escritura y su evento no están en
-  una misma transacción con row-lock ni usan una actualización final scoped por
-  `tenantId`. No se documenta como resistente a carreras.
+- El backend impone una matriz autoritativa de estados bajo row-lock: la reserva solo
+  puede comenzar desde `pendiente` o `asignado`; la entrega solo puede reclamarse
+  desde un estado ya reservado/activo; y los estados de ruta `en_ruta`, `en_camino`
+  y `en_punto` exigen un motorizado asignado. Un cliente PWA anterior ya no puede
+  ejecutar `pendiente → en_camino`, reabrir terminales ni entregar sin pasar por la
+  reserva. Los reintentos de preparación y cancelación conservan sus contratos de
+  error/idempotencia.
+- La Driver App ahora solo ofrece `Entregar y Cobrar` cuando el pedido ya está en un
+  estado entregable (`en_tienda`, `en_ruta`, `en_camino`, `en_punto`). Si un pedido
+  viejo aparece todavía como `asignado` o `preparando`, la UI lo muestra como
+  pendiente de preparación en vez de invitar a una operación que el backend rechaza.
+- `PATCH /api/v1/pedidos/:id/motorizado` ejecuta lock, relectura tenant-scoped,
+  autorización del motorizado, compare-and-set del pedido y evento de tracking en una
+  sola transacción. Rechaza pedidos facturados/terminales y devuelve `409` si pierde
+  una carrera; asignar, reasignar o desasignar nunca deja el evento separado de la
+  escritura canónica.
 - El alta visual exige un PIN numérico de 4 a 6 dígitos y envía nombre, teléfono,
   zona, PIN y placa opcional al endpoint; el backend recorta los textos y normaliza
-  el teléfono. También valida el PIN cuando viene informado, detecta conflictos de
-  credenciales por teléfono y el login del repartidor falla cerrado si encuentra
-  identidades ambiguas. Por compatibilidad, el `POST` directo todavía permite omitir
-  el PIN.
+  el teléfono. El `POST` exige un PIN numérico de 4 a 6 dígitos antes de consultar
+  credenciales o crear la fila, detecta conflictos por teléfono y el login del
+  repartidor falla cerrado si encuentra identidades ambiguas. `PATCH` conserva el
+  bootstrap/reset de PIN para registros legacy que todavía tengan `pinHash = null`.
 - `GET`, `POST` y `PATCH /api/v1/motorizados` usan un select operativo explícito que
   excluye `pinHash`, tenant, KYC, imágenes de documentos, saldo y metadatos de wallet.
   El listado y el detalle autenticado de pedidos reutilizan ese mismo select al
@@ -698,17 +705,13 @@ estados, row-lock de asignación, singleton ni E2E MySQL en esta rama.
 
 ### Pendientes verificables antes de declarar completo el hardening
 
-1. Imponer en backend la matriz permitida de estados y exigir motorizado antes de
-   `en_camino`, independientemente del cliente que invoque el endpoint.
-2. Hacer atómica y tenant-scoped la asignación con row-lock, actualización y evento
-   dentro de la misma transacción.
-3. Paginar o cursar `GET /api/v1/pedidos` y hacer que el tablero consuma todas las
+1. Paginar o cursar `GET /api/v1/pedidos` y hacer que el tablero consuma todas las
    páginas sin ocultar pedidos.
-4. Auditar los teléfonos legacy y, después de sanear colisiones, definir una garantía
+2. Auditar los teléfonos legacy y, después de sanear colisiones, definir una garantía
    de unicidad resistente a carreras para la identidad de login del repartidor.
-5. Retirar `walletId` de la liquidación operativa si ningún consumidor autorizado lo
+3. Retirar `walletId` de la liquidación operativa si ningún consumidor autorizado lo
    necesita y fijar el DTO con una prueba de contrato.
-6. Migrar la ruta al singleton Prisma y ampliar pruebas de integración de rutas y
+4. Migrar la ruta al singleton Prisma y ampliar pruebas de integración de rutas y
    concurrencia contra MySQL 8.
 
 Los tests focales del candidato cubren la secuencia de asignación, fallo de reserva,

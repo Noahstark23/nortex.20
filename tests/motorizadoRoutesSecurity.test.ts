@@ -253,6 +253,30 @@ describe('seguridad de rutas de motorizados', () => {
         expect(mocks.prisma.motorizado.create).not.toHaveBeenCalled();
     });
 
+    it('POST exige PIN antes de consultar credenciales, calcular hash o crear el motorizado', async () => {
+        const res = response();
+
+        await routeHandler(motorizadosRouter, '/', 'post')(
+            {
+                tenantId: 'tenant-auth',
+                body: {
+                    nombre: 'Ana Pérez',
+                    telefono: '8888-0000',
+                    zonaCobertura: 'Managua',
+                },
+            },
+            res,
+        );
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({
+            error: 'El PIN es obligatorio y debe ser de 4 a 6 dígitos.',
+        });
+        expect(mocks.prisma.motorizado.findMany).not.toHaveBeenCalled();
+        expect(mocks.bcrypt.hash).not.toHaveBeenCalled();
+        expect(mocks.prisma.motorizado.create).not.toHaveBeenCalled();
+    });
+
     it('POST devuelve 409 ante un teléfono con credencial existente y no reemplaza su PIN', async () => {
         mocks.prisma.motorizado.findMany.mockResolvedValue([
             { id: 'driver-existing', pinHash: 'existing-hash' },
@@ -315,6 +339,38 @@ describe('seguridad de rutas de motorizados', () => {
         expect(res.statusCode).toBe(409);
         expect(mocks.bcrypt.hash).not.toHaveBeenCalled();
         expect(mocks.prisma.motorizado.update).not.toHaveBeenCalled();
+    });
+
+    it('PATCH permite habilitar el acceso de un motorizado legacy sin PIN', async () => {
+        mocks.prisma.motorizado.findFirst.mockResolvedValue({
+            id: 'driver-legacy',
+            telefono: '50588880000',
+            pinHash: null,
+        });
+        mocks.prisma.motorizado.findMany.mockResolvedValue([]);
+        mocks.prisma.motorizado.update.mockResolvedValue(operationalRider);
+        const res = response();
+
+        await routeHandler(motorizadosRouter, '/:id', 'patch')(
+            {
+                tenantId: 'tenant-auth',
+                params: { id: 'driver-legacy' },
+                body: { pin: '0042' },
+            },
+            res,
+        );
+
+        expect(mocks.bcrypt.hash).toHaveBeenCalledWith('0042', 10);
+        expect(mocks.prisma.motorizado.update).toHaveBeenCalledWith({
+            where: { id: 'driver-legacy' },
+            data: { pinHash: 'pin-hash' },
+            select: motorizadoSafeSelect,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual({
+            message: 'Motorizado actualizado.',
+            motorizado: operationalRider,
+        });
     });
 
     it('driver login falla cerrado ante cuentas duplicadas sin comparar ningún hash', async () => {

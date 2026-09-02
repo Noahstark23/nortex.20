@@ -33,6 +33,7 @@ export type PedidoFulfillmentCode =
     | 'PEDIDO_NOT_FOUND'
     | 'PEDIDO_ALREADY_PREPARED'
     | 'PEDIDO_ALREADY_PROCESSED'
+    | 'PEDIDO_INVALID_STATE_TRANSITION'
     | 'PEDIDO_PRODUCT_NOT_FOUND'
     | 'PEDIDO_RESERVATION_MISMATCH'
     | 'PEDIDO_CANCELLATION_RECONCILIATION_REQUIRED'
@@ -219,6 +220,19 @@ type PedidoSelector = {
     tenantId?: string;
     motorizadoId?: string;
 };
+
+const PEDIDO_RESERVABLE_STATES = ['pendiente', 'asignado'] as const;
+const PEDIDO_DELIVERABLE_STATES = [
+    'preparando',
+    'en_tienda',
+    'en_ruta',
+    'en_camino',
+    'en_punto',
+] as const;
+
+const isPedidoDeliverableState = (estado: string): boolean => (
+    PEDIDO_DELIVERABLE_STATES.some((candidate) => candidate === estado)
+);
 
 const selectorWhere = (selector: PedidoSelector) => ({
     id: selector.pedidoId,
@@ -424,11 +438,36 @@ export async function claimPedidoDelivery(
         where: {
             ...selectorWhere(selector),
             facturaId: null,
-            estado: { notIn: ['entregado', 'cancelado'] },
+            estado: { in: [...PEDIDO_DELIVERABLE_STATES] },
         },
         data: { estado: 'entregado', entregadoAt: new Date() },
     });
     if (claim.count !== 1) {
+        const latest = await tx.pedido.findFirst({
+            where: selectorWhere(selector),
+            select: { estado: true, facturaId: true },
+        });
+        if (!latest) {
+            throw new PedidoFulfillmentError(
+                'PEDIDO_NOT_FOUND',
+                404,
+                selector.motorizadoId
+                    ? 'Pedido no encontrado o no asignado a este motorizado.'
+                    : 'Pedido no encontrado.',
+            );
+        }
+        if (
+            !latest.facturaId
+            && latest.estado !== 'entregado'
+            && latest.estado !== 'cancelado'
+            && !isPedidoDeliverableState(latest.estado)
+        ) {
+            throw new PedidoFulfillmentError(
+                'PEDIDO_INVALID_STATE_TRANSITION',
+                409,
+                `El pedido debe estar preparado o en ruta antes de entregarse; estado actual: ${latest.estado}.`,
+            );
+        }
         throw new PedidoFulfillmentError(
             'PEDIDO_ALREADY_PROCESSED',
             409,
@@ -551,13 +590,34 @@ export async function reservePedidoInTransaction(
     if (!pedido) {
         throw new PedidoFulfillmentError('PEDIDO_NOT_FOUND', 404, 'Pedido no encontrado.');
     }
+    if (pedido.estado === 'preparando') {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_ALREADY_PREPARED',
+            409,
+            'El pedido ya está preparado.',
+        );
+    }
+    if (pedido.facturaId || pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_ALREADY_PROCESSED',
+            409,
+            'Un pedido entregado, facturado o cancelado no se puede preparar.',
+        );
+    }
+    if (!PEDIDO_RESERVABLE_STATES.some((candidate) => candidate === pedido.estado)) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_INVALID_STATE_TRANSITION',
+            409,
+            `El pedido solo se puede preparar desde pendiente o asignado; estado actual: ${pedido.estado}.`,
+        );
+    }
 
     const transition = await tx.pedido.updateMany({
         where: {
             id: params.pedidoId,
             tenantId: params.tenantId,
             facturaId: null,
-            estado: { notIn: ['preparando', 'entregado', 'cancelado'] },
+            estado: { in: [...PEDIDO_RESERVABLE_STATES] },
         },
         data: { estado: 'preparando' },
     });
