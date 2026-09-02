@@ -2,18 +2,31 @@
 
 ## Estado
 
-- Candidato preparado en los PR `#199` y `#200` sobre la base
-  `bc42bb0d22379227143f153442c90ad2b4f67ed3`.
-- **Staging verificado** el 2026-09-02 sobre
-  `b6adb7d6005c2feb9dca5531b93e7e9e007c96e2`. El job `deploy-staging` del run
-  `33681015333` disparó el webhook de Coolify y su paso `Verificar STAGING sano
-  y en el commit esperado` exigió `ok`, `db: up` y ese commit exacto en
-  `/api/health` antes de cerrar en verde (21:02:10Z → 21:06:18Z UTC). El
-  rollout tardó cuatro minutos en converger, dentro de la ventana de reintentos
-  de `scripts/verify-deployed-release.mjs`.
-- **Producción NO autorizada.** El job `deploy-production` del mismo run quedó
-  en `waiting` sobre el environment protegido desde las 21:06:20Z UTC. Requiere
-  la aprobación explícita del responsable, que no se otorgó en este ciclo.
+- Candidato preparado en los PR `#199`, `#200` y `#201`. El SHA promovido es
+  `2834497f6090c2d55bcc48d5edb86887f6993ae3`.
+- **Staging verificado** el 2026-09-02 (run `33688959590`, job `deploy-staging`,
+  22:21:16Z → 22:25:18Z UTC). El paso `Verificar STAGING sano y en el commit
+  esperado` exigió `ok`, `db: up` y ese commit exacto en `/api/health` antes de
+  cerrar en verde.
+- **Producción promovida y verificada** el 2026-09-02. El responsable aprobó el
+  environment protegido; el job `deploy-production` del mismo run arrancó a las
+  23:13:47Z, disparó el webhook de Coolify a las 23:13:51Z y su paso `Verificar
+  PROD sano y en el commit esperado` cerró en verde a las 23:19:05Z tras 5 min
+  14 s de reintentos. `scripts/verify-deployed-release.mjs` solo pasa con `ok`,
+  `db: up` y el commit exacto, así que producción sirve ese SHA.
+- **Falta cerrar el ciclo como `PRODUCCIÓN VERIFICADA`.** El runbook exige,
+  además de la salud por SHA, un smoke autenticado con tenant sintético y una
+  observación de 30 minutos. Ninguno de los dos se ejecutó en este ciclo.
+
+### Intento anterior de promoción
+
+Un primer ciclo llegó a staging verde sobre
+`b6adb7d6005c2feb9dca5531b93e7e9e007c96e2` (run `33681015333`) y dejó
+`deploy-production` en `waiting`. El merge del PR `#201` avanzó `main` y la
+regla `concurrency` con `cancel-in-progress` canceló ese run junto con su
+aprobación pendiente. Aprendizaje operativo: **mientras un `deploy-production`
+esté en `waiting`, ningún merge a `main` es inocuo** — cancela la promoción y
+obliga a repetir staging sobre el SHA nuevo. Promover primero, mergear después.
 
 ## Por qué existe este ciclo
 
@@ -170,10 +183,12 @@ Resultado:
 ## Límites honestos
 
 - No se ejecutó login real ni creación de empresa con datos de negocio.
-- La evidencia visual de este informe sigue siendo local. Staging quedó
-  verificado por CI (salud, `db` y SHA exacto contra `/api/health`), no por una
-  pasada visual nueva sobre ese ambiente. Producción no se verificó porque no
-  fue autorizada.
+- La evidencia visual de este informe sigue siendo local. Staging y producción
+  quedaron verificados por CI (salud, `db` y SHA exacto contra `/api/health`),
+  no por una pasada visual nueva sobre esos ambientes.
+- De producción solo está probada la salud por SHA. No se ejecutó smoke
+  autenticado con tenant sintético ni la observación de 30 minutos; hasta que
+  eso ocurra el ciclo no puede declararse `PRODUCCIÓN VERIFICADA`.
 - El navegador integrado tenía una sesión previa en `127.0.0.1:4174`, por lo
   que la revisión pública se rehízo en un puerto limpio para evitar falsos
   negativos por redirección automática al app autenticado.
