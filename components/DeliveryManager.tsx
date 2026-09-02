@@ -261,6 +261,7 @@ const DeliveryManager: React.FC = () => {
             const canonicalRiderId = body.pedido.motorizadoId ?? null;
             assignmentConfirmed = true;
             reservationConfirmed = body.pedido.estado === 'preparando';
+            setDeliveryError('');
             const canonicalRider = body.pedido.motorizado ?? (canonicalRiderId
                 ? motorizados.find((candidate) => candidate.id === canonicalRiderId)
                 : undefined);
