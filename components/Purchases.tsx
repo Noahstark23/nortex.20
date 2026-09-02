@@ -816,6 +816,10 @@ export default function Purchases() {
         ).slice(0, 8);
     }, [products, productSearch]);
 
+    const effectiveSelectedWarehouseId = selectedWarehouseId || (
+        warehouses.length === 1 ? warehouses[0].id : ''
+    );
+
     const addToCart = (product: Product) => {
         setCart(currentCart => {
             const existing = currentCart.find(c => c.productId === product.id);
@@ -1027,7 +1031,7 @@ export default function Purchases() {
 
         const errors: PurchaseFormErrors = {};
         if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
-        if (!selectedPO && !selectedWarehouseId) errors.warehouseId = 'Seleccioná la bodega donde entra la mercadería.';
+        if (!selectedPO && !effectiveSelectedWarehouseId) errors.warehouseId = 'Seleccioná la bodega donde entra la mercadería.';
         if (!invoiceNumber.trim()) errors.invoiceNumber = 'Ingresá el número de factura del proveedor.';
         if (!purchaseDate) errors.date = 'Ingresá la fecha de la factura.';
         else if (!isValidCalendarDateInput(purchaseDate)) errors.date = 'Ingresá una fecha de factura válida.';
@@ -1116,7 +1120,7 @@ export default function Purchases() {
                 signal: controller.signal,
                 body: JSON.stringify({
                     supplierId: selectedSupplier,
-                    warehouseId: selectedPO ? undefined : selectedWarehouseId || undefined,
+                    warehouseId: selectedPO ? undefined : effectiveSelectedWarehouseId || undefined,
                     invoiceNumber: invoiceNumber.trim(),
                     date: purchaseDate,
                     postingDate: purchaseDate,
@@ -1754,7 +1758,7 @@ export default function Purchases() {
                                             <label htmlFor="purchase-warehouse" className="mb-1.5 block text-sm font-medium text-slate-700">Bodega donde entrará la mercadería *</label>
                                             <select
                                                 id="purchase-warehouse"
-                                                value={selectedWarehouseId}
+                                                value={effectiveSelectedWarehouseId}
                                                 onChange={(e) => {
                                                     setSelectedWarehouseId(e.target.value);
                                                     setFormErrors(current => ({ ...current, warehouseId: undefined }));
@@ -2197,7 +2201,7 @@ export default function Purchases() {
 
                                 <button
                                     onClick={handleSubmit}
-                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !selectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
+                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !effectiveSelectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
                                     aria-busy={submitting}
                                     className="nx-fluid-press nx-ticket-primary mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-control bg-brand py-3.5 text-base font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
                                 >
