@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate, Navigate, Link, useSearchParams } from 'react-router-dom';
 import { Mail, Lock, LogIn, Loader2, ArrowRight, Clock, Eye, EyeOff } from 'lucide-react';
 import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
+import AuthShell, { persistAuthenticatedTheme, useAuthTheme } from './auth/AuthShell';
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -12,6 +13,7 @@ const Login: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const { theme, toggleTheme } = useAuthTheme();
   const [formData, setFormData] = useState({
     email: '',
     password: ''
@@ -63,6 +65,7 @@ const Login: React.FC = () => {
       localStorage.setItem('nortex_user', JSON.stringify({ ...data.user, tenant: data.tenant }));
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
+      persistAuthenticatedTheme(theme);
 
       // SUPER_ADMIN redirect — basado en el rol devuelto por el backend, nunca en un
       // email hardcodeado en el bundle. El privilegio real lo valida el servidor.
@@ -85,107 +88,91 @@ const Login: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-surface-950 p-4">
-      <div className="absolute inset-0 overflow-hidden">
-        <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand/10 rounded-full blur-[120px]"></div>
-        <div className="absolute bottom-0 left-0 w-[500px] h-[500px] bg-emerald-500/[0.07] rounded-full blur-[120px]"></div>
-      </div>
+    <AuthShell
+      title="Bienvenido a Nortex"
+      subtitle="Entrá y seguí donde quedaste."
+      theme={theme}
+      onToggleTheme={toggleTheme}
+      headingId="login-title"
+    >
+      {sessionExpired && !error && (
+        <div role="status" className="nx-auth-alert nx-auth-alert-warning">
+          <Clock aria-hidden="true" size={16} />
+          <span>Tu sesión venció. Volvé a entrar y seguís donde quedaste.</span>
+        </div>
+      )}
 
-      <div className="w-full max-w-sm panel-premium bg-surface-900/70 backdrop-blur-xl p-8 relative z-10 animate-fade-in-up">
+      {error && (
+        <div role="alert" aria-live="assertive" className="nx-auth-alert nx-auth-alert-danger">
+          <Lock aria-hidden="true" size={16} />
+          <span>{error}</span>
+        </div>
+      )}
 
-        <div className="text-center mb-8">
-          <div className="w-10 h-10 bg-nortex-accent rounded flex items-center justify-center mx-auto mb-4 shadow-[0_0_15px_rgba(16,185,129,0.4)]">
-            <span className="font-bold text-nortex-900 text-lg">N</span>
+      <form onSubmit={handleSubmit} className="nx-auth-form" aria-busy={loading}>
+        <div className="nx-auth-field-group">
+          <label htmlFor="login-email">Correo electrónico</label>
+          <div className="nx-auth-control-wrap">
+            <Mail aria-hidden="true" className="nx-auth-control-icon" size={18} />
+            <input
+              id="login-email"
+              type="email"
+              name="email"
+              autoComplete="email"
+              required
+              className="nx-auth-control nx-auth-control-with-icon"
+              placeholder="usuario@empresa.com"
+              value={formData.email}
+              onChange={e => setFormData({ ...formData, email: e.target.value })}
+            />
           </div>
-          <h1 className="text-2xl font-bold text-white tracking-tight">Bienvenido a Nortex</h1>
-          <p className="mt-2 text-sm text-slate-400">Entrá y seguí donde quedaste.</p>
         </div>
 
-        {sessionExpired && !error && (
-          <div role="status" className="mb-6 p-3 bg-amber-500/10 border border-amber-500/20 rounded-lg text-amber-300 text-sm text-center flex items-center justify-center gap-2">
-            <Clock size={14} /> Tu sesión venció. Volvé a entrar y seguís donde quedaste.
+        <div className="nx-auth-field-group">
+          <label htmlFor="login-password">Contraseña</label>
+          <div className="nx-auth-control-wrap">
+            <Lock aria-hidden="true" className="nx-auth-control-icon" size={18} />
+            <input
+              id="login-password"
+              type={showPassword ? 'text' : 'password'}
+              name="password"
+              autoComplete="current-password"
+              required
+              className="nx-auth-control nx-auth-control-with-icon nx-auth-control-with-action"
+              placeholder="••••••••"
+              value={formData.password}
+              onChange={e => setFormData({ ...formData, password: e.target.value })}
+            />
+            <button
+              type="button"
+              onClick={() => setShowPassword(current => !current)}
+              className="nx-auth-control-action"
+              aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              aria-pressed={showPassword}
+            >
+              {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
+            </button>
           </div>
-        )}
-
-        {error && (
-          <div role="alert" aria-live="assertive" className="mb-6 p-3 bg-red-500/10 border border-red-500/20 rounded-lg text-red-300 text-sm text-center flex items-center justify-center gap-2">
-            <Lock size={14} /> {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-5">
-          <div>
-            <label htmlFor="login-email" className="mb-1.5 ml-1 block text-sm font-medium text-slate-300">Correo electrónico</label>
-            <div className="relative group">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-nortex-accent transition-colors" size={18} />
-              <input
-                id="login-email"
-                type="email"
-                name="email"
-                autoComplete="email"
-                required
-                className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-4 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
-                placeholder="usuario@empresa.com"
-                value={formData.email}
-                onChange={e => setFormData({ ...formData, email: e.target.value })}
-              />
-            </div>
-          </div>
-
-          <div>
-            <label htmlFor="login-password" className="mb-1.5 ml-1 block text-sm font-medium text-slate-300">Contraseña</label>
-            <div className="relative group">
-              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 group-focus-within:text-nortex-accent transition-colors" size={18} />
-              <input
-                id="login-password"
-                type={showPassword ? 'text' : 'password'}
-                name="password"
-                autoComplete="current-password"
-                required
-                className="w-full bg-white/[0.03] border border-white/[0.08] text-white pl-10 pr-12 py-3 rounded-xl focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand/40 transition-all placeholder:text-slate-600"
-                placeholder="••••••••"
-                value={formData.password}
-                onChange={e => setFormData({ ...formData, password: e.target.value })}
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(current => !current)}
-                className="absolute right-1 top-1/2 flex h-touch w-touch -translate-y-1/2 items-center justify-center rounded-control text-slate-400 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
-                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
-                aria-pressed={showPassword}
-              >
-                {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
-              </button>
-            </div>
-          </div>
-
-          <div className="text-right">
-            <Link to="/forgot-password" className="text-xs text-slate-400 hover:text-nortex-accent transition-colors">
-              ¿Olvidaste tu contraseña?
-            </Link>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="btn-primary w-full mt-2 py-3.5 flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
-          >
-            {loading ? <Loader2 className="animate-spin" size={20} /> : (
-              <>
-                <LogIn size={20} /> Iniciar Sesión
-              </>
-            )}
-          </button>
-        </form>
-
-        <div className="mt-8 pt-6 border-t border-white/[0.06] text-center">
-          <p className="text-slate-500 text-sm mb-3">¿Aún no tienes cuenta?</p>
-          <Link to="/register" className="inline-flex items-center gap-1 text-nortex-accent hover:text-emerald-400 font-medium text-sm transition-colors">
-            Registrar Empresa <ArrowRight size={14} />
-          </Link>
         </div>
+
+        <div className="nx-auth-form-link-row">
+          <Link to="/forgot-password" className="nx-auth-link">¿Olvidaste tu contraseña?</Link>
+        </div>
+
+        <button type="submit" disabled={loading} className="nx-auth-primary">
+          {loading ? <Loader2 aria-hidden="true" className="animate-spin" size={20} /> : (
+            <><LogIn aria-hidden="true" size={19} /> Iniciar sesión</>
+          )}
+        </button>
+      </form>
+
+      <div className="nx-auth-footer">
+        <p>¿Aún no tenés cuenta?</p>
+        <Link to="/register" className="nx-auth-link nx-auth-link-prominent">
+          Registrar empresa <ArrowRight aria-hidden="true" size={15} />
+        </Link>
       </div>
-    </div>
+    </AuthShell>
   );
 };
 

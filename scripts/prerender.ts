@@ -16,6 +16,10 @@
 // → sin mismatch).
 import fs from 'fs';
 import path from 'path';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { PrivacyPolicyContent } from '../components/PrivacyPolicy';
+import { TermsOfServiceContent } from '../components/TermsOfService';
 import { blogPosts } from '../data/blog-posts';
 import { blogClusters } from '../data/blog-clusters';
 import { markdownToHtml } from '../utils/markdown';
@@ -36,12 +40,45 @@ const OG_IMAGE = `${ORIGIN}/og-image.svg`;
 
 const shell = fs.readFileSync(path.join(DIST, 'index.html'), 'utf-8');
 
+// El HTML estatico se pinta antes de que React pueda leer la preferencia. Este
+// bootstrap replica el contrato de workspaceTheme sin confiar en datos del
+// cliente ni escribirlos: usa el scope tenant/usuario solo cuando ambos estan
+// completos y degrada de forma segura a Dia ante storage bloqueado o corrupto.
+// Se inyecta como primer nodo de <head> para evitar el fogonazo oscuro heredado
+// del shell operativo.
+const publicThemeBootstrap = `<script data-nx-public-theme-bootstrap>(function(){
+  var theme = 'light';
+  try {
+    var storage = window.localStorage;
+    var baseKey = 'nortex_workspace_theme';
+    var storageKey = baseKey;
+    var rawUser = storage.getItem('nortex_user');
+    var user = rawUser ? JSON.parse(rawUser) : {};
+    var userId = typeof user.id === 'string' ? user.id.trim() : '';
+    var tenantFromUser = user.tenant && typeof user.tenant.id === 'string' ? user.tenant.id.trim() : '';
+    var tenantFallback = storage.getItem('nortex_tenant_id');
+    var tenantId = tenantFromUser || (typeof tenantFallback === 'string' ? tenantFallback.trim() : '');
+    if (userId && tenantId) storageKey = baseKey + ':' + encodeURIComponent(tenantId) + ':' + encodeURIComponent(userId);
+    theme = storage.getItem(storageKey) === 'dark' ? 'dark' : 'light';
+  } catch (_) {}
+  document.documentElement.setAttribute('data-nx-theme', theme);
+}());</script>`;
+
+// `index.html` conserva un anti-flash oscuro para el ERP. Las rutas publicas
+// prerenderizadas lo reemplazan por los mismos valores base de los tokens
+// Apple Dia/Noche; luego index.css toma el relevo sin cambiar el canvas.
+const publicFirstPaintStyle = `<style data-nx-public-first-paint>
+  html[data-nx-theme='light'] body { background-color: #ececf0; color: #1d1d1f; }
+  html[data-nx-theme='dark'] body { background-color: #151b23; color: #f5f7fa; }
+</style>`;
+
 interface RouteSEO {
     path: string;        // p.ej. '/ferreterias'
     title: string;
     description: string;
     h1: string;
     body: string;        // HTML visible del bloque SEO
+    bodyIncludesH1?: boolean;
     jsonLd?: string;     // tags <script type="application/ld+json"> ya serializados
     changefreq: string;
     priority: string;
@@ -49,6 +86,12 @@ interface RouteSEO {
 
 const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+// Legal no mantiene una segunda copia de su contenido en este script: el mismo
+// componente que hidrata React se serializa para crawlers y para el primer paint.
+// Esto evita que el HTML estatico quede reducido a un teaser o se desactualice.
+const privacyPolicyBody = renderToStaticMarkup(createElement(PrivacyPolicyContent));
+const termsOfServiceBody = renderToStaticMarkup(createElement(TermsOfServiceContent));
 
 // ── Rutas de marketing (landings de nicho + institucionales) ──
 // La home ('/') NO va aquí: se sirve desde landing.html (estático aparte).
@@ -144,16 +187,18 @@ const routes: RouteSEO[] = [
         h1: 'Política de Privacidad',
         changefreq: 'yearly',
         priority: '0.3',
-        body: `<p>Conoce cómo Nortex protege la información de tu negocio y tus clientes.</p>`,
+        body: privacyPolicyBody,
+        bodyIncludesH1: true,
     },
     {
         path: '/terms',
         title: 'Términos y Condiciones | Nortex',
         description: 'Términos y condiciones de uso del servicio Nortex.',
-        h1: 'Términos y Condiciones',
+        h1: 'Términos de Servicio',
         changefreq: 'yearly',
         priority: '0.3',
-        body: `<p>Condiciones de uso del servicio Nortex.</p>`,
+        body: termsOfServiceBody,
+        bodyIncludesH1: true,
     },
 ];
 
@@ -278,7 +323,20 @@ function calculadoraHtml(tipo: keyof typeof CALCULADORAS): string {
 
 function buildHtml(route: RouteSEO): string {
     const url = `${ORIGIN}${route.path}`;
-    let html = shell;
+    // Los builds nuevos ya incluyen el bootstrap en index.html. El fallback
+    // mantiene el prerender compatible con un shell anterior sin duplicar el
+    // script cuando la fuente canónica ya está presente.
+    let html = shell.includes('nortex_workspace_theme')
+        ? shell
+        : shell.replace('<head>', `<head>\n${publicThemeBootstrap}`);
+
+    // Sustituye solo el bloque anti-flash conocido del shell. Si su comentario
+    // cambia, el resto del prerender sigue siendo valido y el canvas semantico
+    // de `nx-public-prerender` toma el control cuando carga index.css.
+    html = html.replace(
+        /<style>\s*\/\* Anti-flash[\s\S]*?<\/style>/,
+        publicFirstPaintStyle,
+    );
 
     const swap = (re: RegExp, replacement: string) => {
         if (re.test(html)) html = html.replace(re, replacement);
@@ -291,6 +349,9 @@ function buildHtml(route: RouteSEO): string {
     swap(/<meta\s+property="og:title"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:title" content="${esc(route.title)}" />`);
     swap(/<meta\s+property="og:description"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:description" content="${esc(route.description)}" />`);
     swap(/<meta\s+property="og:image"\s+content="[\s\S]*?"\s*\/?>/, `<meta property="og:image" content="${OG_IMAGE}" />`);
+    swap(/<meta\s+name="twitter:title"\s+content="[\s\S]*?"\s*\/?>/, `<meta name="twitter:title" content="${esc(route.title)}" />`);
+    swap(/<meta\s+name="twitter:description"\s+content="[\s\S]*?"\s*\/?>/, `<meta name="twitter:description" content="${esc(route.description)}" />`);
+    swap(/<meta\s+name="twitter:image"\s+content="[\s\S]*?"\s*\/?>/, `<meta name="twitter:image" content="${OG_IMAGE}" />`);
 
     // JSON-LD específico de la ruta, antes de </head>.
     if (route.jsonLd) {
@@ -298,13 +359,13 @@ function buildHtml(route: RouteSEO): string {
     }
 
     // Contenido VISIBLE para crawlers; React lo reemplaza al montar en #root.
-    // Las rutas editoriales usan el mismo canvas cálido que el blog hidratado,
-    // evitando el fogonazo blanco entre el HTML SEO y React. Las demás rutas
-    // conservan su bloque neutral actual.
-    const isBlogRoute = route.path === '/blog' || route.path.startsWith('/blog/');
-    const seoContainer = isBlogRoute
-        ? `<main data-prerender="seo" class="nx-public-prerender"><h1>${esc(route.h1)}</h1>${route.body}</main>`
-        : `<div data-prerender="seo" style="max-width:820px;margin:0 auto;padding:24px;font-family:system-ui,-apple-system,sans-serif;line-height:1.6"><h1>${esc(route.h1)}</h1>${route.body}</div>`;
+    // Todas las rutas publicas usan el mismo canvas Apple en el primer paint.
+    // Se elimina el bloque inline neutral que dejaba registro, legal y landings
+    // fuera de la familia visual aun cuando el React hidratado ya estaba listo.
+    const routeBody = route.bodyIncludesH1
+        ? route.body
+        : `<h1>${esc(route.h1)}</h1>${route.body}`;
+    const seoContainer = `<main data-prerender="seo" class="nx-public-prerender">${routeBody}</main>`;
     const seoBlock = `<div id="root">${seoContainer}</div>`;
     html = html.replace(/<div id="root">\s*<\/div>/, seoBlock);
 

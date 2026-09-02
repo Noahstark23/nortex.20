@@ -127,15 +127,16 @@
   --nx-public-canvas-alt:      #E8E8ED;
   --nx-public-surface:         #F5F5F7;
   --nx-public-surface-raised:  #FAFAFC;
-  --nx-public-border:          #C7C7CC;
+  --nx-public-border:          #85858A;
   --nx-public-text:            #1D1D1F;
   --nx-public-text-secondary:  #515154;
   --nx-public-text-subtle:     #5F5F63;
-  --nx-public-accent-text:     #0C724B;
-  --nx-public-accent-hover:    #095438;
-  --nx-public-accent-soft:     #DDF3E9;
-  --nx-public-primary-fill:    var(--nx-brand);
-  --nx-public-on-primary:      var(--nx-on-brand);
+  --nx-public-accent-text:     #005EB8;
+  --nx-public-accent-hover:    #004C95;
+  --nx-public-accent-soft:     #DDEBFA;
+  --nx-public-primary-fill:    #0071E3;
+  --nx-public-primary-hover:   #0077ED;
+  --nx-public-on-primary:      #FFFFFF;
   --nx-public-shadow:          0 1px 2px rgba(29, 29, 31, .05), 0 12px 36px rgba(29, 29, 31, .07);
 
   /* ---------- Apariencia autenticada ----------
@@ -239,6 +240,8 @@
   --nx-public-surface-rgb:        245 245 247;
   --nx-public-surface-raised-rgb: 250 250 252;
   --nx-public-text-rgb:            29  29  31;
+  --nx-public-accent-rgb:           0  94 184;
+  --nx-public-primary-rgb:          0 113 227;
 
   /* ---------- Marcas de TERCEROS ----------
      No son decoración ni parte de la paleta: son la identidad de otra app, y el
@@ -395,6 +398,31 @@
   --nx-success:         var(--nx-positive);
   --nx-shadow-float:    0 18px 48px rgba(3, 7, 18, .36), 0 2px 10px rgba(3, 7, 18, .24);
   --nx-shadow-subtle:   0 8px 28px rgba(3, 7, 18, .22), 0 1px 3px rgba(3, 7, 18, .18);
+
+  /* La adquisición pública comparte el selector del workspace para que una
+     preferencia ya scopeada por usuario/tenant se mantenga al salir del ERP. */
+  --nx-public-canvas:          #151B23;
+  --nx-public-canvas-alt:      #1B222C;
+  --nx-public-surface:         #202834;
+  --nx-public-surface-raised:  #232B36;
+  --nx-public-border:          #6E7D92;
+  --nx-public-text:            #F5F7FA;
+  --nx-public-text-secondary:  #D5DDE7;
+  --nx-public-text-subtle:     #BFC9D5;
+  --nx-public-accent-text:     #2997FF;
+  --nx-public-accent-hover:    #5AC8FA;
+  --nx-public-accent-soft:     rgba(41, 151, 255, .12);
+  --nx-public-primary-fill:    #2997FF;
+  --nx-public-primary-hover:   #5AC8FA;
+  --nx-public-on-primary:      #001A33;
+  --nx-public-shadow:          0 1px 2px rgba(3, 7, 18, .22), 0 16px 40px rgba(3, 7, 18, .24);
+  --nx-public-canvas-rgb:         21  27  35;
+  --nx-public-canvas-alt-rgb:     27  34  44;
+  --nx-public-surface-rgb:        32  40  52;
+  --nx-public-surface-raised-rgb: 35  43  54;
+  --nx-public-text-rgb:          245 247 250;
+  --nx-public-accent-rgb:         41 151 255;
+  --nx-public-primary-rgb:        41 151 255;
 }
 
 /* El contexto declara la intención de la superficie sin reordenar la escala
