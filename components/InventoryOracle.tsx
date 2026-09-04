@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
-    AlertTriangle, Zap, ShoppingCart, TrendingDown, Package, DollarSign,
-    CheckCircle, XCircle, Loader2, ArrowRight, Shield, Clock
+    AlertTriangle, Zap, ShoppingCart, Package,
+    CheckCircle, XCircle, Loader2
 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { formatMoney } from '../utils/money';
 
 interface OracleAlert {
@@ -22,23 +23,10 @@ interface OracleData {
     totalEstimatedCost: number;
 }
 
-interface LoanResult {
-    message: string;
-    purchaseId: string;
-    loanId: string;
-    loanTerms: {
-        amount: number;
-        interest: string;
-        totalDue: number;
-        dueDate: string;
-    };
-}
-
 const InventoryOracle: React.FC = () => {
+    const navigate = useNavigate();
     const [data, setData] = useState<OracleData | null>(null);
     const [loading, setLoading] = useState(true);
-    const [financing, setFinancing] = useState(false);
-    const [loanResult, setLoanResult] = useState<LoanResult | null>(null);
     const [error, setError] = useState('');
     const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
 
@@ -80,93 +68,10 @@ const InventoryOracle: React.FC = () => {
     const selectedAlerts = data?.alerts.filter(a => selectedItems.has(a.productId)) || [];
     const selectedTotal = selectedAlerts.reduce((s, a) => s + a.suggestedCost, 0);
 
-    const handleFinance = async (supplierId: string) => {
-        if (selectedAlerts.length === 0) return;
-        setFinancing(true);
-        setError('');
-        try {
-            const res = await fetch('/api/capital/finance-purchase', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${token}`
-                },
-                body: JSON.stringify({
-                    supplierId,
-                    items: selectedAlerts.map(a => ({
-                        productId: a.productId,
-                        productName: a.name,
-                        quantity: a.suggestedQty,
-                        unitCost: a.cost
-                    }))
-                })
-            });
-            const json = await res.json();
-            if (res.ok) {
-                setLoanResult(json);
-            } else {
-                setError(json.error || 'Error al financiar');
-            }
-        } catch {
-            setError('Error de conexión');
-        } finally {
-            setFinancing(false);
-        }
-    };
-
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full">
                 <Loader2 className="w-8 h-8 text-blue-400 animate-spin" />
-            </div>
-        );
-    }
-
-    // Success state after financing
-    if (loanResult) {
-        return (
-            <div className="h-full overflow-y-auto p-6 bg-slate-950">
-                <div className="max-w-2xl mx-auto">
-                    <div className="bg-gradient-to-br from-emerald-900/40 to-slate-900 border border-emerald-500/30 rounded-3xl p-10 text-center">
-                        <div className="w-20 h-20 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6">
-                            <CheckCircle className="w-10 h-10 text-emerald-400" />
-                        </div>
-                        <h2 className="text-3xl font-black text-white mb-2">¡Compra Financiada!</h2>
-                        <p className="text-emerald-300 font-medium mb-8">{loanResult.message}</p>
-
-                        <div className="grid grid-cols-2 gap-4 mb-8">
-                            <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
-                                <p className="text-slate-400 text-xs font-bold uppercase mb-1">Monto del Préstamo</p>
-                                <p className="text-2xl font-black text-white">{formatMoney(loanResult.loanTerms.amount)}</p>
-                            </div>
-                            <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
-                                <p className="text-slate-400 text-xs font-bold uppercase mb-1">Total a Pagar</p>
-                                <p className="text-2xl font-black text-amber-400">{formatMoney(loanResult.loanTerms.totalDue)}</p>
-                            </div>
-                            <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
-                                <p className="text-slate-400 text-xs font-bold uppercase mb-1">Interés</p>
-                                <p className="text-2xl font-black text-white">{loanResult.loanTerms.interest}</p>
-                            </div>
-                            <div className="bg-slate-800/50 rounded-2xl p-5 border border-slate-700">
-                                <p className="text-slate-400 text-xs font-bold uppercase mb-1">Vencimiento</p>
-                                <p className="text-lg font-black text-white">{new Date(loanResult.loanTerms.dueDate).toLocaleDateString('es-NI')}</p>
-                            </div>
-                        </div>
-
-                        <div className="bg-blue-950/50 border border-blue-800/30 rounded-xl p-4 text-left">
-                            <p className="text-blue-300 text-sm font-medium flex items-center gap-2">
-                                <Shield size={16} /> El dinero se depositó directamente al proveedor. Tu inventario se actualizará al recibir la mercancía.
-                            </p>
-                        </div>
-
-                        <button
-                            onClick={() => { setLoanResult(null); fetchOracle(); }}
-                            className="mt-8 px-6 py-3 bg-slate-700 text-white rounded-xl font-bold hover:bg-slate-600 transition-colors"
-                        >
-                            Volver al Oráculo
-                        </button>
-                    </div>
-                </div>
             </div>
         );
     }
@@ -275,32 +180,23 @@ const InventoryOracle: React.FC = () => {
                                 </p>
                             </div>
 
+                            {/* Acá iba "Financiar con Nortex Capital": pedía por
+                                `prompt()` el UUID crudo del proveedor y llamaba a
+                                /api/capital/finance-purchase, que hoy responde 409
+                                fijo (financiar exige OC y recepción de inventario).
+                                Era un botón que no podía funcionar. La reposición
+                                se hace donde se hace de verdad: una orden de compra. */}
                             <div className="flex gap-3 w-full md:w-auto">
-                                <button className="flex-1 md:flex-none px-6 py-4 bg-slate-700 text-white rounded-xl font-bold hover:bg-slate-600 transition-colors flex items-center justify-center gap-2 text-sm">
-                                    <ShoppingCart size={18} />
-                                    Orden Manual
-                                </button>
                                 <button
-                                    onClick={() => {
-                                        // Use the first supplier or a default - in production this would open a supplier picker
-                                        const firstSupplierId = prompt('ID del Proveedor (de tu lista de Proveedores):');
-                                        if (firstSupplierId) handleFinance(firstSupplierId);
-                                    }}
-                                    disabled={financing || selectedAlerts.length === 0}
-                                    className="flex-1 md:flex-none px-8 py-4 bg-gradient-to-r from-amber-500 to-orange-500 text-white rounded-xl font-black hover:from-amber-600 hover:to-orange-600 transition-all flex items-center justify-center gap-2 shadow-2xl shadow-amber-500/30 disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                                    type="button"
+                                    onClick={() => navigate('/app/purchase-orders')}
+                                    className="flex-1 md:flex-none px-8 py-4 bg-slate-700 text-white rounded-xl font-bold hover:bg-slate-600 transition-colors flex items-center justify-center gap-2 text-sm"
                                 >
-                                    {financing ? (
-                                        <Loader2 size={18} className="animate-spin" />
-                                    ) : (
-                                        <Zap size={18} className="fill-white" />
-                                    )}
-                                    {financing ? 'Procesando...' : 'Financiar con Nortex Capital'}
+                                    <ShoppingCart size={18} />
+                                    Crear orden de compra
                                 </button>
                             </div>
                         </div>
-                        <p className="text-amber-500/60 text-xs mt-2 flex items-center gap-1">
-                            <Clock size={12} /> Aprobación instantánea · 5% interés · 30 días para pagar · Sujeto a tu límite de crédito
-                        </p>
                     </div>
                 </>
             )}
