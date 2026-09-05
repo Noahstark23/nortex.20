@@ -9,51 +9,17 @@
 
 **Fecha:** 2026-08-28 — **Repo:** `nortex.20` — **Estación:** `Developer/Nortex` (`OFFLINE_SUPERVISED`)
 
-## Instalación de skills (global OpenCode)
+## Registro histórico no ejecutable
 
-```sh
-git clone https://github.com/Ksanbal/apple-hig-codex-skill.git ~/.agents/apple-hig-codex-skill
-bash ~/.agents/apple-hig-codex-skill/install.sh
-# → ~/.config/opencode/skills/apple-human-interface-guidelines/SKILL.md
-# → ~/.claude/skills/apple-human-interface-guidelines/SKILL.md
+El experimento de 2026-08-28 instaló skills externas y propuso una landing
+separada, con una variante oscura inicial. Sus comandos, rutas y copias de
+componentes se retiraron de este archivo para que ningún agente los tome como
+instrucción vigente. Tampoco se conserva `?apple=1` como mecanismo de revisión.
 
-git clone https://github.com/ehmo/platform-design-skills.git /tmp/platform-design-skills
-for p in ios ipados macos watchos visionos tvos; do
-  n=$(grep '^name:' /tmp/platform-design-skills/skills/$p/SKILL.md | awk '{print $2}')
-  mkdir -p ~/.config/opencode/skills/$n
-  cp /tmp/platform-design-skills/skills/$p/SKILL.md ~/.config/opencode/skills/$n/SKILL.md
-  cp /tmp/platform-design-skills/skills/$p/metadata.json ~/.config/opencode/skills/$n/ 2>/dev/null || true
-done
-# → ios-design-guidelines (35K, 67 reglas), ipados, macos, watchos, visionos, tvos + Apple_HIG.pdf
-# Validar: head -n 4 ~/.config/opencode/skills/*/SKILL.md | grep name
-# Reiniciar opencode tras instalar.
-```
-
-## Uso (triggers por description)
-
-```text
-Use the apple-human-interface-guidelines skill. Review this app for iOS/iPadOS HIG alignment.
-Use the ios-design-guidelines skill. Review this SwiftUI view for HIG compliance.
-Use the macos-design-guidelines skill to add menu bar and keyboard shortcuts.
-```
-
-## Pruebas históricas (loop local, sin deploy)
-
-**Método:** offline `DRAFT_LOCAL_ARTIFACT` (cuota `claude`/`openai` agotada, `antigravity` en cuarentena `SYNTHETIC_ONLY`). Artefactos en `Developer/Nortex/control-plane/artifacts/`:
-
-- `apple-landing-proposal-2026-08-28.md` — diagnóstico + fixes
-- `LandingPage.apple.proposal.tsx` — código dark inicial
-- `components/LandingPage.apple.tsx` — copia viva
-- `App.tsx:29` ruta `/apple`, `PublicLanding:264` toggle `?apple=1`
-
-**Loop:**
-```sh
-mise exec "node@22.23.2" -- npm run dev -- --host 127.0.0.1 --port 4174
-# → http://127.0.0.1:4174/apple  (Apple HIG)
-# → http://127.0.0.1:4174/        (original)
-# → http://127.0.0.1:4174/?apple=1 (forzado)
-# HMR: [vite] hmr update /components/LandingPage.apple.tsx
-```
+Las reglas vigentes para agentes están en `AGENTS.md` y `CLAUDE.md`; el alcance,
+la evidencia y los límites de esta superficie están en
+`docs/AUDITORIA_VISUAL_2026-09-05.md`. Cualquier nueva revisión visual debe
+partir de esos documentos y del checkout actual, no de esta bitácora.
 
 **Iteraciones:**
 1. Dark `#0B0D10` — feedback: horrible, fuera de meta
@@ -65,9 +31,6 @@ mise exec "node@22.23.2" -- npm run dev -- --host 127.0.0.1 --port 4174
 La afirmación histórica de que `/apple` estaba «no promovido» ya no describe el
 producto actual. No copiar archivos ni usar este texto como receta: consultar el
 estado vigente y la auditoría enlazada al inicio.
-
-Ver `control-plane/artifacts/apple-hig-skill-uso-y-pruebas-2026-08-28.md` para el
-checklist histórico completo.
 
 ## Estado vigente y contratos que no se deben degradar
 
