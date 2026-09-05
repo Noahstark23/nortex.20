@@ -1,9 +1,7 @@
-// @ts-ignore
-import { PrismaClient } from '@prisma/client';
+import Decimal from 'decimal.js';
+import { prisma } from '../lib/prisma';
 import { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } from './accounting';
 import { ESTADO_ANULADA } from './saleCancellation';
-
-const prisma = new PrismaClient();
 
 interface ScoreResult {
     // NULL = sin datos suficientes: no se inventa un número, no hay historial real.
@@ -21,24 +19,35 @@ interface ScoreResult {
 
 export const calculateTenantScore = async (tenantId: string): Promise<ScoreResult> => {
     // 1. OBTENER DATA HISTÓRICA
+    // `take` SIN `orderBy` deja que MySQL elija 30 turnos cualesquiera: el score
+    // cambiaba de valor entre corridas sobre los mismos datos. Y solo se usa
+    // `difference`, así que no se traen filas completas.
     const shifts = await prisma.shift.findMany({
         where: { tenantId, status: 'CLOSED' },
-        take: 30 // Últimos 30 turnos
+        select: { difference: true },
+        orderBy: { startTime: 'desc' },
+        take: 30, // Últimos 30 turnos
     });
 
-    const sales = await prisma.sale.findMany({
+    // AGREGACIÓN EN LA BD, no filas en JS (guardrail de escalado #2): de este
+    // findMany solo salían un conteo y una suma. Un tenant con 40k ventas al mes
+    // traía 40k filas a memoria por cada recálculo de score.
+    const ventasDelMes = await prisma.sale.aggregate({
         where: {
             tenantId,
             // Una factura ANULADA no es actividad comercial: si contara, un
             // negocio podría inflar su propio score facturando y anulando.
             status: { not: ESTADO_ANULADA },
             createdAt: { gte: new Date(new Date().setDate(new Date().getDate() - 30)) }
-        }
+        },
+        _count: { _all: true },
+        _sum: { total: true },
     });
+    const cantidadDeVentas = ventasDelMes._count._all;
 
     // Gate de historial real: sin NINGÚN cierre de caja ni venta, no hay con qué
     // calcular. Devolvemos score NULL ("sin datos") y línea 0 — nada fantasma.
-    if (shifts.length === 0 && sales.length === 0) {
+    if (shifts.length === 0 && cantidadDeVentas === 0) {
         return {
             score: null,
             creditLimit: 0,
@@ -58,9 +67,9 @@ export const calculateTenantScore = async (tenantId: string): Promise<ScoreResul
     if (perfectShifts > 5) factors.push(`Operación Impecable: ${perfectShifts} cierres perfectos`);
     baseScore += reliabilityBonus;
 
-    // 4. ANÁLISIS DE VOLUMEN TRANSACCIONAL
-    const totalSalesVol = sales.reduce((acc: number, s: any) => acc + Number(s.total), 0);
-    const avgTicket = sales.length > 0 ? totalSalesVol / sales.length : 0;
+    // 4. ANÁLISIS DE VOLUMEN TRANSACCIONAL (Decimal: es dinero)
+    const volumenDeVentas = new Decimal(ventasDelMes._sum.total?.toString() ?? 0);
+    const totalSalesVol = volumenDeVentas.toNumber();
 
     if (totalSalesVol > 10000) {
         baseScore += 100;
@@ -143,9 +152,13 @@ export const calculateTenantScore = async (tenantId: string): Promise<ScoreResul
     let finalScore = Math.max(300, Math.min(850, baseScore));
 
     // 8. CÁLCULO DE LÍNEA DE CRÉDITO
-    const scoreMultiplier = finalScore / 850;
-    const calculatedLimit = (totalSalesVol * 0.30) * scoreMultiplier;
-    const finalLimit = Math.ceil(calculatedLimit / 100) * 100;
+    const finalLimit = volumenDeVentas
+        .mul('0.30')
+        .mul(new Decimal(finalScore).div(850))
+        .div(100)
+        .ceil()
+        .mul(100)
+        .toNumber();
 
     // 9. RATING
     let rating: ScoreResult['rating'] = 'D';

@@ -1,5 +1,8 @@
 # Candidato POS, caja y calidad — 2026-09-04
 
+Actualización posterior: [publicación, CI y avance de main del 5 de septiembre](2026-09-05-pos-publication-ci.md).
+La base y la evidencia de abajo describen la preparación inicial.
+
 Estado: preparación local. Este documento no autoriza publicación ni promoción.
 La evidencia final y la identidad del árbol se entregan en el paquete de release;
 los informes anteriores de esta fecha describen snapshots distintos.

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings, Timer } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, AlertCircle, CreditCard, Banknote, X, Clock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings, Timer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Loan, Tenant } from '../types';
+import { Tenant } from '../types';
 import { formatMoney } from '../utils/money';
 import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
 import { useNavigate } from 'react-router-dom';
@@ -62,15 +62,8 @@ function getUserRole(): string {
 
 const RetailDashboard: React.FC = () => {
   const navigate = useNavigate();
-  // State for Lending
-  const [showLoanModal, setShowLoanModal] = useState(false);
-  const [loanAmount, setLoanAmount] = useState('');
-  const [loadingLoan, setLoadingLoan] = useState(false);
   const [tenantData, setTenantData] = useState<Tenant | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
-  const [refreshingScore, setRefreshingScore] = useState(false);
-  const [scoreFactors, setScoreFactors] = useState<string[]>([]);
 
   // Real Chart Data
   const [chartData, setChartData] = useState<any[]>([]);
@@ -178,8 +171,11 @@ const RetailDashboard: React.FC = () => {
           localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
         }
 
-        // 2. Refresh Credit Score (Algorithm)
-        await refreshCreditScore();
+        // El paso 2 era `await refreshCreditScore()`: cada apertura del panel
+        // recalculaba el Nortex Score (balance + estado de resultados completos)
+        // solo para pintar una tarjeta que ya no existe. Ahora el recálculo lo
+        // dispara el SUPER_ADMIN desde su panel, y abrir el Dashboard dejó de
+        // arrastrar ese trabajo.
 
         // 3. Low Stock Items (Real API)
         const lowStockRes = await fetch('/api/inventory/low-stock', {
@@ -208,29 +204,6 @@ const RetailDashboard: React.FC = () => {
     initDashboard();
   }, []);
 
-  const refreshCreditScore = async () => {
-    setRefreshingScore(true);
-    try {
-      const token = localStorage.getItem('nortex_token');
-      const res = await fetch('/api/fintech/score', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTenantData(data.tenant);
-        localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
-        if (data.analysis && data.analysis.factors) {
-          setScoreFactors(data.analysis.factors);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to refresh score", e);
-    } finally {
-      setRefreshingScore(false);
-    }
-  };
-
-  const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
 
   // Loading spinner
   if (isLoading) {
@@ -284,61 +257,6 @@ const RetailDashboard: React.FC = () => {
   // conversión del producto estaban rotos, y encima marcaban el tenant como
   // ACTIVE en localStorage sin que hubiera pago alguno.
   const handleReactivate = () => navigate('/app/billing');
-
-  const handleRequestLoan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amount = parseFloat(loanAmount);
-
-    if (isNaN(amount) || amount <= 0) {
-      alert("Ingrese un monto válido");
-      return;
-    }
-
-    if (amount > tenantData.creditLimit) {
-      alert("El monto excede su línea de crédito disponible");
-      return;
-    }
-
-    setLoadingLoan(true);
-
-    try {
-      const token = localStorage.getItem('nortex_token');
-      // REAL API CALL
-      const res = await fetch('/api/loans/request', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ amount })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        if (res.status === 402) {
-          alert("BLOQUEADO: Suscripción vencida. Pague para continuar.");
-          return;
-        }
-        throw new Error(data.error);
-      }
-
-      // Verdad del server: el endpoint devuelve el tenant ya actualizado
-      // (wallet acreditado + línea decrementada, atómico y auditado). NO
-      // recalculamos el saldo en el cliente — eso era el número fantasma.
-      setTenantData(data);
-      localStorage.setItem('nortex_tenant_data', JSON.stringify(data));
-
-      setShowLoanModal(false);
-      setLoanAmount('');
-      alert("¡Fondos desembolsados exitosamente!");
-
-    } catch (error: any) {
-      alert(error.message || "Error al procesar el préstamo");
-    } finally {
-      setLoadingLoan(false);
-    }
-  };
 
   // El RÉGIMEN se guarda solo, al elegirlo, sin pasar por "GUARDAR DATOS".
   //
@@ -428,13 +346,6 @@ const RetailDashboard: React.FC = () => {
   // llevara el capital de trabajo).
   const retiroSeguro = numeroDelBackend(survivalData?.retiroSeguro);
 
-  // ── NX-05 · Score y línea de crédito ───────────────────────────────────────
-  // Con una sola venta, "300/850" y una línea de C$100 no son información: son
-  // cebo. Mientras no haya historial suficiente no se muestra ningún número.
-  const creditScore = numeroDelBackend(tenantData.creditScore);
-  const creditLimit = numeroDelBackend(tenantData.creditLimit) ?? 0;
-  const historialInsuficiente = creditScore === null || creditScore <= 300 || creditLimit < 5000;
-  const puedeSolicitar = !historialInsuficiente && creditScore !== null && creditScore >= 500 && creditLimit > 100;
 
   return (
     <div className="nx-light-context nx-workspace h-full overflow-y-auto bg-slate-50 text-slate-950 relative">
@@ -753,123 +664,21 @@ const RetailDashboard: React.FC = () => {
         </section>
       )}
 
-      {/* Stats Grid */}
-      <section aria-label="Indicadores del negocio" className="nx-list-surface mb-8 grid grid-cols-1 gap-px overflow-hidden bg-slate-200 md:grid-cols-2 xl:grid-cols-4">
+      {/* Las cuatro tarjetas de Nortex Capital vivían acá: billetera, Nortex
+          Score, línea disponible y deuda activa. Se quitaron enteras.
 
-        {/* Wallet Card */}
-        <article className="bg-white p-5 sm:p-6">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <p className="nx-label text-slate-500">Saldo en billetera</p>
-              <h3 className="nx-num mt-1 text-kpi font-bold tracking-tight text-slate-950 transition-colors duration-500">{formatMoney(tenantData.walletBalance)}</h3>
-            </div>
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-green-500/10 text-green-700"><DollarSign size={18} aria-hidden="true" /></span>
-          </div>
-          <p className="text-xs text-slate-500">Disponible según los movimientos registrados.</p>
-        </article>
+          POR QUÉ: Nortex no presta plata hoy. Tres de esas tarjetas prometían
+          crédito que nunca llega —la propia home pública ya lo aclara— y la
+          cuarta ("Deuda activa") mostraba C$0.00 en todas las cuentas porque
+          `activeLoans` nunca se cargó: era un `useState([])` sin un solo
+          `setActiveLoans` en el archivo. Lo primero que veía el dueño al abrir
+          Nortex eran cuatro números de un producto financiero inexistente, y no
+          el estado de su negocio, que es lo que sí está más abajo (ventas del
+          día, cuánto puede retirar, stock bajo, lotes por vencer).
 
-        {/* Credit Score Card */}
-        <article className="relative overflow-hidden bg-white p-5 sm:p-6">
-          <button
-            type="button"
-            onClick={refreshCreditScore}
-            aria-label="Recalcular Nortex Score"
-            className="nx-fluid-press absolute right-4 top-4 flex h-touch w-touch items-center justify-center rounded-control text-slate-500 hover:bg-slate-100 hover:text-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
-            title="Recalcular Score"
-          >
-            <RefreshCw size={16} aria-hidden="true" className={refreshingScore ? 'animate-spin' : ''} />
-          </button>
-          <div className="flex justify-between items-start mb-4">
-            <div className="pr-10">
-              <p className="nx-label text-slate-500">Nortex Score</p>
-              {/* NX-05: sin historial suficiente NO se muestra el número. Un
-                  "300/850" tras la primera venta no describe al negocio — es el
-                  piso de la escala — y el dueño lo lee como que el sistema ya lo
-                  juzgó mal. En su lugar se dice qué falta, en concreto. */}
-              {historialInsuficiente ? (
-                <h3 className="mt-1 text-lg font-semibold text-slate-800">Todavía no alcanza</h3>
-              ) : (
-                <h3 className="nx-num mt-1 text-kpi font-bold text-slate-950">{creditScore} <span className="text-sm font-normal text-slate-500">/ 850</span></h3>
-              )}
-            </div>
-          </div>
-          {!historialInsuficiente && (
-            <div className="mb-3 h-1.5 w-full overflow-hidden rounded-pill bg-slate-100" role="progressbar" aria-label="Nortex Score" aria-valuemin={0} aria-valuemax={850} aria-valuenow={creditScore ?? 0}>
-              <div className="h-full rounded-pill bg-brand transition-[width] duration-1000" style={{ width: `${((creditScore ?? 0) / 850) * 100}%` }}></div>
-            </div>
-          )}
-          {historialInsuficiente ? (
-            <p className="text-xs text-slate-600">
-              Seguí registrando ventas: tu score se calcula con tu historial.
-            </p>
-          ) : scoreFactors.length > 0 ? (
-            <p className="truncate text-xs text-slate-500" title={scoreFactors.join(', ')}>
-              Factores: {scoreFactors[0]} {scoreFactors.length > 1 && `+${scoreFactors.length - 1}`}
-            </p>
-          ) : (
-            <p className="text-xs text-slate-600">Actualizá para calcular tu score</p>
-          )}
-        </article>
-
-        {/* Credit Line Card */}
-        <article className="relative overflow-hidden bg-white p-5 sm:p-6">
-
-          {/* NX-05: una "línea disponible" de C$100 el día 1 no compra nada y se
-              lee como cebo; y un botón gris deshabilitado se lee como función
-              bloqueada por no pagar. Mientras no haya historial no se muestra
-              monto ni botón muerto: se muestra el camino, accionable. */}
-          <div className="flex justify-between items-start mb-4 relative z-10">
-            <div>
-              <p className="nx-label text-slate-500">Línea disponible</p>
-              {historialInsuficiente ? (
-                <h3 className="mt-1 text-lg font-semibold text-slate-800">Se activa con tu historial</h3>
-              ) : (
-                <h3 className="nx-num mt-1 text-kpi font-bold text-slate-950">{formatMoney(creditLimit)}</h3>
-              )}
-            </div>
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-slate-100 text-slate-700"><CreditCard size={18} aria-hidden="true" /></span>
-          </div>
-          {historialInsuficiente ? (
-            <>
-              <p className="relative z-10 mb-3 text-xs text-slate-600">
-                Nortex calcula tu línea con las ventas y los pagos que vas registrando. Todavía no hay suficiente movimiento.
-              </p>
-              <button
-                onClick={() => navigate('/app/pos')}
-                className="nx-fluid-press relative z-10 flex h-touch w-full items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
-              >
-                <ShoppingCart size={16} aria-hidden="true" /> Registrar una venta
-              </button>
-            </>
-          ) : puedeSolicitar ? (
-            <button
-              onClick={() => setShowLoanModal(true)}
-              className="nx-fluid-press relative z-10 flex h-touch w-full items-center justify-center gap-2 rounded-control bg-brand px-3 text-sm font-semibold text-brand-on hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
-            >
-              <Banknote size={16} aria-hidden="true" /> Solicitar desembolso
-            </button>
-          ) : (
-            <p className="relative z-10 flex items-start gap-2 text-xs text-slate-600">
-              <Lock size={14} className="mt-0.5 flex-shrink-0" aria-hidden="true" />
-              Los desembolsos se habilitan a partir de 500 puntos. Seguí vendiendo y pagando en fecha.
-            </p>
-          )}
-        </article>
-
-        {/* Active Debt Card */}
-        <article className="bg-white p-5 sm:p-6">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <p className="nx-label text-slate-500">Deuda activa</p>
-              <h3 className="nx-num mt-1 text-kpi font-bold text-slate-950">{formatMoney(activeDebt)}</h3>
-            </div>
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-red-500/10 text-red-700"><AlertCircle size={18} aria-hidden="true" /></span>
-          </div>
-          <p className="text-xs text-slate-600">
-            {activeLoans.length > 0 ? `${activeLoans.length} préstamos activos` : 'Sin deudas pendientes'}
-          </p>
-        </article>
-      </section>
+          El score se sigue calculando: ahora se recalcula desde el panel de
+          SUPER_ADMIN (POST /api/admin/tenants/:id/score), que es donde sirve
+          para decidir, sin prometerle nada a nadie en la pantalla del cliente. */}
 
       {/* 🛡️ DASHBOARD DE SUPERVIVENCIA (NIIF PyMES) */}
       {survivalData && (
@@ -944,8 +753,11 @@ const RetailDashboard: React.FC = () => {
           <p className="nx-label mb-1 text-slate-500">Últimos 7 días</p>
           <h2 id="activity-heading" className="text-title font-bold text-slate-950">Actividad y caja</h2>
         </div>
-        <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
-        <article className="nx-canvas-card p-5 sm:p-6 lg:col-span-2">
+        {/* El gráfico ocupaba 2 de 3 columnas; la tercera era un panel
+            "Préstamos activos" que SIEMPRE estaba vacío (`activeLoans` nunca se
+            cargó) y que además pertenecía a Nortex Capital. Retirado el panel,
+            el flujo de caja —el dato que el dueño sí mira— se lleva el ancho. */}
+        <article className="nx-canvas-card p-5 sm:p-6">
           <h3 className="mb-6 text-lg font-semibold text-slate-950">Flujo de caja real</h3>
           <div className="h-64 min-h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
@@ -962,127 +774,9 @@ const RetailDashboard: React.FC = () => {
           </div>
         </article>
 
-        <article className="nx-canvas-card overflow-hidden p-5 sm:p-6">
-          <h3 className="mb-4 text-lg font-semibold text-slate-950">Préstamos activos</h3>
-          <div className="h-64 overflow-y-auto custom-scrollbar pr-2">
-            {activeLoans.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center text-slate-500">
-                <span className="mb-3 flex h-12 w-12 items-center justify-center rounded-pill bg-slate-100"><PieChart size={21} aria-hidden="true" /></span>
-                <p className="text-sm font-medium text-slate-700">No hay préstamos activos</p>
-                <p className="mt-1 text-xs text-slate-500">Tu historial aparecerá aquí.</p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-slate-200 border-y border-slate-200">
-                {activeLoans.map(loan => (
-                  <li key={loan.id} className="flex items-center justify-between gap-3 py-3">
-                    <div>
-                      <div className="flex items-center gap-1 text-xs text-slate-500">
-                        <Clock size={12} aria-hidden="true" /> Vence: {new Date(loan.dueDate).toLocaleDateString()}
-                      </div>
-                      <div className="nx-num mt-0.5 font-semibold text-slate-950">{formatMoney(loan.amount)}</div>
-                    </div>
-                    <span className="rounded-pill bg-green-500/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-green-700">Activo</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </article>
-        </div>
       </section>
 
       </div>
-
-      {/* LENDING MODAL */}
-      {showLoanModal && (
-        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/65 p-4 backdrop-blur-sm">
-          <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="loan-dialog-title"
-            aria-describedby="loan-dialog-description"
-            className="nx-dark-context w-full max-w-md overflow-hidden rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
-          >
-            <div className="relative overflow-hidden border-b border-white/[0.06] p-6">
-              <button
-                type="button"
-                onClick={() => setShowLoanModal(false)}
-                aria-label="Cerrar solicitud de capital"
-                className="nx-fluid-press absolute right-4 top-4 flex h-touch w-touch items-center justify-center rounded-control text-slate-400 hover:bg-white/[0.06] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
-              >
-                <X size={19} aria-hidden="true" />
-              </button>
-              <span className="mb-4 flex h-10 w-10 items-center justify-center rounded-control bg-brand-soft text-brand"><Banknote size={19} aria-hidden="true" /></span>
-              <h3 id="loan-dialog-title" className="relative z-10 flex items-center gap-2 text-title font-bold text-white">
-                Solicitar capital
-              </h3>
-              <p id="loan-dialog-description" className="relative z-10 mt-1 text-sm text-slate-400">Revisá el monto y el total antes de confirmar.</p>
-            </div>
-
-            <form onSubmit={handleRequestLoan} className="p-6">
-              <div className="mb-6">
-                <label htmlFor="loan-amount" className="nx-label mb-2 block text-slate-400">Monto a solicitar</label>
-                <div className="relative">
-                  <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={20} aria-hidden="true" />
-                  <input
-                    id="loan-amount"
-                    type="number"
-                    min="1"
-                    step="0.01"
-                    max={tenantData.creditLimit}
-                    required
-                    className="nx-num h-[64px] w-full rounded-control border border-white/[0.10] bg-surface-800 pl-12 pr-4 text-3xl font-bold text-white outline-none transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring"
-                    placeholder="0.00"
-                    value={loanAmount}
-                    onChange={e => setLoanAmount(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <div className="mt-2 flex justify-between gap-4 text-xs">
-                  <span className="text-slate-500">Disponible: <span className="nx-num font-semibold text-slate-200">{formatMoney(tenantData.creditLimit)}</span></span>
-                  {Number(loanAmount) > tenantData.creditLimit && (
-                    <span className="font-semibold text-red-400">Excede el límite</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Loan Breakdown */}
-              {Number(loanAmount) > 0 && Number(loanAmount) <= tenantData.creditLimit && (
-                <dl className="mb-6 divide-y divide-white/[0.06] rounded-card border border-white/[0.08] bg-surface-800/40 px-4">
-                  <div className="flex justify-between text-sm">
-                    <dt className="py-3 text-slate-400">Capital</dt>
-                    <dd className="nx-num py-3 font-medium text-white">{formatMoney(Number(loanAmount))}</dd>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <dt className="py-3 text-slate-400">Interés (5% Flat)</dt>
-                    <dd className="nx-num py-3 font-medium text-white">{formatMoney(Number(loanAmount) * 0.05)}</dd>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <dt className="py-3 text-slate-400">Plazo</dt>
-                    <dd className="py-3 font-medium text-white">30 días</dd>
-                  </div>
-                  <div className="flex items-center justify-between text-sm">
-                    <dt className="py-3 font-semibold text-slate-200">Total a pagar</dt>
-                    <dd className="nx-num py-3 text-lg font-bold text-white">{formatMoney(Number(loanAmount) * 1.05)}</dd>
-                  </div>
-                </dl>
-              )}
-
-              <button
-                type="submit"
-                disabled={loadingLoan || !loanAmount || Number(loanAmount) > tenantData.creditLimit}
-                className="nx-fluid-press flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-5 font-semibold text-brand-on shadow-sm hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
-              >
-                {loadingLoan ? 'Procesando…' : (
-                  <>
-                    Confirmar y recibir <Check size={19} aria-hidden="true" />
-                  </>
-                )}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* FISCAL SETTINGS MODAL */}
       {showFiscalModal && (
