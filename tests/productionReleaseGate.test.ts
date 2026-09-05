@@ -7,7 +7,10 @@ import {
     readCurrentMain,
     validStagingUrl,
 } from '../scripts/authorize-production-release.mjs';
-import { waitForExpectedRelease } from '../scripts/verify-deployed-release.mjs';
+import {
+    DEPLOYED_HEALTH_RETRY,
+    waitForExpectedRelease,
+} from '../scripts/verify-deployed-release.mjs';
 
 const SHA = 'a'.repeat(40);
 const OTHER_SHA = 'b'.repeat(40);
@@ -55,6 +58,11 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         'https://user:secret@staging.example.test',
         'https://staging.example.test?token=private',
         'https://staging.example.test#private',
+        ' https://staging.example.test',
+        'https://staging.example.test?',
+        'https://staging.example.test#',
+        'https://@staging.example.test',
+        'https:///api/health',
     ])('rechaza staging inválido sin consultarlo: %s', async (STAGING_URL) => {
         const verifyStaging = vi.fn();
         await expect(authorizeProductionRelease({
@@ -83,7 +91,11 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
             status,
             json: async () => payload,
         });
-        const verifyStaging = (options) => waitForExpectedRelease({ ...options, fetchImpl });
+        const verifyStaging = (options) => waitForExpectedRelease({
+            ...options,
+            attempts: 1,
+            fetchImpl,
+        });
         await expect(authorizeProductionRelease({ env: approved, verifyStaging, readMain }))
             .rejects.toThrow('STAGING_RELEASE_NOT_VERIFIED');
         expect(fetchImpl).toHaveBeenCalledOnce();
@@ -125,8 +137,37 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         expect(verifyStaging).toHaveBeenCalledWith({
             baseUrl: approved.STAGING_URL,
             expectedCommit: SHA,
-            attempts: 1,
-            timeoutMs: 5_000,
+            ...DEPLOYED_HEALTH_RETRY,
+        });
+    });
+
+    it('espera una salud exacta de staging después de un 503 transitorio', async () => {
+        const fetchImpl = vi.fn()
+            .mockResolvedValueOnce({ ok: false, status: 503 })
+            .mockResolvedValueOnce({
+                ok: true,
+                status: 200,
+                json: async () => ({ ok: true, db: 'up', commit: SHA }),
+            });
+        const sleep = vi.fn().mockResolvedValue(undefined);
+        const verifyStaging = vi.fn((options) => waitForExpectedRelease({
+            ...options,
+            fetchImpl,
+            sleep,
+        }));
+
+        await expect(authorizeProductionRelease({
+            env: approved,
+            verifyStaging,
+            readMain: () => SHA,
+        })).resolves.toBe(SHA);
+
+        expect(fetchImpl).toHaveBeenCalledTimes(2);
+        expect(sleep).toHaveBeenCalledOnce();
+        expect(verifyStaging).toHaveBeenCalledWith({
+            baseUrl: approved.STAGING_URL,
+            expectedCommit: SHA,
+            ...DEPLOYED_HEALTH_RETRY,
         });
     });
 
@@ -164,5 +205,21 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         expect(result.stderr).toContain('Compuerta de producción cerrada');
         expect(result.stdout).toBe('');
         expect(result.stderr).not.toMatch(/private|DO_NOT_LOG/);
+    });
+
+    it('el CLI no revela una URL insegura de staging', () => {
+        const privateStagingUrl = 'https://user:secret@staging.example.test?token=DO_NOT_LOG';
+        const result = spawnSync(process.execPath, ['scripts/authorize-production-release.mjs'], {
+            encoding: 'utf8',
+            env: {
+                ...process.env,
+                ...approved,
+                STAGING_URL: privateStagingUrl,
+            },
+        });
+        expect(result.status).toBe(1);
+        expect(result.stderr.trim()).toBe('Compuerta de producción cerrada: VALID_STAGING_URL_REQUIRED');
+        expect(result.stdout).toBe('');
+        expect(result.stderr).not.toMatch(/user|secret|DO_NOT_LOG|staging/);
     });
 });

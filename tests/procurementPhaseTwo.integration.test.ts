@@ -664,7 +664,7 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
     })).toBe(1);
   }, 120_000);
 
-  it('revierte por completo una factura CASH fuera de tolerancia', async () => {
+  it('prioriza la conciliación y revierte por completo una factura CASH fuera de tolerancia', async () => {
     const order = await createApprovedOrder(cashProductId, '1', '10.00');
     await receiveOrder(
       order.id,
@@ -681,6 +681,7 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
       purchases: await prisma.purchase.count({ where: { tenantId: tenantAId } }),
       journals: await prisma.journalEntry.count({ where: { tenantId: tenantAId } }),
       expenses: await prisma.expense.count({ where: { tenantId: tenantAId } }),
+      cashMovements: await prisma.cashMovement.count({ where: { tenantId: tenantAId } }),
       allocations: await prisma.purchaseMatchAllocation.count({ where: { tenantId: tenantAId } }),
       audits: await prisma.auditLog.count({ where: { tenantId: tenantAId } }),
       wallet: decimal((await prisma.tenant.findUnique({
@@ -709,6 +710,8 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
       .toBe(before.journals);
     expect(await prisma.expense.count({ where: { tenantId: tenantAId } }))
       .toBe(before.expenses);
+    expect(await prisma.cashMovement.count({ where: { tenantId: tenantAId } }))
+      .toBe(before.cashMovements);
     expect(await prisma.purchaseMatchAllocation.count({ where: { tenantId: tenantAId } }))
       .toBe(before.allocations);
     expect(await prisma.auditLog.count({ where: { tenantId: tenantAId } }))
@@ -719,7 +722,43 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
     }))?.walletBalance, 2)).toBe(before.wallet);
   }, 120_000);
 
-  it('proyecta recepcion legacy como excepcion y falla cerrado sin identidad explicita', async () => {
+  it('exige caja solo después de validar una compra CASH conciliada', async () => {
+    const order = await createApprovedOrder(cashProductId, '1', '10.00');
+    await receiveOrder(
+      order.id,
+      [{ itemId: order.items[0].id, quantityReceived: '1' }],
+      'REMISION-CASH-SIN-CAJA',
+    );
+
+    const invoiceNumber = `FAC-CASH-SIN-CAJA-${crypto.randomUUID()}`;
+    const before = {
+      purchases: await prisma.purchase.count({ where: { tenantId: tenantAId } }),
+      allocations: await prisma.purchaseMatchAllocation.count({ where: { tenantId: tenantAId } }),
+      cashMovements: await prisma.cashMovement.count({ where: { tenantId: tenantAId } }),
+    };
+    const result = await postLinkedInvoice({
+      invoiceNumber,
+      orderId: order.id,
+      productId: cashProductId,
+      orderItemId: order.items[0].id,
+      unitCost: '10.00',
+      paymentMethod: 'CASH',
+    });
+
+    expectStatus(result, 409);
+    expect(result.body.code).toBe('SIN_CAJA_ABIERTA');
+    expect(await prisma.purchase.findFirst({
+      where: { tenantId: tenantAId, supplierId, invoiceNumber },
+    })).toBeNull();
+    expect(await prisma.purchaseMatchAllocation.count({ where: { tenantId: tenantAId } }))
+      .toBe(before.allocations);
+    expect(await prisma.cashMovement.count({ where: { tenantId: tenantAId } }))
+      .toBe(before.cashMovements);
+    expect(await prisma.purchase.count({ where: { tenantId: tenantAId } }))
+      .toBe(before.purchases);
+  }, 120_000);
+
+  it('prioriza trazabilidad legacy de contado y falla cerrado sin identidad explicita', async () => {
     const order = await createApprovedOrder(legacyProductId, '2', '7.00');
     const orderItemId = order.items[0].id;
     await prisma.$transaction([
@@ -795,6 +834,7 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
       purchases: await prisma.purchase.count({ where: { tenantId: tenantAId } }),
       journals: await prisma.journalEntry.count({ where: { tenantId: tenantAId } }),
       expenses: await prisma.expense.count({ where: { tenantId: tenantAId } }),
+      cashMovements: await prisma.cashMovement.count({ where: { tenantId: tenantAId } }),
       wallet: decimal((await prisma.tenant.findUnique({
         where: { id: tenantAId },
         select: { walletBalance: true },
@@ -819,6 +859,8 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
       .toBe(countsBeforeCash.journals);
     expect(await prisma.expense.count({ where: { tenantId: tenantAId } }))
       .toBe(countsBeforeCash.expenses);
+    expect(await prisma.cashMovement.count({ where: { tenantId: tenantAId } }))
+      .toBe(countsBeforeCash.cashMovements);
     expect(decimal((await prisma.tenant.findUnique({
       where: { id: tenantAId },
       select: { walletBalance: true },

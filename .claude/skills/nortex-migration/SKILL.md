@@ -1,13 +1,18 @@
 ---
 name: nortex-migration
-description: Cambios de schema Prisma / base de datos en Nortex (agregar modelos/campos, índices, migraciones). Usar SIEMPRE que se toque backend/prisma/schema.prisma — la BD es MySQL 8 y el deploy usa db push (solo DDL), lo que impone patrones específicos.
+description: Cambios de schema Prisma / base de datos en Nortex (agregar modelos/campos, índices, migraciones). Usar SIEMPRE que se toque backend/prisma/schema.prisma — la BD es MySQL 8 y la imagen promovida ejecuta un preflight DDL controlado, lo que impone patrones específicos.
 ---
 
 # Migraciones en Nortex (MySQL 8 + `db push`)
 
 ## Realidad del deploy (dicta todo lo demás)
-El Dockerfile arranca con `npx prisma db push` (sin `--accept-data-loss`, ya se
-quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
+La imagen arranca mediante un entrypoint controlado que ejecuta
+`npx --no-install prisma db push` (sin `--accept-data-loss`) → **aplica el schema
+como DDL y NUNCA ejecuta DML**. El entrypoint se ejecuta en cada arranque; que una
+imagen llegue a producción mediante el workflow autorizado depende además de las
+protecciones externas y de Auto Deploy apagado. Eso no es permiso para ejecutar
+`db push` manualmente contra una base real. Las validaciones manuales solo usan
+MySQL local o CI descartable. Consecuencias:
 - Los backfills de datos **van en la aplicación** (patrón perezoso), no en SQL.
 - Sin el flag, un rename/tipo incompatible **hace fallar el arranque** (la instancia
   vieja sigue viva) en vez de borrar datos → los cambios deben ser **ADITIVOS**
@@ -16,7 +21,7 @@ quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
 - **Aditivo no significa libre de warnings:** Prisma también exige
   `--accept-data-loss` al crear algunos índices `UNIQUE` sobre tablas pobladas.
   No habilitar el flag. Agregar un paso state-based en
-  `scripts/deploy-schema-preflight.ts` que inspeccione `information_schema`,
+   `scripts/deploy-schema-preflight.ts` que inspeccione `information_schema`,
   valide duplicados/estado exacto, aplique únicamente el DDL permitido y revalide;
   luego el `db push` normal debe quedar sin warnings.
 - Igual se escribe el SQL en `backend/prisma/migrations/<YYYYMMDD>_<nombre>/migration.sql`
@@ -30,17 +35,17 @@ quitó) → **aplica el schema como DDL y NUNCA ejecuta DML**. Consecuencias:
    conflictos triviales keep-both entre PRs hermanos: avisarlo en el PR).
 3. Validar y generar (sin BD real, con URL dummy):
    ```bash
-   DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma validate --schema=backend/prisma/schema.prisma
-   DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
+   DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma validate --schema=backend/prisma/schema.prisma
+   DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
    ```
    ⚠️ Si `validate` dice "datasource url no soportado" → estás corriendo prisma 7
-   del registry: `npm install` primero (el repo pinnea 6.4.1).
+   del registry: `npm ci` primero (el repo pinnea 6.4.1).
 4. Escribir el `migration.sql` espejo (aditivo, con FKs e índices con los nombres
    que Prisma genera: `Tabla_campo_idx`, `Tabla_campoA_campoB_key`).
 5. Si el delta agrega un `UNIQUE` a una tabla existente/poblada, reproducir el
    upgrade en MySQL 8 con datos y agregar el preflight idempotente antes descrito.
    Debe fallar cerrado ante duplicados o una definición homónima incompatible.
-6. `npx tsc --noEmit` (el client generado tipa el código nuevo).
+6. `npx --no-install tsc --noEmit` (el client generado tipa el código nuevo).
 
 ## Patrones del repo
 - **Dinero nuevo** → `Decimal @db.Decimal(18, 4)`. Excepción documentada: campos

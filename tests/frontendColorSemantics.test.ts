@@ -10,14 +10,27 @@ const themeColors = theme.colors as unknown as Record<string, ColorPalette>;
 const tokens = readFileSync(new URL('../nortex-tokens.css', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 const contrastContract = styles.slice(styles.lastIndexOf('CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS'));
+const brandAliasBridge = styles.slice(
+    styles.indexOf('Tailwind colapsa estos aliases fríos a la marca.'),
+    styles.indexOf('.nx-apple-dark-workspace'),
+);
 const inventoryOracle = readFileSync(new URL('../components/InventoryOracle.tsx', import.meta.url), 'utf8');
+const inventory = readFileSync(new URL('../components/Inventory.tsx', import.meta.url), 'utf8');
 const quickAddProduct = readFileSync(new URL('../components/QuickAddProduct.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../components/Layout.tsx', import.meta.url), 'utf8');
+const pinPadClock = readFileSync(new URL('../components/PinPadClock.tsx', import.meta.url), 'utf8');
 
 function rootToken(name: string): string {
     const root = tokens.match(/^:root\s*\{([\s\S]*?)^\}/m)?.[1] ?? '';
     const value = root.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
     if (!value) throw new Error(`No se encontró el token --${name} en :root`);
+    return value;
+}
+
+function lightToken(name: string): string {
+    const light = tokens.match(/\[data-nx-theme=['"]light['"]\]\s*\{([\s\S]*?)\n\}/)?.[1] ?? '';
+    const value = light.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
+    if (!value) throw new Error(`No se encontró el token --${name} en el tema Día`);
     return value;
 }
 
@@ -116,6 +129,59 @@ describe('contrato semántico del tema frontend', () => {
         }
     });
 
+    it('traduce tintas semánticas claras sobre avisos suaves de Día', () => {
+        const semanticPairs = [
+            ['nx-positive', 'nx-positive-bg'],
+            ['nx-warning', 'nx-warning-bg'],
+            ['nx-info', 'nx-info-bg'],
+            ['nx-danger', 'nx-danger-bg'],
+        ] as const;
+
+        for (const [ink, background] of semanticPairs) {
+            expect(
+                contrastRatio(lightToken(ink), lightToken(background)),
+                `${ink} sobre ${background}`,
+            ).toBeGreaterThanOrEqual(4.5);
+        }
+
+        const canvas = lightToken('nx-canvas');
+        const orangeSoft = over('#F5A524', canvas, 0.05);
+        const amberSoft = over(tailwindColors.amber[500], canvas, 0.1);
+        expect(contrastRatio(lightToken('nx-warning'), orangeSoft)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(lightToken('nx-warning'), amberSoft)).toBeGreaterThanOrEqual(4.5);
+
+        for (const className of [
+            'text-emerald-100/80',
+            'text-amber-100', 'text-amber-200/80', 'text-amber-400/90',
+            'text-orange-100', 'text-orange-300/70',
+            'text-blue-200', 'text-blue-300/80',
+            'text-red-100', 'text-red-100/80', 'text-red-400/70',
+            'text-rose-500',
+        ]) {
+            expect(styles).toContain(`[class~="${className}"]`);
+        }
+    });
+
+    it('traduce aliases de marca a una tinta accesible en Día', () => {
+        expect(brandAliasBridge).toContain('color: var(--nx-positive);');
+        for (const className of [
+            'text-brand-200',
+            'text-nortex-accent',
+            'text-blue-400', 'text-blue-300/80',
+            'text-indigo-400', 'text-cyan-300',
+            'text-violet-700', 'text-purple-300',
+            'hover:text-brand-800', 'hover:text-blue-300',
+            'group-hover:text-nortex-accent',
+        ]) {
+            expect(brandAliasBridge).toContain(`[class~="${className}"]`);
+        }
+
+        const canvas = lightToken('nx-canvas');
+        const brandSoft = over('#16C784', canvas, 0.15);
+        expect(contrastRatio(lightToken('nx-positive'), brandSoft)).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(lightToken('nx-positive'), '#E6FAF2')).toBeGreaterThanOrEqual(4.5);
+    });
+
     it('protege sólo los rellenos sólidos y sus cambios hover conocidos', () => {
         for (const className of [
             'bg-brand', 'bg-emerald-500', 'bg-blue-600', 'bg-nortex-accent', 'bg-whatsapp',
@@ -145,5 +211,36 @@ describe('contrato semántico del tema frontend', () => {
         expect(webOrderToast).not.toContain('text-white/60 hover:bg-white/10 hover:text-white');
         expect(webOrderToast).toContain('text-brand-on/80');
         expect(contrastRatio(over(rootToken('nx-on-brand'), '#16C784', 0.8), '#16C784')).toBeGreaterThanOrEqual(4.5);
+    });
+
+    it('no rebaja una tinta de control peligrosa por opacidad en el reloj', () => {
+        const dangerInk = rootToken('nx-on-danger-solid');
+        expect(contrastRatio(dangerInk, '#F0483E')).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(over(dangerInk, '#F0483E', 0.8), '#F0483E')).toBeLessThan(4.5);
+
+        expect(pinPadClock).toMatch(/bg-emerald-500[\s\S]{0,500}text-sm text-brand-on uppercase tracking-wider[\s\S]{0,240}Entrada/);
+        expect(pinPadClock).toMatch(/bg-rose-500[\s\S]{0,500}text-sm nx-on-danger-solid uppercase tracking-wider[\s\S]{0,240}Salida/);
+    });
+
+    it('mantiene la pérdida de Kardex legible en la isla ticket bajo ambos modos', () => {
+        const lossBadge = inventory.slice(
+            inventory.indexOf("'ADJUST_LOSS':"),
+            inventory.indexOf("'ADJUST_GAIN':"),
+        );
+
+        expect(lossBadge).toContain('bg-[var(--nx-ticket-raised)]');
+        expect(lossBadge).toContain('text-[var(--nx-ticket-warning)]');
+        expect(lossBadge).toContain('border-[color:var(--nx-ticket-warning)]');
+        expect(lossBadge).not.toContain('bg-orange-900/60');
+        expect(lossBadge).not.toContain('text-orange-300');
+
+        // Los tokens ticket son invariantes: la misma isla oscura se muestra
+        // dentro del workspace Día y del workspace Noche.
+        for (const workspaceTheme of ['light', 'dark']) {
+            expect(
+                contrastRatio(rootToken('nx-ticket-warning'), rootToken('nx-ticket-raised')),
+                `pérdida Kardex sobre ticket ${workspaceTheme}`,
+            ).toBeGreaterThanOrEqual(4.5);
+        }
     });
 });

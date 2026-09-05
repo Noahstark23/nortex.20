@@ -255,7 +255,14 @@ Arquitectura objetivo: **ambas capas** (defensa en profundidad). La extension es
 
 ## Orden de Adopción
 
-1. **Merge PR #4** → deploy (`prisma db push` crea columnas y `LedgerHead` automáticamente).
+> **Nota histórica.** Los identificadores de PR y el orden siguiente describen el
+> plan original; no son instrucciones ejecutables de despliegue. La promoción actual
+> se rige por `docs/runbooks/release-promotion.md` y nunca autoriza un `db push`
+> manual contra datos reales.
+
+1. **Integrar el cambio autorizado** → la imagen promovida ejecuta su preflight DDL
+   controlado y crea las columnas/`LedgerHead` de forma aditiva, sin
+   `--accept-data-loss`.
 2. Definir `NORTEX_LEDGER_KEYS` en Coolify → la cadena se activa sola; smoke test: `GET /api/admin/ledger/verify/:tenantId`.
 3. `JWT_SECRETS` (opcional ya; obligatorio antes de exponer servicios externos).
 4. Fase 0 del plan de hardening (tests + CI) → luego migración de rutas al `forTenant` con el CI-guard activo.

@@ -14,6 +14,7 @@ import {
     fetchAuthenticatedJson,
     openAuthenticatedPreview,
 } from '../utils/authenticatedDownload';
+import { DAY_DARK_SURFACE } from '../utils/daySurfaceInk';
 
 // Helpers
 const IVA_RATE = 0.15;
@@ -546,7 +547,7 @@ const Reports: React.FC = () => {
                         </div>
 
                         {/* Valor en Bodega */}
-                        <div className="nx-dark-island bg-gradient-to-br from-nortex-900 to-nortex-800 text-white p-5 rounded-xl shadow-lg relative overflow-hidden">
+                        <div className={`${DAY_DARK_SURFACE.inventoryValue} p-5 rounded-xl shadow-lg relative overflow-hidden`}>
                             <div className="absolute -right-4 -top-4 w-20 h-20 bg-nortex-accent blur-[40px] opacity-20" />
                             <div className="flex items-center justify-between mb-3 relative z-10">
                                 <div className="p-2 bg-white/10 rounded-lg">
@@ -865,7 +866,7 @@ const Reports: React.FC = () => {
                                 </div>
                             )}
                             {/* MEGA CARD: Total a Pagar */}
-                            <div className="nx-dark-island bg-gradient-to-br from-red-800 to-red-900 text-white p-8 rounded-2xl shadow-xl mb-8 relative overflow-hidden">
+                            <div className={`${DAY_DARK_SURFACE.taxTotal} p-8 rounded-2xl shadow-xl mb-8 relative overflow-hidden`}>
                                 <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full" />
                                 <div className="absolute -right-5 bottom-0 w-24 h-24 bg-white/5 rounded-full" />
                                 <div className="relative z-10">

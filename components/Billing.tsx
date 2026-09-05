@@ -1,6 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { CreditCard, Shield, CheckCircle, AlertTriangle, Clock, Zap, ArrowRight, ExternalLink, Loader2, XCircle, RefreshCw, Building2, Upload, Send, FileText, DollarSign, Banknote } from 'lucide-react';
 import ImageUploader from './ImageUploader';
+import {
+    BILLING_STATUS_META_CLASS,
+    BILLING_STATUS_RENEWAL_CLASS,
+    billingStatusSurfaceClass,
+} from '../utils/daySurfaceInk';
 
 interface BankAccount {
     bank: string;
@@ -173,24 +178,20 @@ const Billing: React.FC = () => {
             </div>
 
             {/* Status Card */}
-            <div className={`p-6 rounded-2xl mb-6 relative overflow-hidden ${
-                isActive ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 text-brand-on' :
-                isSuspended ? 'nx-dark-island bg-gradient-to-br from-red-800 to-red-900 text-white' :
-                'bg-gradient-to-br from-amber-400 to-amber-600 nx-on-warning-solid'
-            }`}>
+            <div className={`p-6 rounded-2xl mb-6 relative overflow-hidden ${billingStatusSurfaceClass(isActive, isSuspended)}`}>
                 <div className="absolute -right-8 -top-8 w-32 h-32 bg-white/10 rounded-full" />
                 <div className="relative z-10 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         {isActive ? <Shield size={28} /> : isSuspended ? <XCircle size={28} /> : <Clock size={28} />}
                         <div>
-                            <div className="text-sm font-mono opacity-80">ESTADO</div>
+                            <div className={BILLING_STATUS_META_CLASS}>ESTADO</div>
                             <div className="text-xl font-bold">
                                 {isActive ? 'SUSCRIPCIÓN ACTIVA' : isSuspended ? 'SERVICIO SUSPENDIDO' : 'PERIODO DE PRUEBA'}
                             </div>
                         </div>
                     </div>
                     {isActive && daysLeft !== null && (
-                        <div className="text-right text-sm opacity-80">
+                        <div className={BILLING_STATUS_RENEWAL_CLASS}>
                             Renueva en <strong>{daysLeft} días</strong>
                         </div>
                     )}

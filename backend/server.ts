@@ -380,6 +380,9 @@ app.use(express.json({ limit: '2mb' }) as any);
 // colgar también el healthcheck).
 const arranqueDelProceso = Date.now();
 app.get('/api/health', async (_req: any, res: any) => {
+    // El commit y la BD son evidencia de la instancia actual. Un CDN/proxy no
+    // puede reutilizar un 200 anterior como prueba de una promoción nueva.
+    res.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
     let db: 'up' | 'down' = 'down';
     try {
         await Promise.race([
@@ -7393,7 +7396,6 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
         });
     } catch (error: any) {
         if (productQuantityErrorResponse(res, error)) return;
-        if (manualBatchErrorResponse(res, error)) return;
         if (error instanceof StockError) {
             const status =
                 error.code === 'PRODUCT_NOT_FOUND' ? 404
@@ -7401,6 +7403,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
                         : 400;
             return res.status(status).json({ error: error.message, code: error.code });
         }
+        if (manualBatchErrorResponse(res, error)) return;
         console.error('Error en ajuste de inventario:', error);
         res.status(error.message?.includes('no encontrado') || error.message?.includes('insuficiente') ? 400 : 500)
             .json({ error: error.message || 'Error procesando ajuste de inventario' });
@@ -9059,20 +9062,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         if (!anchorPurchase || !ppvAccount) await seedChartOfAccounts(authReq.tenantId!);
         if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
-        // Compra de CONTADO: el efectivo sale de la gaveta, así que exige una
-        // caja abierta. Se resuelve ANTES de la tx (el turno es el mismo que ve
-        // la píldora del POS) y el error DICE que falta abrir caja — antes se
-        // debitaba la billetera fintech y respondía "recarga tu billetera".
+        // Compra de CONTADO: el efectivo sale de la gaveta. Capturamos el turno
+        // antes de la tx (es el mismo que ve la píldora del POS), pero no
+        // devolvemos todavía SIN_CAJA_ABIERTA: para una factura con OC, la
+        // conciliación debe poder rechazar primero una diferencia que hace
+        // inválida la compra CASH por sí misma.
         const { shift: turnoDeContado } = paymentMethod === 'CASH'
             ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
             : { shift: null };
-        if (paymentMethod === 'CASH' && !turnoDeContado) {
-            const sinCaja = new CashSupplierPaymentError(
-                'SIN_CAJA_ABIERTA',
-                'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.'
-            );
-            return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
-        }
         // Snapshot de la gaveta para la auditoría (se llena dentro de la tx).
         let efectivoAntesCompra: Decimal | null = null;
         let efectivoDespuesCompra: Decimal | null = null;
@@ -9443,6 +9440,17 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 userId: authReq.userId!,
                 purchaseId: purchase.id,
             });
+            // `executeProcurementMatch` falla cerrado para CASH antes de crear
+            // allocations, tocar dinero o auditar cuando la OC/recepción/factura
+            // no se pueden conciliar. Si falta caja, su requisito operativo se
+            // evalúa solo después de esa validación de integridad; la excepción
+            // queda dentro de la misma tx y revierte la cabecera recién creada.
+            if (paymentMethod === 'CASH' && !turnoDeContado) {
+                throw new CashSupplierPaymentError(
+                    'SIN_CAJA_ABIERTA',
+                    'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.',
+                );
+            }
             // executeProcurementMatch materializa identidad OC y snapshots exactos
             // mediante UPDATE SQL. El objeto devuelto por purchase.create conserva
             // los items previos; refrescarlos evita responder costos/variancias stale.

@@ -75,8 +75,8 @@ Antes de un cambio de schema exigir, para la base real:
 - restore drill vigente y exitoso sobre MySQL 8 desechable;
 - CI, preflight aditivo y plan de rollback verdes.
 
-Si falta cualquiera, **fail closed**: no marcar listo, no mergear si `main` despliega,
-no llamar webhooks y no usar `--accept-data-loss`. Corregir el respaldo y repetir la
+Si falta cualquiera, **fail closed**: no marcar listo, no solicitar staging ni
+producción, no llamar webhooks y no usar `--accept-data-loss`. Corregir el respaldo y repetir la
 verificación. Después del deploy comprobar `/api/health`, commit exacto y smokes según
 `nortex-deploy`; conservar la migración aditiva durante un rollback de aplicación.
 

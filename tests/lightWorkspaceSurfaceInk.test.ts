@@ -1,11 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import {
+    BILLING_STATUS_META_CLASS,
+    BILLING_STATUS_RENEWAL_CLASS,
+    billingStatusSurfaceClass,
+    DAY_DARK_SURFACE,
+} from '../utils/daySurfaceInk';
 
 const css = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 const tokens = readFileSync(new URL('../nortex-tokens.css', import.meta.url), 'utf8');
-const billing = readFileSync(new URL('../components/Billing.tsx', import.meta.url), 'utf8');
-const quotationManager = readFileSync(new URL('../components/QuotationManager.tsx', import.meta.url), 'utf8');
-const reports = readFileSync(new URL('../components/Reports.tsx', import.meta.url), 'utf8');
+const tailwindConfig = readFileSync(new URL('../tailwind.config.js', import.meta.url), 'utf8');
 
 const bridgeStart = css.indexOf('.nx-apple-light-workspace {');
 const solidContractStart = css.indexOf('CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS');
@@ -73,6 +77,8 @@ describe('tinta heredada del bridge Día', () => {
         }
 
         expect(lightInkBridge).toContain('--nx-legacy-white-ink: var(--nx-ticket-text);');
+        expect(lightInkBridge).toContain('--nx-warning: var(--nx-ticket-warning);');
+        expect(lightInkBridge).toContain('--nx-danger: var(--nx-ticket-danger);');
         expect(solidContract).toContain('--nx-legacy-white-ink: var(--nx-on-brand);');
         expect(solidContract).toContain('--nx-legacy-white-ink: var(--nx-on-danger-solid);');
         expect(solidContract).toContain('--nx-legacy-white-ink: var(--nx-on-warning-solid);');
@@ -80,16 +86,33 @@ describe('tinta heredada del bridge Día', () => {
     });
 
     it('marca sólo los gradientes oscuros y da tinta AA a los gradientes mixtos', () => {
-        expect(quotationManager).toContain('nx-dark-island mb-6 bg-gradient-to-r from-slate-900 to-slate-800');
-        expect(quotationManager).toContain('text-sm text-slate-300 mb-3');
-        expect(reports).toContain('nx-dark-island bg-gradient-to-br from-nortex-900 to-nortex-800');
-        expect(reports).toContain('nx-dark-island bg-gradient-to-br from-red-800 to-red-900');
-        expect(reports).toContain('text-xs font-mono text-slate-400 mb-1 relative z-10');
+        // Las clases viven en una primitive pequeña para que el contrato no lea
+        // componentes monolíticos. Tailwind debe escanear esa carpeta o las
+        // islas se purgan del CSS de producción.
+        expect(tailwindConfig).toContain('"./utils/**/*.{js,ts,jsx,tsx}",');
+        expect(DAY_DARK_SURFACE.publicCatalog).toBe('nx-dark-island bg-gradient-to-r from-slate-900 to-slate-800 text-white');
+        expect(DAY_DARK_SURFACE.inventoryValue).toBe('nx-dark-island bg-gradient-to-br from-nortex-900 to-nortex-800 text-white');
+        expect(DAY_DARK_SURFACE.taxTotal).toBe('nx-dark-island bg-gradient-to-br from-red-800 to-red-900 text-white');
 
-        expect(billing).toContain('from-emerald-500 to-emerald-700 text-brand-on');
-        expect(billing).toContain('nx-dark-island bg-gradient-to-br from-red-800 to-red-900 text-white');
-        expect(billing).toContain('from-amber-400 to-amber-600 nx-on-warning-solid');
-        expect(reports).toContain('text-xs opacity-80 mb-4');
+        expect(billingStatusSurfaceClass(true, false)).toBe('bg-gradient-to-br from-emerald-500 to-emerald-700 text-brand-on');
+        expect(billingStatusSurfaceClass(false, true)).toBe(DAY_DARK_SURFACE.taxTotal);
+        expect(billingStatusSurfaceClass(false, false)).toBe('bg-gradient-to-br from-amber-400 to-amber-600 nx-on-warning-solid');
+
+        expect(BILLING_STATUS_META_CLASS).toBe('text-sm font-mono');
+        expect(BILLING_STATUS_RENEWAL_CLASS).toBe('text-right text-sm');
+
+        for (const [foreground, backgrounds] of [
+            ['#001B12', ['#16C784', '#0F9461']],
+            ['#171A1F', ['#FBBF24', '#D97706']],
+            [rootToken('--nx-ticket-text'), ['#991B1B', '#7F1D1D']],
+        ] as const) {
+            for (const background of backgrounds) {
+                expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+            }
+        }
+
+        expect(contrastRatio(over('#001B12', '#0F9461', 0.8), '#0F9461')).toBeLessThan(4.5);
+        expect(contrastRatio(over('#171A1F', '#D97706', 0.8), '#D97706')).toBeLessThan(4.5);
 
         const red800 = '#991B1B';
         const ticketText = rootToken('--nx-ticket-text');

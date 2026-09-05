@@ -1,6 +1,6 @@
-# Runbook canónico — promoción a producción
+# Runbook canónico — staging y promoción a producción
 
-> **Regla vinculante.** Este documento define la única ruta de promoción a
+> **Regla vinculante.** Este documento define las únicas rutas de staging y
 > producción de Nortex. CI verde, un merge, staging sano, una aprobación de PR o
 > la aprobación técnica de un environment son señales distintas; ninguna sustituye
 > la autorización explícita del producto para producción.
@@ -24,15 +24,44 @@ Después de esta reparación, las rutas son deliberadamente separadas:
 
 | Etapa | Mecanismo | Qué prueba | Qué no autoriza |
 |---|---|---|---|
-| CI | `ci.yml` sobre el SHA candidato | Tests, build y controles técnicos | Staging ni producción |
-| Staging | job de staging de `ci.yml` | Que staging sirve el SHA exacto y pasa smoke proporcional | Producción |
+| CI | `ci.yml` sobre el SHA candidato | Tests, build, schema smoke e integración aislada obligatoria | Staging ni producción |
+| Staging | `.github/workflows/release-staging.yml`, solo manual | Que staging sirve API, base y SHA exactos | Producción ni el smoke funcional |
 | Decisión de producto | Registro humano explícito | Que el responsable acepta alcance, SHA, ventana y rollback | Ejecutar un deployment por sí sola |
 | Producción | `.github/workflows/release-production.yml`, solo manual | Que el mismo SHA vigente de `main` y staging sano siguen siendo el candidato | Una autorización futura o un SHA distinto |
 | Environment `production` | Protección técnica dentro del workflow manual | Segunda revisión antes de acceder a secretos de producción | Autorización de producto por inferencia |
 
-`ci.yml` puede desplegar staging cuando esté autorizado para ello, pero nunca debe
-crear un job de producción. El único workflow con webhook o secretos de producción
-es `release-production.yml`; no se activa por `push`, PR ni merge.
+`ci.yml` solo verifica código: no puede invocar ningún webhook ni crear jobs de
+staging o producción, ni siquiera con `workflow_dispatch`. El único workflow con
+webhook o secretos de staging es `release-staging.yml`; el único con webhook o
+secretos de producción es `release-production.yml`. Ninguno se activa por
+`push`, PR ni merge.
+
+## Ejecutar staging manual
+
+Antes de usar staging, identificá un SHA completo de 40 caracteres que sea el tip
+vigente de `main` y que ya tenga CI terminal para ese mismo SHA. Un SHA abreviado,
+una rama, un tag mutable o “el último” no son candidatos aceptables.
+
+Un responsable inicia **Promote staging candidate** en GitHub Actions, selecciona la
+rama `main` e introduce:
+
+| Campo | Valor aceptado |
+|---|---|
+| `candidate_sha` | El SHA completo de 40 caracteres, actual en `main` y con CI terminal |
+| `confirmation` | Exactamente `STAGE <candidate_sha>` |
+
+El preflight falla cerrado si el evento no es manual, la rama no es `main`, el SHA
+no coincide con `GITHUB_SHA` ni con `origin/main`, la confirmación no es exacta
+o `NORTEX_DEPLOY_ENABLED` no vale `true`. Después de la aprobación técnica del
+environment `staging`, el job repite esas comparaciones antes de leer el webhook.
+Si `main` avanzó mientras se esperaba la aprobación, no se llama a Coolify.
+
+El checkout, el health y la evidencia se fijan al `candidate_sha` introducido; un
+webhook aceptado no prueba el despliegue. El run solo queda sano cuando staging
+responde con API y base disponibles para ese SHA exacto. Una aprobación de staging
+no autoriza producción ni sustituye el smoke con tenant sintético ni la autorización
+explícita descrita abajo. El smoke funcional es una compuerta separada y proporcional
+al riesgo, realizada sin datos de clientes.
 
 ## Requisitos antes de solicitar producción
 
@@ -42,9 +71,10 @@ es `release-production.yml`; no se activa por `push`, PR ni merge.
 2. Conservá evidencia del CI terminal de ese mismo SHA y del estado limpio que se
    revisó. Si el alcance toca dinero, inventario, identidad o schema, aplicá las
    compuertas adicionales de `AGENTS.md` y `CLAUDE.md`.
-3. Verificá que staging sirve exactamente ese SHA y que pasó el smoke proporcional
-   al riesgo, con tenant sintético cuando corresponda. Un `503` transitorio, un
-   health sin SHA o un SHA diferente detienen el proceso.
+3. Verificá que staging sirve exactamente ese SHA con API y base sanas, y ejecutá
+   por separado el smoke proporcional al riesgo con tenant sintético cuando
+   corresponda. Un `503` transitorio, un health sin SHA, un SHA diferente o un
+   smoke omitido detienen el proceso.
 4. Registrá una autorización explícita de producto independiente de GitHub, por
    ejemplo:
 
@@ -107,6 +137,9 @@ ruta manual, lo siguiente:
 | Control externo | Estado exigido |
 |---|---|
 | Rama `main` | Protección que exige PR y checks requeridos antes del merge |
+| Environment `staging` | Política de ramas limitada a `main`; aprobación técnica si el riesgo lo exige |
+| Secretos de staging | Solo en el environment `staging`; `COOLIFY_STAGING_WEBHOOK` y, si aplica, `COOLIFY_TOKEN` sin acceso desde CI |
+| Variable de habilitación de staging | `NORTEX_DEPLOY_ENABLED=true` en repo u organización antes del preflight; un push no la usa para desplegar |
 | Environment `production` | Política de ramas limitada a `main` (preferiblemente solo ramas protegidas) |
 | Reviewer de producción | Revisor independiente del autor que inicia la promoción |
 | Autoaprobación | `prevent-self-review=true` |
@@ -114,6 +147,7 @@ ruta manual, lo siguiente:
 | Secretos de producción | Solo en el environment `production`, nunca expuestos a CI/staging |
 | Variable de habilitación de producción | `NORTEX_PRODUCTION_DEPLOY_ENABLED` a nivel repo u organización; no dentro del environment porque el preflight no entra a él |
 | Plataforma de despliegue | Sin ruta automática general desde un push que eluda `release-production.yml`; API habilitada si Coolify es self-hosted, app fijada manualmente al SHA candidato, build desde Git (`dockerfile` o `dockercompose`) y Auto Deploy explícitamente apagado |
+| Identidad de origen público | La relación entre la app Coolify verificada y `PROD_URL` debe estar documentada con un contrato/fixture saneado y comprobarse antes del webhook; mientras el contrato no exista, infraestructura la registra por separado y producción queda bloqueada |
 | Tokens de Coolify | `COOLIFY_PROD_READ_TOKEN` obligatorio, solo lectura del destino; `COOLIFY_PROD_DEPLOY_TOKEN` separado y opcional solo si el webhook necesita bearer. No usar `write`, `read:sensitive` ni `root` |
 
 Si cualquiera de estos controles no se puede verificar, el estado es
@@ -134,6 +168,7 @@ Conservá estos campos sin secretos ni datos de clientes:
 SHA candidato completo:
 Alcance y riesgo:
 CI del mismo SHA:
+Run manual de release-staging.yml:
 Staging: salud/SHA/smoke:
 Autorización explícita de producto (responsable, fecha, ventana, rollback):
 Run manual de release-production.yml:
@@ -146,8 +181,8 @@ Estado final: PRODUCCIÓN VERIFICADA | BLOQUEADO | ROLLBACK AUTORIZADO
 ## Aprendizaje permanente
 
 Un documento, un merge o un comentario no son una promoción. La prevención no
-depende de que alguien recuerde no aprobar: la arquitectura del workflow elimina la
-ruta automática a producción, exige intención humana inequívoca y vuelve a validar
-el candidato después de la aprobación técnica. Cualquier cambio futuro de workflow,
-environment o runbook debe conservar un test negativo de que un push docs-only no
-puede crear ni ejecutar un job de producción.
+depende de que alguien recuerde no aprobar: la arquitectura elimina las rutas
+automáticas a staging y producción, exige intención humana inequívoca y vuelve a
+validar el candidato después de cada aprobación técnica. Cualquier cambio futuro de
+workflow, environment o runbook debe conservar un test negativo de que un push
+docs-only no puede crear ni ejecutar un job de staging o producción.

@@ -151,7 +151,7 @@ export const PinPadClock: React.FC<PinPadClockProps> = ({ onClose }) => {
             disabled={loading || pin.length !== 4}
             className="py-4 px-4 bg-emerald-500 hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-2xl flex flex-col items-center justify-center gap-1 transition-all shadow-lg shadow-emerald-500/20 active:scale-95"
           >
-            <span className="text-sm opacity-80 uppercase tracking-wider">Entrada</span>
+            <span className="text-sm text-brand-on uppercase tracking-wider">Entrada</span>
             <span className="text-xl">Clock IN</span>
           </button>
 
@@ -160,7 +160,7 @@ export const PinPadClock: React.FC<PinPadClockProps> = ({ onClose }) => {
             disabled={loading || pin.length !== 4}
             className="py-4 px-4 bg-rose-500 hover:bg-rose-600 disabled:opacity-50 disabled:cursor-not-allowed text-white font-bold rounded-2xl flex flex-col items-center justify-center gap-1 transition-all shadow-lg shadow-rose-500/20 active:scale-95"
           >
-            <span className="text-sm opacity-80 uppercase tracking-wider">Salida</span>
+            <span className="text-sm nx-on-danger-solid uppercase tracking-wider">Salida</span>
             <span className="text-xl">Clock OUT</span>
           </button>
         </div>

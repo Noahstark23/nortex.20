@@ -255,7 +255,10 @@ equivale a autorización de push, staging ni producción.
 
 ## 8. Compuerta de staging
 
-Staging requiere autorización propia. Después de obtenerla:
+Staging requiere autorización propia. Después de obtenerla, un responsable inicia
+**Promote staging candidate** (`release-staging.yml`) desde `main` con el SHA
+completo y la confirmación exacta `STAGE <SHA>`. CI no puede desplegar por push ni
+por su propio `workflow_dispatch`. Después:
 
 1. fijá el SHA candidato y revalidá que la base relevante no avanzó; CI verde de un
    SHA viejo no sirve;

@@ -16,6 +16,7 @@
     "phase0:camera:preview": "vite preview --config vite.phase0.config.ts",
     "phase0:camera:simulate": "tsx tools/camera-barcode-phase0/simulate.ts",
     "test": "vitest run",
+    "test:integration:required": "mise exec -- bash scripts/qa-integration-required.sh",
     "test:mutation": "stryker run && node scripts/check-mutation-scope.cjs",
     "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview",

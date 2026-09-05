@@ -227,57 +227,18 @@ jobs:
           docker run --rm --entrypoint bash nortex-backup:ci -lc \
             'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
 
-  # ── Staging automático ────────────────────────────────────────────────────
-  # Compatibilidad: NORTEX_DEPLOY_ENABLED ahora controla SOLO staging. Un push
-  # a main puede actualizar staging después de todas las compuertas; un dispatch
-  # de CI no. Producción vive exclusivamente en release-production.yml.
-  # Coolify Auto Deploy debe permanecer APAGADO: GitHub es la única compuerta.
-  deploy-staging:
-    name: deploy-staging
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      github.event_name == 'push' &&
-      vars.NORTEX_DEPLOY_ENABLED == 'true'
-    needs: [verify, deploy-schema-smoke, backup-restore-smoke]
+  # Esta compuerta arranca su propia base MySQL 8 efímera y backend loopback.
+  # La imagen se obtiene únicamente en CI; el script local falla cerrado si no
+  # fue obtenida de forma explícita por la persona que ejecuta la verificación.
+  integration-required:
+    name: integration-required
+    needs: [verify]
     runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: ${{ vars.STAGING_URL }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Validar configuración de STAGING
-        env:
-          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
-          APP_URL: ${{ vars.STAGING_URL }}
-        run: |
-          test -n "$WEBHOOK" || { echo "::error::Falta COOLIFY_STAGING_WEBHOOK"; exit 1; }
-          test -n "$APP_URL" || { echo "::error::Falta la variable STAGING_URL"; exit 1; }
-          case "$APP_URL" in
-            https://*) ;;
-            *) echo "::error::STAGING_URL debe usar https://"; exit 1 ;;
-          esac
-
-      - name: Desplegar STAGING (webhook de Coolify)
-        env:
-          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
-          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            curl --fail --show-error --silent --max-time 30 --retry 3 \
-              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
-          else
-            curl --fail --show-error --silent --max-time 30 --retry 3 "$WEBHOOK"
-          fi
-          echo "🚀 Deploy de staging disparado"
-
-      # No basta con que staging esté sano: tiene que servir ESTE commit. Así un
-      # webhook roto o un deploy que no avanzó nunca habilita producción.
-      - name: Verificar STAGING sano y en el commit esperado
-        env:
-          APP_URL: ${{ vars.STAGING_URL }}
-          EXPECTED_COMMIT: ${{ github.sha }}
-        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
+      - uses: jdx/mise-action@v4
+      - run: npm ci
+      - name: Preparar MySQL 8 solo para la compuerta CI
+        run: docker pull mysql:8.0
+      - name: Integración obligatoria de dinero e inventario
+        run: npm run test:integration:required

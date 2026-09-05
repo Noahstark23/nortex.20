@@ -1,6 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
-import { waitForExpectedRelease } from './verify-deployed-release.mjs';
+import {
+    DEPLOYED_HEALTH_RETRY,
+    healthUrlFor,
+    waitForExpectedRelease,
+} from './verify-deployed-release.mjs';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
 
@@ -20,13 +24,7 @@ export const assessProductionCandidate = (env) => {
 
 export const validStagingUrl = (value) => {
     try {
-        const url = new URL(value);
-        return url.protocol === 'https:'
-            && Boolean(url.hostname)
-            && !url.username
-            && !url.password
-            && !url.search
-            && !url.hash;
+        return new URL(healthUrlFor(value)).protocol === 'https:';
     } catch {
         return false;
     }
@@ -53,13 +51,13 @@ export const authorizeProductionRelease = async ({
     if (!validStagingUrl(env.STAGING_URL)) throw new Error('VALID_STAGING_URL_REQUIRED');
 
     try {
-        // No esperamos a que staging se ponga al día: debe estar sano en el
-        // candidato exacto al inicio de preflight y otra vez tras la aprobación.
+        // Una sustitución de contenedor puede devolver 503 transitorio. El
+        // verificador comparte una ventana acotada de reintentos con el
+        // chequeo post-deploy y solo retorna con salud+BD+SHA exactos.
         await verifyStaging({
             baseUrl: env.STAGING_URL,
             expectedCommit: env.CANDIDATE_SHA,
-            attempts: 1,
-            timeoutMs: 5_000,
+            ...DEPLOYED_HEALTH_RETRY,
         });
     } catch {
         throw new Error('STAGING_RELEASE_NOT_VERIFIED');

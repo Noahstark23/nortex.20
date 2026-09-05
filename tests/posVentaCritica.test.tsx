@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, within, fireEvent, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import React from 'react';
 import POS from '../components/POS';
 
@@ -138,7 +138,8 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-const montarPOS = () => render(<MemoryRouter><POS /></MemoryRouter>);
+const RutaActual = () => <output data-testid="ruta-actual">{useLocation().pathname}</output>;
+const montarPOS = () => render(<MemoryRouter initialEntries={['/app/pos']}><POS /><RutaActual /></MemoryRouter>);
 
 /** El buscador es el control donde el cajero pasa el turno; tiene autoFocus. */
 const buscador = () => screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i);
@@ -319,6 +320,29 @@ describe('POS · escanear y armar la venta', () => {
         expect(cuerpo).toContain('No encontramos');
         expect(cuerpo).toContain('0000000000000');
         expect(cuerpo).toContain('Tu venta está vacía');
+    });
+});
+
+describe('POS · correcciones de venta aprobadas', () => {
+    it('lleva al expediente con aprobación, sin ejecutar una devolución o anulación desde el POS', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.click(await screen.findByTitle('Acciones de caja'));
+        const menu = await screen.findByRole('menu', { name: 'Acciones de caja' });
+        const corrections = within(menu).getByRole('button', { name: 'Correcciones y aprobaciones' });
+        expect(corrections).toHaveAttribute(
+            'title',
+            'Solicitá y aprobá devoluciones o anulaciones antes de ejecutarlas',
+        );
+
+        await user.click(corrections);
+
+        expect(screen.getByTestId('ruta-actual')).toHaveTextContent('/app/sales');
+        expect(posteos.filter((posteo) => (
+            posteo.ruta === '/api/returns' || /\/api\/sales\/[^/]+\/cancel$/.test(posteo.ruta)
+        ))).toEqual([]);
     });
 });
 

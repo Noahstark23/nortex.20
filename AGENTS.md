@@ -17,8 +17,11 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 
 - CI verde, staging sano, una aprobación de GitHub Environment y una autorización
   de producción son compuertas distintas. Ninguna implica las otras.
-- Un merge o un cambio documental puede llegar a staging, pero nunca autoriza ni
-  crea por sí solo una promoción a producción.
+- CI solo verifica el SHA candidato: no puede llegar a staging ni producción.
+  Staging solo se inicia con `release-staging.yml`, desde `main`, con el SHA
+  completo y `STAGE <SHA>` exacto; un merge o un cambio documental no lo inicia.
+  El health con SHA y base disponibles acredita infraestructura, no reemplaza el
+  smoke con tenant sintético proporcional al riesgo.
 - Producción solo se considera con una autorización explícita que nombre alcance,
   SHA completo, ventana, responsable y rollback. El único flujo técnico permitido
   es `release-production.yml`, con `candidate_sha` y `PROMOTE <SHA>` exactos.
@@ -42,6 +45,11 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 - Compuerta rápida, sin deploy: `nortex check` o `sh scripts/ci-local-safe.sh`.
 - La compuerta mínima es: Prisma generate, TypeScript, Vitest, sistema de diseño y
   build. Activa mutación con `NORTEX_CI_MUTATION=1` cuando cambie lógica de dinero.
+- Para cambios de dinero o inventario también ejecuta
+  `npm run test:integration:required`. Solo puede usar MySQL 8 temporal y datos
+  sintéticos; una suite ausente, fallida, omitida o una infraestructura no
+  disponible deja el candidato sin aprobar, nunca se sustituye por una base de
+  desarrollo, staging o producción.
 - Los servicios locales viven en `~/Developer/Nortex`; no uses el Compose de
   producción para desarrollo general ni inicies su servicio de backup.
 
@@ -65,6 +73,9 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
   la herencia en una isla oscura real (`nx-ticket-*`, `nx-code-surface` o
   `nx-dark-island`) y prueba ambos estados; nunca uses un selector de
   subcadena o una excepción por pantalla.
+- Si una primitive TypeScript conserva clases Tailwind, su carpeta debe estar
+  en `content` de `tailwind.config.js`; cubrí el contrato con una prueba de la
+  primitive y del escaneo, no leyendo componentes monolíticos como texto.
 - Capturas o el demo local prueban un escenario visual, no el producto entero.
   Antes de una release, repite los recorridos de tenant QA sobre el SHA
   candidato y registra probado, pendiente y riesgo en la auditoría visual.

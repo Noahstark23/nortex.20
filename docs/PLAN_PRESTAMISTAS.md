@@ -156,7 +156,8 @@ documentada. Los hallazgos de QA se corrigen antes del push.
   cobranza, nunca el `LenderDashboard`. (Se apoya en la Fase 1 para la pantalla.)
 - **H3:** migración aditiva con `@@index([lenderId, status])`, `@@index([lenderId, createdAt])`
   en `Loan` y `@@index([loanId])`, `@@index([paymentDate])` en `Repayment`.
-- **QA:** aislamiento por rol probado con un COLLECTOR real (skill `run-nortex`);
+- **QA:** aislamiento por rol probado en un tenant sintético con rol COLLECTOR
+  (skill `run-nortex` aislada);
   `prisma validate`; regresión de que el dueño sigue pudiendo todo.
 - **Aceptación:** un COLLECTOR autenticado recibe 403 en originar/refinanciar/
   multar; la cartera consulta usa índice (`EXPLAIN`).
@@ -166,8 +167,9 @@ documentada. Los hallazgos de QA se corrigen antes del push.
   `Dashboard`); el COLLECTOR aterriza ahí y **solo** ahí.
 - **H8:** que el panel del cobrador consuma `GET /:id/schedule` (mora real) en vez
   de calcularla a ojo.
-- **QA:** login como COLLECTOR → ve ruta, registra abono, no ve capital/CRM;
-  screenshots antes/después (`run-nortex`).
+- **QA:** login sintético como COLLECTOR → ve ruta, registra abono, no ve
+  capital/CRM; comparación visual antes/después en un candidato local aislado
+  (no una captura de usuarios reales).
 
 ### Fase 2 — Cerrar los huecos del panel del dueño (P1, 1 PR)
 - **H5:** crear `GET /api/loans/collectors` (tenant-scoped) → arreglar el dropdown

@@ -21,8 +21,11 @@ The generated baseline enables GitHub, Context7, Exa, Memory, Playwright, and Se
 
 ## Workflow Files
 
-- `.github/workflows/ci.yml`: CI y staging automático exclusivamente para pushes a
-  `main`; no contiene ningún job ni secreto de producción.
+- `.github/workflows/ci.yml`: solo verifica CI, incluida integración aislada de
+  dinero/inventario; no contiene jobs, webhooks ni secretos de staging/producción.
+- `.github/workflows/release-staging.yml`: única promoción manual de staging desde
+  `main`, con SHA completo, `STAGE <SHA>`, CI terminal y revalidación posterior al
+  environment.
 - `.github/workflows/release-production.yml`: único workflow con promoción manual
   de producción. Exige `candidate_sha`, `PROMOTE <SHA>`, staging con ese SHA y
   revalidación posterior a la aprobación del environment.

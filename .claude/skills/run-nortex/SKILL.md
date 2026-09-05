@@ -1,78 +1,64 @@
 ---
 name: run-nortex
-description: Levantar, correr y manejar la app Nortex real desde una máquina limpia — arrancar el server con MySQL, probar la API end-to-end, servir el frontend y tomar screenshots. Usar cuando se pida "correr Nortex", "levantar la app", "probar un cambio en vivo", "screenshot", o verificar que un PR funciona de verdad (no solo tsc).
+description: Ejecutar un smoke aislado de la app real Nortex contra MySQL 8 efímero y datos sintéticos. Úsalo para comprobar un flujo local de API y build, nunca contra una base compartida, staging o producción.
 ---
 
-# Correr Nortex (app real, no la suite de tests)
+# Correr Nortex con smoke aislado
 
-Nortex = Express+Prisma sobre **MySQL 8** + SPA Vite servido por el mismo server en
-producción. Rutas relativas a la **raíz del repo**.
+Nortex mueve dinero e inventario. Esta skill verifica una instancia **local y
+efímera**, no sustituye la compuerta de integración obligatoria ni acredita un
+tenant real, staging o producción.
 
-## Camino del agente (PRIMERO)
+## Camino seguro del agente
 
-Un solo comando hace todo — instala MySQL si falta, aplica el schema (`db push`,
-igual que el deploy), buildea, arranca el server, corre un **flujo real**
-(registro → producto con mayoreo/empaque → login → lectura tenant-scoped →
-landing/prerender/sitemap) y saca screenshot de la GUI:
+Desde la raíz del repositorio:
 
 ```bash
-bash .claude/skills/run-nortex/smoke.sh          # levanta, prueba, apaga → 14 PASS
-bash .claude/skills/run-nortex/smoke.sh --keep   # ídem, pero deja el server vivo en :3000
+mise exec -- bash .claude/skills/run-nortex/smoke.sh
 ```
 
-Salidas en `/tmp/nortex-smoke/`: `server.log`, `build.log`, `login.png`.
-Verificado en este contenedor: **14 PASS · 0 FAIL**.
+El script falla cerrado si no encuentra Docker local, la imagen local
+`mysql:8.0`, Node 22 o las dependencias ya instaladas. No instala paquetes, no
+hace `docker pull`, no inicia MySQL del sistema y no acepta una `DATABASE_URL`,
+un puerto, credenciales o una carpeta de salida del entorno llamante.
 
-Con `--keep`, interactuá directo:
-```bash
-curl -s -X POST localhost:3000/api/auth/register -H 'Content-Type: application/json' \
-  -d '{"companyName":"Mi Negocio","email":"yo@test.com","password":"Pass1234","type":"FERRETERIA"}'
-# → { token, ... }  · usar como  -H "Authorization: Bearer $TOKEN"  en todo /api/*
-```
-Screenshot de cualquier ruta (chromium del entorno, sin instalar nada):
-```bash
-CHROME=$(find /opt/pw-browsers -name chrome -type f | head -1)
-"$CHROME" --headless --disable-gpu --no-sandbox --screenshot=/tmp/shot.png \
-  --window-size=1280,800 http://localhost:3000/login
-```
+Durante una sola ejecución el script:
 
-## Invocación directa (lógica interna sin server)
-La lógica pura se prueba sin levantar nada — patrón del repo (ver nortex-qa):
-replicar la función en un `.cjs` con `require('<repo>/node_modules/decimal.js')`
-y correr casos. Para tocar la BD desde un script:
-`DATABASE_URL="mysql://nortex:nortex123@localhost:3306/nortex" npx tsx <script>.ts`.
+1. crea un contenedor MySQL 8 propio en `tmpfs`, con nombre, usuario,
+   contraseña, base y puerto loopback aleatorios;
+2. aplica el schema solo a esa base descartable con el binario local de Prisma,
+   sin `--accept-data-loss`;
+3. construye el frontend localmente y arranca un backend propio solo en
+   `127.0.0.1` con un JWT aleatorio;
+4. desactiva correo, Stripe, WhatsApp, LLM y telemetría al ejecutar el backend
+   en un entorno mínimo;
+5. prueba datos sintéticos: registro, producto con mayoreo/empaque, login,
+   lectura aislada por tenant, landing, prerender y sitemap;
+6. detiene exclusivamente el grupo de procesos que creó, borra exclusivamente
+   su contenedor etiquetado y elimina sus archivos temporales, incluso ante
+   error o señal.
 
-## Camino humano (dev)
-`npm run dev` (Vite :5173, proxy al backend) + `npm run start` con las env de
-abajo. Inútil headless — el camino del agente es el de arriba.
+La opción histórica `--keep` queda rechazada a propósito: una prueba aislada no
+deja servidor, base, token, capturas ni logs activos. Para una revisión visual
+del candidato, abrí una instancia local controlada por la persona operadora y
+registra ese recorrido por separado; una captura no prueba todo el ERP.
 
-## Env mínimas del server
-`DATABASE_URL` · `JWT_SECRET` (o `JWT_SECRETS`; **sin él el server lanza y muere**)
-· `NODE_ENV=production` para servir `dist/` (landing + prerender + SPA) · `PORT` (def. 3000).
-Opcionales: Stripe/Resend/WhatsApp solo logean warnings si faltan.
+## Límites y evidencia
 
-## Gotchas (todas pasaron acá)
-- **`docker` CLI existe pero NO hay daemon** en este contenedor → MySQL va por
-  `apt-get` (el driver lo hace). Antes de instalar: `apt-get update` (las listas
-  vienen viejas → 404 en los .deb).
-- **Matar el server**: el PID de `npx tsx` NO es el del node hijo — matarlo deja
-  al viejo dueño del puerto y tus curls pegan contra código VIEJO (síntoma:
-  editás y "no cambia nada"). Siempre `pkill -f "tsx backend/server.ts"`.
-- **`npm install` tras cambiar de rama** o `npx prisma` baja v7 y rechaza el
-  schema con errores engañosos (el repo pinnea 6.4.1).
-- `service mysql start` imprime `su: warning: cannot change directory to
-  /nonexistent` — **cosmético**, ignorarlo.
-- El flujo de registro valida `type` contra el enum Zod de
-  `backend/validation/schemas.ts` (`businessType`) — si agregás un tipo de
-  negocio en la UI, agregalo AHÍ también (este driver encontró ese bug).
-- `/` en producción es `public/landing.html`, no el SPA — no busques la app ahí;
-  el SPA vive en `/login`, `/app/*`, etc.
+- El smoke usa un tenant recién registrado y datos sintéticos. No lee `.env`,
+  usuarios, credenciales ni bases existentes.
+- El build y las solicitudes HTTP son locales; la imagen debe existir antes de
+  empezar. La compuerta no descarga imágenes ni llama servicios externos.
+- Si Docker apunta a un contexto que no sea un socket Unix local, el script se
+  niega a continuar.
+- No sustituye `npm run test:integration:required` para cambios de dinero o
+  inventario, ni el QA visual autenticado, ni una compuerta de release.
 
-## Troubleshooting
-| Síntoma | Fix |
+## Diagnóstico seguro
+
+| Situación | Acción segura |
 |---|---|
-| `🚨 CRITICAL: JWT_SECRETS/JWT_SECRET no está definido` | exportar `JWT_SECRET=loquesea` |
-| `db push` cuelga o `P1001` | `service mysql start; sleep 3` y reintentar |
-| register devuelve `Datos de entrada inválidos` | body es `{companyName,email,password,type}` — `type` del enum de schemas.ts |
-| server "Ready" pero responde código viejo | proceso huérfano: `pkill -f "tsx backend/server.ts"` y relanzar |
-| screenshot en negro/blanco | la página anima el fade-in; agregar `--virtual-time-budget=5000` |
+| Falta Docker, Node 22, dependencias o `mysql:8.0` | Preparar explícitamente el entorno local; no instalar ni descargar desde este script. |
+| Docker no es un socket local | Corregir o seleccionar un contexto local; nunca usar un daemon remoto para este smoke. |
+| El backend o una aserción falla | El script limpia sus recursos y termina no cero. Investigar con pruebas focales; no reutilizar una BD de desarrollo. |
+| Se requiere una pantalla para revisión | Ejecutar el flujo visual autorizado por separado contra un candidato local; no usar `--keep`. |

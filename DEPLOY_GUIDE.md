@@ -71,14 +71,15 @@ TTL: 300
 La ruta vinculante de release está en
 [`docs/runbooks/release-promotion.md`](docs/runbooks/release-promotion.md). CI,
 staging, la aprobación técnica de un environment y la autorización de producto son
-estados distintos. Un push —incluido uno solo documental— puede actualizar staging,
-pero nunca crea una ruta automática a producción.
+estados distintos. Un push —incluido uno solo documental— solo ejecuta CI: no puede
+actualizar staging ni producción.
 
-`.github/workflows/ci.yml` ejecuta CI y, en pushes a `main`, puede actualizar
-staging. `.github/workflows/release-production.yml` es el único workflow de
-producción: se dispara manualmente con un SHA candidato completo y la confirmación
-`PROMOTE <SHA>`, comprueba staging/main antes y después del environment, y verifica
-que Coolify esté fijado al candidato. Para configurarlo:
+`.github/workflows/release-staging.yml` es la única ruta a staging: se dispara
+manualmente desde `main` con un SHA candidato completo y `STAGE <SHA>`. Exige CI
+terminal de ese mismo SHA y vuelve a validar después de la aprobación de staging.
+`.github/workflows/release-production.yml` es el único workflow de producción: se
+dispara manualmente con `PROMOTE <SHA>`, comprueba CI/staging/main antes y después
+del environment, y verifica que Coolify esté fijado al candidato. Para configurarlo:
 
 1. **Apagar el auto-deploy de Coolify** en las apps de staging y prod
    (Configuration → desactivar *Auto Deploy on push*). Si queda encendido,
@@ -105,7 +106,7 @@ que Coolify esté fijado al candidato. Para configurarlo:
    |---|---|
    | `STAGING_URL` | `https://staging.somosnortex.com` |
    | `PROD_URL` | `https://somosnortex.com` |
-   | `NORTEX_DEPLOY_ENABLED` | `false` durante la preparación; `true` solo habilita staging en push a `main` |
+   | `NORTEX_DEPLOY_ENABLED` | `false` durante la preparación; `true` solo permite el preflight manual de staging |
    | `NORTEX_PRODUCTION_DEPLOY_ENABLED` | `false` por defecto; `true` solo después de endurecer controles externos y para permitir el preflight manual |
 
    `NORTEX_PRODUCTION_DEPLOY_ENABLED` debe existir a nivel repo u organización:
@@ -135,11 +136,12 @@ que Coolify esté fijado al candidato. Para configurarlo:
    checks requeridos; limitar el environment `production` a `main`, usar reviewer
    independiente, activar `prevent-self-review` y desactivar bypass administrativo.
    Sin esos controles, el estado correcto es bloqueado.
-9. **Promover solo con el runbook canónico:** tras CI y staging del mismo SHA,
-   registrar autorización explícita de producto (alcance, SHA, ventana,
-   responsable, rollback). Recién entonces un responsable inicia **Promote
-   production** desde `main`; no uses `workflow_dispatch` de CI para staging ni
-   producción.
+9. **Promover solo con el runbook canónico:** tras CI del mismo SHA, un responsable
+   inicia **Promote staging candidate** desde `main` con `STAGE <SHA>` y registra
+   health/SHA/base y smoke sintético proporcional al riesgo. Solo entonces, con
+   autorización explícita de producto (alcance, SHA, ventana, responsable,
+   rollback), inicia **Promote production**; no uses `workflow_dispatch` de CI para
+   staging ni producción.
 10. **Monitoreo** (5 minutos de setup, gratis):
    - **Sentry**: crear proyecto Node en sentry.io y poner `SENTRY_DSN` en las
      variables de Coolify (el backend ya lo soporta — gate suave, sin DSN opera
@@ -319,28 +321,19 @@ curl -s https://somosnortex.com/api/health | jq .
 # Respuesta esperada (200 si la BD responde, 503 si no):
 # { "ok": true, "db": "up", "uptimeSeconds": 12345, "commit": "<sha del build>" }
 
-# Probar autenticación:
-curl -s -X POST https://nortex.com/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"tu@email.com","password":"tu_password"}' | jq .
-
-# Probar que Stripe responde:
-curl -s https://nortex.com/api/billing/status \
-  -H "Authorization: Bearer TU_JWT_TOKEN" | jq .
+# Las rutas autenticadas, cobros y mensajes se prueban solo como parte del smoke
+# autorizado sobre un tenant sintético. Nunca copies credenciales de una persona,
+# ni crees datos de negocio de clientes para verificar un deploy.
 ```
 
-### Ejecutar migraciones de base de datos
+### Schema y cuentas administrativas
 
-```bash
-# Dentro del contenedor de la app:
-docker exec -it $(docker ps --filter "name=nortex" -q --last 1) npx prisma db push
-
-# Generar cliente Prisma:
-docker exec -it $(docker ps --filter "name=nortex" -q --last 1) npx prisma generate
-
-# Crear Super Admin:
-docker exec -it $(docker ps --filter "name=nortex" -q --last 1) npx tsx backend/scripts/createSuperAdmin.ts
-```
+La operación normal **no** ejecuta `prisma db push`, `prisma generate` ni scripts
+de creación de usuarios dentro de un contenedor productivo. El schema se valida en
+las compuertas descartables y se promueve mediante el workflow controlado. Una
+recuperación de schema o una cuenta administrativa requieren autorización separada,
+un procedimiento revisado y una evidencia posterior; no se publican comandos de
+copia rápida contra datos reales en esta guía.
 
 ---
 
@@ -348,11 +341,10 @@ docker exec -it $(docker ps --filter "name=nortex" -q --last 1) npx tsx backend/
 
 - [ ] ✅ La app carga en `https://nortex.com`
 - [ ] ✅ El certificado SSL está activo (candado verde)
-- [ ] ✅ Login funciona correctamente
-- [ ] ✅ Se puede crear un tenant nuevo desde `/register`
-- [ ] ✅ POS procesa ventas correctamente
-- [ ] ✅ Stripe webhook recibe eventos (`/api/billing/webhook`)
-- [ ] ✅ Emails se envían correctamente (verificar en Resend dashboard)
+- [ ] ✅ Health responde API/base/SHA exactos para el candidato
+- [ ] ✅ Smoke autorizado en tenant sintético cubre login, rol y los flujos afectados
+- [ ] ✅ Para dinero o stock, el smoke sintético confirma idempotencia y ausencia de movimientos inesperados
+- [ ] ✅ Webhooks, correos y cobros se observan sin disparar datos o mensajes de clientes
 - [ ] ✅ Base de datos persistente entre reinicios
 - [ ] ✅ Super Admin puede acceder a `/admin`
 - [ ] ✅ El servicio `backup` está arriba (`docker compose -p nortex ps`) y su log dice
