@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import tailwindColors from 'tailwindcss/colors.js';
 import tailwindConfig from '../tailwind.config.js';
@@ -6,6 +7,32 @@ type ColorPalette = Record<string | number, string>;
 
 const theme = tailwindConfig.theme.extend;
 const themeColors = theme.colors as unknown as Record<string, ColorPalette>;
+const tokens = readFileSync(new URL('../nortex-tokens.css', import.meta.url), 'utf8');
+const styles = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
+const contrastContract = styles.slice(styles.lastIndexOf('CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS'));
+
+function rootToken(name: string): string {
+    const root = tokens.match(/^:root\s*\{([\s\S]*?)^\}/m)?.[1] ?? '';
+    const value = root.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))?.[1];
+    if (!value) throw new Error(`No se encontró el token --${name} en :root`);
+    return value;
+}
+
+function contrastRatio(foreground: string, background: string): number {
+    const luminance = (hex: string) => {
+        const channels = hex.slice(1).match(/.{2}/g)?.map((channel) => Number.parseInt(channel, 16)) ?? [];
+        const [red = 0, green = 0, blue = 0] = channels.map((channel) => {
+            const normalized = channel / 255;
+            return normalized <= 0.03928
+                ? normalized / 12.92
+                : ((normalized + 0.055) / 1.055) ** 2.4;
+        });
+        return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+    };
+
+    const [first, second] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
+    return (first + 0.05) / (second + 0.05);
+}
 
 describe('contrato semántico del tema frontend', () => {
     it.each(['red', 'amber', 'sky'] as const)(
@@ -61,5 +88,37 @@ describe('contrato semántico del tema frontend', () => {
             spring: '380ms',
         });
         expect(theme.scale).toMatchObject({ press: '.985' });
+    });
+
+    it('mantiene tinta AA sobre cada relleno sólido heredado', () => {
+        const coverage = [
+            [rootToken('nx-on-brand'), ['#16C784', '#13B476', '#0F9461']],
+            [rootToken('nx-on-danger-solid'), ['#F0483E', '#EF4444']],
+            [rootToken('nx-on-warning-solid'), ['#F5A524', '#D97706']],
+            [rootToken('nx-on-info-solid'), ['#0284C7']],
+        ] as const;
+
+        for (const [foreground, backgrounds] of coverage) {
+            for (const background of backgrounds) {
+                expect(contrastRatio(foreground, background)).toBeGreaterThanOrEqual(4.5);
+            }
+        }
+    });
+
+    it('protege sólo los rellenos sólidos y sus cambios hover conocidos', () => {
+        for (const className of [
+            'bg-brand', 'bg-emerald-500', 'bg-blue-600', 'bg-nortex-accent',
+            'bg-danger', 'bg-red-500', 'bg-warning', 'bg-amber-600', 'bg-sky-600',
+            'hover:bg-brand-700', 'hover:bg-red-500', 'hover:bg-amber-600', 'hover:bg-sky-700',
+        ]) {
+            expect(contrastContract).toContain(`[class~="${className}"]`);
+        }
+
+        expect(contrastContract).toContain('color: var(--nx-on-brand) !important;');
+        expect(contrastContract).toContain('color: var(--nx-on-danger-solid) !important;');
+        expect(contrastContract).toContain('color: var(--nx-on-warning-solid) !important;');
+        expect(contrastContract).toContain('color: var(--nx-on-info-solid) !important;');
+        expect(contrastContract).not.toMatch(/\[class~="(?:bg|hover:bg)-[^"]+\/[0-9]+"\]/);
+        expect(contrastContract).not.toContain('[class*=');
     });
 });

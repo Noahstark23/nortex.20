@@ -2856,3 +2856,154 @@
     border-color: var(--nx-public-text-subtle);
   }
 }
+
+/* ==========================================
+   CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS
+   ==========================================
+   Tailwind conserva nombres heredados, pero varios aliases (`blue`,
+   `emerald`, `orange`, `rose`) se resuelven a las rampas semánticas de
+   Nortex. Blanco sobre sus tonos claros no alcanza AA. Estas reglas usan
+   selectores exactos, sólo en el mismo control y sólo para rellenos opacos:
+   no modifican fondos con `/opacidad`, superficies oscuras ni tarjetas.
+
+   Cuando se agregue una combinación nueva de relleno + `text-white`, medirla
+   y sumarla al contrato o usar desde el componente la tinta semántica
+   correspondiente. La prueba frontendColorSemantics mantiene la matriz. */
+
+/* Marca y aliases verdes: el 700 todavía requiere tinta oscura. */
+:where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+/* Destructivo: rojo canónico 500 y aliases danger/rose. */
+:where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+/* Atención: amber canónico claro y aliases warning/orange. */
+:where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Info conserva sky separado de blue: sky-600 aún necesita tinta oscura. */
+[class~="bg-sky-600"]:is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-info-solid) !important;
+}
+
+/* El estado hover puede cruzar de un tono seguro a uno claro, o viceversa. */
+:where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+:where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+:where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Estos hover pasan a un tono oscuro y recuperan tinta blanca. */
+:where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: #FFFFFF !important;
+}
