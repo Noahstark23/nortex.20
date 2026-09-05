@@ -24,7 +24,17 @@ export const assessProductionCandidate = (env) => {
 
 export const validStagingUrl = (value) => {
     try {
-        return new URL(healthUrlFor(value)).protocol === 'https:';
+        // La promoción manual fija STAGING_URL como origen público, igual que el
+        // workflow. Aceptar una ruta permitiría probar otro proxy/path distinto
+        // del destino que el expediente de release declara como staging.
+        const rawAuthority = typeof value === 'string'
+            ? /^https:\/\/([^/?#\\\s]+)\/?$/i.exec(value)?.[1]
+            : null;
+        if (!rawAuthority || rawAuthority.includes('@')) return false;
+        const url = new URL(value);
+        return new URL(healthUrlFor(value)).protocol === 'https:'
+            && url.protocol === 'https:'
+            && url.pathname === '/';
     } catch {
         return false;
     }

@@ -13,9 +13,12 @@ worktree salvo que autorice de forma explícita la acción y el objetivo.
 
 ## Contexto de CI (crítico)
 
-- La CI (`.github/workflows/ci.yml`) corre en cada PR: `npm ci` → `prisma generate` (URL dummy) → **`npx tsc --noEmit`** → **`npm test`** (vitest) → sistema de diseño → mutación → **`npm run build`**, más la integración aislada obligatoria de dinero/inventario. Un fallo en cualquiera deja el SHA sin aprobar.
+- La CI (`.github/workflows/ci.yml`) corre en cada PR dentro de un runner efímero y limpio: `npm ci` → `npx --no-install prisma generate` (URL dummy) → **`npx --no-install tsc --noEmit`** → **`npm test`** (vitest) → sistema de diseño → mutación → **`npm run build`**, más la integración aislada obligatoria de dinero/inventario. Esa receta de CI no autoriza una instalación local fuera de un worktree aislado. Un fallo en cualquiera deja el SHA sin aprobar.
 - **La CI corre sobre el MERGE del PR con main, no sobre la rama sola.** Consecuencia clave: si `main` está roto (no compila/buildea), **TODOS los PRs abiertos salen en rojo** aunque su código propio esté impecable. Esta es la confusión #1 — siempre distinguila.
-- Prisma está pinneado a **6.4.1**: tras cambiar de rama correr `npm install` (o `npx` puede traer prisma 7 y fallar engañosamente).
+- Prisma está pinneado a **6.4.1**: si un worktree aislado ya autorizado necesita
+  dependencias, usar `mise exec -- npm ci` y luego `mise exec -- npx --no-install
+  prisma --version`; no usar una instalación implícita ni mutar `package-lock.json`
+  durante el diagnóstico.
 
 ## Diagnóstico de un check en rojo (tu trabajo principal)
 
@@ -26,7 +29,7 @@ worktree salvo que autorice de forma explícita la acción y el objetivo.
 3. **Reproducí localmente** para confirmar, sin alterar un worktree ajeno. Si ya hay
    un checkout aislado autorizado, usalo; de otro modo informá el diagnóstico y
    pedí autorización antes de crear/cambiar worktree o rama. En ese checkout: ¿main
-   solo falla con `npx --no-install tsc --noEmit`? Entonces es main roto. En la
+   solo falla con `mise exec -- npx --no-install tsc --noEmit`? Entonces es main roto. En la
    rama del PR, ¿los errores pertenecen a los archivos propios? Entonces es del PR.
 4. Si es **main roto**: identificá el PR que lo repara (o creá uno). Ese PR es el desbloqueo; hay que mergearlo PRIMERO. Reportá "el rojo de #N es heredado de main; lo arregla #M".
 5. Si es **del PR**: describí el arreglo y verificá controles proporcionales en un
@@ -62,7 +65,8 @@ la propuesta sin mutar Git.
   prepares un merge en el checkout compartido. Si falta esa autorización, reportá
   el conflicto y el orden seguro de resolución.
 - **Conflictos triviales típicos de este repo:** dos PRs agregaron funciones/reglas adyacentes en el mismo archivo (`nicaTax.ts`, `accounting.ts`). Casi siempre la resolución correcta es **conservar AMBOS lados** (son complementarios, no alternativos). Ojo con el anti-patrón "el merge dejó ambas versiones de una misma declaración" → ahí SÍ se elige una (la que referencia símbolos existentes).
-- Tras resolver: `npx --no-install tsc --noEmit` + `npm test` + `npm run build`
+- Tras resolver: `mise exec -- npx --no-install tsc --noEmit` +
+  `mise exec -- npm test` + `mise exec -- npm run build`
   **antes** de commitear. Si algo no compila, el merge quedó mal.
 - Con autorización, usá un commit de merge descriptivo explicando qué se conservó
   y por qué.

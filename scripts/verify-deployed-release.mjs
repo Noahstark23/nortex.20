@@ -14,6 +14,12 @@ export const DEPLOYED_HEALTH_RETRY = Object.freeze({
 
 const invalidAppUrl = () => new Error('APP_URL_INVALID');
 
+const hasNoStore = (headers) => {
+    const value = headers?.get?.('cache-control');
+    return typeof value === 'string'
+        && value.split(',').some((directive) => directive.trim().toLowerCase() === 'no-store');
+};
+
 export const assessReleaseHealth = (payload, expectedCommit) => {
     if (!expectedCommit || typeof expectedCommit !== 'string') {
         return { ready: false, reason: 'EXPECTED_COMMIT_REQUIRED' };
@@ -106,6 +112,11 @@ export const waitForExpectedRelease = async ({
 
             if (!response.ok) {
                 lastReason = Number.isInteger(response.status) ? `HTTP_${response.status}` : 'HTTP_UNEXPECTED';
+            } else if (!hasNoStore(response.headers)) {
+                // Un request no-cache no corrige un proxy que entrega una
+                // respuesta almacenada. Sin esta política observada, el SHA
+                // no es evidencia fresca del despliegue esperado.
+                lastReason = 'CACHE_POLICY_MISSING';
             } else {
                 const payload = await response.json();
                 const assessment = assessReleaseHealth(payload, expectedCommit);

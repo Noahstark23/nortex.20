@@ -10,6 +10,11 @@ on:
   # staging ni producción: las promociones tienen flujos y contratos propios.
   workflow_dispatch:
 
+# CI solo lee el repositorio. Declararlo evita heredar un GITHUB_TOKEN más
+# amplio de una configuración de organización o repositorio.
+permissions:
+  contents: read
+
 # Un push nuevo invalida una verificación anterior del mismo ref. La promoción
 # de producción tiene concurrencia independiente y nunca nace desde este flujo.
 concurrency:
@@ -23,15 +28,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
       - run: npm ci
       - name: Auditoría de dependencias de producción
         run: npm audit --omit=dev --audit-level=moderate
       - name: Prisma generate (URL dummy — solo tipos)
-        run: DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
+        run: DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npx --no-install tsc --noEmit
       - name: Tests (vitest)
         run: npm test
 
@@ -82,11 +87,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
       - run: npm ci
       - name: Prisma generate
-        run: DATABASE_URL="$DATABASE_URL" npx prisma generate --schema=backend/prisma/schema.prisma
+        run: DATABASE_URL="$DATABASE_URL" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
         env:
           DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
       - name: Preparar schema anterior a PR 158
@@ -139,7 +144,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
       - run: npm ci
 
@@ -161,8 +166,8 @@ jobs:
 
       - name: Crear el schema real en la BD de origen
         run: |
-          npx prisma generate --schema=backend/prisma/schema.prisma
-          npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+          npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
         env:
           DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
 

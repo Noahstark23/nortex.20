@@ -4,6 +4,10 @@
 > producción de Nortex. CI verde, un merge, staging sano, una aprobación de PR o
 > la aprobación técnica de un environment son señales distintas; ninguna sustituye
 > la autorización explícita del producto para producción.
+>
+> Este runbook tampoco configura proveedores externos. Las variables, UUIDs, tokens
+> y apps reales de Coolify se habilitan solo con autorización externa separada; su
+> ausencia o identidad no comprobada bloquea la promoción.
 
 ## Cuándo usarlo
 
@@ -25,9 +29,9 @@ Después de esta reparación, las rutas son deliberadamente separadas:
 | Etapa | Mecanismo | Qué prueba | Qué no autoriza |
 |---|---|---|---|
 | CI | `ci.yml` sobre el SHA candidato | Tests, build, schema smoke e integración aislada obligatoria | Staging ni producción |
-| Staging | `.github/workflows/release-staging.yml`, solo manual | Que staging sirve API, base y SHA exactos | Producción ni el smoke funcional |
+| Staging | `.github/workflows/release-staging.yml`, solo manual | Procedencia manual, destino Coolify validado y API/base/SHA exactos de staging | Producción ni el smoke funcional |
 | Decisión de producto | Registro humano explícito | Que el responsable acepta alcance, SHA, ventana y rollback | Ejecutar un deployment por sí sola |
-| Producción | `.github/workflows/release-production.yml`, solo manual | Que el mismo SHA vigente de `main` y staging sano siguen siendo el candidato | Una autorización futura o un SHA distinto |
+| Producción | `.github/workflows/release-production.yml`, solo manual | Que el mismo SHA vigente de `main`, un staging manual exitoso y su salud siguen siendo el candidato | Una autorización futura o un SHA distinto |
 | Environment `production` | Protección técnica dentro del workflow manual | Segunda revisión antes de acceder a secretos de producción | Autorización de producto por inferencia |
 
 `ci.yml` solo verifica código: no puede invocar ningún webhook ni crear jobs de
@@ -63,6 +67,36 @@ no autoriza producción ni sustituye el smoke con tenant sintético ni la autori
 explícita descrita abajo. El smoke funcional es una compuerta separada y proporcional
 al riesgo, realizada sin datos de clientes.
 
+## Contrato de identidad Coolify (falla cerrada)
+
+Antes de llamar un webhook, el workflow valida por separado el destino de cada
+environment. La URL pública y el webhook no se aceptan como una identidad implícita:
+la lectura de Coolify se construye solo desde el origen API confiable y el UUID
+configurados para ese environment.
+
+| Elemento por environment | Requisito que falla cerrada |
+|---|---|
+| Origen de API | `COOLIFY_STAGING_API_ORIGIN` o `COOLIFY_PROD_API_ORIGIN`: origen HTTPS raíz exacto, sin ruta, credenciales, query, fragmento ni espacios. |
+| Aplicación | `COOLIFY_*_APPLICATION_UUID`: UUID exacto de la única app que puede consultarse. |
+| Lectura | `COOLIFY_*_READ_TOKEN`: secreto de solo lectura y mínimo alcance, guardado únicamente en su environment; nunca es un token de deploy ni llega a CI u otro environment. |
+| Webhook | `COOLIFY_*_WEBHOOK`: HTTPS en el mismo origen API, ruta `/api/v1/deploy` y query con el mismo `uuid`; solo se admite `force=true|false` adicional. Es una capacidad de escritura, no una fuente de identidad. |
+| Respuesta de Coolify | La app devuelta debe tener ese UUID, `git_commit_sha` igual al candidato, build desde Git (`dockerfile` o `dockercompose`) y Auto Deploy explícitamente apagado. |
+
+La falta, URL ambigua, token ausente o cualquier desacuerdo entre esos elementos
+detiene el run antes del webhook. El workflow nunca escribe el pin de Coolify ni
+intenta adivinar la app correcta.
+
+`STAGING_URL` y `PROD_URL` son además orígenes públicos HTTPS raíz, sin
+credenciales, query ni fragmento. El verificador de salud rechaza redirecciones y
+solo acepta API/base sanas con el SHA esperado y una respuesta que incluya
+`Cache-Control: no-store`; solicitar `no-cache` no compensa una respuesta almacenada.
+
+**Bloqueo externo actual:** este candidato no configuró ni comprobó variables,
+UUIDs, tokens o apps de Coolify reales. Tampoco existe aún una evidencia verificable
+que relacione cada URL pública con la app Coolify validada por UUID. Infraestructura
+debe proporcionar esa relación de forma saneada y registrarla antes de habilitar
+staging o producción; hasta entonces, el estado correcto es bloqueado.
+
 ## Requisitos antes de solicitar producción
 
 1. Identificá un SHA candidato completo de 40 caracteres que ya esté en `main`.
@@ -71,10 +105,12 @@ al riesgo, realizada sin datos de clientes.
 2. Conservá evidencia del CI terminal de ese mismo SHA y del estado limpio que se
    revisó. Si el alcance toca dinero, inventario, identidad o schema, aplicá las
    compuertas adicionales de `AGENTS.md` y `CLAUDE.md`.
-3. Verificá que staging sirve exactamente ese SHA con API y base sanas, y ejecutá
-   por separado el smoke proporcional al riesgo con tenant sintético cuando
-   corresponda. Un `503` transitorio, un health sin SHA, un SHA diferente o un
-   smoke omitido detienen el proceso.
+3. Verificá la procedencia de un run manual exitoso de `release-staging.yml` para
+   exactamente ese SHA, que staging sirve API y base sanas y que su health fresco
+   trae ese SHA y `Cache-Control: no-store`. Ejecutá por separado el smoke
+   proporcional al riesgo con tenant sintético cuando corresponda. Un `503`
+   transitorio, un health sin SHA, una política de caché ausente, un SHA diferente,
+   una procedencia manual ausente o un smoke omitido detienen el proceso.
 4. Registrá una autorización explícita de producto independiente de GitHub, por
    ejemplo:
 
@@ -101,9 +137,11 @@ inicia manualmente. Debe introducir:
 | `confirmation` | Exactamente `PROMOTE <candidate_sha>` |
 
 El workflow falla cerrado si los valores no son exactos, si el SHA ya no coincide
-con `main`, si el despliegue de staging no es sano para ese SHA o si la compuerta de
-despliegue está deshabilitada. No se corrige una falla cambiando el input por un SHA
-nuevo: el nuevo SHA vuelve a CI y staging.
+con `main`, si no existe un staging **manual exitoso** y sano para ese SHA o si la
+compuerta de despliegue está deshabilitada. Vuelve a comprobar esa procedencia
+después de la aprobación técnica del environment, por lo que un health aislado o
+un run de otra rama no puede reemplazar staging. No se corrige una falla cambiando
+el input por un SHA nuevo: el nuevo SHA vuelve a CI y staging.
 
 El job que llega al environment `production` vuelve a comprobar **después** de la
 aprobación técnica que `main` y staging siguen en el SHA candidato. Si alguien
@@ -118,7 +156,7 @@ Después de que el workflow termine, registrá por separado:
 
 1. URL/identificador del run manual y SHA solicitado.
 2. Resultado de la revalidación posterior a la aprobación (`main` y staging).
-3. Salud de producción: API sana, base disponible y SHA exacto.
+3. Salud de producción: API sana, base disponible, SHA exacto y `Cache-Control: no-store`.
 4. Smoke funcional de las rutas afectadas; para dinero, stock o identidad, tenant
    sintético, idempotencia y ausencia de movimientos inesperados.
 5. Observación definida por el riesgo y decisión explícita de cierre o rollback.
@@ -138,23 +176,23 @@ ruta manual, lo siguiente:
 |---|---|
 | Rama `main` | Protección que exige PR y checks requeridos antes del merge |
 | Environment `staging` | Política de ramas limitada a `main`; aprobación técnica si el riesgo lo exige |
-| Secretos de staging | Solo en el environment `staging`; `COOLIFY_STAGING_WEBHOOK` y, si aplica, `COOLIFY_TOKEN` sin acceso desde CI |
+| Identidad Coolify de staging | `COOLIFY_STAGING_API_ORIGIN` y `COOLIFY_STAGING_APPLICATION_UUID` configurados como variables; `COOLIFY_STAGING_READ_TOKEN` y `COOLIFY_STAGING_WEBHOOK` solo en `staging`, más `COOLIFY_TOKEN` opcional si el webhook exige bearer. Los cuatro deben concordar según el contrato anterior y no ser accesibles desde CI. |
 | Variable de habilitación de staging | `NORTEX_DEPLOY_ENABLED=true` en repo u organización antes del preflight; un push no la usa para desplegar |
 | Environment `production` | Política de ramas limitada a `main` (preferiblemente solo ramas protegidas) |
 | Reviewer de producción | Revisor independiente del autor que inicia la promoción |
 | Autoaprobación | `prevent-self-review=true` |
 | Bypass administrativo | `can_admins_bypass=false` |
-| Secretos de producción | Solo en el environment `production`, nunca expuestos a CI/staging |
+| Identidad Coolify de producción | `COOLIFY_PROD_API_ORIGIN` y `COOLIFY_PROD_APPLICATION_UUID` configurados como variables; `COOLIFY_PROD_READ_TOKEN` y `COOLIFY_PROD_WEBHOOK` solo en `production`, nunca expuestos a CI/staging. `COOLIFY_PROD_DEPLOY_TOKEN` es separado y opcional solo si el webhook exige bearer. |
 | Variable de habilitación de producción | `NORTEX_PRODUCTION_DEPLOY_ENABLED` a nivel repo u organización; no dentro del environment porque el preflight no entra a él |
 | Plataforma de despliegue | Sin ruta automática general desde un push que eluda `release-production.yml`; API habilitada si Coolify es self-hosted, app fijada manualmente al SHA candidato, build desde Git (`dockerfile` o `dockercompose`) y Auto Deploy explícitamente apagado |
-| Identidad de origen público | La relación entre la app Coolify verificada y `PROD_URL` debe estar documentada con un contrato/fixture saneado y comprobarse antes del webhook; mientras el contrato no exista, infraestructura la registra por separado y producción queda bloqueada |
-| Tokens de Coolify | `COOLIFY_PROD_READ_TOKEN` obligatorio, solo lectura del destino; `COOLIFY_PROD_DEPLOY_TOKEN` separado y opcional solo si el webhook necesita bearer. No usar `write`, `read:sensitive` ni `root` |
+| Identidad de origen público | La relación entre la app Coolify verificada y cada `STAGING_URL`/`PROD_URL` debe estar documentada con un contrato/fixture saneado y comprobarse antes del webhook; mientras no exista, infraestructura la registra por separado y staging/producción quedan bloqueados |
+| Tokens de Coolify | Los tokens de lectura son obligatorios, de mínimo alcance y separados por environment. No usar `write`, `read:sensitive` ni `root`; nunca guardar token ni URL completa del webhook en la evidencia. |
 
 Si cualquiera de estos controles no se puede verificar, el estado es
 `LISTO PARA PRODUCCIÓN BLOQUEADO`, no una excepción implícita. Documentá el
 bloqueo y escalalo al responsable de infraestructura.
 
-Antes de iniciar el workflow manual, el responsable de infraestructura fija en
+Solo con autorización externa registrada, el responsable de infraestructura fija en
 Coolify `git_commit_sha` al candidato autorizado. El workflow no escribe esa
 configuración —solo la lee y la rechaza si apunta a `HEAD`, una rama mutable u otro
 SHA—, de modo que no puede esconder un cambio de destino detrás de sus propios
@@ -169,12 +207,13 @@ SHA candidato completo:
 Alcance y riesgo:
 CI del mismo SHA:
 Run manual de release-staging.yml:
-Staging: salud/SHA/smoke:
+Staging: procedencia manual, identidad Coolify saneada, salud/SHA/no-store/smoke:
 Autorización explícita de producto (responsable, fecha, ventana, rollback):
 Run manual de release-production.yml:
 Aprobación técnica del environment (quién/cuándo):
 Revalidación posterior a la aprobación (main y staging):
-Producción: salud/SHA/smoke/observación:
+Producción: identidad Coolify saneada, salud/SHA/no-store/smoke/observación:
+Relación pública URL↔Coolify: verificada | bloqueada, con referencia saneada:
 Estado final: PRODUCCIÓN VERIFICADA | BLOQUEADO | ROLLBACK AUTORIZADO
 ```
 

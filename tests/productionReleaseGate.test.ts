@@ -72,9 +72,14 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         expect(verifyStaging).not.toHaveBeenCalled();
     });
 
-    it('acepta únicamente un HTTPS de staging sin credenciales, query ni fragmento', () => {
+    it('acepta únicamente un origen HTTPS raíz de staging sin credenciales, query ni fragmento', () => {
         expect(validStagingUrl('https://staging.example.test')).toBe(true);
-        expect(validStagingUrl('https://staging.example.test/release')).toBe(true);
+        expect(validStagingUrl('https://staging.example.test/')).toBe(true);
+        expect(validStagingUrl('https://staging.example.test/release')).toBe(false);
+        expect(validStagingUrl('https://staging.example.test\\release')).toBe(false);
+        expect(validStagingUrl('https://staging.example.test/.')).toBe(false);
+        expect(validStagingUrl('https://staging.example.test/%2e')).toBe(false);
+        expect(validStagingUrl('https://staging.example.test/release/..')).toBe(false);
         expect(validStagingUrl('ftp://staging.example.test')).toBe(false);
     });
 
@@ -89,6 +94,7 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         const fetchImpl = vi.fn().mockResolvedValue({
             ok: status === 200,
             status,
+            headers: new Headers({ 'cache-control': 'no-store' }),
             json: async () => payload,
         });
         const verifyStaging = (options) => waitForExpectedRelease({
@@ -120,7 +126,12 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         const order: string[] = [];
         const fetchImpl = vi.fn().mockImplementation(async () => {
             order.push('staging');
-            return { ok: true, status: 200, json: async () => ({ ok: true, db: 'up', commit: SHA }) };
+            return {
+                ok: true,
+                status: 200,
+                headers: new Headers({ 'cache-control': 'no-store' }),
+                json: async () => ({ ok: true, db: 'up', commit: SHA }),
+            };
         });
         const verifyStaging = vi.fn((options) => waitForExpectedRelease({ ...options, fetchImpl }));
         const result = await authorizeProductionRelease({
@@ -147,6 +158,7 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
             .mockResolvedValueOnce({
                 ok: true,
                 status: 200,
+                headers: new Headers({ 'cache-control': 'no-store' }),
                 json: async () => ({ ok: true, db: 'up', commit: SHA }),
             });
         const sleep = vi.fn().mockResolvedValue(undefined);

@@ -219,7 +219,7 @@ model Invitation {
   email     String
   role      String // MANAGER, CASHIER, VIEWER
   token     String   @unique
-  status    String   @default("PENDING") // PENDING, ACCEPTED, EXPIRED
+  status    String   @default("PENDING") // PENDING, ACCEPTED, EXPIRED, CANCELLED
   invitedBy String // userId del que invitó
   createdAt DateTime @default(now())
   expiresAt DateTime // 48 horas después de creación

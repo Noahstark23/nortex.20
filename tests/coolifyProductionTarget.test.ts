@@ -10,7 +10,9 @@ const SHA = 'a'.repeat(40);
 const env = {
     CANDIDATE_SHA: SHA,
     COOLIFY_PROD_WEBHOOK: 'https://coolify.example.test/api/v1/deploy?uuid=production-app&force=false',
-    COOLIFY_TOKEN: 'synthetic-private-token',
+    COOLIFY_PROD_API_ORIGIN: 'https://coolify.example.test',
+    COOLIFY_PROD_APPLICATION_UUID: 'production-app',
+    COOLIFY_PROD_READ_TOKEN: 'synthetic-private-token',
 };
 const application = {
     uuid: 'production-app',
@@ -44,25 +46,52 @@ describe('destino Coolify de producción: lectura, pin y auto deploy', () => {
         'https://coolify.example.test/api/v1/deploy?uuid=../other',
         'https://coolify.example.test/api/v1/deploy?uuid=production-app%0A',
         ' https://coolify.example.test/api/v1/deploy?uuid=production-app',
+        'https://foreign.example.test/api/v1/deploy?uuid=production-app',
     ])('rechaza webhook ambiguo o inseguro antes de contactar la API: %s', async (COOLIFY_PROD_WEBHOOK) => {
         const fetchImpl = vi.fn();
         await expect(verifyCoolifyProductionTarget({
             env: { ...env, COOLIFY_PROD_WEBHOOK },
             fetchImpl,
-        })).rejects.toThrow('SINGLE_COOLIFY_DEPLOY_TARGET_REQUIRED');
+        })).rejects.toThrow('TRUSTED_COOLIFY_PRODUCTION_TARGET_REQUIRED');
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
-    it.each(['', ' ', 'token\r\nInjected: header'])('un token inválido bloquea sin red: %j', async (COOLIFY_TOKEN) => {
+    it.each(['', ' ', 'token\r\nInjected: header'])('un token inválido bloquea sin red: %j', async (COOLIFY_PROD_READ_TOKEN) => {
         const fetchImpl = vi.fn();
         await expect(verifyCoolifyProductionTarget({
-            env: { ...env, COOLIFY_TOKEN },
+            env: { ...env, COOLIFY_PROD_READ_TOKEN },
             fetchImpl,
-        })).rejects.toThrow('COOLIFY_API_TOKEN_REQUIRED');
+        })).rejects.toThrow('COOLIFY_PROD_READ_TOKEN_REQUIRED');
         expect(fetchImpl).not.toHaveBeenCalled();
     });
 
-    it('deriva una sola lectura GET del mismo origen y prohíbe redirecciones con token', async () => {
+    it.each([undefined, '', 'a'.repeat(39), 'A'.repeat(40)])('exige un SHA candidato completo antes de enviar el token: %j', async (CANDIDATE_SHA) => {
+        const fetchImpl = vi.fn();
+        await expect(verifyCoolifyProductionTarget({
+            env: { ...env, CANDIDATE_SHA },
+            fetchImpl,
+        })).rejects.toThrow('CANDIDATE_SHA_REQUIRED');
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { COOLIFY_PROD_API_ORIGIN: '' },
+        { COOLIFY_PROD_API_ORIGIN: 'http://coolify.example.test' },
+        { COOLIFY_PROD_API_ORIGIN: 'https://coolify.example.test/api/v1' },
+        { COOLIFY_PROD_API_ORIGIN: 'https://user:pass@coolify.example.test' },
+        { COOLIFY_PROD_APPLICATION_UUID: '' },
+        { COOLIFY_PROD_APPLICATION_UUID: '../other-app' },
+        { COOLIFY_PROD_APPLICATION_UUID: 'different-app' },
+    ])('exige origen y UUID independientes del webhook antes de enviar el token: %j', async (patch) => {
+        const fetchImpl = vi.fn();
+        await expect(verifyCoolifyProductionTarget({
+            env: { ...env, ...patch },
+            fetchImpl,
+        })).rejects.toThrow('TRUSTED_COOLIFY_PRODUCTION_TARGET_REQUIRED');
+        expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('deriva una sola lectura GET del origen independiente y prohíbe redirecciones con token', async () => {
         const fetchImpl = vi.fn().mockResolvedValue(response());
         expect(parseCoolifyProductionTarget(env)).toEqual({
             uuid: 'production-app',
@@ -73,7 +102,7 @@ describe('destino Coolify de producción: lectura, pin y auto deploy', () => {
             'https://coolify.example.test/api/v1/applications/production-app',
             {
                 method: 'GET',
-                headers: { accept: 'application/json', authorization: `Bearer ${env.COOLIFY_TOKEN}` },
+                headers: { accept: 'application/json', authorization: `Bearer ${env.COOLIFY_PROD_READ_TOKEN}` },
                 redirect: 'error',
                 signal: expect.any(AbortSignal),
             },
@@ -147,10 +176,10 @@ describe('destino Coolify de producción: lectura, pin y auto deploy', () => {
     it('el CLI no revela URL, token ni cuerpo sensibles cuando falta token', () => {
         const result = spawnSync(process.execPath, ['scripts/verify-coolify-production-target.mjs'], {
             encoding: 'utf8',
-            env: { ...process.env, ...env, COOLIFY_TOKEN: '' },
+            env: { ...process.env, ...env, COOLIFY_PROD_READ_TOKEN: '' },
         });
         expect(result.status).toBe(1);
-        expect(result.stderr.trim()).toBe('Compuerta de producción cerrada: COOLIFY_API_TOKEN_REQUIRED');
+        expect(result.stderr.trim()).toBe('Compuerta de producción cerrada: COOLIFY_PROD_READ_TOKEN_REQUIRED');
         expect(result.stdout).toBe('');
         expect(result.stderr).not.toMatch(/https|production-app|synthetic/);
     });

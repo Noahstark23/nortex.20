@@ -1,11 +1,12 @@
 # Runbook de auditoría y mejora preproducción del frontend
 
-> **Estado del primer ciclo P0 (2026-09-01): QA LOCAL COMPLETA · PENDIENTE STAGING.** El
-> detalle y la evidencia están en
-> `docs/releases/2026-09-01-frontend-audit-remediation.md`. La auditoría de
-> producción es la línea base; no demuestra por sí sola qué sigue presente en el
-> candidato local ni que algún hallazgo ya esté reparado. No marcar este ciclo como
-> completado hasta cerrar adjudicación, QA, evidencia local, staging y sus compuertas.
+> **Registro histórico del primer ciclo P0 (2026-09-01): evidencia local parcial ·
+> staging pendiente.** El detalle y las mediciones de esa fecha están en
+> `docs/releases/2026-09-01-frontend-audit-remediation.md`. No prueban el estado del
+> candidato actual ni sustituyen recorridos autenticados, evidencia visual por ruta o
+> las compuertas posteriores. No marcar este ciclo como completado hasta cerrar
+> adjudicación, QA, evidencia local, staging y sus compuertas; para el candidato
+> actual, registrar límites y evidencia en `docs/AUDITORIA_VISUAL_2026-09-05.md`.
 
 ## Propósito y resultado esperado
 
@@ -258,13 +259,16 @@ equivale a autorización de push, staging ni producción.
 Staging requiere autorización propia. Después de obtenerla, un responsable inicia
 **Promote staging candidate** (`release-staging.yml`) desde `main` con el SHA
 completo y la confirmación exacta `STAGE <SHA>`. CI no puede desplegar por push ni
-por su propio `workflow_dispatch`. Después:
+por su propio `workflow_dispatch`. La identidad Coolify y el origen público deben
+haber quedado comprobados conforme al [runbook de promoción](release-promotion.md).
+Después:
 
 1. fijá el SHA candidato y revalidá que la base relevante no avanzó; CI verde de un
    SHA viejo no sirve;
 2. corré preflight de schema/backup cuando aplique y confirmá que no hay DDL
    destructivo ni `--accept-data-loss`;
-3. desplegá **solo staging** y verificá `/api/health`: `ok`, `db` y commit exacto;
+3. desplegá **solo staging** y verificá `/api/health`: `ok`, `db`, commit exacto y
+   encabezado `Cache-Control: no-store`;
 4. repetí las rutas, viewports, preferencias y contadores de la evidencia local;
 5. para dinero/stock, hacé smoke autenticado con tenant sintético, idempotencia y
    ausencia de movimientos no esperados;

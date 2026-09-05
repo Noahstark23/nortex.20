@@ -8,6 +8,14 @@ import {
 } from '../scripts/verify-deployed-release.mjs';
 
 const SHA = 'ec8018443d3d1d00954823d1845d9e4ebf51b226';
+const healthResponse = (payload: unknown, init: ResponseInit = {}) => new Response(
+    JSON.stringify(payload),
+    {
+        status: 200,
+        ...init,
+        headers: { 'cache-control': 'private, no-store, max-age=0', ...init.headers },
+    },
+);
 
 describe('verificación post-deploy por commit', () => {
     it('acepta únicamente una app sana con BD arriba y el SHA esperado', () => {
@@ -60,8 +68,8 @@ describe('verificación post-deploy por commit', () => {
 
     it('espera hasta observar el SHA nuevo y no acepta una release anterior sana', async () => {
         const fetchImpl = vi.fn()
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, db: 'up', commit: 'old' })))
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, db: 'up', commit: SHA })));
+            .mockResolvedValueOnce(healthResponse({ ok: true, db: 'up', commit: 'old' }))
+            .mockResolvedValueOnce(healthResponse({ ok: true, db: 'up', commit: SHA }));
         const sleep = vi.fn().mockResolvedValue(undefined);
 
         const result = await waitForExpectedRelease({
@@ -80,7 +88,7 @@ describe('verificación post-deploy por commit', () => {
 
     it('falla cerrado si nunca aparece el commit esperado', async () => {
         const fetchImpl = vi.fn().mockResolvedValue(
-            new Response(JSON.stringify({ ok: true, db: 'up', commit: 'old' })),
+            healthResponse({ ok: true, db: 'up', commit: 'old' }),
         );
 
         await expect(waitForExpectedRelease({
@@ -135,7 +143,7 @@ describe('verificación post-deploy por commit', () => {
     it('acepta el SHA exacto tras un 503 transitorio', async () => {
         const fetchImpl = vi.fn()
             .mockResolvedValueOnce(new Response(null, { status: 503 }))
-            .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, db: 'up', commit: SHA })));
+            .mockResolvedValueOnce(healthResponse({ ok: true, db: 'up', commit: SHA }));
         const sleep = vi.fn().mockResolvedValue(undefined);
 
         await expect(waitForExpectedRelease({
@@ -169,6 +177,27 @@ describe('verificación post-deploy por commit', () => {
         expect(json).not.toHaveBeenCalled();
     });
 
+    it.each([
+        undefined,
+        'max-age=600',
+        'private, no-cache, max-age=0',
+    ])('no acepta ni parsea una salud potencialmente cacheada: %j', async (cacheControl) => {
+        const response = new Response(JSON.stringify({ ok: true, db: 'up', commit: SHA }), {
+            status: 200,
+            headers: cacheControl === undefined ? {} : { 'cache-control': cacheControl },
+        });
+        const json = vi.spyOn(response, 'json');
+
+        await expect(waitForExpectedRelease({
+            baseUrl: 'https://somosnortex.com',
+            expectedCommit: SHA,
+            attempts: 1,
+            fetchImpl: async () => response,
+        })).rejects.toThrow('CACHE_POLICY_MISSING');
+
+        expect(json).not.toHaveBeenCalled();
+    });
+
     it('no filtra URL, error de red ni commit remoto en una falla', async () => {
         const networkSecret = 'https://private.invalid?token=DO_NOT_LOG';
         const fetchImpl = vi.fn().mockRejectedValue(new Error(networkSecret));
@@ -194,11 +223,11 @@ describe('verificación post-deploy por commit', () => {
                 baseUrl: 'https://somosnortex.com',
                 expectedCommit: SHA,
                 attempts: 1,
-                fetchImpl: async () => new Response(JSON.stringify({
+                fetchImpl: async () => healthResponse({
                     ok: true,
                     db: 'up',
                     commit: mismatchedCommit,
-                })),
+                }),
             });
         } catch (error) {
             mismatchMessage = error instanceof Error ? error.message : '';
@@ -224,7 +253,7 @@ describe('verificación post-deploy por commit', () => {
 
     it('prohíbe seguir redirecciones al comprobar salud', async () => {
         const fetchImpl = vi.fn().mockResolvedValue(
-            new Response(JSON.stringify({ ok: true, db: 'up', commit: SHA })),
+            healthResponse({ ok: true, db: 'up', commit: SHA }),
         );
         await waitForExpectedRelease({
             baseUrl: 'https://somosnortex.com',

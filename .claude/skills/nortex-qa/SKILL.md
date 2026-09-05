@@ -30,10 +30,12 @@ deja anotado si requiere migración/decisión del CEO.
 5. **Integración/estado React** — refs colgantes a identificadores eliminados
    (`grep` de los nombres viejos), flujos secundarios: carritos en espera,
    quick-create, restore, offline-sync, scanner.
-6. **Build/regresión/entorno** — `npx tsc --noEmit` (comparar contra la línea base
-   de errores preexistentes, no exigir 0 global) · `npm run build` · servicios core
-   intactos (`git status backend/services/`) · `npm install` hecho (prisma 6.4.1,
-   no 7) · defaults preservan comportamiento.
+6. **Build/regresión/entorno** — `mise exec -- npx --no-install tsc --noEmit`
+   (comparar contra la línea base de errores preexistentes, no exigir 0 global) ·
+   `mise exec -- npm run build` · servicios core intactos
+   (`git status backend/services/`) · dependencias sincronizadas solo en un
+   worktree autorizado con `mise exec -- npm ci` (Prisma 6.4.1, no 7; sin mutar
+   `package-lock.json`) · defaults preservan comportamiento.
 
 ## Reporte final
 Tabla ronda → resultado (PASS / defecto encontrado → corregido), con los defectos

@@ -11,7 +11,13 @@ const inputSha = '$' + '{{ inputs.candidate_sha }}';
 const inputConfirmation = '$' + '{{ inputs.confirmation }}';
 const githubToken = '$' + '{{ github.token }}';
 const stagingWebhook = '$' + '{{ secrets.COOLIFY_STAGING_WEBHOOK }}';
+const stagingReadToken = '$' + '{{ secrets.COOLIFY_STAGING_READ_TOKEN }}';
+const stagingApiOrigin = '$' + '{{ vars.COOLIFY_STAGING_API_ORIGIN }}';
+const stagingApplicationUuid = '$' + '{{ vars.COOLIFY_STAGING_APPLICATION_UUID }}';
 const productionWebhook = '$' + '{{ secrets.COOLIFY_PROD_WEBHOOK }}';
+const productionReadToken = '$' + '{{ secrets.COOLIFY_PROD_READ_TOKEN }}';
+const productionApiOrigin = '$' + '{{ vars.COOLIFY_PROD_API_ORIGIN }}';
+const productionApplicationUuid = '$' + '{{ vars.COOLIFY_PROD_APPLICATION_UUID }}';
 
 const parse = (source: string): Workflow => {
     const document = parseDocument(source, { uniqueKeys: true });
@@ -82,9 +88,13 @@ const assertTerminalCiGate = (gate: Workflow, scope: string) => {
         'github.rest.actions.listWorkflowRuns',
         "workflow_id: 'ci.yml'",
         'head_sha: candidate',
+        "branch: 'main'",
         "event: 'push'",
-        'run.head_sha === candidate && run.event === \'push\'',
+        'run.head_sha === candidate',
+        "run.head_branch === 'main'",
+        "run.event === 'push'",
         "const expectedPath = '.github/workflows/ci.yml@';",
+        'runs.every((run) =>',
         "run.status === 'completed'",
         "run.conclusion === 'success'",
         "throw new Error('CI_TERMINAL_SUCCESS_REQUIRED')",
@@ -92,6 +102,35 @@ const assertTerminalCiGate = (gate: Workflow, scope: string) => {
         assert.ok(script.includes(required), scope + ': falta ' + required);
     }
     assert.ok(!script.includes("status: 'completed'"), scope + ': no debe ocultar runs pendientes');
+    assert.ok(!script.includes('runs.some'), scope + ': un único CI verde no puede ocultar otro fallido o pendiente');
+    assert.ok(!script.includes('console.log'), scope + ': no debe imprimir respuesta de API');
+};
+
+const assertSuccessfulManualStagingGate = (gate: Workflow, scope: string) => {
+    assert.equal(gate.uses, 'actions/github-script@v9', scope + ': usa el cliente GitHub oficial');
+    assert.equal(gate.if, undefined, scope + ': gate opcional');
+    assert.equal(gate['continue-on-error'], undefined, scope + ': gate ignora errores');
+    assert.deepEqual(gate.env, { CANDIDATE_SHA: inputSha });
+    assert.equal(gate.with['github-token'], githubToken);
+    assert.ok(!JSON.stringify(gate).includes('secrets.'), scope + ': no debe leer secretos');
+    const script = gate.with.script;
+    for (const required of [
+        'github.rest.actions.listWorkflowRuns',
+        "workflow_id: 'release-staging.yml'",
+        'head_sha: candidate',
+        "branch: 'main'",
+        "event: 'workflow_dispatch'",
+        'run.head_sha === candidate',
+        "run.head_branch === 'main'",
+        "run.event === 'workflow_dispatch'",
+        "const expectedPath = '.github/workflows/release-staging.yml@';",
+        'runs.some',
+        "run.status === 'completed'",
+        "run.conclusion === 'success'",
+        "throw new Error('MANUAL_STAGING_SUCCESS_REQUIRED')",
+    ]) {
+        assert.ok(script.includes(required), scope + ': falta ' + required);
+    }
     assert.ok(!script.includes('console.log'), scope + ': no debe imprimir respuesta de API');
 };
 
@@ -130,7 +169,9 @@ const assertCi = (workflow: Workflow) => {
         assert.notEqual(job.environment?.name ?? job.environment, 'production', 'producción en CI: ' + name);
         assert.notEqual(job.environment?.name ?? job.environment, 'staging', 'staging en CI: ' + name);
         assert.ok(!text.includes('COOLIFY_PROD_WEBHOOK'), 'webhook de producción en CI: ' + name);
+        assert.ok(!text.includes('COOLIFY_PROD_READ_TOKEN'), 'lectura de producción en CI: ' + name);
         assert.ok(!text.includes('COOLIFY_STAGING_WEBHOOK'), 'webhook de staging en CI: ' + name);
+        assert.ok(!text.includes('COOLIFY_STAGING_READ_TOKEN'), 'lectura de staging en CI: ' + name);
     }
 };
 
@@ -173,14 +214,26 @@ const assertStaging = (workflow: Workflow) => {
 
     const postApproval = step(deploy.steps, 'Revalidar candidato después de la aprobación');
     const postApprovalCi = step(deploy.steps, 'Verificar CI terminal y exitoso del candidato');
+    const coolifyTarget = step(deploy.steps, 'Verificar destino Coolify de staging fijado al candidato');
     const config = step(deploy.steps, 'Validar configuración de STAGING');
     const webhook = step(deploy.steps, 'Desplegar STAGING (webhook de Coolify)');
     const health = step(deploy.steps, 'Verificar STAGING sano y en el candidato esperado');
     assertManualStagingGate(postApproval, 'post-aprobación');
     assertTerminalCiGate(postApprovalCi, 'post-aprobación CI');
     assert.ok(deploy.steps.indexOf(postApprovalCi) > deploy.steps.indexOf(postApproval));
-    assert.ok(deploy.steps.indexOf(config) > deploy.steps.indexOf(postApprovalCi), 'configuración antes del webhook');
-    assert.ok(deploy.steps.indexOf(webhook) > deploy.steps.indexOf(config), 'webhook antes de validar');
+    assert.equal(coolifyTarget.run, 'node scripts/verify-coolify-staging-target.mjs');
+    assert.equal(coolifyTarget.if, undefined);
+    assert.equal(coolifyTarget['continue-on-error'], undefined);
+    assert.deepEqual(coolifyTarget.env, {
+        CANDIDATE_SHA: inputSha,
+        COOLIFY_STAGING_WEBHOOK: stagingWebhook,
+        COOLIFY_STAGING_API_ORIGIN: stagingApiOrigin,
+        COOLIFY_STAGING_APPLICATION_UUID: stagingApplicationUuid,
+        COOLIFY_STAGING_READ_TOKEN: stagingReadToken,
+    });
+    assert.ok(deploy.steps.indexOf(config) > deploy.steps.indexOf(postApprovalCi), 'configuración posterior a los checks');
+    assert.ok(deploy.steps.indexOf(coolifyTarget) > deploy.steps.indexOf(config), 'destino después de validar configuración');
+    assert.ok(deploy.steps.indexOf(webhook) > deploy.steps.indexOf(coolifyTarget), 'webhook después de validar destino');
     assert.ok(deploy.steps.indexOf(health) > deploy.steps.indexOf(webhook), 'health debe ser posterior');
     assert.deepEqual(config.env, {
         WEBHOOK: stagingWebhook,
@@ -207,19 +260,23 @@ const assertStaging = (workflow: Workflow) => {
     assert.ok(!webhook.run.includes('--retry'), 'webhook de staging no puede reintentarse sin idempotencia');
     assert.ok(!webhook.run.includes('--show-error'));
     assert.equal(config['continue-on-error'], undefined);
+    assert.equal(coolifyTarget['continue-on-error'], undefined);
     assert.equal(webhook['continue-on-error'], undefined);
     assert.equal(health['continue-on-error'], undefined);
     assert.deepEqual(health.env, {
         APP_URL: '$' + '{{ vars.STAGING_URL }}',
         EXPECTED_COMMIT: inputSha,
     });
+    assert.equal(health.run, 'node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"');
 
     for (const [name, job] of Object.entries(workflow.jobs) as [string, Workflow][]) {
         const text = JSON.stringify(job);
         assert.ok(!text.includes('COOLIFY_PROD_WEBHOOK'), 'webhook de producción en staging: ' + name);
+        assert.ok(!text.includes('COOLIFY_PROD_READ_TOKEN'), 'lectura de producción en staging: ' + name);
         assert.notEqual(job.environment?.name ?? job.environment, 'production', 'producción en staging: ' + name);
         if (name !== 'deploy-staging') {
             assert.ok(!text.includes('COOLIFY_STAGING_WEBHOOK'), 'webhook fuera del job protegido: ' + name);
+            assert.ok(!text.includes('COOLIFY_STAGING_READ_TOKEN'), 'lectura fuera del job protegido: ' + name);
             assert.notEqual(job.environment?.name ?? job.environment, 'staging', 'environment fuera del job: ' + name);
         }
     }
@@ -249,6 +306,7 @@ const assertProduction = (workflow: Workflow) => {
     assert.ok(!JSON.stringify(preflight).includes('secrets.'), 'preflight no puede leer secretos');
     const preflightGate = step(preflight.steps, 'Verificar intención, main y staging del candidato');
     const preflightCi = step(preflight.steps, 'Verificar CI terminal y exitoso del candidato');
+    const preflightStagingProvenance = step(preflight.steps, 'Verificar staging manual exitoso del candidato');
     assert.equal(preflightGate.run,
         'node scripts/authorize-production-release.mjs');
     assert.equal(preflightGate.if, undefined);
@@ -259,11 +317,14 @@ const assertProduction = (workflow: Workflow) => {
         STAGING_URL: '$' + '{{ vars.STAGING_URL }}',
     });
     assertTerminalCiGate(preflightCi, 'preflight CI de producción');
+    assertSuccessfulManualStagingGate(preflightStagingProvenance, 'preflight de procedencia staging');
     assert.ok(preflight.steps.indexOf(preflightCi) > preflight.steps.indexOf(preflightGate));
+    assert.ok(preflight.steps.indexOf(preflightStagingProvenance) > preflight.steps.indexOf(preflightCi));
 
     const deploy = workflow.jobs['deploy-production'];
     assert.deepEqual(deploy.needs, ['preflight']);
     assert.equal(deploy.if, undefined, 'producción no puede forzarse');
+    assert.equal(deploy['continue-on-error'], undefined, 'producción no puede ignorar un fallo del job');
     assert.deepEqual(deploy.environment, {
         name: 'production',
         url: '$' + '{{ vars.PROD_URL }}',
@@ -273,30 +334,37 @@ const assertProduction = (workflow: Workflow) => {
     assert.equal(checkout.with.ref, inputSha);
     const postApproval = step(deploy.steps, 'Revalidar candidato después de la aprobación');
     const postApprovalCi = step(deploy.steps, 'Verificar CI terminal y exitoso del candidato');
+    const postApprovalStagingProvenance = step(deploy.steps, 'Revalidar staging manual exitoso del candidato');
     assert.equal(postApproval.run,
         'node scripts/authorize-production-release.mjs');
     assert.equal(postApproval.if, undefined);
     assert.deepEqual(postApproval.env, preflightGate.env);
     assertTerminalCiGate(postApprovalCi, 'post-aprobación CI de producción');
+    assertSuccessfulManualStagingGate(postApprovalStagingProvenance, 'post-aprobación de procedencia staging');
     const coolifyTarget = step(deploy.steps, 'Verificar destino Coolify fijado al candidato');
     assert.equal(coolifyTarget.run, 'node scripts/verify-coolify-production-target.mjs');
     assert.equal(coolifyTarget.if, undefined);
     assert.deepEqual(coolifyTarget.env, {
         CANDIDATE_SHA: inputSha,
         COOLIFY_PROD_WEBHOOK: productionWebhook,
-        COOLIFY_TOKEN: '$' + '{{ secrets.COOLIFY_PROD_READ_TOKEN }}',
+        COOLIFY_PROD_API_ORIGIN: productionApiOrigin,
+        COOLIFY_PROD_APPLICATION_UUID: productionApplicationUuid,
+        COOLIFY_PROD_READ_TOKEN: productionReadToken,
     });
     const config = step(deploy.steps, 'Validar configuración de PROD');
     const webhook = step(deploy.steps, 'Desplegar PROD (webhook de Coolify)');
     const health = step(deploy.steps, 'Verificar PROD sano y en el candidato esperado');
     assert.ok(deploy.steps.indexOf(postApprovalCi) > deploy.steps.indexOf(postApproval));
-    assert.ok(deploy.steps.indexOf(coolifyTarget) > deploy.steps.indexOf(postApprovalCi));
+    assert.ok(deploy.steps.indexOf(postApprovalStagingProvenance) > deploy.steps.indexOf(postApprovalCi));
+    assert.ok(deploy.steps.indexOf(coolifyTarget) > deploy.steps.indexOf(postApprovalStagingProvenance));
     assert.ok(deploy.steps.indexOf(config) > deploy.steps.indexOf(coolifyTarget));
     assert.ok(deploy.steps.indexOf(webhook) > deploy.steps.indexOf(config));
     assert.equal(webhook.env.WEBHOOK, productionWebhook);
     assert.equal(health.env.EXPECTED_COMMIT, inputSha);
+    assert.equal(health.run, 'node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"');
     assert.ok(deploy.steps.indexOf(health) > deploy.steps.indexOf(webhook));
     assert.equal(postApproval['continue-on-error'], undefined);
+    assert.equal(postApprovalStagingProvenance['continue-on-error'], undefined);
     assert.equal(coolifyTarget['continue-on-error'], undefined);
     assert.equal(config['continue-on-error'], undefined);
     assert.equal(webhook['continue-on-error'], undefined);
@@ -335,8 +403,10 @@ const assertProduction = (workflow: Workflow) => {
     for (const [name, job] of Object.entries(workflow.jobs) as [string, Workflow][]) {
         const text = JSON.stringify(job);
         assert.ok(!text.includes('COOLIFY_STAGING_WEBHOOK'), 'webhook de staging en producción: ' + name);
+        assert.ok(!text.includes('COOLIFY_STAGING_READ_TOKEN'), 'lectura de staging en producción: ' + name);
         if (name !== 'deploy-production') {
             assert.ok(!text.includes('COOLIFY_PROD_WEBHOOK'), 'webhook fuera del job protegido: ' + name);
+            assert.ok(!text.includes('COOLIFY_PROD_READ_TOKEN'), 'lectura fuera del job protegido: ' + name);
             assert.notEqual(job.environment?.name ?? job.environment, 'production', 'environment fuera del job: ' + name);
         }
     }
@@ -352,12 +422,21 @@ const assertNoOtherReleaseRoute = () => {
             assert.notEqual(job.environment?.name ?? job.environment, 'production', path + ':' + name);
             assert.notEqual(job.environment?.name ?? job.environment, 'staging', path + ':' + name);
             assert.ok(!text.includes('COOLIFY_PROD_WEBHOOK'), path + ':' + name);
+            assert.ok(!text.includes('COOLIFY_PROD_READ_TOKEN'), path + ':' + name);
             assert.ok(!text.includes('COOLIFY_STAGING_WEBHOOK'), path + ':' + name);
+            assert.ok(!text.includes('COOLIFY_STAGING_READ_TOKEN'), path + ':' + name);
         }
     }
 };
 
 describe('contrato de separación CI, staging y producción', () => {
+    it('fija el runtime de Node de las promociones al mismo patch de CI', () => {
+        expect(stagingSource.match(/node-version: 22\.23\.2/g)).toHaveLength(1);
+        expect(productionSource.match(/node-version: 22\.23\.2/g)).toHaveLength(2);
+        expect(stagingSource).not.toMatch(/node-version: 22\s*$/m);
+        expect(productionSource).not.toMatch(/node-version: 22\s*$/m);
+    });
+
     it('deja ambos webhooks fuera de CI y exige promociones manuales por SHA exacto', () => {
         assertCi(parse(ciSource));
         assertStaging(parse(stagingSource));
@@ -461,6 +540,21 @@ describe('contrato de separación CI, staging y producción', () => {
                 .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
             ci.with.script = ci.with.script.replace("workflow_id: 'ci.yml'", "workflow_id: 'other.yml'");
         }],
+        ['CI de staging no limita la API a main', (staging: Workflow) => {
+            const ci = staging.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
+            ci.with.script = ci.with.script.replace("branch: 'main'", "branch: 'release'");
+        }],
+        ['CI de staging acepta un run de otra rama', (staging: Workflow) => {
+            const ci = staging.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
+            ci.with.script = ci.with.script.replace("run.head_branch === 'main'", 'true');
+        }],
+        ['CI de staging acepta un solo run verde entre runs no terminales', (staging: Workflow) => {
+            const ci = staging.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
+            ci.with.script = ci.with.script.replace('runs.every((run) =>', 'runs.some((run) =>');
+        }],
         ['revalidación posterior eliminada', (staging: Workflow) => {
             staging.jobs['deploy-staging'].steps = staging.jobs['deploy-staging'].steps
                 .filter((item: Workflow) => item.name !== 'Revalidar candidato después de la aprobación');
@@ -483,6 +577,10 @@ describe('contrato de separación CI, staging y producción', () => {
                 .find((item: Workflow) => item.name === 'Revalidar candidato después de la aprobación');
             gate.run = gate.run.replace('[ "$CURRENT_MAIN" = "$CANDIDATE_SHA" ]', 'true');
         }],
+        ['verificación del destino de staging eliminada', (staging: Workflow) => {
+            staging.jobs['deploy-staging'].steps = staging.jobs['deploy-staging'].steps
+                .filter((item: Workflow) => item.name !== 'Verificar destino Coolify de staging fijado al candidato');
+        }],
         ['webhook fuera del job protegido', (staging: Workflow) => {
             staging.jobs.preflight.steps.push({ env: { WEBHOOK: stagingWebhook } });
         }],
@@ -495,6 +593,11 @@ describe('contrato de separación CI, staging y producción', () => {
             const health = staging.jobs['deploy-staging'].steps
                 .find((item: Workflow) => item.name === 'Verificar STAGING sano y en el candidato esperado');
             health['continue-on-error'] = true;
+        }],
+        ['health de staging usa otro verificador', (staging: Workflow) => {
+            const health = staging.jobs['deploy-staging'].steps
+                .find((item: Workflow) => item.name === 'Verificar STAGING sano y en el candidato esperado');
+            health.run = 'node scripts/other-health-check.mjs';
         }],
     ])('rechaza la regresión de staging: %s', (_name, mutate) => {
         const staging = parse(stagingSource);
@@ -522,6 +625,20 @@ describe('contrato de separación CI, staging y producción', () => {
             production.jobs.preflight.steps = production.jobs.preflight.steps
                 .filter((item: Workflow) => item.name !== 'Verificar CI terminal y exitoso del candidato');
         }],
+        ['CI de preflight de producción no limita la API a main', (production: Workflow) => {
+            const ci = production.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
+            ci.with.script = ci.with.script.replace("branch: 'main'", "branch: 'release'");
+        }],
+        ['CI de preflight de producción acepta otra rama', (production: Workflow) => {
+            const ci = production.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
+            ci.with.script = ci.with.script.replace("run.head_branch === 'main'", 'true');
+        }],
+        ['procedencia manual de staging eliminada', (production: Workflow) => {
+            production.jobs.preflight.steps = production.jobs.preflight.steps
+                .filter((item: Workflow) => item.name !== 'Verificar staging manual exitoso del candidato');
+        }],
         ['gate posterior de producción eliminado', (production: Workflow) => {
             production.jobs['deploy-production'].steps = production.jobs['deploy-production'].steps
                 .filter((item: Workflow) => item.name !== 'Revalidar candidato después de la aprobación');
@@ -536,8 +653,28 @@ describe('contrato de separación CI, staging y producción', () => {
                 .find((item: Workflow) => item.name === 'Verificar CI terminal y exitoso del candidato');
             ci['continue-on-error'] = true;
         }],
+        ['procedencia posterior de staging eliminada', (production: Workflow) => {
+            production.jobs['deploy-production'].steps = production.jobs['deploy-production'].steps
+                .filter((item: Workflow) => item.name !== 'Revalidar staging manual exitoso del candidato');
+        }],
+        ['procedencia de staging consulta workflow distinto', (production: Workflow) => {
+            const provenance = production.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar staging manual exitoso del candidato');
+            provenance.with.script = provenance.with.script.replace(
+                "workflow_id: 'release-staging.yml'",
+                "workflow_id: 'other.yml'",
+            );
+        }],
+        ['procedencia de staging acepta otra rama', (production: Workflow) => {
+            const provenance = production.jobs['deploy-production'].steps
+                .find((item: Workflow) => item.name === 'Revalidar staging manual exitoso del candidato');
+            provenance.with.script = provenance.with.script.replace("run.head_branch === 'main'", 'true');
+        }],
         ['producción fuerza ejecución', (production: Workflow) => {
             production.jobs['deploy-production'].if = 'always()';
+        }],
+        ['producción ignora el fallo completo del job', (production: Workflow) => {
+            production.jobs['deploy-production']['continue-on-error'] = true;
         }],
         ['pin de Coolify eliminado', (production: Workflow) => {
             production.jobs['deploy-production'].steps = production.jobs['deploy-production'].steps
@@ -562,6 +699,11 @@ describe('contrato de separación CI, staging y producción', () => {
             const health = production.jobs['deploy-production'].steps
                 .find((item: Workflow) => item.name === 'Verificar PROD sano y en el candidato esperado');
             health['continue-on-error'] = true;
+        }],
+        ['health de producción usa otro verificador', (production: Workflow) => {
+            const health = production.jobs['deploy-production'].steps
+                .find((item: Workflow) => item.name === 'Verificar PROD sano y en el candidato esperado');
+            health.run = 'node scripts/other-health-check.mjs';
         }],
         ['checkout de producción no usa candidato', (production: Workflow) => {
             const checkout = production.jobs['deploy-production'].steps

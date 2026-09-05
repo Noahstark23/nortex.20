@@ -2,7 +2,14 @@
 
 > **Plataforma:** Coolify + Docker Compose  
 > **Autor:** DevOps Team — NORTEX Inc.  
-> **Última actualización:** Agosto 2026
+> **Última actualización:** 2026-09-05
+
+> **Límite de autorización.** Esta guía describe una preparación para un operador
+> ya autorizado; no autoriza DNS, Coolify, variables o secretos de GitHub,
+> webhooks, backups, deploys, merge ni cambios en proveedores externos. Cada acción
+> debe tener una autorización explícita y separada con destino, SHA (si aplica),
+> responsable y rollback. La ruta vinculante de release es el
+> [runbook de promoción](docs/runbooks/release-promotion.md).
 
 ---
 
@@ -12,12 +19,16 @@
 |-----------|---------|
 | **VPS** | Ubuntu 22.04+ con mínimo 2GB RAM, 2 vCPU, 40GB SSD |
 | **Coolify** | Instalado y accesible en tu VPS ([coolify.io](https://coolify.io)) |
-| **Dominio** | Dominio comprado y DNS apuntando al IP del VPS (ej: `nortex.com`) |
+| **Dominio** | Dominio verificado y autorizado para apuntar al VPS (ejemplo: `https://<origen-publico-verificado>`) |
 | **Stripe** | Cuenta activa con claves `sk_live_...` y `pk_live_...` |
 | **Resend** | Cuenta activa con API key `re_...` para envío de emails transaccionales |
 | **GitHub** | Repositorio con el código de Nortex accesible desde Coolify |
 
 ### Configuración DNS
+
+No copies estos registros a un proveedor real por inferencia. Antes de un cambio
+de DNS, el responsable autorizado debe confirmar el dominio exacto, IP, ventana y
+rollback; ningún nombre de ejemplo de esta guía identifica un destino de Nortex.
 
 ```
 Tipo: A
@@ -36,6 +47,11 @@ TTL: 300
 ---
 
 ## 2. Configuración en Coolify
+
+Los pasos siguientes son una receta de preparación, no una orden de configurar una
+instalación real. Ejecutalos únicamente tras la autorización externa separada del
+proyecto, dominio y app exactos; no pegues secretos ni webhooks en tickets, chats o
+commits.
 
 ### Paso 1: Crear el Proyecto
 
@@ -61,7 +77,7 @@ TTL: 300
 
 1. En la sección **"Domains"**, configurar:
    ```
-   https://nortex.com
+   https://<origen-publico-verificado>
    ```
 2. Coolify generará automáticamente el certificado SSL vía Let's Encrypt
 3. Habilitar **"Force HTTPS"** ✅
@@ -85,8 +101,8 @@ del environment, y verifica que Coolify esté fijado al candidato. Para configur
    (Configuration → desactivar *Auto Deploy on push*). Si queda encendido,
    Coolify despliega el push directo y evita la compuerta de GitHub.
 2. **Crear la app de STAGING en Coolify** (misma receta que prod, mismo repo y
-   branch `main`): base de datos MySQL **propia** (jamás la de prod), dominio
-   `staging.somosnortex.com`, mismas variables de entorno pero con
+   branch `main`): base de datos MySQL **propia** (jamás la de prod), origen público
+   `https://<origen-publico-staging-verificado>`, mismas variables de entorno pero con
    `DATABASE_URL`/`JWT_SECRETS` propios y SIN llaves reales de Stripe/WhatsApp.
    También con auto-deploy apagado.
 3. **Activar `Include Source Commit in Build`** en ambas apps. Coolify inyecta
@@ -98,14 +114,20 @@ del environment, y verifica que Coolify esté fijado al candidato. Para configur
    promoción, fijar en la configuración de la app el `git_commit_sha` al SHA
    candidato autorizado; no dejar `HEAD`, `main` ni una rama mutable. Esta guía no
    da permiso al workflow para escribir ese pin: el workflow solo lo verifica.
-5. **Copiar los webhooks de deploy**: en cada app de Coolify, sección
-   *Webhooks* → copiar la *Deploy Webhook URL*.
+5. **Registrar la identidad de cada app sin exponer secretos**: para staging y
+   producción, conservar por separado el origen HTTPS raíz de la API de Coolify,
+   UUID de aplicación y webhook de deploy. El webhook es una capacidad de escritura:
+   no puede elegir la API ni el UUID que se lee con el token de solo lectura.
 6. **Crear las variables públicas en GitHub** (repo u organización → Settings →
    Secrets and variables → Actions → Variables):
    | Variable | Valor |
    |---|---|
-   | `STAGING_URL` | `https://staging.somosnortex.com` |
-   | `PROD_URL` | `https://somosnortex.com` |
+   | `STAGING_URL` | `https://<origen-publico-staging-verificado>` |
+   | `PROD_URL` | `https://<origen-publico-produccion-verificado>` |
+   | `COOLIFY_STAGING_API_ORIGIN` | Origen HTTPS raíz confiable de la API de Coolify de staging, sin ruta, credenciales, query ni fragmento |
+   | `COOLIFY_STAGING_APPLICATION_UUID` | UUID exacto de la aplicación de staging |
+   | `COOLIFY_PROD_API_ORIGIN` | Origen HTTPS raíz confiable de la API de Coolify de producción, sin ruta, credenciales, query ni fragmento |
+   | `COOLIFY_PROD_APPLICATION_UUID` | UUID exacto de la aplicación de producción |
    | `NORTEX_DEPLOY_ENABLED` | `false` durante la preparación; `true` solo permite el preflight manual de staging |
    | `NORTEX_PRODUCTION_DEPLOY_ENABLED` | `false` por defecto; `true` solo después de endurecer controles externos y para permitir el preflight manual |
 
@@ -119,6 +141,7 @@ del environment, y verifica que Coolify esté fijado al candidato. Para configur
    | Environment | Secret | Valor |
    |---|---|---|
    | `staging` | `COOLIFY_STAGING_WEBHOOK` | URL del webhook de la app staging |
+   | `staging` | `COOLIFY_STAGING_READ_TOKEN` | Obligatorio: token de API de solo lectura y mínimo alcance para esa app de staging |
    | `staging` | `COOLIFY_TOKEN` | Solo si el webhook de staging exige bearer token |
    | `production` | `COOLIFY_PROD_WEBHOOK` | URL del webhook de la app productiva |
    | `production` | `COOLIFY_PROD_READ_TOKEN` | Obligatorio: token API con permiso mínimo de lectura del destino de producción |
@@ -129,25 +152,36 @@ del environment, y verifica que Coolify esté fijado al candidato. Para configur
 
    La promoción manual falla cerrada si Coolify no devuelve una aplicación única
    con `git_commit_sha` igual al candidato, un build desde Git (`dockerfile` o
-   `dockercompose`) y `is_auto_deploy_enabled=false`. Nunca pongas este token en
-   CI o staging, ni le des permisos `write`, `read:sensitive` o `root`. El token de
-   despliegue, si se necesita, debe quedar separado y limitado a `deploy`.
+   `dockercompose`) y `is_auto_deploy_enabled=false`. Además, para **cada**
+   environment el origen API HTTPS confiable, UUID de app, token de solo lectura y
+   webhook deben concordar: el webhook debe ser HTTPS en el mismo origen API, usar
+   `/api/v1/deploy` y llevar únicamente el UUID esperado (más `force=true|false`
+   opcional). Nunca pongas un token de lectura en CI o en otro environment, ni le
+   des permisos `write`, `read:sensitive` o `root`. El token de despliegue, si se
+   necesita, debe quedar separado y limitado a `deploy`.
+
+   Esta auditoría **no** configuró ni verificó valores reales de esas variables,
+   tokens, UUIDs o apps. Tampoco prueba que `STAGING_URL` o `PROD_URL` sean la misma
+   aplicación que Coolify identifica por UUID. Infraestructura debe aportar y
+   registrar esa identidad pública↔Coolify de forma saneada antes de que un workflow
+   pueda considerarse habilitado.
 8. **Endurecer GitHub antes de habilitar producción:** proteger `main` con PR y
    checks requeridos; limitar el environment `production` a `main`, usar reviewer
    independiente, activar `prevent-self-review` y desactivar bypass administrativo.
    Sin esos controles, el estado correcto es bloqueado.
 9. **Promover solo con el runbook canónico:** tras CI del mismo SHA, un responsable
-   inicia **Promote staging candidate** desde `main` con `STAGE <SHA>` y registra
-   health/SHA/base y smoke sintético proporcional al riesgo. Solo entonces, con
-   autorización explícita de producto (alcance, SHA, ventana, responsable,
-   rollback), inicia **Promote production**; no uses `workflow_dispatch` de CI para
-   staging ni producción.
+   inicia **Promote staging candidate** desde `main` con `STAGE <SHA>`. Producción
+   requiere la procedencia de un staging manual exitoso para **ese mismo SHA** y
+   salud API/base/SHA fresca, incluido `Cache-Control: no-store`, además del smoke
+   sintético proporcional al riesgo. Solo entonces, con autorización explícita de
+   producto (alcance, SHA, ventana, responsable, rollback), inicia **Promote
+   production**; no uses `workflow_dispatch` de CI para staging ni producción.
 10. **Monitoreo** (5 minutos de setup, gratis):
    - **Sentry**: crear proyecto Node en sentry.io y poner `SENTRY_DSN` en las
      variables de Coolify (el backend ya lo soporta — gate suave, sin DSN opera
      igual). Los errores 500 de prod llegan solos, con stack.
-   - **UptimeRobot** (o similar): monitor HTTP a
-     `https://somosnortex.com/api/health` cada 5 min con alerta al correo. El
+   - **UptimeRobot** (o similar): tras autorización separada, monitor HTTP a
+     `https://<origen-publico-produccion-verificado>/api/health` cada 5 min con alerta al correo. El
      endpoint devuelve 503 si la BD no responde, así que también avisa de una
      BD caída, no solo del proceso muerto.
    - El contenedor ya trae `HEALTHCHECK` (Dockerfile): Coolify reinicia una
@@ -194,8 +228,8 @@ JWT_SECRET=GENERA_UNA_CLAVE_LARGA_CON_OPENSSL_RAND_BASE64_64
 STRIPE_SECRET_KEY=<tu-clave-secreta-de-stripe-live>
 STRIPE_PUBLISHABLE_KEY=<tu-clave-publica-de-stripe-live>
 
-# Obtener desde: https://dashboard.stripe.com/webhooks
-# Crear webhook apuntando a: https://nortex.com/api/billing/webhook
+# Solo tras autorización externa separada para Stripe, el dominio y este webhook:
+# Crear webhook apuntando a: https://<origen-publico-produccion-verificado>/api/billing/webhook
 STRIPE_WEBHOOK_SECRET=<tu-webhook-secret-de-stripe>
 
 # ID del precio de suscripción mensual (creado en Stripe Dashboard > Products)
@@ -230,7 +264,7 @@ RESEND_API_KEY=<tu-api-key-de-resend>
 # ==========================================
 # 🌐 FRONTEND
 # ==========================================
-FRONTEND_URL=https://nortex.com
+FRONTEND_URL=https://<origen-publico-produccion-verificado>
 
 # ==========================================
 # 💾 BACKUP DIARIO OFF-SITE (DGI-4 · OBLIGATORIO)
@@ -281,7 +315,7 @@ Tu `docker-compose.yml` actual es para desarrollo. Para producción en Coolify, 
 
 - [ ] Contraseña MySQL cambiada (no usar `root`)
 - [ ] `DATABASE_URL` apunta a `db:3306` (nombre del servicio Docker)
-- [ ] Webhook de Stripe configurado para `https://nortex.com/api/billing/webhook`
+- [ ] Webhook de Stripe autorizado y configurado para `https://<origen-publico-produccion-verificado>/api/billing/webhook`
 - [ ] DNS del dominio apuntando al VPS
 - [ ] phpMyAdmin deshabilitado o protegido con autenticación adicional
 - [ ] Credenciales del bucket de backup cargadas (`BACKUP_S3_BUCKET`, `AWS_*`)
@@ -315,11 +349,15 @@ docker compose -p nortex ps
 ### Probar endpoint /health
 
 ```bash
-# Desde tu máquina local:
-curl -s https://somosnortex.com/api/health | jq .
+# Solo después de autorizar una observación de este origen público verificado:
+APP_URL="https://<origen-publico-verificado>"
+curl -sS -o /dev/null -D - "$APP_URL/api/health"
+curl -sS "$APP_URL/api/health" | jq .
 
 # Respuesta esperada (200 si la BD responde, 503 si no):
 # { "ok": true, "db": "up", "uptimeSeconds": 12345, "commit": "<sha del build>" }
+# El encabezado de respuesta debe incluir `Cache-Control: no-store`; de otro modo
+# el SHA puede venir de una caché y no acredita el candidato recién desplegado.
 
 # Las rutas autenticadas, cobros y mensajes se prueban solo como parte del smoke
 # autorizado sobre un tenant sintético. Nunca copies credenciales de una persona,
@@ -339,9 +377,14 @@ copia rápida contra datos reales en esta guía.
 
 ## 6. Post-Deploy Checklist
 
-- [ ] ✅ La app carga en `https://nortex.com`
+Completá esta lista solo durante una ventana de release ya autorizada y usando los
+orígenes/identidades que infraestructura haya verificado. Las acciones de backup y
+restore requieren además la autorización y el procedimiento de recuperación
+correspondiente; no las ejecutes por copiar esta guía.
+
+- [ ] ✅ La app carga en `https://<origen-publico-produccion-verificado>`
 - [ ] ✅ El certificado SSL está activo (candado verde)
-- [ ] ✅ Health responde API/base/SHA exactos para el candidato
+- [ ] ✅ Health responde API/base/SHA exactos para el candidato y `Cache-Control: no-store`
 - [ ] ✅ Smoke autorizado en tenant sintético cubre login, rol y los flujos afectados
 - [ ] ✅ Para dinero o stock, el smoke sintético confirma idempotencia y ausencia de movimientos inesperados
 - [ ] ✅ Webhooks, correos y cobros se observan sin disparar datos o mensajes de clientes
@@ -379,7 +422,7 @@ docker compose -p nortex exec backup bash -lc '
 | Stripe webhook falla | Verifica el `STRIPE_WEBHOOK_SECRET` y que la URL sea `https://` |
 | `P1001: Can't reach database` | Verifica que `DATABASE_URL` use `db` como host (no `localhost`) |
 | Emails no llegan | Verifica la API key de Resend y que el dominio esté verificado |
-| CSS no carga | Ejecuta `npm run build` y verifica que Vite genera a `/dist` |
+| CSS no carga | Ejecuta `mise exec -- npm run build` en un checkout autorizado y verifica que Vite genera a `/dist` |
 | Puerto 3000 ocupado | Cambiar `PORT` en las variables de entorno |
 
 ---

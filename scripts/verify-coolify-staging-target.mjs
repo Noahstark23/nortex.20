@@ -1,18 +1,19 @@
 import { pathToFileURL } from 'node:url';
 
-// Solo lectura: nunca modifica una aplicación ni dispara /deploy. Coolify puede
-// devolver campos sensibles, así que esta compuerta conserva únicamente códigos.
-export const parseCoolifyProductionTarget = (env) => {
-    const token = env.COOLIFY_PROD_READ_TOKEN;
+// Solo lectura: nunca modifica una aplicación ni dispara /deploy. El webhook
+// es una capacidad de escritura; su URL no puede elegir a dónde se envía el
+// token de lectura de staging.
+export const parseCoolifyStagingTarget = (env) => {
+    const token = env.COOLIFY_STAGING_READ_TOKEN;
     if (typeof token !== 'string' || !token.trim() || /[\r\n]/.test(token)) {
-        throw new Error('COOLIFY_PROD_READ_TOKEN_REQUIRED');
+        throw new Error('COOLIFY_STAGING_READ_TOKEN_REQUIRED');
     }
     if (typeof env.CANDIDATE_SHA !== 'string' || !/^[a-f0-9]{40}$/.test(env.CANDIDATE_SHA)) {
         throw new Error('CANDIDATE_SHA_REQUIRED');
     }
 
     try {
-        const apiOrigin = env.COOLIFY_PROD_API_ORIGIN;
+        const apiOrigin = env.COOLIFY_STAGING_API_ORIGIN;
         if (typeof apiOrigin !== 'string'
             || apiOrigin.trim() !== apiOrigin
             || /[\x00-\x20\x7f]/.test(apiOrigin)) {
@@ -28,7 +29,7 @@ export const parseCoolifyProductionTarget = (env) => {
             throw new Error('invalid');
         }
 
-        const expectedUuid = env.COOLIFY_PROD_APPLICATION_UUID;
+        const expectedUuid = env.COOLIFY_STAGING_APPLICATION_UUID;
         if (typeof expectedUuid !== 'string'
             || !expectedUuid
             || expectedUuid.length > 128
@@ -36,7 +37,7 @@ export const parseCoolifyProductionTarget = (env) => {
             throw new Error('invalid');
         }
 
-        const webhook = env.COOLIFY_PROD_WEBHOOK;
+        const webhook = env.COOLIFY_STAGING_WEBHOOK;
         if (typeof webhook !== 'string' || webhook.trim() !== webhook || /[\x00-\x20\x7f]/.test(webhook)) {
             throw new Error('invalid');
         }
@@ -53,30 +54,26 @@ export const parseCoolifyProductionTarget = (env) => {
         if (keys.some((key) => !['uuid', 'force'].includes(key)) || new Set(keys).size !== keys.length) {
             throw new Error('invalid');
         }
-        const uuid = url.searchParams.get('uuid');
-        if (uuid !== expectedUuid) throw new Error('invalid');
+        if (url.searchParams.get('uuid') !== expectedUuid) throw new Error('invalid');
         if (url.searchParams.has('force') && !['true', 'false'].includes(url.searchParams.get('force'))) {
             throw new Error('invalid');
         }
         return {
             uuid: expectedUuid,
-            // El webhook es una capacidad de escritura. Jamás determina el
-            // destino que recibe el token de solo lectura: ese origen viene de
-            // una variable de environment separada, validada y de mínimo scope.
             applicationUrl: new URL(`/api/v1/applications/${expectedUuid}`, trustedApi.origin).href,
         };
     } catch {
-        throw new Error('TRUSTED_COOLIFY_PRODUCTION_TARGET_REQUIRED');
+        throw new Error('TRUSTED_COOLIFY_STAGING_TARGET_REQUIRED');
     }
 };
 
-export const verifyCoolifyProductionTarget = async ({ env = process.env, fetchImpl = globalThis.fetch } = {}) => {
-    const target = parseCoolifyProductionTarget(env);
+export const verifyCoolifyStagingTarget = async ({ env = process.env, fetchImpl = globalThis.fetch } = {}) => {
+    const target = parseCoolifyStagingTarget(env);
     let application;
     try {
         const response = await fetchImpl(target.applicationUrl, {
             method: 'GET',
-            headers: { accept: 'application/json', authorization: `Bearer ${env.COOLIFY_PROD_READ_TOKEN}` },
+            headers: { accept: 'application/json', authorization: `Bearer ${env.COOLIFY_STAGING_READ_TOKEN}` },
             redirect: 'error',
             signal: AbortSignal.timeout(5_000),
         });
@@ -90,9 +87,6 @@ export const verifyCoolifyProductionTarget = async ({ env = process.env, fetchIm
         throw new Error('COOLIFY_APPLICATION_MISMATCH');
     }
     if (application.git_commit_sha !== env.CANDIDATE_SHA) throw new Error('COOLIFY_COMMIT_NOT_PINNED');
-    // Nortex se publica desde el repositorio tanto con Dockerfile como con
-    // Docker Compose; los dos modos respetan git_commit_sha. No se acepta una
-    // imagen externa ni un build pack que pueda ignorar el pin Git.
     if (!['dockerfile', 'dockercompose'].includes(application.build_pack)) {
         throw new Error('COOLIFY_GIT_BUILD_PACK_REQUIRED');
     }
@@ -104,11 +98,11 @@ export const verifyCoolifyProductionTarget = async ({ env = process.env, fetchIm
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
     try {
-        const sha = await verifyCoolifyProductionTarget();
-        console.log(`Destino de producción fijado al candidato: ${sha}`);
+        const sha = await verifyCoolifyStagingTarget();
+        console.log(`Destino de staging fijado al candidato: ${sha}`);
     } catch (error) {
         const reason = error instanceof Error ? error.message : 'UNKNOWN_GATE_FAILURE';
-        console.error(`Compuerta de producción cerrada: ${reason}`);
+        console.error(`Compuerta de staging cerrada: ${reason}`);
         process.exitCode = 1;
     }
 }
