@@ -2870,7 +2870,7 @@
    y sumarla al contrato o usar desde el componente la tinta semántica
    correspondiente. La prueba frontendColorSemantics mantiene la matriz. */
 
-/* Marca y aliases verdes: el 700 todavía requiere tinta oscura. */
+/* Marca, aliases verdes y WhatsApp: el 700 todavía requiere tinta oscura. */
 :where(
   [class~="bg-brand"],
   [class~="bg-brand-600"],
@@ -2889,7 +2889,8 @@
   [class~="bg-purple-400"],
   [class~="bg-purple-500"],
   [class~="bg-violet-500"],
-  [class~="bg-nortex-accent"]
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
 ):is(
   [class~="text-white"],
   [class~="text-white/60"],
@@ -2951,7 +2952,8 @@
   [class~="hover:bg-indigo-600"],
   [class~="hover:bg-indigo-700"],
   [class~="hover:bg-purple-400"],
-  [class~="hover:bg-purple-500"]
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
 ):hover:is(
   [class~="text-white"],
   [class~="hover:text-white"],

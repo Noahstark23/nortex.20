@@ -92,7 +92,7 @@ describe('contrato semántico del tema frontend', () => {
 
     it('mantiene tinta AA sobre cada relleno sólido heredado', () => {
         const coverage = [
-            [rootToken('nx-on-brand'), ['#16C784', '#13B476', '#0F9461']],
+            [rootToken('nx-on-brand'), ['#16C784', '#13B476', '#0F9461', '#25D366', '#1EBE57']],
             [rootToken('nx-on-danger-solid'), ['#F0483E', '#EF4444']],
             [rootToken('nx-on-warning-solid'), ['#F5A524', '#D97706']],
             [rootToken('nx-on-info-solid'), ['#0284C7']],
@@ -107,9 +107,9 @@ describe('contrato semántico del tema frontend', () => {
 
     it('protege sólo los rellenos sólidos y sus cambios hover conocidos', () => {
         for (const className of [
-            'bg-brand', 'bg-emerald-500', 'bg-blue-600', 'bg-nortex-accent',
+            'bg-brand', 'bg-emerald-500', 'bg-blue-600', 'bg-nortex-accent', 'bg-whatsapp',
             'bg-danger', 'bg-red-500', 'bg-warning', 'bg-amber-600', 'bg-sky-600',
-            'hover:bg-brand-700', 'hover:bg-red-500', 'hover:bg-amber-600', 'hover:bg-sky-700',
+            'hover:bg-brand-700', 'hover:bg-whatsapp-hover', 'hover:bg-red-500', 'hover:bg-amber-600', 'hover:bg-sky-700',
         ]) {
             expect(contrastContract).toContain(`[class~="${className}"]`);
         }

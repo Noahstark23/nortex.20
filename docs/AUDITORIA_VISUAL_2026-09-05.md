@@ -66,7 +66,7 @@ no se fusionaron `--nx-danger` ni `--nx-warning` de forma global.
 
 El candidato local añade tintas de control explícitas y reglas de compatibilidad
 de selector exacto en `index.css`. Cubren los botones sólidos existentes de
-marca (`brand`, `emerald`, `blue`, etc.), danger/rose/red-500,
+marca (`brand`, `emerald`, `blue`, WhatsApp, etc.), danger/rose/red-500,
 warning/orange/amber-500/600 y sky-600, además de los hover que cruzan entre
 un tono claro y uno oscuro. Se preservan los rellenos con opacidad y los tonos
 ya legibles (`red-600+`, `amber-700+`, `sky-700+`, `green-800+`).
