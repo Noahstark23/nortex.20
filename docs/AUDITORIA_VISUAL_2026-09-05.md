@@ -56,6 +56,47 @@ sitemap. La advertencia de Browserslist desactualizado y el chunk `xlsx` mayor
 de 500 kB quedan como deuda de mantenimiento; no fueron introducidos por esta
 ronda.
 
+## Reparación P0: tinta ilegible sobre rellenos sólidos
+
+La revisión posterior encontró combinaciones reales de `text-white` con
+rellenos verde, rojo, ámbar y azul cuyo contraste no alcanzaba AA. La causa no
+era una paleta uniforme: Tailwind remapea algunos aliases a los canales RGB de
+marca/estado, mientras los tokens de texto de estado tienen otro uso. Por eso
+no se fusionaron `--nx-danger` ni `--nx-warning` de forma global.
+
+El candidato local añade tintas de control explícitas y reglas de compatibilidad
+de selector exacto en `index.css`. Cubren los botones sólidos existentes de
+marca (`brand`, `emerald`, `blue`, etc.), danger/rose/red-500,
+warning/orange/amber-500/600 y sky-600, además de los hover que cruzan entre
+un tono claro y uno oscuro. Se preservan los rellenos con opacidad y los tonos
+ya legibles (`red-600+`, `amber-700+`, `sky-700+`, `green-800+`).
+
+La matriz ejecutable ahora comprueba contraste AA de cada tinta y que el guard
+no use selectores amplios ni fondos con opacidad. En el mismo checkout del
+candidato pasaron:
+
+```sh
+mise exec -- npx --no-install prisma generate --schema backend/prisma/schema.prisma
+mise exec -- npx --no-install tsc --noEmit
+mise exec -- npm test -- --run \
+  tests/frontendColorSemantics.test.ts \
+  tests/frontendCriticalPress.test.ts \
+  tests/deliveryVisualContext.test.ts \
+  tests/fluidMotion.test.ts \
+  tests/fluidSheet.test.tsx \
+  tests/lightWorkspaceFormContrast.test.ts \
+  tests/shellThemeContrast.test.ts
+mise exec -- npm run check:design
+mise exec -- npm run build
+```
+
+Resultado: 45/45 pruebas focales, TypeScript, sistema de diseño y build
+correctos. También se recorrió localmente una venta de demostración hasta la
+selección de pago; los botones verdes mostraron tinta oscura legible. Esa
+demostración no escribió datos reales y no acredita los módulos autenticados:
+la validación de cada ruta permanece pendiente de tenant QA y del SHA que llegue
+a staging.
+
 ## Límites que impiden declarar “todo Nortex aprobado”
 
 - Las 33 rutas autenticadas no recibieron todavía un recorrido visual real con

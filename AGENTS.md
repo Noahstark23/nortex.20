@@ -45,6 +45,21 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 - Los servicios locales viven en `~/Developer/Nortex`; no uses el Compose de
   producción para desarrollo general ni inicies su servicio de backup.
 
+## Contraste y evidencia visual
+
+- Los aliases Tailwind no son una garantía de contraste: `blue`, `emerald`,
+  `orange` y `rose` se remapean a tonos propios. Un relleno sólido con
+  `text-white` debe medirse en su estado base y hover; usar la tinta semántica
+  correspondiente o ampliar el contrato exacto en `index.css` y
+  `tests/frontendColorSemantics.test.ts`.
+- No cambies ni unifiques a ciegas los tokens de estado: las utilidades
+  `bg-danger`/`bg-warning` consumen canales RGB distintos del texto de estado.
+  Mantén el alcance de los guards a clases opacas exactas; nunca a selectores
+  amplios ni fondos con opacidad.
+- Capturas o el demo local prueban un escenario visual, no el producto entero.
+  Antes de una release, repite los recorridos de tenant QA sobre el SHA
+  candidato y registra probado, pendiente y riesgo en la auditoría visual.
+
 ## Reglas de revisión
 
 - Toda lectura/escritura de negocio debe quedar aislada por `tenantId` obtenido del

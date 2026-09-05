@@ -43,6 +43,12 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
 - Backend: `tsx backend/server.ts` (sin build). Verificar con `npx tsc --noEmit`.
 - Frontend: `npm run build` (Vite + PWA). Producción usa `npm run build:seo`
   (build + prerender por-ruta: 70+ HTML estáticos + sitemap — ver `scripts/prerender.ts`).
+- Contraste: los aliases Tailwind de color no representan una paleta independiente;
+  `blue`/`emerald` se remapean a marca y `orange`/`rose` a estados. Para un
+  relleno sólido con texto claro, medir estado base y hover, usar tinta
+  semántica AA y cubrirlo en `tests/frontendColorSemantics.test.ts`. Los guards
+  de compatibilidad en `index.css` deben usar clases exactas; no tocar fondos
+  translúcidos ni fusionar los tokens de estado con sus canales RGB.
 - Deploy: Docker + `prisma db push` (aplica **solo DDL**; los backfills de datos van
   en la aplicación con patrón perezoso). Prisma pinneado a **6.4.1** — correr
   `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
