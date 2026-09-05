@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
 import {
@@ -16,16 +17,17 @@ import {
  * Smoke de concurrencia contra MySQL 8 real.
  *
  * No corre dentro de `npm test`: el wrapper
- * `scripts/test-cash-close-journal-mysql.sh` crea una BD/usuario efimeros en
- * `nortex-mysql-dev`, activa esta suite y siempre limpia al terminar.
+ * `npm run test:integration:required` exige una BD QA descartable local y
+ * activa esta suite. Cada corrida crea fixtures con identidad independiente.
  */
 const mysqlEnabled = process.env.NORTEX_MYSQL_INTEGRATION === '1';
 const describeMysql = mysqlEnabled ? describe : describe.skip;
 
-const TENANT_ID = 'tenant-pr01-mysql';
-const USER_ID = 'user-pr01-mysql';
-const CASH_ACCOUNT_ID = 'account-cash-pr01';
-const SALES_ACCOUNT_ID = 'account-sales-pr01';
+const fixtureId = randomUUID();
+const TENANT_ID = `tenant-pr01-${fixtureId}`;
+const USER_ID = `user-pr01-${fixtureId}`;
+const CASH_ACCOUNT_ID = `cash-pr01-${fixtureId}`;
+const SALES_ACCOUNT_ID = `sales-pr01-${fixtureId}`;
 const POSTING_DATE = new Date('2026-08-31T15:00:00.000Z');
 
 const journalDb = prisma as unknown as JournalPostingDatabase;
@@ -97,7 +99,7 @@ describeMysql('PR-01 cash close + journal en MySQL 8 real', () => {
             data: {
                 id: TENANT_ID,
                 businessName: 'Nortex PR-01 MySQL Integration',
-                taxId: 'PR01-MYSQL-EPHEMERAL',
+                taxId: `PR01-${fixtureId}`,
                 theftAlertThreshold: '500.00',
             },
         });
@@ -324,7 +326,7 @@ describeMysql('PR-01 cash close + journal en MySQL 8 real', () => {
     }, 30_000);
 
     it('dos cierres identicos concurrentes dejan un SHIFT_CLOSED y un replay', async () => {
-        const shiftId = 'shift-pr01-identical';
+        const shiftId = `shift-identical-${fixtureId}`;
         const eventId = '9e742da8-d440-4b7f-9ff4-629827a77812';
         await createCloseFixture(shiftId);
         const input = {
@@ -360,7 +362,7 @@ describeMysql('PR-01 cash close + journal en MySQL 8 real', () => {
     }, 15_000);
 
     it('dos cierres distintos concurrentes dejan un ganador y un conflicto 409 sin segunda auditoria', async () => {
-        const shiftId = 'shift-pr01-conflict';
+        const shiftId = `shift-conflict-${fixtureId}`;
         const eventId = '06889a39-617c-4c14-bb9a-a01642209fee';
         await createCloseFixture(shiftId);
         const context = { tenantId: TENANT_ID, userId: USER_ID, role: 'CASHIER' };

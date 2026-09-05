@@ -1,10 +1,12 @@
 import { EmptyState, TableEmptyState, type EmptyStateProps } from './ui/EmptyState';
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 // xlsx (~430 KB) se importa dinámicamente en handleExport — fuera del bundle inicial.
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
 import { trackEvent } from '../utils/analytics';
+import { batchExpiryPresentation } from '../utils/batchExpiry';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
 import { buildCreateProductPayload, productValidationMessage } from '../utils/productForm';
 import {
@@ -258,7 +260,10 @@ export default function Inventory() {
     const [seeding, setSeeding] = useState(false);
     const [seedError, setSeedError] = useState('');
     const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
+    const [inventoryParams] = useSearchParams();
+    const alertSearch = inventoryParams.get('search') ?? '';
+    const [searchTerm, setSearchTerm] = useState(alertSearch);
+    useEffect(() => { setSearchTerm(alertSearch); }, [alertSearch]);
     const [debouncedSearch, setDebouncedSearch] = useState('');
 
     // Paginación / filtros / orden (server-side)
@@ -3315,8 +3320,9 @@ export default function Inventory() {
                                         </tr>
                                     ) : (
                                         batchesData.map((batch) => {
-                                            const isExpired = new Date(batch.expiryDate) < new Date();
-                                            const isExpiringSoon = new Date(batch.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+                                            const expiry = batchExpiryPresentation(batch.expiryDate);
+                                            const isExpired = expiry.status === 'expired';
+                                            const isExpiringSoon = expiry.status === 'expiring' || expiry.status === 'unknown';
 
                                             return (
                                                 <tr key={batch.id} className="hover:bg-slate-700/20 transition-colors">
@@ -3325,7 +3331,7 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-6 py-4 text-sm">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
-                                                            {isExpired ? '' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {isExpired ? 'Vencido · ' : ''}{expiry.label}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-sm text-right font-bold text-white">

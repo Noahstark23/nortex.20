@@ -1,5 +1,13 @@
 # ADR-2026-08-27: Backups off-site y evolución del monolito para WhatsApp/RAG
 
+> **Revisión 2026-09-04:** se conserva la decisión incremental de esta ADR.
+> El [plan maestro](../PLAN_TRANSFORMACION_TOTAL_2026.md) coordina prioridades y la
+> [auditoría general](../AUDITORIA_GENERAL_2026-09-04.md) sustituye su fotografía del código.
+> Identidad privada, inbox/outbox y handoff son gates del primer piloto, aun con
+> una instancia. Backups off-site, restore, despliegue, precios y capacidad de
+> proveedores descritos abajo son evidencia/decisiones de su fecha: no se verificaron
+> operativamente en esta revisión. RPO/RTO son objetivos, no resultados medidos.
+
 **Estado:** Aceptado
 
 **Fecha:** 2026-08-27

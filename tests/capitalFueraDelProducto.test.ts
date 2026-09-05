@@ -55,16 +55,16 @@ describe('el abono en efectivo sale de la caja, no de la billetera fintech', () 
         expect(rutaDePago).toContain('normalizeSupplierPaymentMethod(req.body?.method)');
         expect(rutaDePago).toContain('resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)');
         expect(rutaDePago).toContain('shiftId: turnoDelAbono?.id ?? null');
-        // Sin caja abierta el mensaje DICE que falta abrir caja.
-        expect(rutaDePago).toContain('MENSAJE_SIN_CAJA_ABIERTA');
-        expect(rutaDePago).toContain("CashSupplierPaymentError('SIN_CAJA_ABIERTA'");
+        // El servicio exige caja para pagos nuevos, después del replay.
+        // El recorrido HTTP de purchaseFlow prueba ambos casos con caja cerrada.
+        expect(servicio).toContain("SupplierPaymentError('NO_OPEN_SHIFT', 409, MENSAJE_SIN_CAJA_ABIERTA)");
     });
 
     it('el turno solo se exige cuando el abono es en efectivo', () => {
         // TRANSFER/CARD/QR liquidan contra Bancos: pedirles caja abierta
         // bloquearía un pago que no toca la gaveta.
         expect(rutaDePago).toMatch(/metodoDelAbono === 'CASH'\s*\n\s*\?\s*await resolverTurnoAbierto/u);
-        expect(rutaDePago).toContain("if (metodoDelAbono === 'CASH' && !turnoDelAbono)");
+        expect(rutaDePago).not.toContain("if (metodoDelAbono === 'CASH' && !turnoDelAbono)");
     });
 
     it('traduce los errores de la gaveta a su propio status, no a un 500 genérico', () => {

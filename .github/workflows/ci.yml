@@ -6,13 +6,24 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Permite ejecutar la misma compuerta después de configurar Coolify, sin
-  # necesitar un commit vacío ni saltarse las verificaciones de la release.
+  # Por defecto verifica y despliega solo staging. Producción requiere una
+  # intención manual para un SHA completo y la aprobación del environment.
   workflow_dispatch:
+    inputs:
+      production_approved:
+        description: 'Promover a producción el SHA indicado; requiere aprobación de production'
+        type: boolean
+        required: false
+        default: false
+      production_sha:
+        description: 'SHA completo (40 caracteres) autorizado para producción; debe ser el HEAD de main'
+        type: string
+        required: false
+        default: ''
 
 # Un push nuevo invalida cualquier promoción anterior que aún esté verificando
-# staging o esperando aprobación de producción. Así nunca se puede aprobar por
-# accidente un SHA que ya dejó de ser el HEAD de main.
+# staging o esperando aprobación de producción. Además, antes del webhook de
+# producción se vuelve a consultar main y a verificar staging por SHA.
 concurrency:
   group: nortex-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -46,7 +57,7 @@ jobs:
       # Pruebas de MUTACIÓN sobre los módulos de dinero: no basta con que los
       # tests pasen, tienen que MATAR bugs. Stryker introduce fallas (invierte
       # comparaciones, cambia signos, vacía cuerpos) y falla el CI si un mutante
-      # sobrevive por debajo del umbral. Alcance acotado a lógica pura → ~30 s.
+      # sobrevive por debajo del umbral. Alcance de lógica pura; duración variable.
       - name: Mutación (Stryker — módulos de dinero)
         run: npm run test:mutation
 
@@ -59,8 +70,47 @@ jobs:
           name: mutation-report
           path: reports/mutation/
           retention-days: 7
-      - name: Build frontend
-        run: npm run build
+      - name: Build frontend y prerender de producción
+        run: npm run build:seo
+
+  integration-required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: qa-local-only
+          MYSQL_DATABASE: nortex_qa
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pqa-local-only"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:qa-local-only@127.0.0.1:3306/nortex_qa?connection_limit=8
+      NORTEX_QA_DATABASE_ACK: disposable-database
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate --schema=backend/prisma/schema.prisma
+      - name: Preparar únicamente la base descartable
+        run: npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+      - name: HTTP y MySQL reales; cero casos omitidos
+        run: npm run test:integration:required
+      - name: Evidencia de integración
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-integration
+          path: reports/quality-integration/
+          retention-days: 7
 
   deploy-schema-smoke:
     runs-on: ubuntu-latest
@@ -229,7 +279,7 @@ jobs:
             'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
 
   # ── Despliegue con COMPUERTA: solo corre en main, cuando la variable
-  # NORTEX_DEPLOY_ENABLED vale "true", y después de verify + schema smoke.
+  # NORTEX_DEPLOY_ENABLED vale "true", y después de todas las compuertas.
   # Sin esa variable el job aparece SKIPPED (no como un falso deploy verde).
   # Cuando está habilitado, la configuración faltante falla de forma explícita.
   # Coolify Auto Deploy debe permanecer APAGADO: GitHub es la única compuerta.
@@ -239,7 +289,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       vars.NORTEX_DEPLOY_ENABLED == 'true'
-    needs: [verify, deploy-schema-smoke, backup-restore-smoke]
+    needs: [verify, integration-required, deploy-schema-smoke, backup-restore-smoke]
     runs-on: ubuntu-latest
     environment:
       name: staging
@@ -287,8 +337,10 @@ jobs:
     name: deploy-production
     if: >-
       github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      vars.NORTEX_DEPLOY_ENABLED == 'true'
+      github.event_name == 'workflow_dispatch' &&
+      vars.NORTEX_DEPLOY_ENABLED == 'true' &&
+      inputs.production_approved == true &&
+      inputs.production_sha == github.sha
     needs: [deploy-staging]
     runs-on: ubuntu-latest
     environment:
@@ -312,16 +364,28 @@ jobs:
             *) echo "::error::PROD_URL debe usar https://"; exit 1 ;;
           esac
 
+      # Corre después de la aprobación del environment. Los inputs viajan por
+      # env, nunca se interpolan como código shell. Un staging previo o una
+      # aprobación para un main antiguo no pueden autorizar el webhook.
+      - name: Autorizar PROD para el SHA vigente y staging verificado
+        env:
+          NORTEX_DEPLOY_ENABLED: ${{ vars.NORTEX_DEPLOY_ENABLED }}
+          PRODUCTION_APPROVED: ${{ inputs.production_approved }}
+          PRODUCTION_SHA: ${{ inputs.production_sha }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          COOLIFY_PROD_WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: node scripts/authorize-production-release.mjs
+
       - name: Desplegar PROD (webhook de Coolify)
         env:
           WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
           TOKEN: ${{ secrets.COOLIFY_TOKEN }}
         run: |
-          if [ -n "$TOKEN" ]; then
-            curl --fail --show-error --silent --max-time 30 --retry 3 \
-              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
-          else
-            curl --fail --show-error --silent --max-time 30 --retry 3 "$WEBHOOK"
+          test -n "$TOKEN" || { echo "::error::Falta COOLIFY_TOKEN"; exit 1; }
+          if ! curl --fail --silent --max-time 30 --retry 3 --output /dev/null \
+            -H "Authorization: Bearer $TOKEN" "$WEBHOOK"; then
+            echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
           fi
           echo "🚀 Deploy de prod disparado"
 

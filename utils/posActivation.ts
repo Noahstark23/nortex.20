@@ -98,7 +98,7 @@ const decimalFromDraft = (value: string): Decimal | null => {
 /**
  * Contrato del alta rápida del POS.
  *
- * Un artículo creado con nombre + precio es una unidad contable. Los productos
+ * Un artículo creado con nombre, precio y existencia es una unidad contable. Los productos
  * por peso/volumen se configuran explícitamente en Inventario; no se degradan a
  * `saleMode: null`, porque ese legado hace que el botón + sume 0.0001.
  *
@@ -127,13 +127,17 @@ export function validateQuickProductDraft(
     }
 
     let stock: Decimal | null = null;
-    try {
-        stock = validateNonNegativeQuantity(draft.stock.trim() === '' ? '0' : draft.stock, {
-            saleMode: 'COUNTED',
-            quantityStep: '1',
-        });
-    } catch (error) {
-        errors.stock = error instanceof Error ? error.message : 'La existencia no es válida.';
+    if (draft.stock.trim() === '') {
+        errors.stock = 'Ingresá la existencia real (0 si no tenés).';
+    } else {
+        try {
+            stock = validateNonNegativeQuantity(draft.stock, {
+                saleMode: 'COUNTED',
+                quantityStep: '1',
+            });
+        } catch (error) {
+            errors.stock = error instanceof Error ? error.message : 'La existencia no es válida.';
+        }
     }
 
     if (Object.keys(errors).length > 0 || !price || !cost || !stock) {

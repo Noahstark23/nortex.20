@@ -28,7 +28,24 @@ import {
 } from '../services/pedidoTrackingService.js';
 import { motorizadoSafeSelect } from '../services/motorizadoIdentity.js';
 
-const router = express.Router();
+const DEFAULT_PEDIDO_LIST_LIMIT = 100;
+const MAX_PEDIDO_LIST_LIMIT = 200;
+const PEDIDO_PRODUCT_OPERATIONAL_SELECT = {
+    name: true,
+    sku: true,
+    imageUrl: true,
+} as const;
+
+
+export const PedidoListQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).optional().default(1),
+    limit: z.coerce.number().int().min(1).max(MAX_PEDIDO_LIST_LIMIT).optional().default(DEFAULT_PEDIDO_LIST_LIMIT),
+});
+
+const isLimitedPedidoDetailRole = (role?: string): boolean => (
+    role === 'CASHIER' || role === 'VIEWER'
+);
+
 
 export const PEDIDO_ESTADOS_VALIDOS = [
     'pendiente',
@@ -165,6 +182,9 @@ export const buildPublicPedidoConfirmationItems = (
     });
 };
 
+export const buildPedidosRouter = () => {
+    const router = express.Router();
+
 // POST /api/v1/pedidos -> (Público) Crear pedido desde el catálogo
 router.post('/', createPedidoLimiter, async (req: any, res: any) => {
     const parsed = CreatePedidoSchema.safeParse(req.body);
@@ -292,30 +312,50 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
 });
 
 // GET /api/v1/pedidos -> (Privado) Listar pedidos del Dashboard
-router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    try {
-        const pedidos = await prisma.pedido.findMany({
-            where: { tenantId: authReq.tenantId },
-            include: {
-                motorizado: { select: motorizadoSafeSelect },
-                items: {
-                    include: {
-                        producto: {
-                            select: { name: true, sku: true, imageUrl: true }
+    router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const parsedQuery = PedidoListQuerySchema.safeParse(req.query);
+        if (!parsedQuery.success) {
+            return res.status(400).json({ error: 'Parámetros de listado inválidos.' });
+        }
+
+        try {
+            const { page, limit } = parsedQuery.data;
+            const skip = (page - 1) * limit;
+            const pedidos = await prisma.pedido.findMany({
+                where: { tenantId: authReq.tenantId },
+                include: {
+                    motorizado: { select: motorizadoSafeSelect },
+                    items: {
+                        include: {
+                            producto: {
+                                select: PEDIDO_PRODUCT_OPERATIONAL_SELECT,
+                            }
                         }
                     }
-                }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+                },
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                skip,
+                take: limit + 1,
+            });
 
-        res.json({ pedidos });
-    } catch (error) {
-        console.error('Get Pedidos Error:', error);
-        res.status(500).json({ error: 'Error al listar los pedidos.' });
-    }
-});
+            const hasMore = pedidos.length > limit;
+            const pageItems = hasMore ? pedidos.slice(0, limit) : pedidos;
+
+            res.json({
+                pedidos: pageItems,
+                pageInfo: {
+                    page,
+                    limit,
+                    hasMore,
+                    nextPage: hasMore ? page + 1 : null,
+                },
+            });
+        } catch (error) {
+            console.error('Get Pedidos Error:', error);
+            res.status(500).json({ error: 'Error al listar los pedidos.' });
+        }
+    });
 
 // GET /api/v1/pedidos/:id -> (Privado) Detalle de pedido
 router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
@@ -323,13 +363,16 @@ router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, 
     const { id } = req.params;
 
     try {
+        const includeProduct = isLimitedPedidoDetailRole(authReq.role)
+            ? { select: PEDIDO_PRODUCT_OPERATIONAL_SELECT }
+            : true;
         const pedido = await prisma.pedido.findFirst({
             where: { id, tenantId: authReq.tenantId },
             include: {
                 motorizado: { select: motorizadoSafeSelect },
                 items: {
                     include: {
-                        producto: true
+                        producto: includeProduct
                     }
                 },
                 eventos: {
@@ -629,6 +672,7 @@ router.patch('/:id/motorizado', authenticate, checkRole(PEDIDO_WRITE_ROLES), asy
 
             return tx.pedido.findFirstOrThrow({
                 where: { id, tenantId: authReq.tenantId },
+                include: { motorizado: { select: motorizadoSafeSelect } },
             });
         });
 
@@ -645,4 +689,7 @@ router.patch('/:id/motorizado', authenticate, checkRole(PEDIDO_WRITE_ROLES), asy
     }
 });
 
-export default router;
+    return router;
+};
+
+export default buildPedidosRouter();

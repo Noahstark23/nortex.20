@@ -189,6 +189,8 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
     tenantAToken = registrationA.body.token;
     tenantAId = registrationA.body.tenant.id;
     tenantAUserId = registrationA.body.user.id;
+    // CASH debe llegar a la conciliación con una caja real abierta, no solo wallet.
+    expectStatus(await post('/api/shifts/open', { initialCash: 1000 }), 200);
 
     const registrationB = await post('/api/auth/register', {
       companyName: `QA Procurement 2B ${runId}`,

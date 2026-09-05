@@ -2344,7 +2344,7 @@
    botones descendientes, evitando la regresión de texto verde sobre CTA verde. */
 
 .nx-public-page {
-  min-height: 100vh;
+  min-height: 100dvh;
   min-height: 100dvh;
   color-scheme: light;
   background: var(--nx-public-canvas);
@@ -2639,7 +2639,7 @@
 .nx-public-loading,
 .nx-public-prerender {
   box-sizing: border-box;
-  min-height: 100vh;
+  min-height: 100dvh;
   background: var(--nx-public-canvas);
   color: var(--nx-public-text);
   font-family: var(--nx-font);

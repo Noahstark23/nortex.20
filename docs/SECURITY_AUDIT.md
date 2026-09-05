@@ -1,5 +1,11 @@
 # Auditoría de Seguridad e Integridad — Nortex POS
 
+> **Revalidación 2026-09-04:** el cuerpo conserva el análisis histórico de su fecha.
+> La evidencia actual está en [AUDITORIA_GENERAL_2026-09-04.md](AUDITORIA_GENERAL_2026-09-04.md)
+> y la prioridad en [PLAN_TRANSFORMACION_TOTAL_2026.md](PLAN_TRANSFORMACION_TOTAL_2026.md).
+> No ejecutar una receta antigua sin contrastarla con código, pruebas y reglas de integridad.
+> Estado local, staging y producción se registran por separado.
+
 Auditoría de las **6 capas** del Security & Integrity Loop sobre todo el backend
 (`backend/server.ts`, `backend/routes/*`, `backend/services/*`, `backend/prisma/schema.prisma`),
 realizada por 3 auditorías en paralelo + verificación manual. Fecha: 2026-06.

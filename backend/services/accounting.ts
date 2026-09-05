@@ -12,6 +12,7 @@ import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
 import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
 import prisma from '../lib/prisma';
+import { settledPaymentAccount } from '../lib/paymentAccounts';
 import {
     FISCAL_REGIME_GENERAL,
     resolveSaleFiscalAmounts,
@@ -91,11 +92,11 @@ const CHART_OF_ACCOUNTS = [
 // SEED: Crear catálogo automáticamente para un tenant
 // ==========================================
 
-export async function seedChartOfAccounts(tenantId: string): Promise<void> {
+export async function seedChartOfAccounts(tenantId: string, client: Pick<Prisma.TransactionClient, 'account'> = prisma): Promise<void> {
     // Idempotente y AUTO-SANABLE: createMany skipDuplicates agrega solo las
     // cuentas faltantes (el @@unique(tenantId,code) las dedupe). Así un tenant
     // ya sembrado recibe cuentas NUEVAS del catálogo (ej. 1.1.6) sin migración.
-    const result = await prisma.account.createMany({
+    const result = await client.account.createMany({
         data: CHART_OF_ACCOUNTS.map(a => ({
             tenantId,
             code: a.code,
@@ -116,14 +117,14 @@ export async function seedChartOfAccounts(tenantId: string): Promise<void> {
 // HELPERS
 // ==========================================
 
-async function getAccount(tenantId: string, code: string) {
-    const account = await prisma.account.findUnique({
+async function getAccount(tx: Pick<Prisma.TransactionClient, 'account'>, tenantId: string, code: string) {
+    const account = await tx.account.findUnique({
         where: { tenantId_code: { tenantId, code } }
     });
     if (!account) {
         // Auto-seed if missing
-        await seedChartOfAccounts(tenantId);
-        return prisma.account.findUnique({
+        await seedChartOfAccounts(tenantId, tx);
+        return tx.account.findUnique({
             where: { tenantId_code: { tenantId, code } }
         });
     }
@@ -214,7 +215,7 @@ export async function createJournalEntry(
     // anterior disparaba esos seeds en paralelo y el asiento moría.
     const accounts: Awaited<ReturnType<typeof getAccount>>[] = [];
     for (const l of lines) {
-        accounts.push(await getAccount(tenantId, l.accountCode));
+        accounts.push(await getAccount(tx, tenantId, l.accountCode));
     }
 
     // A4: si algún código NO existe en el catálogo (ni tras el auto-seed), se
@@ -329,7 +330,7 @@ export function buildSaleJournalLines(
         throw new Error('El saldo a favor aplicado debe estar entre cero y el total de la venta');
     }
     const tenderAmount = normalizedTotal.minus(storeCreditApplied);
-    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
+    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : settledPaymentAccount(paymentMethod);
     return [
         ...(tenderAmount.greaterThan(0)
             ? [{ accountCode: cashAccount, debit: tenderAmount.toNumber(), credit: 0 }]
@@ -431,7 +432,7 @@ export function buildPaymentJournalLines(amount: Decimal.Value, paymentMethod: C
     if (normalizedAmount.decimalPlaces() > 2 || normalizedAmount.greaterThan('99999999.99')) {
         throw new Error('amount no cabe en el rango monetario permitido');
     }
-    const settlementAccount = paymentMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    const settlementAccount = settledPaymentAccount(paymentMethod);
     return [
         { accountCode: settlementAccount, debit: normalizedAmount.toNumber(), credit: 0 },
         { accountCode: '1.1.3', debit: 0, credit: normalizedAmount.toNumber() },
@@ -991,7 +992,7 @@ export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJourna
         ? '2.1.14'
         : input.refundPending
         ? '2.1.13'
-        : input.refundMethod === 'CASH' ? '1.1.1' : '1.1.2';
+        : settledPaymentAccount(input.refundMethod);
     return [
         { accountCode: '4.1.2', debit: fiscalAmounts.netRevenue.toNumber(), credit: 0 },
         { accountCode: '2.1.2', debit: fiscalAmounts.vatAmount.toNumber(), credit: 0 },

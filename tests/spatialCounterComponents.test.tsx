@@ -23,34 +23,24 @@ const martillo: Product = {
 };
 
 describe('Spatial Counter en componentes de Caja Nica', () => {
-    it('separa reconocimiento, precio y existencia y confirma la pulsación', () => {
+    it('muestra precio y existencia, y confirma solo una cantidad aceptada por el POS', () => {
         const onAdd = vi.fn();
-        const { container } = render(
-            <CajaNicaCatalog
-                products={[martillo]}
-                totalProducts={1}
-                categories={['Todos', 'Herramientas']}
-                selectedCategory="Todos"
-                searchTerm=""
-                blockedProductIds={new Set()}
-                onCategoryChange={vi.fn()}
-                onAdd={onAdd}
-                onBlocked={vi.fn()}
-                onShowMore={vi.fn()}
-            />,
-        );
-
-        expect(container.querySelector('.nx-catalog-plane')).toBeTruthy();
-        expect(container.querySelector('.nx-catalog-card-media')).toBeTruthy();
-        expect(container.querySelector('.nx-catalog-card-content')).toBeTruthy();
-        expect(container.querySelector('.nx-catalog-card-price')?.textContent).toBe('C$ 275.00');
-        expect(container.querySelector('.nx-catalog-card-stock')?.textContent).toContain('48 en existencia');
-
+        const props = { products: [martillo], totalProducts: 1, categories: ['Todos', 'Herramientas'],
+            selectedCategory: 'Todos', searchTerm: '', blockedProductIds: new Set<string>(),
+            onCategoryChange: vi.fn(), onAdd, onBlocked: vi.fn(), onShowMore: vi.fn() };
+        const { container, rerender } = render(<CajaNicaCatalog {...props} />);
+        expect(screen.getByText('Martillo de uña')).toBeTruthy();
+        expect(screen.getByText('C$ 275.00')).toBeTruthy();
+        expect(screen.getByText('48 en existencia · unidad')).toBeTruthy();
+        expect(container.querySelector('img')).toBeNull();
         const card = screen.getByRole('button', { name: /Agregar Martillo de uña/i });
         fireEvent.click(card);
-
         expect(onAdd).toHaveBeenCalledOnce();
+        expect(card.getAttribute('data-selected')).toBeNull();
+        rerender(<CajaNicaCatalog {...props} quantitiesByProduct={new Map([['martillo-1', 1]])} />);
         expect(card.getAttribute('data-selected')).toBe('true');
+        expect(card.getAttribute('data-in-cart')).toBe('true');
+        expect(screen.getByText('En la venta: 1 unidad')).toBeTruthy();
         expect(card.className).toContain('nx-fluid-press');
     });
 

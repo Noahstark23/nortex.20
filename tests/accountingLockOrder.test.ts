@@ -91,7 +91,7 @@ describe('orden canónico de locks contables', () => {
             $queryRaw: queryRaw,
             journalEntry: { create: journalEntryCreate },
             journalLine: { create: journalLineCreate },
-            account: { update: accountUpdate },
+            account: { findUnique: db.accountFindUnique, update: accountUpdate },
         };
 
         await createJournalEntry(
@@ -126,7 +126,7 @@ describe('orden canónico de locks contables', () => {
             $queryRaw: vi.fn().mockResolvedValue([]),
             journalEntry: { create: vi.fn() },
             journalLine: { create: vi.fn() },
-            account: { update: vi.fn() },
+            account: { findUnique: db.accountFindUnique, update: vi.fn() },
         };
 
         await expect(createJournalEntry(

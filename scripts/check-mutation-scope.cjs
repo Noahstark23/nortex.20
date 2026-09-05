@@ -21,6 +21,7 @@
  */
 const fs = require('fs');
 const path = require('path');
+const ts = require('typescript');
 
 const REPORT = path.join(__dirname, '..', 'reports', 'mutation', 'mutation.json');
 
@@ -117,6 +118,9 @@ const PISO_MUTANTES = {
     // netos, utilidad, ticket, redondeo y prorrateo exacto de devoluciones.
     // Corrida dirigida final: 73/73 killed, 0 survived, 0 timeout y
     // 0 NoCoverage (100.00%), sin rangos ni ignores.
+    // moneyUsd completo produce exactamente un ArrowFunction con Stryker 9.6.1.
+    // Medido killed; el contrato AST también protege su firma y cuerpo completos.
+    'backend/lib/shiftCloseReport.ts': 1,
     'backend/lib/reportMoney.ts': 73,
     // Agrupación exacta de cantidades vendidas: 67/67.
     'backend/lib/salesQuantityReport.ts': 67,
@@ -238,16 +242,141 @@ const PISO_MUTANTES = {
     'backend/services/legacyShiftCloseService.ts': 9,
     // JSON canónico de cierre (NIO 2dp, USD 4dp, notas normalizadas): 8/8.
     'backend/validation/schemas.ts': 8,
-    // Asientos puros de venta con crédito de tienda, abonos, pago a proveedor,
-    // compra+PPV y devolución: 205/205, más 7/7 del orden canónico de locks;
-    // 212/212 después de realinear los seis rangos integrados. La factura ligada a OC deja
-    // Inventario al costo recibido y separa variación favorable/desfavorable
-    // en 5.1.3, incluidos bordes CUOTA_FIJA.
-    'backend/services/accounting.ts': 212,
+    // Los siete cuerpos previos pasan de 212 a 199 al centralizar selectores
+    // de medios de pago (venta -1, abono -6, devolución -6), no por recorte.
+    // Movimientos de caja añade 33; corrida dirigida: 232/232 killed.
+    // El piso agregado SUBE y los pisos AST de cada función impiden que la
+    // ampliación oculte otra función perdida. Evidencia en el runbook de release.
+    'backend/services/accounting.ts': 232,
+    'backend/lib/paymentAccounts.ts': 11,
     // Reglas cruzadas RETURN/VOID: 50/50 sobre el superRefine autoritativo.
     'backend/validation/saleCorrectionSchemas.ts': 50,
 };
 
+// Los totales por archivo no detectan una función perdida si otra crece.
+// Cada función exige su declaración COMPLETA en mutate y su propio piso.
+// La reducción 212 → 199 anterior a ampliar caja se explica función por función
+// en docs/releases/2026-09-04-production-gate.md; no fue un rango truncado.
+const FUNCTION_FLOORS = {
+    'backend/services/accounting.ts': {
+        canonicalJournalAccountLockOrder: 7,
+        buildSaleJournalLines: 40,
+        buildPaymentJournalLines: 25,
+        buildSupplierPaymentJournalLines: 12,
+        buildPurchaseJournalLines: 64,
+        returnMoney: 10,
+        buildReturnJournalLines: 41,
+        cashMovementJournalLines: 33,
+    },
+    'backend/lib/paymentAccounts.ts': { settledPaymentAccount: 11 },
+    'backend/validation/schemas.ts': { canonicalizeCloseShiftPayload: 8 },
+    'backend/lib/shiftCloseReport.ts': { moneyUsd: 1 },
+};
+
+/** Pure checker: fixtures exercise negative cases without reading Stryker's
+ * instrumented working copy during its own dry-run. Report positions are
+ * one-based; config columns are zero-based and include their endpoint. */
+function checkFunctionScopes({ config, report, readSource, floors = FUNCTION_FLOORS }) {
+    const failures = [];
+    const counts = {};
+    const mutate = config.mutate;
+    if (!Array.isArray(mutate) || mutate.some((entry) => typeof entry !== 'string' || entry.startsWith('!'))) {
+        return { failures: ['mutate debe declarar rangos positivos explícitos, sin exclusiones.'], counts };
+    }
+    for (const [file, functions] of Object.entries(floors)) {
+        const fail = (message) => failures.push(`${file}: ${message}`);
+        const keys = Object.keys(report.files ?? {}).filter((key) => key === file || key.endsWith(`/${file}`));
+        if (keys.length !== 1) {
+            fail('reporte ausente o ambiguo.');
+            continue;
+        }
+        const source = readSource(file);
+        const reported = report.files[keys[0]];
+        if (reported.source !== source) {
+            fail('el reporte no corresponde al código actual; ejecutar de nuevo la mutación.');
+            continue;
+        }
+        const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+        if (ast.parseDiagnostics.length) {
+            fail('TypeScript inválido; no se puede demostrar el alcance.');
+            continue;
+        }
+        const lines = ast.getLineStarts();
+        const intervals = [];
+        for (const entry of mutate) {
+            if (entry === file) {
+                intervals.push([0, source.length]);
+            } else if (entry.startsWith(`${file}:`)) {
+                const match = entry.slice(file.length).match(/^:(\d+)(?::(\d+))?-(\d+)(?::(\d+))?$/);
+                const first = match && Number(match[1]);
+                const last = match && Number(match[3]);
+                const firstColumn = Number(match?.[2] ?? 0);
+                const lastColumn = match?.[4] === undefined ? undefined : Number(match[4]);
+                if (!first || !last || first > last || first > lines.length || last > lines.length) {
+                    fail('rango explícito inválido.');
+                    continue;
+                }
+                const start = lines[first - 1] + firstColumn;
+                const end = lastColumn === undefined ? (lines[last] ?? source.length) : lines[last - 1] + lastColumn + 1;
+                if (start >= end || start >= (lines[first] ?? source.length) || end > (lines[last] ?? source.length)) {
+                    fail('columnas del rango fuera de la línea.');
+                    continue;
+                }
+                intervals.push([start, end]);
+            }
+        }
+        intervals.sort((a, b) => a[0] - b[0]);
+        const declarations = [];
+        for (const statement of ast.statements) {
+            if (ts.isFunctionDeclaration(statement) && statement.name && statement.body) {
+                declarations.push({ name: statement.name.text, node: statement, cover: statement });
+            } else if (ts.isVariableStatement(statement)) {
+                for (const declaration of statement.declarationList.declarations) {
+                    if (ts.isIdentifier(declaration.name) && declaration.initializer &&
+                        (ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer))) {
+                        declarations.push({ name: declaration.name.text, node: declaration, cover: statement });
+                    }
+                }
+            }
+        }
+        const reportOffset = (position) => {
+            if (!position || !Number.isInteger(position.line) || !Number.isInteger(position.column) ||
+                position.line < 1 || position.line > lines.length || position.column < 1) return NaN;
+            const offset = lines[position.line - 1] + position.column - 1;
+            return offset <= (lines[position.line] ?? source.length) ? offset : NaN;
+        };
+        const mutants = (reported.mutants ?? []).map((mutant) => ({
+            start: reportOffset(mutant.location?.start), end: reportOffset(mutant.location?.end), status: mutant.status,
+        }));
+        if (mutants.some((mutant) => !Number.isFinite(mutant.start) || !Number.isFinite(mutant.end) || mutant.end <= mutant.start)) {
+            fail('ubicación de mutante inválida.');
+        }
+        for (const [name, floor] of Object.entries(functions)) {
+            const matches = declarations.filter((declaration) => declaration.name === name);
+            if (matches.length !== 1) {
+                fail(`${name}: declaración ausente o duplicada.`);
+                continue;
+            }
+            const start = matches[0].node.getStart(ast);
+            const end = matches[0].node.getEnd();
+            let coveredUntil = matches[0].cover.getStart(ast);
+            for (const [from, to] of intervals) {
+                if (from <= coveredUntil && to > coveredUntil) coveredUntil = to;
+            }
+            if (coveredUntil < matches[0].cover.getEnd()) fail(`${name}: mutate no cubre la declaración completa (firma y cuerpo).`);
+            const scoped = mutants.filter((mutant) => mutant.start >= start && mutant.end <= end);
+            if (scoped.some((mutant) => mutant.status === 'Ignored' || mutant.status === 'CompileError')) {
+                fail(`${name}: contiene mutantes ignorados o no compilables; no acreditan conducta.`);
+            }
+            const count = scoped.filter((mutant) => mutant.status !== 'Ignored' && mutant.status !== 'CompileError').length;
+            counts[`${file}#${name}`] = count;
+            if (count < floor) fail(`${name}: ${count} mutantes < piso ${floor}.`);
+        }
+    }
+    return { failures, counts };
+}
+
+function main() {
 if (!fs.existsSync(REPORT)) {
     console.error(`❌ No se encontró el reporte de mutación en ${REPORT}.`);
     console.error('   ¿Corrió `stryker run` con el reporter "json" activo?');
@@ -257,6 +386,11 @@ if (!fs.existsSync(REPORT)) {
 const report = JSON.parse(fs.readFileSync(REPORT, 'utf-8'));
 const archivos = report.files ?? {};
 const fallas = [];
+const functionScopes = checkFunctionScopes({
+    config: JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'stryker.config.json'), 'utf-8')),
+    report,
+    readSource: (file) => fs.readFileSync(path.join(__dirname, '..', file), 'utf-8'),
+});
 
 for (const [ruta, piso] of Object.entries(PISO_MUTANTES)) {
     // Las claves del reporte pueden venir absolutas o relativas según el entorno.
@@ -267,7 +401,7 @@ for (const [ruta, piso] of Object.entries(PISO_MUTANTES)) {
     }
 }
 
-if (fallas.length > 0) {
+if (fallas.length > 0 || functionScopes.failures.length > 0) {
     console.error('\n❌ ALCANCE DE MUTACIÓN ROTO — la red de seguridad de dominio perdió cobertura.\n');
     for (const f of fallas) {
         console.error(
@@ -276,6 +410,7 @@ if (fallas.length > 0) {
                 : `   · ${f.ruta}: ${f.cantidad} mutantes < ${f.piso} esperados.`
         );
     }
+    for (const failure of functionScopes.failures) console.error(`   · ${failure}`);
     console.error('\n   Causa más común: un rango de líneas de stryker.config.json quedó desfasado');
     console.error('   porque la función se movió. Revisá que el rango cubra la función completa.');
     console.error('   NO bajes los pisos de scripts/check-mutation-scope.cjs para que esto pase.\n');
@@ -284,3 +419,8 @@ if (fallas.length > 0) {
 
 const total = Object.values(archivos).reduce((s, f) => s + (f.mutants?.length ?? 0), 0);
 console.log(`✅ Alcance de mutación intacto: ${total} mutantes sobre ${Object.keys(PISO_MUTANTES).length} módulos puros protegidos.`);
+console.log(`   ${Object.keys(functionScopes.counts).length} funciones con declaración completa y piso individual comprobados por AST.`);
+}
+
+module.exports = { checkFunctionScopes, FUNCTION_FLOORS, PISO_MUTANTES };
+if (require.main === module) main();

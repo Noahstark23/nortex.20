@@ -78,6 +78,17 @@ Salida: todo el workspace autenticado usa las mismas primitivas y estados.
 6. `npx tsc --noEmit`, pruebas focalizadas, `npm run check:design` y `npm run build`
    terminan correctamente con Node 22.23.2.
 
+## Compuerta P0 móvil y PWA
+
+- `index.html` debe emitir `viewport-fit=cover`; sin eso, `env(safe-area-inset-*)`
+  queda inutilizado en iPhone.
+- El shell y los contenedores con scroll deben contener el gesto con
+  `overscroll-behavior` para evitar pull-to-refresh y scroll chaining durante una venta.
+- Las entradas con `animate-in` deben compilar a CSS real; no se aceptan clases
+  muertas en overlays, menús o sheets operativos.
+- No quedan remanentes de `100vh` en sheets, modales y columnas móviles
+  operativas; ahí el estándar es `100dvh`.
+
 ## Archivos base
 
 - `nortex-tokens.css`: tokens y contextos.
@@ -89,4 +100,3 @@ Salida: todo el workspace autenticado usa las mismas primitivas y estados.
 - `components/pos/CajaNicaCheckout.tsx`: cobro presentacional.
 - `components/GuestPOS.tsx`: recorrido público verificable.
 - `utils/fluidMotion.ts` y `hooks/useFluidPress.ts`: física compartida.
-

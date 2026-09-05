@@ -76,6 +76,6 @@ describe('motorizadoIdentity', () => {
 
     it('reutiliza el select operativo y no serializa el modelo completo en pedidos', () => {
         expect(pedidosRoute).not.toMatch(/motorizado:\s*true/);
-        expect(pedidosRoute.match(/motorizado:\s*\{ select: motorizadoSafeSelect \}/g)).toHaveLength(2);
+        expect(pedidosRoute.match(/motorizado:\s*\{ select: motorizadoSafeSelect \}/g)).toHaveLength(3);
     });
 });

@@ -15,7 +15,7 @@ export const POS_SALE_ROLES = [
     'VENDEDOR',
 ];
 
-/** Clientes/CxC: lectura operativa desde CRM/POS y conciliación contable. */
+/** Búsqueda básica de clientes desde POS/CRM, incluida el alta operativa de EMPLOYEE. */
 export const CUSTOMER_READ_ROLES = [
     'OWNER',
     'ADMIN',
@@ -248,6 +248,15 @@ export const ACCOUNTING_READ_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
+    'ACCOUNTANT',
+];
+
+/** Expedientes salariales y vistas gerenciales: misma lectura que nómina y empleados. */
+export const HR_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
     'ACCOUNTANT',
 ];
 

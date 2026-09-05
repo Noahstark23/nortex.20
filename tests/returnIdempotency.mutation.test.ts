@@ -56,6 +56,25 @@ describe('contrato mutacional de la idempotencia de devoluciones', () => {
         expect(actual).toBe('79ec8111ea53000bbe7448628d4ed74bb16014f46968a5963eb20b00892e2c60');
     });
 
+    it('congela la huella v2 y normaliza la referencia de aprobación sin cambiar el replay', () => {
+        const approved = payload({ correctionRequestId: 'correction-approved-001' });
+        const canonicalHash = buildReturnPayloadHash(approved);
+        expect(canonicalHash).toBe('c4799afae27200725c6962d0e876cdb226b7ec927c23932bab682fcbf07393bb');
+        expect(buildReturnPayloadHash({ ...approved, correctionRequestId: '  correction-approved-001  ' })).toBe(canonicalHash);
+    });
+
+    it('otra aprobación para la misma venta no puede reutilizar el resultado de la anterior', () => {
+        const existing = { payloadHash: buildReturnPayloadHash(payload({ correctionRequestId: 'correction-approved-001' })) };
+        const differentApproval = buildReturnPayloadHash(payload({ correctionRequestId: 'correction-approved-002' }));
+        const error = captureResolutionError(() => assertMatchingReturnReplay(existing, differentApproval));
+        expect(error).toMatchObject({ code: 'RETURN_IDEMPOTENCY_CONFLICT', httpStatus: 409 });
+    });
+
+    it('una referencia de aprobación vacía sigue siendo la intención histórica v1', () => {
+        expect(buildReturnPayloadHash(payload({ correctionRequestId: '   ' })))
+            .toBe('79ec8111ea53000bbe7448628d4ed74bb16014f46968a5963eb20b00892e2c60');
+    });
+
     it('normaliza identidades vacías como ausentes sin confundir identidades reales', () => {
         const withoutIdentities = buildReturnPayloadHash(payload({
             items: [{ quantity: '1.0000' }],

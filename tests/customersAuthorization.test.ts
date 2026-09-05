@@ -72,6 +72,27 @@ describe('autorizacion del modulo de clientes', () => {
         expect(update.res.statusCode).toBe(403);
     });
 
+    it('EMPLOYEE conserva el selector POS pero no accede a cartera ni historiales enriquecidos', () => {
+        expect(runGuard(CUSTOMER_READ_ROLES, 'EMPLOYEE').next).toHaveBeenCalledOnce();
+        const portfolio = runGuard(CUSTOMER_HUB_READ_ROLES, 'EMPLOYEE');
+        expect(portfolio.next).not.toHaveBeenCalled();
+        expect(portfolio.res.statusCode).toBe(403);
+    });
+
+    it('preserva los lectores autorizados de cartera y rechaza bodega o roles desconocidos', () => {
+        for (const role of ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER', 'VENDEDOR', 'ACCOUNTANT']) {
+            expect(runGuard(CUSTOMER_HUB_READ_ROLES, role).next).toHaveBeenCalledOnce();
+        }
+        for (const role of ['BODEGUERO', 'UNKNOWN']) {
+            const portfolio = runGuard(CUSTOMER_HUB_READ_ROLES, role);
+            expect(portfolio.next).not.toHaveBeenCalled();
+            expect(portfolio.res.statusCode).toBe(403);
+        }
+        const unauthenticated = runGuard(CUSTOMER_HUB_READ_ROLES, '');
+        expect(unauthenticated.next).not.toHaveBeenCalled();
+        expect(unauthenticated.res.statusCode).toBe(401);
+    });
+
     it('reserva nombre y documento legal para roles administrativos', () => {
         expect(CUSTOMER_IDENTITY_UPDATE_ROLES).toEqual(['OWNER', 'ADMIN', 'SUPER_ADMIN']);
         expect(CUSTOMER_CONTACT_UPDATE_ROLES).toEqual([
