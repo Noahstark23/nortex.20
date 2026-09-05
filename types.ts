@@ -12,6 +12,7 @@ export interface Product {
   price: number;
   costPrice: number; // NUEVO: Para calcular utilidad real
   stock: number;
+  minStock?: number | null;
   sku: string;
   category: string;
   // Foto del producto (opcional). El schema ya la tiene (`Product.imageUrl`);

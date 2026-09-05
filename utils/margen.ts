@@ -251,7 +251,9 @@ export function calcularEfectivoTurno(comp: ComponentesTurno): EfectivoTurno {
         .minus(agentOUTs)
         .toDecimalPlaces(2);
 
-    const efectivoUSD = initialCashUsd.plus(usdINs).minus(usdOUTs).toDecimalPlaces(2);
+    // La gaveta USD se persiste en Decimal(18,4); redondear a centavos
+    // aquí inventaría diferencias contra el conteo y los movimientos exactos.
+    const efectivoUSD = initialCashUsd.plus(usdINs).minus(usdOUTs).toDecimalPlaces(4);
 
     return {
         efectivoNIO,

@@ -18,6 +18,7 @@ import {
     CUSTOMER_PAYMENT_ROLES,
     CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_READ_ROLES,
+    HR_READ_ROLES,
     CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
     isCustomerUpdateAuthorized,
@@ -38,6 +39,8 @@ import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPoli
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
 import { isSameManaguaBusinessDay } from './lib/saleCorrections';
+import { parseProductRefreshIds } from './lib/productRefreshQuery';
+import offlineSaleEvidenceRoutes from './routes/offlineSaleEvidence';
 import {
     pagarFacturaProveedorEnCaja,
     registrarSalidaDeCajaPorCompra,
@@ -46,6 +49,7 @@ import {
 } from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
 import { closeShiftWithReport, ShiftCloseError } from './services/shiftCloseService';
+import { voidManualCashMovement, ManualCashMovementVoidError } from './services/manualCashMovementVoidService';
 import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
@@ -147,6 +151,7 @@ import {
     assertProductBatchExpiryIdentity,
     ProductBatchIdentityError,
 } from './lib/productBatchIdentity';
+import { buildAllowedOrigins, isAllowedOrigin } from './lib/allowedOrigins';
 import {
     QuotationItemError,
     resolveQuotationItems,
@@ -248,7 +253,8 @@ import {
     normalizeTenantCapabilities,
     suggestedCapabilitiesForBusinessType,
 } from '../utils/tenantCapabilities.js';
-import { isPlaceholderTaxId } from '../utils/tenantTaxId.js';
+import onboardingRouter from './routes/onboarding.js';
+import operationalAlertsRouter from './routes/operationalAlerts.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -288,21 +294,14 @@ app.set('trust proxy', 1);
 app.use(compression() as any);
 
 // CORS: Permite orígenes de desarrollo y producción
-const ALLOWED_ORIGINS = [
-    'http://localhost:5173',
-    'http://localhost:3000',
-    'https://somosnortex.com',
-    'https://www.somosnortex.com',
-    'http://206.189.183.163:3000',
+const ALLOWED_ORIGINS = buildAllowedOrigins(
     process.env.FRONTEND_URL,
     process.env.COOLIFY_URL,
-].filter(Boolean) as string[];
+);
 
 app.use(cors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-        // Permitir requests sin origin (mobile apps, curl, server-to-server)
-        if (!origin) return callback(null, true);
-        if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+        if (isAllowedOrigin(ALLOWED_ORIGINS, origin)) return callback(null, true);
         callback(new Error(`CORS: Origin ${origin} not allowed`));
     },
     credentials: true,
@@ -479,6 +478,7 @@ const registerLimiter = rateLimit({
 });
 app.use('/api/auth/register', registerLimiter as any);
 
+app.use('/api/sales/offline-evidence', offlineSaleEvidenceRoutes);
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -1333,111 +1333,8 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
     }
 });
 
-app.get('/api/onboarding', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    try {
-        const tenantId = authReq.tenantId;
-        const tenant = await prisma.tenant.findUnique({ where: { id: tenantId } });
-        if (!tenant) return res.status(404).json({ error: 'Negocio no encontrado' });
-
-        const isLender = tenant.type === 'LENDER';
-        const capabilityRows = isLender
-            ? []
-            : await prisma.tenantCapability.findMany({
-                where: { tenantId },
-                select: { code: true },
-            });
-        const capabilities = new Set(capabilityRows.map(row => row.code));
-        const wantsMeasured = tenant.type === 'CARNICERIA_POLLERIA'
-            || capabilities.has('CARNES_AVES')
-            || capabilities.has('ALIMENTO_ANIMAL');
-        const wantsPack = tenant.type === 'AGROPECUARIA'
-            || capabilities.has('ALIMENTO_ANIMAL')
-            || capabilities.has('MAYOREO');
-        const wantsBatch = capabilities.has('PERECEDEROS')
-            || capabilities.has('CARNES_AVES');
-
-        // Conteos reales (alcance: este negocio). Los préstamos del prestamista se
-        // identifican por lenderId; el Employee del dueño se crea al registrarse,
-        // por eso "equipo" = más de 1 empleado.
-        const [products, sales, customers, employees, lenderLoans, measuredProducts, packedProducts, batches] = await Promise.all([
-            prisma.product.count({ where: { tenantId } }),
-            prisma.sale.count({ where: { tenantId } }),
-            prisma.customer.count({ where: { tenantId } }),
-            prisma.employee.count({ where: { tenantId } }),
-            isLender ? prisma.loan.count({ where: { lenderId: tenantId } }) : Promise.resolve(0),
-            wantsMeasured
-                ? prisma.product.count({ where: { tenantId, saleMode: 'MEASURED' } })
-                : Promise.resolve(0),
-            wantsPack
-                ? prisma.product.count({ where: { tenantId, packUnit: { not: null }, packSize: { gt: 0 } } })
-                : Promise.resolve(0),
-            wantsBatch
-                ? prisma.productBatch.count({ where: { tenantId } })
-                : Promise.resolve(0),
-        ]);
-
-        // El registro siembra un taxId placeholder "TAX-<uuid>" (y existen
-        // filas legacy TAX-<timestamp>); el paso solo
-        // se completa cuando el dueño guarda su RUC real (Configuración DGI).
-        const hasFiscal = !!(
-            tenant.taxId &&
-            String(tenant.taxId).trim() &&
-            !isPlaceholderTaxId(tenant.taxId)
-        );
-        const teamReady = employees > 1;
-
-        const steps = isLender
-            ? [
-                { key: 'fiscal',    label: 'Configurá los datos de tu negocio',  done: hasFiscal,        href: '/app/dashboard', cta: 'Configurar' },
-                { key: 'customer',  label: 'Registrá tu primer cliente',         done: customers > 0,    href: '/app/dashboard', cta: 'Agregar cliente' },
-                { key: 'loan',      label: 'Creá tu primer préstamo',            done: lenderLoans > 0,  href: '/app/dashboard', cta: 'Crear préstamo' },
-                { key: 'team',      label: 'Agregá un cobrador a tu equipo',     done: teamReady,        href: '/app/hr',        cta: 'Agregar cobrador' },
-              ]
-            : [
-                // Activación retail = tres resultados concretos. Equipo y DGI
-                // siguen disponibles en contexto, pero ya no compiten con la
-                // primera venta ni convierten el onboarding en una configuración
-                // de ERP antes de que la persona reciba valor.
-                {
-                    key: 'product',
-                    label: wantsMeasured ? 'Configurá tu primer producto por peso o medida' : 'Agregá tu primer producto',
-                    done: wantsMeasured ? measuredProducts > 0 : products > 0,
-                    href: '/app/inventory',
-                    cta: 'Configurar',
-                },
-                ...(wantsPack ? [{
-                    key: 'pack',
-                    label: 'Registrá una presentación por empaque o saco',
-                    done: packedProducts > 0,
-                    href: '/app/inventory',
-                    cta: 'Configurar empaque',
-                }] : []),
-                ...(wantsBatch ? [{
-                    key: 'batch',
-                    label: 'Registrá tu primer lote y vencimiento',
-                    done: batches > 0,
-                    href: '/app/inventory',
-                    cta: 'Registrar lote',
-                }] : []),
-                { key: 'sale',      label: 'Hacé tu primera venta',     done: sales > 0,     href: '/app/pos?first_sale=1', cta: 'Vender' },
-                { key: 'customer',  label: 'Registrá un cliente',       done: customers > 0, href: '/app/clients',          cta: 'Agregar' },
-              ];
-
-        const completed = steps.filter(s => s.done).length;
-        res.json({
-            type: tenant.type,
-            businessName: tenant.businessName ?? '',
-            steps,
-            completed,
-            total: steps.length,
-            allDone: completed === steps.length,
-        });
-    } catch (e: any) {
-        console.error('onboarding status error', e);
-        res.status(500).json({ error: 'Error al calcular el onboarding' });
-    }
-});
+app.use('/api/onboarding', onboardingRouter);
+app.use('/api/operational-alerts', operationalAlertsRouter);
 
 // ── Pulso del día del POS (gamificación honesta) ─────────────────────────────
 // Los números REALES del negocio como motor del loop de venta: cuánto llevás
@@ -5216,6 +5113,7 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
             declaredCash: req.body.declaredCash,
             declaredCashUsd: req.body.declaredCashUsd,
             auditNotes: req.body.auditNotes,
+            clientEventId: req.body.clientEventId,
         });
         res.json({
             ...result.shift,
@@ -5467,11 +5365,20 @@ app.get('/api/audit-logs', authenticate, checkRole(['OWNER', 'ADMIN']), async (r
 // POST /api/cash-movements — Registrar entrada o salida de caja
 app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { type, amount, currency, category, description } = req.body;
+    const { type, amount, currency, category, description = '' } = req.body;
     const cashMovementRouteError = (code: string, httpStatus: number, message: string): Error & {
         code: string;
         httpStatus: number;
     } => Object.assign(new Error(message), { code, httpStatus });
+
+    // El mayor de este comando está denominado en NIO. No convertir USD
+    // por omisión: requiere un contrato de tasa y reversión contable propio.
+    if (currency !== 'NIO') {
+        return res.status(409).json({
+            error: 'Los movimientos manuales de caja se registran en córdobas. El movimiento en dólares requiere conversión contable y no se registró.',
+            code: 'CASH_MOVEMENT_USD_UNSUPPORTED',
+        });
+    }
 
     // Los pagos a proveedores pertenecen al subledger de CxP. El atajo
     // histórico de caja no tiene purchaseId, idempotencia ni los guards de
@@ -5891,103 +5798,24 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
     }
 });
 
-// POST /api/cash-movements/:id/void — Anular movimiento (soft delete)
+// POST /api/cash-movements/:id/void — Anulación atómica de caja, gasto y asiento.
 app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { reason } = req.body;
-
     try {
-        if (!reason || reason.trim().length < 3) {
-            return res.status(400).json({ error: 'Razón de anulación requerida (mínimo 3 caracteres).' });
-        }
-
-        // Solo OWNER/ADMIN pueden anular
-        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '')) {
-            return res.status(403).json({ error: 'Solo el dueño o gerente puede anular movimientos.' });
-        }
-
-        const movement = await prisma.cashMovement.findFirst({
-            where: { id, tenantId: authReq.tenantId }
+        const result = await voidManualCashMovement({
+            tenantId: authReq.tenantId!,
+            userId: authReq.userId!,
+            role: authReq.role,
+            movementId: req.params.id,
+            reason: req.body?.reason,
         });
-
-        if (!movement) {
-            return res.status(404).json({ error: 'Movimiento no encontrado.' });
-        }
-
-        if (movement.isVoided) {
-            return res.status(400).json({ error: 'Este movimiento ya fue anulado.' });
-        }
-
-        // Un COBRO_CREDITO es la proyección de un Payment ya aplicado a Sale y
-        // Customer. Anular solo la fila de gaveta dejaría CxC/contabilidad
-        // cobradas pero borraría el efectivo del cierre Z. Hasta que exista una
-        // reversión integral de abonos, este movimiento derivado es inmutable.
-        if (movement.category === 'COBRO_CREDITO') {
-            return res.status(409).json({
-                error: 'Este movimiento pertenece a un abono. Revertí el abono desde cobranza para mantener caja y contabilidad conciliadas.',
-                code: 'CREDIT_PAYMENT_CASH_MOVEMENT_IMMUTABLE',
-            });
-        }
-
-        const result = await prisma.$transaction(async (tx: any) => {
-            // Revertir el Expense auto-creado enlazado: si el movimiento OUT generó
-            // un gasto (expenseId), al anular el movimiento hay que revertir también el
-            // gasto para que no quede contabilizado como gasto fantasma en el P&L.
-            // Verificamos propiedad por tenant antes de tocarlo. Liberamos primero la FK
-            // (expenseId=null) para no depender de la acción onDelete del enlace @unique.
-            let expenseRevertido: { id: string; amount: number; description: string; category: string } | null = null;
-            if (movement.expenseId) {
-                const expense = await tx.expense.findFirst({
-                    where: { id: movement.expenseId, tenantId: authReq.tenantId }
-                });
-                if (expense) {
-                    expenseRevertido = {
-                        id: expense.id,
-                        amount: new Decimal(expense.amount.toString()).toNumber(),
-                        description: expense.description,
-                        category: expense.category,
-                    };
-                }
-            }
-
-            const voided = await tx.cashMovement.update({
-                where: { id },
-                data: {
-                    isVoided: true,
-                    voidReason: reason.trim(),
-                    voidedAt: new Date(),
-                    voidedBy: authReq.userId,
-                    ...(expenseRevertido ? { expenseId: null } : {}),
-                }
-            });
-
-            if (expenseRevertido) {
-                await tx.expense.delete({ where: { id: expenseRevertido.id } });
-            }
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId,
-                    userId: authReq.userId,
-                    action: 'CASH_MOVEMENT_VOIDED',
-                    details: JSON.stringify({
-                        movimientoId: id,
-                        tipoOriginal: movement.type,
-                        montoOriginal: new Decimal(movement.amount.toString()).toNumber(),
-                        razon: reason.trim(),
-                        expenseRevertido,
-                    })
-                }
-            });
-
-            return voided;
-        });
-
         res.json(result);
-    } catch (error: any) {
+    } catch (error) {
+        if (error instanceof ManualCashMovementVoidError) {
+            return res.status(error.httpStatus).json({ code: error.code, error: error.message });
+        }
         console.error('Error voiding cash movement:', error);
-        res.status(500).json({ error: error.message || 'Error anulando movimiento' });
+        res.status(500).json({ error: 'Error anulando movimiento' });
     }
 });
 
@@ -6179,9 +6007,14 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const includeSellableStock = req.query.includeSellableStock === 'true';
     const { search, lowStock, category, status, family, mode, sort, dir, page, pageSize } = req.query;
+    let refreshIds: string[] | undefined;
+    try { refreshIds = parseProductRefreshIds(req.query.ids); }
+    catch { return res.status(400).json({ error: 'Solicitá entre 1 y 100 referencias válidas.', code: 'INVALID_PRODUCT_IDS' }); }
 
     try {
         const whereClause: any = { tenantId: authReq.tenantId };
+        // AND conserva la intersección con el catálogo asignado del vendedor.
+        if (refreshIds) whereClause.AND = [{ id: { in: refreshIds } }];
 
         // Catálogo asignado (Vendedores Fase B): un VENDEDOR con catálogo ve
         // SOLO sus productos — en el POS y en cualquier listado. Sin filas, ve
@@ -6254,6 +6087,7 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
 
         let products = await prisma.product.findMany({
             where: whereClause,
+            ...(refreshIds ? { take: refreshIds.length } : {}),
             orderBy,
             include: {
                 creator: { select: { name: true, email: true } }
@@ -10401,10 +10235,53 @@ app.post('/api/payroll/calculate', authenticate, checkRole(['OWNER', 'ADMIN', 'A
     }
 });
 
+// GET /api/payroll/aguinaldo/:year — previsualización + estado de la corrida.
+app.get('/api/payroll/aguinaldo/:year', authenticate, checkRole(HR_READ_ROLES), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    const tenantId = authReq.tenantId!;
+    const year = parseInt(req.params.year);
+    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
+    try {
+        const today = new Date();
+        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' }, orderBy: { firstName: 'asc' } });
+        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year } });
+        const paidMap = new Map(existing.map(a => [a.employeeId, a]));
+
+        const items = employees.map(emp => {
+            const paid = paidMap.get(emp.id);
+            const base = Number(emp.baseSalary);
+            const calc = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            return {
+                employeeId: emp.id,
+                name: `${emp.firstName} ${emp.lastName}`,
+                cedula: emp.cedula,
+                baseSalary: base,
+                diasLaborados: paid ? paid.diasLaborados : calc.dias,
+                monto: paid ? Number(paid.monto) : calc.monto,
+                pagado: !!paid,
+                paidAt: paid?.paidAt ?? null,
+            };
+        });
+
+        const totalMonto = Number(items.reduce((s, i) => s + i.monto, 0).toFixed(2));
+        const dueDate = new Date(year, 11, 10); // 10 de diciembre (fecha límite legal)
+        const diasParaVencer = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
+        const pendientes = items.filter(i => !i.pagado && i.monto > 0).length;
+
+        res.json({ year, periodo: `Dic ${year - 1} – Nov ${year}`, items, totalMonto, dueDate, diasParaVencer, pendientes });
+    } catch (error) {
+        console.error('Aguinaldo preview error:', error);
+        res.status(500).json({ error: 'Error al calcular el aguinaldo.' });
+    }
+});
+
 // GET /api/payroll/:month/:year - Obtener nómina existente
 app.get('/api/payroll/:month/:year', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT', 'MANAGER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { month, year } = req.params;
+    if (!/^\d{1,2}$/.test(month) || Number(month) < 1 || Number(month) > 12 || !/^\d{4}$/.test(year)) {
+        return res.status(400).json({ error: 'Mes o año inválido.' });
+    }
 
     try {
         const payrolls = await prisma.payroll.findMany({
@@ -10643,46 +10520,6 @@ function computeAguinaldo(baseSalary: number, hireDate: Date, year: number, toda
         .toNumber();
     return { dias, monto };
 }
-
-// GET /api/payroll/aguinaldo/:year — previsualización + estado de la corrida.
-app.get('/api/payroll/aguinaldo/:year', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const tenantId = authReq.tenantId!;
-    const year = parseInt(req.params.year);
-    if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
-    try {
-        const today = new Date();
-        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' }, orderBy: { firstName: 'asc' } });
-        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year } });
-        const paidMap = new Map(existing.map(a => [a.employeeId, a]));
-
-        const items = employees.map(emp => {
-            const paid = paidMap.get(emp.id);
-            const base = Number(emp.baseSalary);
-            const calc = computeAguinaldo(base, new Date(emp.hireDate), year, today);
-            return {
-                employeeId: emp.id,
-                name: `${emp.firstName} ${emp.lastName}`,
-                cedula: emp.cedula,
-                baseSalary: base,
-                diasLaborados: paid ? paid.diasLaborados : calc.dias,
-                monto: paid ? Number(paid.monto) : calc.monto,
-                pagado: !!paid,
-                paidAt: paid?.paidAt ?? null,
-            };
-        });
-
-        const totalMonto = Number(items.reduce((s, i) => s + i.monto, 0).toFixed(2));
-        const dueDate = new Date(year, 11, 10); // 10 de diciembre (fecha límite legal)
-        const diasParaVencer = Math.ceil((dueDate.getTime() - today.getTime()) / 86400000);
-        const pendientes = items.filter(i => !i.pagado && i.monto > 0).length;
-
-        res.json({ year, periodo: `Dic ${year - 1} – Nov ${year}`, items, totalMonto, dueDate, diasParaVencer, pendientes });
-    } catch (error) {
-        console.error('Aguinaldo preview error:', error);
-        res.status(500).json({ error: 'Error al calcular el aguinaldo.' });
-    }
-});
 
 // POST /api/payroll/aguinaldo/:year/run — corre y paga el aguinaldo (idempotente).
 app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
@@ -14274,7 +14111,7 @@ async function salarioBaseLiquidacion(tenantId: string, employeeId: string, base
 const SETTLEMENT_REASONS = ['DISMISSAL', 'RESIGNATION', 'MUTUAL'];
 
 // GET /api/hrm/settlement-preview/:employeeId?reason=&date= — Previsualizar finiquito
-app.get('/api/hrm/settlement-preview/:employeeId', authenticate, async (req: any, res: any) => {
+app.get('/api/hrm/settlement-preview/:employeeId', authenticate, checkRole(HR_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { employeeId } = req.params;
     const reason = SETTLEMENT_REASONS.includes(String(req.query.reason)) ? String(req.query.reason) : 'DISMISSAL';
@@ -14408,7 +14245,7 @@ app.post('/api/hrm/settlement/:employeeId', authenticate, checkRole(['OWNER', 'A
 });
 
 // GET /api/hrm/dashboard/:year/:month — Tablero gerencial de RRHH (solo lectura)
-app.get('/api/hrm/dashboard/:year/:month', authenticate, async (req: any, res: any) => {
+app.get('/api/hrm/dashboard/:year/:month', authenticate, checkRole(HR_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);

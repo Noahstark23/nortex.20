@@ -1,8 +1,8 @@
 # Plan maestro — Cierre de caja profesional, DGI y contabilidad
 
-> Fecha de corte: 31 de agosto de 2026  
+> Fecha de corte: 31 de agosto de 2026\
 > Estado: plan técnico listo para ejecución; activación financiera bloqueada hasta
-> validación CPA/DGI indicada en este documento.  
+> validación CPA/DGI indicada en este documento.\
 > Alcance de este documento: arquitectura, datos, APIs, política operativa,
 > controles fiscales, contabilización, migración y QA. No implementa cambios.
 

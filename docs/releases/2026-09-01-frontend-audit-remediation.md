@@ -1521,3 +1521,10 @@ este arreglo visual.
 
 El procedimiento repetible vive en
 `docs/runbooks/frontend-preprod-audit.md`.
+
+## Integración local del 4 de septiembre
+
+Se conserva el historial vigente de `main` (2834497). La entrega local posterior
+del POS, activación y avisos se documenta en `docs/VERIFICACION_MODULOS_2026-09-04.md`.
+Los resultados de esa copia anterior no acreditan este candidato integrado ni
+un despliegue: requiere nuevas pruebas sobre el árbol final.

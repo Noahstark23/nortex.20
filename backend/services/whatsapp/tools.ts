@@ -8,7 +8,9 @@
  *    del usuario → prompt injection no puede cruzar tenants ni clientes.
  *  - llama a datos tenant-scoped y devuelve texto listo para WhatsApp.
  *
- * `scope` filtra qué tools ve el agente según el canal (B2C/B2B/BOTH).
+ * El scope del canal organiza el catálogo; no autentica al remitente como
+ * personal. Las herramientas internas requieren una identidad de personal
+ * verificada, que este canal todavía no proporciona.
  */
 
 import { z } from 'zod';
@@ -46,8 +48,8 @@ const buscarProducto: AgentTool = {
     },
     async run(ctx, rawArgs) {
         const { query } = (this.zod as z.ZodType<{ query: string }>).parse(rawArgs);
-        const publicOnly = ctx.botScope === 'B2C';
-        const hits = await catalogRetriever.search(ctx.tenantId, query, { publicOnly, limit: 5 });
+        // B2B/BOTH identifica al canal, no concede acceso a inventario privado.
+        const hits = await catalogRetriever.search(ctx.tenantId, query, { publicOnly: true, limit: 5 });
         if (hits.length === 0) {
             return `No encontré productos para "${query}". ¿Querés que lo busque de otra forma?`;
         }
@@ -86,29 +88,10 @@ const consultarDeuda: AgentTool = {
     },
 };
 
-// ── consultarVentasHoy (B2B: dueño) ─────────────────────────────────────────
-const ventasHoy: AgentTool = {
-    name: 'ventas_hoy',
-    description: 'Resume las ventas del día de hoy del negocio (uso del dueño).',
-    scope: 'B2B',
-    zod: z.object({}),
-    jsonSchema: { type: 'object', properties: {} },
-    async run(ctx) {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const agg = await prisma.sale.aggregate({
-            where: { tenantId: ctx.tenantId, createdAt: { gte: start }, status: { not: 'CANCELLED' } },
-            _sum: { total: true },
-            _count: { _all: true },
-        });
-        const total = new Decimal((agg._sum.total ?? 0).toString());
-        const count = agg._count._all;
-        if (count === 0) return 'Hoy todavía no hay ventas registradas.';
-        return `📊 Hoy: ${count} ventas por un total de ${money(total)}.`;
-    },
-};
-
-const ALL_TOOLS: AgentTool[] = [buscarProducto, consultarDeuda, ventasHoy];
+// ventas_hoy se retira incluso del lookup por nombre. Su futura activación
+// exige vincular y revalidar personal; botScope, waId o argumentos del modelo
+// nunca son prueba de ese permiso. El dueño consulta su dashboard autenticado.
+const ALL_TOOLS: AgentTool[] = [buscarProducto, consultarDeuda];
 
 /** Tools visibles para un canal según su scope. */
 export function toolsForScope(botScope: string): AgentTool[] {

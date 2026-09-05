@@ -96,7 +96,7 @@ describe('sistema de color público', () => {
         for (const className of classes) {
             expect(css, `falta .${className}`).toContain(`.${className}`);
         }
-        expect(css).toMatch(/\.nx-public-loading,\s*\.nx-public-prerender\s*\{[^}]*min-height:\s*100vh/s);
+        expect(css).toMatch(/\.nx-public-loading,\s*\.nx-public-prerender\s*\{[^}]*min-height:\s*100dvh/s);
         expect(appSource).toContain('className="nx-public-loading"');
         expect(prerenderSource).toContain('class="nx-public-prerender"');
     });

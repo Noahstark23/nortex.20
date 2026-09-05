@@ -1,13 +1,15 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
-import { AlertTriangle, LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, Bell, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal, Moon, Sun } from 'lucide-react';
+import { AlertTriangle, LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal, Moon, Sun } from 'lucide-react';
+import { OperationalNotifications } from './notifications/OperationalNotifications';
 import { formatMoney } from '../utils/money';
 import { PinPadClock } from './PinPadClock';
 import { useVentaEnCurso } from './VentaEnCursoContext';
 import OnboardingHub from './OnboardingHub';
 import InstallPrompt from './InstallPrompt';
 import FluidSheet from './ui/FluidSheet';
-import { buildNavigation, groupBySection, resolveUiMode, navPathForRoute, esRutaDe, UI_MODE_KEY, type UiMode, type NavEntry, type NavSection } from '../utils/navigation';
+import { buildNavigation, groupBySection, navPathForRoute, esRutaDe, type NavEntry, type NavSection } from '../utils/navigation';
+import { useUiMode } from '../hooks/useUiMode';
 import { nextWorkspaceTheme, persistWorkspaceTheme, readWorkspaceTheme, type WorkspaceTheme } from '../utils/workspaceTheme';
 
 // El módulo de navegación es puro (sin React): mapa iconKey → componente lucide.
@@ -94,94 +96,13 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
   const toggleWorkspaceTheme = () => setWorkspaceTheme(nextWorkspaceTheme);
 
   // ── Modo de menú (simple | full) — persistido; lo guardado siempre gana ──
-  const [uiMode, setUiMode] = useState<UiMode>(() => {
-    let type = '';
-    try { type = JSON.parse(localStorage.getItem('nortex_user') || '{}')?.tenant?.type || ''; } catch { /* sin tenant → simple */ }
-    return resolveUiMode(type, localStorage.getItem(UI_MODE_KEY));
-  });
-  const toggleUiMode = () => setUiMode(prev => {
-    const next: UiMode = prev === 'simple' ? 'full' : 'simple';
-    localStorage.setItem(UI_MODE_KEY, next);
-    return next;
-  });
+  const [uiMode, setUiMode] = useUiMode();
+  const toggleUiMode = () => setUiMode(prev => prev === 'simple' ? 'full' : 'simple');
   // "Más opciones" del sidebar: abierto si la ruta actual vive ahí adentro.
   const [showMore, setShowMore] = useState(false);
   // Secciones del menú abiertas/cerradas. Sin entrada = se decide por la ruta
   // activa (la sección donde estás parado arranca abierta).
   const [openSections, setOpenSections] = useState<Partial<Record<NavSection, boolean>>>({});
-
-  // ── Toast de notificaciones ──────────────────────────────────────────────
-  interface AppToast { id: string; message: string; }
-  const [toasts, setToasts] = useState<AppToast[]>([]);
-  const knownOrderIds = useRef<Set<string>>(new Set());
-  const isFirstPoll = useRef(true);
-
-  const dismissToast = (id: string) =>
-    setToasts(prev => prev.filter(t => t.id !== id));
-
-  const pushToast = (message: string) => {
-    const id = Date.now().toString();
-    setToasts(prev => [...prev, { id, message }]);
-    setTimeout(() => dismissToast(id), 6000);
-  };
-
-  const playBeep = () => {
-    try {
-      const ctx = new AudioContext();
-      [0, 0.15].forEach(startOffset => {
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.frequency.value = 1046; // C6
-        gain.gain.setValueAtTime(0.25, ctx.currentTime + startOffset);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + startOffset + 0.18);
-        osc.start(ctx.currentTime + startOffset);
-        osc.stop(ctx.currentTime + startOffset + 0.18);
-      });
-    } catch { /* sin permiso de audio — silencio */ }
-  };
-
-  // Smart Polling: detecta nuevos pedidos web cada 30 s
-  useEffect(() => {
-    // Solo para roles de admin/dueño, no para motoristas
-    const storedToken = localStorage.getItem('nortex_token');
-    if (!storedToken) return;
-    let role = '';
-    try {
-      role = JSON.parse(atob(storedToken.split('.')[1])).role || '';
-    } catch { return; }
-    if (role === 'COLLECTOR' || role === 'BODEGUERO') return;
-
-    const poll = async () => {
-      try {
-        const res = await fetch('/api/public-orders', {
-          headers: { Authorization: `Bearer ${storedToken}` },
-        });
-        if (!res.ok) return;
-        const orders: Array<{ id: string; status: string; customerName: string }> = await res.json();
-        const pending = orders.filter(o => o.status === 'PENDING');
-
-        if (isFirstPoll.current) {
-          pending.forEach(o => knownOrderIds.current.add(o.id));
-          isFirstPoll.current = false;
-          return;
-        }
-
-        const newOrders = pending.filter(o => !knownOrderIds.current.has(o.id));
-        newOrders.forEach(o => {
-          knownOrderIds.current.add(o.id);
-          pushToast(`¡NUEVO PEDIDO WEB DE ${o.customerName.toUpperCase()}!`);
-          playBeep();
-        });
-      } catch { /* red caída — ignorar */ }
-    };
-
-    poll();
-    const interval = setInterval(poll, 30_000);
-    return () => clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('nortex_token');
@@ -615,7 +536,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
         {/* El chrome responde al tema de la persona; POS conserva su superficie
             funcional y no recibe el bridge claro/oscuro del resto del ERP. */}
-        <header className={`${isPosSurface ? 'hidden' : 'hidden lg:flex'} nx-dark-chrome nx-shell-border h-[4.5rem] shrink-0 items-center justify-between border-b px-5 shadow-lg xl:px-6`}>
+        <header className={`${isPosSurface ? 'hidden' : 'flex'} nx-dark-chrome nx-shell-border min-h-16 shrink-0 items-center justify-between gap-3 border-b px-3 shadow-lg lg:h-[4.5rem] lg:px-5 xl:px-6`}>
           <div className="flex min-w-0 items-center gap-4">
             <div className="min-w-0" aria-label="Ubicación actual">
               <p className="nx-shell-faint text-[9px] font-semibold uppercase tracking-[0.17em]">{pageGroup}</p>
@@ -636,12 +557,9 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
           <div className="flex shrink-0 items-center gap-3">
             <ThemeToggle theme={workspaceTheme} onToggle={toggleWorkspaceTheme} />
-            <div className="nx-shell-control nx-shell-muted relative flex h-9 w-9 items-center justify-center rounded-full border" role="status" aria-label={toasts.length > 0 ? `${toasts.length} notificaciones nuevas` : 'Sin notificaciones nuevas'}>
-              <Bell size={17} aria-hidden="true" />
-              {toasts.length > 0 && <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-emerald-400 ring-2 ring-surface-950" />}
-            </div>
+            {!isPosSurface && !['BODEGUERO', 'COLLECTOR'].includes(userRole) && !userRole.startsWith('LENDER_') && <OperationalNotifications />}
             <div className="nx-shell-border h-7 border-l" aria-hidden="true" />
-            <div className="flex min-w-0 items-center gap-2.5">
+            <div className="hidden min-w-0 items-center gap-2.5 lg:flex">
               <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-emerald-300 to-emerald-500 text-sm font-bold text-emerald-950 shadow-md shadow-emerald-950/20" aria-hidden="true">
                 {sessionInitial}
               </div>
@@ -697,31 +615,6 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       )}
 
       {canUseAttendanceClock && showClock && <PinPadClock onClose={() => setShowClock(false)} />}
-
-      {/* 🔔 Toast de pedidos web */}
-      <div className={`pointer-events-none fixed right-4 z-toast flex w-[calc(100%-2rem)] max-w-xs flex-col gap-2 ${isPosSurface ? 'top-4' : 'top-4 lg:top-20'}`} aria-live="polite" aria-atomic="false">
-        {toasts.map(toast => (
-          <div
-            key={toast.id}
-            className="pointer-events-auto flex items-start gap-3 rounded-2xl bg-brand px-4 py-3 text-brand-on shadow-2xl shadow-brand/30"
-          >
-            <div className="w-8 h-8 bg-white/20 rounded-xl flex items-center justify-center flex-shrink-0 mt-0.5">
-              <Bell size={16} className="animate-bounce" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-bold text-sm leading-tight">{toast.message}</p>
-              <p className="text-emerald-200 text-xs mt-0.5">Andá a Entregas para gestionarlo</p>
-            </div>
-            <button
-              onClick={() => dismissToast(toast.id)}
-              className="nx-fluid-press mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-white/60 hover:bg-white/10 hover:text-white"
-              aria-label="Cerrar notificación"
-            >
-              <X size={14} aria-hidden="true" />
-            </button>
-          </div>
-        ))}
-      </div>
 
       {/* 🚀 Onboarding guiado: el flujo crea catálogo y configura el negocio,
           por eso ni siquiera se monta en la sesión operativa de bodega. */}

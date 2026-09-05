@@ -13,16 +13,18 @@ del push. Nada de "debería funcionar".
 ## Flujo (en orden, sin saltarse pasos)
 
 ### 0 · Entorno
-```bash
-git fetch origin main && git checkout -B claude/<feature> origin/main
-npm install   # SIEMPRE tras cambiar de rama/rebase
-```
-⚠️ Sin `npm install`, `npx prisma` baja la **última versión del registry** (7.x),
-que rechaza el schema 6.x con errores engañosos (`datasource url no soportado`).
-El proyecto pinnea **prisma 6.4.1**. Verificar: `npx prisma --version`.
+- Leer `AGENTS.md`, `CLAUDE.md`, `git status --short --branch` y versiones del runtime.
+- Con cambios existentes, conservar checkout, índice y rama. Preparar un candidato
+  aislado que incluya esos cambios si son parte del producto revisado; documentar
+  origen y comparar hashes antes de reintegrar. No usar `checkout -B`, reset, clean,
+  rebase o reemplazos completos de archivos para preparar una reparación.
+- Usar dependencias bloqueadas (`npm ci` en el candidato cuando haga falta).
+  El proyecto fija Prisma 6.4.1; no descargar una versión distinta con `npx`.
+- No leer secretos ni conectar una base real para pruebas. Generar credenciales
+  efímeras y mantenerlas fuera del repositorio y de los reportes.
 
 ### 1 · Recon (antes de diseñar)
-- `grep -rn` los términos del dominio: ¿ya existe algo? ¿dónde viven los patrones?
+- `rg -n` los términos del dominio: ¿ya existe algo? ¿dónde viven los patrones?
 - Leer el modelo Prisma tocado, el handler análogo más cercano y el componente destino.
 - Ubicar **anclas de edición exactas** (Read del bloque) — los line numbers se mueven;
   editar por string único, nunca por número de línea recordado.
@@ -31,16 +33,12 @@ El proyecto pinnea **prisma 6.4.1**. Verificar: `npx prisma --version`.
   no `LandingPage.tsx`).
 
 ### 2 · Diseño mínimo
-- Elegir el diseño que **no toca el core**: capa aditiva > refactor. Ejemplos vivos:
-  - Multi-bodega: `Product.stock` siguió siendo el agregado autoritativo; el desglose
-    se construyó debajo con backfill perezoso.
-  - Recepción de OC: goods-receipt separado de la factura → el path de dinero
-    auditado quedó intacto.
-  - Mayoreo: el precio efectivo se resuelve en el POS; el contrato de `executeSale`
-    no cambió.
-- Extraer la lógica de negocio como **función pura testeable** (ej: la regla de
-  precios por cantidad al tope de `components/POS.tsx`) — es lo que permite la
-  ronda de QA de casos.
+- Definir contrato, propietario de cada archivo y comprobación de aceptación.
+- Reparar la autoridad existente de dinero/inventario; no construir un motor
+  alternativo para esquivar el defecto. Extraer responsabilidades al intervenirlas
+  con pruebas del comportamiento previo. No elevar presupuestos para acomodar deuda.
+- Elegir el cambio más pequeño que resuelve el caso y sus efectos relacionados.
+  Un cambio aditivo también puede aumentar riesgo: justificarlo con evidencia.
 
 ### 3 · Implementación (orden fijo)
 1. **Schema** (`backend/prisma/schema.prisma`): cambios **aditivos** con comentario
@@ -55,47 +53,46 @@ El proyecto pinnea **prisma 6.4.1**. Verificar: `npx prisma --version`.
    también — varios componentes duplican su `interface Product`).
 5. `npx prisma generate` tras tocar el schema (el router nuevo lo necesita para tipar).
 
-### 4 · Rondas de QA (mínimo 4; los hallazgos SE CORRIGEN antes de seguir)
-1. **Tipos/schema** — `npx tsc --noEmit` (0 errores nuevos) + `prisma validate` + `generate`.
-2. **Lógica pura** — replicar la función de negocio en un `.cjs` en `/tmp` y correr
-   casos reales + bordes (umbral exacto, borde −0.01, degradaciones con campos null/0,
-   ida-y-vuelta, empates de precedencia, cantidades fraccionables). Esta ronda ha
-   atrapado bugs de diseño reales (el doble conteo del backfill de bodegas se detectó
-   aquí, no en producción).
-3. **Aislamiento/integración** — grep de que TODA query nueva filtra por `tenantId`;
-   verificar los call-sites afectados (checkout, carritos en espera, quick-create);
-   raw SQL solo parametrizado (`Prisma.sql`), jamás concatenado.
-4. **Build + regresión** — `npm run build` (si se tocó frontend); confirmar que los
-   servicios core NO cambiaron (`git status backend/services/`); el default de todo
-   flag nuevo debe preservar el comportamiento actual.
-5. (Si aplica) **entorno/deploy** — ¿el Dockerfile ejecuta lo nuevo? ¿`db push`
-   cubre el schema? ¿preview features deprecados?
+### 4 · Rondas de QA
+1. **Reproducción**: una prueba contra la función o ruta real falla antes de la
+   reparación. No copiar fórmulas a `.cjs`: una réplica puede pasar mientras el
+   producto sigue roto. Aseverar resultados independientes y efectos persistidos.
+2. **Regresión y tipos**: casos límite, errores, tenant/roles y sesión; `tsc --noEmit`,
+   Prisma validate y build si corresponde. No rebajar aserciones para ocultar fallos.
+3. **Dinero e inventario**: `npm run test:integration:required` con MySQL 8 local,
+   `DATABASE_URL` de base `nortex_qa`, `nortex_quality` o `nortex_test` y
+   `NORTEX_QA_DATABASE_ACK=disposable-database`. Preparar el schema únicamente allí.
+   El runner inicia su backend, genera claves temporales, exige salud y ejecuta todas
+   las suites requeridas sin omisiones. Reintentos, duplicados, rollback y conflictos
+   se verifican por sus efectos, no solo por HTTP 200.
+4. **Diseño y mutación**: `npm run check:design` y `npm run test:mutation` cuando aplica.
+   Realinear rangos Stryker si se mueven funciones; mantener el umbral y comprobar
+   mutantes ejecutados. No presentar un porcentaje parcial como cobertura global.
+5. **Navegador**: recorrer el flujo afectado en el candidato y documentar resolución,
+   datos sintéticos y resultado. Separar QA de software de equipos físicos y usuarios.
 
 ### 5 · Entrega
-- Commit en español: `feat|fix(<área>): <qué>` + cuerpo con el porqué, decisiones
-  y resumen de QA. Nunca incluir el id del modelo en commits/PRs.
-- `git push -u origin claude/<feature>` y **PR en DRAFT** contra `main` con:
-  problema → solución (tabla por capa) → decisiones de diseño → rondas de QA con
-  resultados → qué queda para la siguiente fase.
-- Fases grandes = PRs separados y secuenciales (Fase A mergeada antes de construir B).
+- Registrar archivos, motivación, pruebas con conteos, fallos resueltos y límites.
+- Reintegrar solo cambios propios después de comprobar que el origen no cambió;
+  preservar el trabajo previo y el estado del índice.
+- Un commit o PR autorizado describe el problema y el comportamiento resultante.
+  No ejecutar push, merge o despliegue por ser el siguiente paso de esta guía.
+- Antes de promover se exige CI del candidato y staging del mismo SHA; producción
+  conserva su autorización y verificación propias. Un resultado local no las sustituye.
 
-### 6 · Post-merge
-- Si otro PR hermano toca líneas adyacentes (relaciones de `Tenant`/`Product`,
-  imports/mounts de `server.ts`), verificar su mergeabilidad:
-  `git merge-tree --write-tree origin/main origin/<rama>` → si conflictúa, resolver
-  **conservando ambos lados** (las adiciones adyacentes casi nunca compiten).
-- Si git "auto-mergea" mal (hunks injertados), tomar la versión completa de un lado
-  (`git checkout --theirs`) y **re-aplicar quirúrgicamente** los cambios propios.
-- Si un archivo quedó con versiones apiladas de merges manuales (campos duplicados,
-  arrays sin cerrar), NO re-mezclar a mano: reconstruir desde git history
-  (`git log --oneline -- <archivo>` → checkout del último estado limpio, ej. `<merge>^1`).
+### 6 · Integración y conflictos
+- Inspeccionar ambos lados y el ancestro. Resolver en aislamiento, conservando los
+  cambios ajenos; no reemplazar archivos enteros con `--theirs` ni con versiones viejas.
+- Volver a ejecutar las comprobaciones afectadas por la resolución y documentar el
+  candidato preciso. Si cambian los archivos originales, integrar el cambio nuevo
+  antes de aplicar el parche, sin sobreescribirlo.
 
 ## Patrones obligatorios del repo
 
 | Regla | Cómo |
 |---|---|
 | Tenant SOLO del JWT | `req.tenantId`/`req.userId`/`req.role` (los pone `authenticate`); JAMÁS del body/query. Toda query de negocio filtra por `tenantId`; `update/delete` por id → `findFirst({id, tenantId})` primero |
-| Dinero | `decimal.js` (`new Decimal(x.toString())`), nunca `parseFloat` para calcular. `price/cost/wholesale/pack` son Float legacy → migran juntos a `Decimal(18,4)` (sweep pendiente); campos money NUEVOS no relacionados: `Decimal` |
+| Dinero | `decimal.js` (`new Decimal(x.toString())`), nunca `parseFloat` para calcular. `price/cost/wholesale/pack` siguen siendo Float legacy en este schema; su migración exige expansión, backfill y conciliación por agregado, sin sweep global. Campos monetarios nuevos: `Decimal` con precisión explícita |
 | Stock | SIEMPRE vía `applyStockDelta` (`backend/services/stockService.ts`): UPDATE condicional atómico + row-lock + read-back; acepta `warehouseId` opcional. Nunca `product.update({stock})` directo |
 | Auditoría | Operación que mueve dinero/inventario → `auditLog.create` con before/after **dentro de la misma transacción** |
 | Validación | Zod en el body cuando hay dinero; inputs opcionales numéricos: `''`/null limpia → null, si viene valor → `> 0` finito; validación cruzada de updates parciales sobre el **estado final** (leer la fila existente) |

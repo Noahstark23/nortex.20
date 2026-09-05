@@ -1,0 +1,109 @@
+/* Superficie del mostrador. No modifica los temas de los demás módulos. */
+.nx-app-shell.nx-pos-workspace {
+  --nx-canvas: rgb(var(--nx-neutral-50-rgb));
+  --nx-canvas-raised: white;
+  --nx-canvas-subtle: rgb(var(--nx-neutral-100-rgb));
+  --nx-canvas-text: rgb(var(--nx-neutral-900-rgb));
+  --nx-canvas-muted: rgb(var(--nx-neutral-600-rgb));
+  --nx-canvas-faint: rgb(var(--nx-neutral-500-rgb));
+  --nx-canvas-border: rgb(var(--nx-neutral-200-rgb));
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+  color-scheme: light;
+}
+.nx-app-shell.nx-pos-workspace .nx-pos-header {
+  height: 80px;
+  padding-inline: 24px;
+  background: white;
+  background-image: none;
+  border-color: rgb(var(--nx-neutral-200-rgb));
+  box-shadow: none;
+  --nx-shell-text: rgb(var(--nx-neutral-900-rgb));
+  --nx-shell-muted: rgb(var(--nx-neutral-600-rgb));
+  --nx-shell-faint: rgb(var(--nx-neutral-500-rgb));
+}
+.nx-app-shell.nx-pos-workspace .nx-pos-header-identity { flex-direction: column; align-items: flex-start; gap: 2px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-header h1 { font-size: 23px; font-weight: 700; letter-spacing: -.04em; }
+.nx-app-shell.nx-pos-workspace .nx-pos-header :is(.text-slate-100,.text-slate-200,.text-slate-300,.text-slate-400) { color: rgb(var(--nx-neutral-600-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-header button { border-color: rgb(var(--nx-neutral-200-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-header [role='menu'] { background: white; border-color: rgb(var(--nx-neutral-200-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-header [role='menu'] button:hover { background: rgb(var(--nx-neutral-100-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-header [role='menu'] .text-slate-500 { color: rgb(var(--nx-neutral-600-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-catalog {
+  margin-top: 80px;
+  padding: 24px;
+  background: var(--nx-canvas);
+  min-width: 0;
+}
+.nx-app-shell.nx-pos-workspace .nx-pos-catalog .nx-canvas-muted { color: rgb(var(--nx-neutral-600-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-catalog .nx-canvas-text { color: rgb(var(--nx-neutral-900-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-search { margin-bottom: 20px; align-items: flex-start; }
+.nx-pos-search-field { position: relative; }
+.nx-pos-search-label { display: block; margin-bottom: 8px; color: rgb(var(--nx-neutral-700-rgb)); font-size: 13px; font-weight: 600; }
+.nx-app-shell.nx-pos-workspace .nx-pos-search input { background: white; color: rgb(var(--nx-neutral-900-rgb)); border-color: rgb(var(--nx-neutral-200-rgb)); box-shadow: 0 1px 2px rgb(16 24 40 / .04); }
+.nx-pos-clear-search { position: absolute; right: 5px; top: 5px; min-width: 44px; min-height: 44px; border-radius: var(--nx-r-control); color: rgb(var(--nx-neutral-600-rgb)); display: grid; place-items: center; }
+.nx-pos-clear-search:hover { background: rgb(var(--nx-neutral-100-rgb)); }
+.nx-pos-create { display: inline-flex; min-height: 44px; align-items: center; justify-content: center; gap: 6px; padding-inline: 12px; border: 1px solid rgb(var(--nx-neutral-200-rgb)); border-radius: var(--nx-r-control); color: rgb(var(--nx-neutral-700-rgb)); background: white; font-weight: 600; font-size: 13px; margin-top: 26px; }
+.nx-pos-create:hover { background: rgb(var(--nx-neutral-100-rgb)); }
+.nx-app-shell.nx-pos-workspace .nx-pos-receipt[data-pos-ticket-mode='desktop'] {
+  margin: 96px 20px 20px 0;
+  width: 35%; min-width: 350px; max-width: 410px;
+  border-radius: var(--nx-r-card);
+  box-shadow: 0 4px 20px rgb(16 24 40 / .10);
+}
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer[data-empty='true'] { display: none; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-header { background: var(--nx-ticket); min-height: 76px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-lines { padding-top: 8px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-empty { align-items: flex-start; text-align: left; justify-content: flex-start; padding-top: 40px; gap: 12px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-empty > p:first-of-type { font-size: 20px; color: var(--nx-ticket-text); letter-spacing: -.02em; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-empty > p:last-of-type { max-width: 260px; text-align: left; font-size: 14px; line-height: 1.6; color: var(--nx-ticket-muted); }
+.nx-pos-mobile-bar { position: fixed; bottom: 0; left: 0; right: 0; z-index: 40; padding: 12px 16px max(12px, env(safe-area-inset-bottom)); background: white; border-top: 1px solid rgb(var(--nx-neutral-200-rgb)); gap: 12px; align-items: center; box-shadow: 0 -4px 20px rgb(16 24 40 / .06); }
+.nx-pos-mobile-review { display: flex; min-height: 52px; align-items: center; gap: 8px; color: rgb(var(--nx-neutral-700-rgb)); font-weight: 600; font-size: 13px; text-align: left; }
+.nx-pos-mobile-pay { display: flex; min-height: 52px; flex: 1; align-items: center; justify-content: center; gap: 8px; border-radius: var(--nx-r-control); background: var(--nx-brand); color: var(--nx-on-brand); font-size: 15px; font-weight: 700; white-space: nowrap; }
+.nx-pos-mobile-bar button:disabled { opacity: .5; }
+.nx-pos-mobile-bar button:focus-visible, .nx-pos-clear-search:focus-visible, .nx-pos-create:focus-visible { outline: 2px solid rgb(var(--nx-brand-800-rgb)); outline-offset: 3px; }
+@media (max-width: 1023px) {
+  .nx-pos-mobile-bar { display: flex; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-catalog { padding: 20px 16px 100px; }
+}
+@media (max-width: 600px) {
+  .nx-app-shell.nx-pos-workspace .nx-pos-header { padding-inline: 16px; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-header h1 { font-size: 20px; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-search { flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-search > div { flex-basis: 100%; }
+  .nx-pos-create { margin-top: 0; min-height: 44px; }
+  .nx-pos-mobile-bar { padding-inline: 12px; gap: 8px; }
+  .nx-pos-mobile-review { font-size: 12px; gap: 5px; }
+  .nx-pos-mobile-pay { font-size: 14px; padding-inline: 10px; }
+}
+
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-header h2 { flex-direction: column; align-items: flex-start; gap: 3px; }
+
+/* Densidad del ticket: cantidades y quitar conservan 44px. Los avisos complejos
+   ocupan una fila completa; no se ocultan para hacer caber más productos. */
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-header { min-height: 64px; padding-block: 12px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-lines { padding-inline: 12px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line { display: grid; grid-template-columns: minmax(0, 1fr) 140px 44px; column-gap: 4px; padding-block: 6px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line-name { grid-column: 1; grid-row: 1; font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
+.nx-app-shell.nx-pos-workspace :is(.nx-pos-line-body, .nx-pos-line-price) { display: contents; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line-price > div:first-child { grid-column: 1; grid-row: 2; font-size: 11px; line-height: 14px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line-total { grid-column: 1; grid-row: 3; font-size: 14px; line-height: 18px; margin-top: 0; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line-quantity { grid-column: 2; grid-row: 1 / span 3; align-self: center; justify-content: center; padding: 0; gap: 0; min-width: 0; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line-quantity :is(button, input) { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line-remove { grid-column: 3; grid-row: 1 / span 3; align-self: center; }
+.nx-app-shell.nx-pos-workspace .nx-pos-line > :is([role='status'], [role='alert']) { grid-column: 1 / -1; }
+.nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer { padding: 12px; container-type: inline-size; }
+.nx-app-shell.nx-pos-workspace .nx-pos-total-row { min-width: 0; gap: 8px; }
+.nx-app-shell.nx-pos-workspace .nx-pos-total-row .nx-total { font-size: clamp(20px, 8cqi, 40px); line-height: 1.15; white-space: nowrap; font-variant-numeric: tabular-nums; }
+@media (min-width: 1024px) {
+  .nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer:has(.nx-ticket-checkout) { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer:has(.nx-ticket-checkout) > * { grid-column: 1 / -1; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer:has(.nx-ticket-checkout) > .nx-pos-tax-details { grid-column: 1; grid-row: 1; min-width: 0; min-height: 44px; margin: 0; max-width: 140px; text-align: left; gap: 4px; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-tax-details > span { min-width: 0; overflow-wrap: anywhere; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer:has(.nx-ticket-checkout) > .nx-pos-total-row { grid-column: 2; grid-row: 1; min-width: 0; flex-direction: column; align-items: flex-end; margin: 0; padding: 0; border: 0; }
+  .nx-app-shell.nx-pos-workspace .nx-pos-ticket-footer:has(.nx-ticket-checkout) .nx-total { font-size: clamp(20px, 7.5cqi, 32px); line-height: 1.15; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .nx-app-shell.nx-pos-workspace .nx-ticket-checkout { position: relative; }
+  .nx-app-shell.nx-pos-workspace .nx-ticket-checkout .nx-ticket-primary { height: 48px; }
+  .nx-app-shell.nx-pos-workspace .nx-ticket-checkout .nx-ticket-secondary { padding-bottom: 13px; }
+  .nx-app-shell.nx-pos-workspace .nx-ticket-checkout > p { position: absolute; bottom: 2px; left: 0; right: 0; margin: 0; pointer-events: none; }
+}

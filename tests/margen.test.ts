@@ -195,6 +195,18 @@ describe('calcularRetiroSeguro — cuánto puede sacar el dueño sin descapitali
 });
 
 describe('calcularEfectivoTurno — una sola verdad para la gaveta', () => {
+    it('conserva cuatro decimales USD sin cambiar el redondeo NIO', () => {
+        const result = calcularEfectivoTurno({
+            initialCash: '100.00', cashSales: '0.005', initialCashUsd: '20.1234',
+            movimientos: [
+                { type: 'IN', amount: '0.0003', currency: 'USD', category: 'CAMBIO' },
+                { type: 'OUT', amount: '0.0001', currency: 'USD', category: 'CAMBIO' },
+            ],
+        });
+        expect(result.efectivoUSD.toFixed(4)).toBe('20.1236');
+        expect(result.efectivoNIO.toFixed(2)).toBe('100.01');
+    });
+
     it('fondo + ventas en efectivo + entradas − salidas (manuales Y de agente)', () => {
         const r = calcularEfectivoTurno({
             initialCash: 1000,

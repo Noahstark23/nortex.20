@@ -13,6 +13,18 @@ export interface OnboardingStatus {
     completed: number;
     total: number;
     allDone: boolean;
+    /** Opcional durante el despliegue: no inferir una cantidad desde el checklist. */
+    salesProgress?: {
+        confirmedSales: number;
+        lastSaleAt: string | null;
+        /** Evidencia persistida; ausente en servidores anteriores. No representa una cohorte. */
+        firstSaleId?: string | null;
+        lastSaleId?: string | null;
+        firstSaleAt?: string | null;
+        firstSaleBusinessDate?: string | null;
+        lastSaleBusinessDate?: string | null;
+        returnedOnAnotherBusinessDate?: boolean;
+    };
 }
 
 const CACHE_TTL_MS = 2_000;

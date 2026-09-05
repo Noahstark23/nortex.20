@@ -1,4 +1,5 @@
 import { beforeAll, describe, expect, it } from 'vitest';
+import { approveQaCorrection, inviteQaMember } from './helpers/saleCorrectionQa';
 
 /**
  * QA HTTP real de idempotencia de devoluciones.
@@ -15,6 +16,7 @@ let token = '';
 let productId = '';
 let saleId = '';
 let saleItemId = '';
+let approver: { email: string; password: string };
 
 async function api<T = any>(path: string, init: RequestInit = {}): Promise<ApiResult<T>> {
     if (!QA_BASE_URL) throw new Error('NORTEX_QA_BASE_URL no está definido');
@@ -52,6 +54,7 @@ qaDescribe('QA integración: devolución idempotente', () => {
         });
         expectStatus(registration, 200);
         token = registration.body.token;
+        approver = await inviteQaMember(post, 'MANAGER');
 
         expectStatus(await post('/api/shifts/open', {
             initialCash: 500,
@@ -90,11 +93,18 @@ qaDescribe('QA integración: devolución idempotente', () => {
 
     it('dos POST concurrentes idénticos crean una vez y ambos recuperan la misma devolución', async () => {
         const clientEventId = crypto.randomUUID();
+        const reason = 'Producto regresado en QA';
+        const correctionRequestId = await approveQaCorrection(post, approver, {
+            saleId, kind: 'RETURN', reason, resolution: 'REFUND', refundMethod: 'CASH',
+            lines: [{ saleItemId, quantity: '1', disposition: 'RESTOCK' }],
+        });
         const payload = {
+            correctionRequestId,
             clientEventId,
             saleId,
             items: [{ saleItemId, quantity: 1 }],
-            reason: 'Producto regresado en QA',
+            reason,
+            refundMethod: 'CASH',
         };
 
         const stockBefore = await productStock();
@@ -112,15 +122,36 @@ qaDescribe('QA integración: devolución idempotente', () => {
 
     it('dos payloads divergentes concurrentes dejan un ganador y un 409, nunca un 500', async () => {
         const clientEventId = crypto.randomUUID();
+        const reason = 'Motivo concurrente autorizado';
+        const correctionRequestId = await approveQaCorrection(post, approver, {
+            saleId, kind: 'RETURN', reason, resolution: 'REFUND', refundMethod: 'CASH',
+            lines: [{ saleItemId, quantity: '1', disposition: 'RESTOCK' }],
+        });
+        const otherSale = await post('/api/sales', {
+            items: [{ id: productId, quantity: 1 }], paymentMethod: 'CASH', offlineId: crypto.randomUUID(),
+        });
+        expectStatus(otherSale, 200);
+        const otherSearch = await api(`/api/sales/search?q=${encodeURIComponent(otherSale.body.id)}`);
+        expectStatus(otherSearch, 200);
+        const otherSaleItemId = otherSearch.body.items[0].saleItemId;
+        const otherReason = 'Otra devolución concurrente autorizada';
+        const otherCorrectionId = await approveQaCorrection(post, approver, {
+            saleId: otherSale.body.id, kind: 'RETURN', reason: otherReason, resolution: 'REFUND', refundMethod: 'CASH',
+            lines: [{ saleItemId: otherSaleItemId, quantity: '1', disposition: 'RESTOCK' }],
+        });
         const stockBefore = await productStock();
         const base = {
+            correctionRequestId,
             clientEventId,
             saleId,
             items: [{ saleItemId, quantity: 1 }],
+            reason,
+            refundMethod: 'CASH',
         };
         const responses = await Promise.all([
-            post('/api/returns', { ...base, reason: 'Motivo concurrente A' }),
-            post('/api/returns', { ...base, reason: 'Motivo concurrente B' }),
+            post('/api/returns', base),
+            post('/api/returns', { ...base, correctionRequestId: otherCorrectionId,
+                saleId: otherSale.body.id, items: [{ saleItemId: otherSaleItemId, quantity: 1 }], reason: otherReason }),
         ]);
         const winner = responses.find((response) => response.status === 200);
         const loser = responses.find((response) => response.status === 409);
@@ -131,5 +162,9 @@ qaDescribe('QA integración: devolución idempotente', () => {
         expect(winner?.body.idempotentReplay).toBe(false);
         expect(loser?.body.code).toBe('RETURN_IDEMPOTENCY_CONFLICT');
         expect(await productStock()).toBe(stockBefore + 1);
+        // Tras el ganador confirmado, la divergencia siempre es conflicto de identidad.
+        const divergentReplay = await post('/api/returns', { ...base, reason: 'Motivo concurrente divergente' });
+        expectStatus(divergentReplay, 409);
+        expect(divergentReplay.body.code).toBe('RETURN_IDEMPOTENCY_CONFLICT');
     }, 120_000);
 });

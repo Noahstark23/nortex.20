@@ -1,3 +1,4 @@
+import { motorizadoSafeSelect } from '../backend/services/motorizadoIdentity';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => {
@@ -377,6 +378,7 @@ describe('asignación atómica de motorizado', () => {
         });
         expect(mocks.tx.pedido.findFirstOrThrow).toHaveBeenCalledWith({
             where: { id: 'pedido-1', tenantId: 'tenant-auth' },
+            include: { motorizado: { select: motorizadoSafeSelect } },
         });
         expect(res.body).toEqual({
             message: 'Motorizado asignado correctamente.',

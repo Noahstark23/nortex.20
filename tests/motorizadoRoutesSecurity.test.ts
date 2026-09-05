@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => {
         findUnique: vi.fn(),
         create: vi.fn(),
         update: vi.fn(),
+        updateMany: vi.fn(),
     };
 
     return {
@@ -118,7 +119,10 @@ const operationalRider = {
 
 describe('seguridad de rutas de motorizados', () => {
     beforeEach(() => {
-        vi.clearAllMocks();
+        vi.resetAllMocks();
+        mocks.prisma.motorizado.findFirst.mockResolvedValue(null);
+        mocks.prisma.motorizado.findMany.mockResolvedValue([]);
+        mocks.prisma.motorizado.updateMany.mockResolvedValue({ count: 1 });
         mocks.bcrypt.hash.mockResolvedValue('pin-hash');
         mocks.bcrypt.compare.mockResolvedValue(true);
     });
@@ -159,6 +163,7 @@ describe('seguridad de rutas de motorizados', () => {
             },
             select: motorizadoSafeSelect,
             orderBy: { tipoFlota: 'asc' },
+            take: 250,
         });
         expect(Object.keys(motorizadoSafeSelect).sort()).toEqual([
             'activo',
@@ -185,6 +190,30 @@ describe('seguridad de rutas de motorizados', () => {
         expect(res.body).toEqual({ motorizados: [operationalRider] });
     });
 
+    it.each([
+        ['post', { tenantId: 'tenant-forjado' }],
+        ['post', { tipoFlota: 'NORTEX' }],
+        ['patch', { tenantId: 'tenant-forjado' }],
+        ['patch', { tipoFlota: 'NORTEX' }],
+    ] as const)('%s rechaza campos de autoridad en el body sin consultar ni escribir', async (method, forged) => {
+        const res = response();
+        const body = method === 'post'
+            ? { nombre: 'Ana Pérez', telefono: '88880000', zonaCobertura: 'Managua', pin: '0042', ...forged }
+            : { activo: false, ...forged };
+        await routeHandler(motorizadosRouter, method === 'post' ? '/' : '/:id', method)(
+            { tenantId: 'tenant-auth', params: { id: 'driver-1' }, body }, res,
+        );
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({ error: method === 'post' && 'tipoFlota' in forged
+            ? 'La flota propia es el único tipo permitido.'
+            : 'La solicitud contiene campos no permitidos.' });
+        expect(mocks.prisma.motorizado.findFirst).not.toHaveBeenCalled();
+        expect(mocks.prisma.motorizado.findMany).not.toHaveBeenCalled();
+        expect(mocks.prisma.motorizado.create).not.toHaveBeenCalled();
+        expect(mocks.prisma.motorizado.updateMany).not.toHaveBeenCalled();
+        expect(mocks.bcrypt.hash).not.toHaveBeenCalled();
+    });
+
     it('POST normaliza los campos y persiste exclusivamente el tenant autenticado', async () => {
         mocks.prisma.motorizado.findMany.mockResolvedValue([]);
         mocks.prisma.motorizado.create.mockResolvedValue(operationalRider);
@@ -194,8 +223,6 @@ describe('seguridad de rutas de motorizados', () => {
             {
                 tenantId: 'tenant-auth',
                 body: {
-                    tenantId: 'tenant-forjado',
-                    tipoFlota: 'NORTEX',
                     nombre: '  Ana Pérez  ',
                     telefono: '+505 8888-0000',
                     zonaCobertura: '  Managua  ',
@@ -270,7 +297,7 @@ describe('seguridad de rutas de motorizados', () => {
 
         expect(res.statusCode).toBe(400);
         expect(res.body).toEqual({
-            error: 'El PIN es obligatorio y debe ser de 4 a 6 dígitos.',
+            error: 'El PIN debe ser texto para conservar ceros iniciales.',
         });
         expect(mocks.prisma.motorizado.findMany).not.toHaveBeenCalled();
         expect(mocks.bcrypt.hash).not.toHaveBeenCalled();
@@ -318,13 +345,13 @@ describe('seguridad de rutas de motorizados', () => {
             {
                 tenantId: 'tenant-auth',
                 params: { id: 'driver-1' },
-                body: { tenantId: 'tenant-forjado', pin: '7777' },
+                body: { pin: '7777' },
             },
             res,
         );
 
         expect(mocks.prisma.motorizado.findFirst).toHaveBeenCalledWith({
-            where: { id: 'driver-1', tenantId: 'tenant-auth' },
+            where: { id: 'driver-1', tenantId: 'tenant-auth', tipoFlota: 'PROPIA' },
             select: { id: true, telefono: true },
         });
         expect(mocks.prisma.motorizado.findMany).toHaveBeenCalledWith({
@@ -342,13 +369,13 @@ describe('seguridad de rutas de motorizados', () => {
     });
 
     it('PATCH permite habilitar el acceso de un motorizado legacy sin PIN', async () => {
-        mocks.prisma.motorizado.findFirst.mockResolvedValue({
+        mocks.prisma.motorizado.findFirst.mockResolvedValueOnce({
             id: 'driver-legacy',
             telefono: '50588880000',
             pinHash: null,
         });
         mocks.prisma.motorizado.findMany.mockResolvedValue([]);
-        mocks.prisma.motorizado.update.mockResolvedValue(operationalRider);
+        mocks.prisma.motorizado.findFirst.mockResolvedValueOnce(operationalRider);
         const res = response();
 
         await routeHandler(motorizadosRouter, '/:id', 'patch')(
@@ -361,9 +388,12 @@ describe('seguridad de rutas de motorizados', () => {
         );
 
         expect(mocks.bcrypt.hash).toHaveBeenCalledWith('0042', 10);
-        expect(mocks.prisma.motorizado.update).toHaveBeenCalledWith({
-            where: { id: 'driver-legacy' },
+        expect(mocks.prisma.motorizado.updateMany).toHaveBeenCalledWith({
+            where: { id: 'driver-legacy', tenantId: 'tenant-auth', tipoFlota: 'PROPIA' },
             data: { pinHash: 'pin-hash' },
+        });
+        expect(mocks.prisma.motorizado.findFirst).toHaveBeenLastCalledWith({
+            where: { id: 'driver-legacy', tenantId: 'tenant-auth', tipoFlota: 'PROPIA' },
             select: motorizadoSafeSelect,
         });
         expect(res.statusCode).toBe(200);

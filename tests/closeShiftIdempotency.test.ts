@@ -326,9 +326,9 @@ describe('contrato idempotente del cierre de caja legacy', () => {
 
         const audit = JSON.parse(String(db.audits[0].details));
         expect(audit.usd).toEqual({
-            esperado: '10.1200',
+            esperado: '10.1234',
             declarado: '10.1200',
-            diferencia: '0.0000',
+            diferencia: '-0.0034',
             fondoInicial: '10.1234',
         });
     });

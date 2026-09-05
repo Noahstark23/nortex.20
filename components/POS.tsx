@@ -2,18 +2,18 @@ import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useR
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, PlayCircle, House } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
-import { EmptyState } from './ui/EmptyState';
 import { IconButton } from './ui/IconButton';
-import { ProductImage } from './ui/ProductImage';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
-import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
+import { useUiMode } from '../hooks/useUiMode';
 import { ToastViewport, useToast } from './ui/Toast';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
-import { indexarProductos, buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
+import { buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
+import { usePosSearchIndex } from '../hooks/usePosSearchIndex';
+import { usePosCatalog } from '../hooks/usePosCatalog';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
     decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente,
@@ -24,12 +24,19 @@ import {
 } from '../utils/cartPersistence';
 import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
-import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
+import { OperationalNotifications } from './notifications/OperationalNotifications';
+import { PosSaleResultSheet } from './pos/PosSaleResultSheet';
+import { PosSaleHeader } from './pos/PosSaleHeader';
+import { PosMobileCheckoutBar } from './pos/PosMobileCheckoutBar';
+import './pos/posWorkspace.css';
+import { PosCatalogPane } from './pos/PosCatalogPane';
 import { PosCashSheet } from './pos/PosCashSheet';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
 import { PosPaymentSheet } from './pos/PosPaymentSheet';
 import { PosTicketShell } from './pos/PosTicketShell';
+import { NumberDraftInput } from './pos/NumberDraftInput';
 import { StoreCreditPaymentOption } from './pos/StoreCreditPaymentOption';
+import { usePosOfflineQueue } from '../hooks/usePosOfflineQueue';
 import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
 import POSCatalogAdminTools from './pos/POSCatalogAdminTools';
 import {
@@ -53,7 +60,7 @@ import {
     type FiscalSettingsSnapshot,
 } from '../utils/fiscalSettingsSnapshot';
 import {
-    generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced, recordOfflineSyncResults,
+    generateOfflineId, saveSaleOffline,
     getScaleContext, saveScaleContext,
     normalizeActiveScaleContext,
     OfflineScaleContext,
@@ -80,7 +87,7 @@ import {
     type RequestErrorCategory,
 } from '../utils/posActivation';
 import { validateCashReceived } from '../utils/posCash';
-import { mapApiProductForPos, mapApiProductImage } from '../utils/posProductMapper';
+import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
 // `discount` y `basePrice` son estado comercial de la línea, no del producto.
@@ -92,21 +99,6 @@ const effectiveSaleMode = effectivePosSaleMode;
 const effectiveQuantityStep = effectivePosQuantityStep;
 
 const lineKey = (item: CartItem): string => claveLineaCarrito(item as unknown as LineaGuardada);
-
-const PRODUCT_TILE_GRADIENTS = [
-    'from-indigo-500/25 to-cyan-500/15',
-    'from-emerald-500/25 to-teal-500/15',
-    'from-rose-500/25 to-fuchsia-500/15',
-    'from-amber-500/25 to-orange-500/15',
-    'from-sky-500/25 to-blue-500/15',
-];
-
-const productoPaleta = (seed: string): string =>
-    PRODUCT_TILE_GRADIENTS[
-        Math.abs(
-            seed.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0),
-        ) % PRODUCT_TILE_GRADIENTS.length
-    ];
 
 const isQuotationCartLine = (item: Pick<CartItem, 'quotationItemId'>): boolean =>
     typeof item.quotationItemId === 'string' && item.quotationItemId.trim() !== '';
@@ -206,59 +198,6 @@ const MIN_VENTAS_PARA_RANKING = 20;
 export const rotuloProductosRapidos = (esRanking: boolean, ventasRegistradas: number): string =>
     esRanking && ventasRegistradas >= MIN_VENTAS_PARA_RANKING ? 'Más vendidos' : 'Tus productos';
 
-/**
- * Tarjeta de producto de la grilla — MEMOIZADA (P0-2).
- *
- * Sin esto, cada tecla en la búsqueda vuelve a renderizar todas las tarjetas
- * visibles aunque ninguna cambió. Con la grilla ya acotada el costo baja solo,
- * pero el re-render sigue siendo gratis de evitar: las props son primitivas y
- * `onAgregar` es estable.
- */
-const TarjetaProducto = React.memo<{
-    product: Product;
-    bloqueada: boolean;
-    onAgregar: (p: Product) => void;
-}>(({ product, bloqueada, onAgregar }) => (
-    <button
-        type="button"
-        onClick={() => onAgregar(product)}
-        aria-disabled={bloqueada || undefined}
-        title={bloqueada ? 'Sin existencia. Tocá para cargar stock.' : undefined}
-        className={`nx-fluid-press h-32 bg-surface-900 border rounded-card px-3 py-2 transition-colors text-left flex flex-col justify-between text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 ${bloqueada
-            ? 'border-danger/25 opacity-70 hover:border-danger/50 hover:bg-danger-soft cursor-pointer'
-            : 'border-white/[0.06] hover:bg-surface-800 hover:border-brand/50'}`}
-    >
-        <div className="min-w-0 flex items-center gap-2">
-            <ProductImage
-                src={product.imageUrl}
-                alt={product.name}
-                loading="lazy"
-                sizes="56px"
-                className={`h-14 w-14 shrink-0 rounded-control border border-white/[0.12] bg-gradient-to-br ${productoPaleta(product.name)}`}
-                fallbackClassName="text-white"
-            />
-            <div className="min-w-0">
-                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
-                {product.sku ? (
-                    <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 truncate">
-                        SKU: {product.sku}
-                    </p>
-                ) : null}
-            </div>
-        </div>
-        <div className="flex justify-between items-end gap-1">
-            <span className="text-[15px] sm:text-[17px] font-bold text-brand nx-num whitespace-nowrap">{formatMoney(product.price)}</span>
-            {/* El stock negativo se muestra tal cual (−3), no disfrazado de
-                AGOTADO: es la señal de que el inventario ya se descuadró.
-                A 12px y no 11px — a 11px fallaba el contraste AA (P2-1). */}
-            <span className={`text-xs px-1.5 py-0.5 rounded-control shrink-0 ${product.stock <= 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-400'}`}>
-                {product.stock === 0 ? 'AGOTADO' : product.stock}
-            </span>
-        </div>
-    </button>
-));
-TarjetaProducto.displayName = 'TarjetaProducto';
-
 // Acá vivía PIN_DUENO_POR_DEFECTO = '1234', el PIN que el backend siembra al
 // registrar el negocio: el modal lo IMPRIMÍA en pantalla y además lo precargaba.
 // Un secreto que la propia pantalla revela y rellena no es un control de acceso,
@@ -338,53 +277,6 @@ const validacionEs = (mensaje: string = MENSAJE_REQUERIDO) => ({
     onInput: (e: React.FormEvent<CampoValidable>) => e.currentTarget.setCustomValidity(''),
 });
 
-// Input numérico controlado para estado `number` (cantidad, % descuento por
-// ítem): mantiene un BORRADOR string para que se puedan teclear decimales
-// ("1." no se "come" el punto) y commitea el número parseado. Nunca type="number".
-const NumberDraftInput: React.FC<{
-    value: number;
-    onCommit: (n: number) => void;
-    className?: string;
-    placeholder?: string;
-    ariaLabel?: string;
-    allowZero?: boolean;
-    ariaInvalid?: boolean;
-    describedBy?: string;
-}> = ({ value, onCommit, className, placeholder, ariaLabel, allowZero, ariaInvalid, describedBy }) => {
-    const [draft, setDraft] = useState<string>(value ? String(value) : '');
-    const lastCommitted = useRef<number>(value);
-
-    useEffect(() => {
-        // Resync solo si el valor externo cambió por algo distinto a este input
-        // (botones +/-, reset de carrito) — no pisamos el borrador propio.
-        if (value !== lastCommitted.current) {
-            setDraft(value ? String(value) : '');
-            lastCommitted.current = value;
-        }
-    }, [value]);
-
-    return (
-        <input
-            type="text"
-            inputMode="decimal"
-            placeholder={placeholder}
-            aria-label={ariaLabel}
-            aria-invalid={ariaInvalid || undefined}
-            aria-describedby={describedBy}
-            className={className}
-            value={draft}
-            onChange={(e) => {
-                const s = sanitizeDecimalInput(e.target.value);
-                setDraft(s);
-                if (s === '' && !allowZero) return; // permitir borrar sin forzar 0
-                const n = toDecimal(s).toNumber();
-                lastCommitted.current = n;
-                onCommit(n);
-            }}
-        />
-    );
-};
-
 interface Customer {
     id: string;
     name: string;
@@ -417,6 +309,7 @@ interface ParkingNotice {
 
 // Post-sale state
 interface CompletedSale {
+    syncStatus: 'pending' | 'confirmed';
     items: CartItem[];
     subtotal: number;
     discount: number; // monto rebajado (línea + global) para que el ticket cuadre
@@ -600,9 +493,6 @@ const POS: React.FC = () => {
     // que no son del tenant) online desaparecían tras fetchProducts, pero OFFLINE
     // persistían y se podían agregar al carrito → venta encolada con IDs mock
     // inexistentes → el sync fallaba. El catálogo real llega de /api/products.
-    const [products, setProducts] = useState<Product[]>([]);
-    // Distingue "no tenés productos" de "no pudimos cargarlos" (auditoría C8).
-    const [productsError, setProductsError] = useState(false);
     // Rótulo del acceso rápido: hoy esa lista sale del catálogo (`products`), no
     // de un endpoint de más-vendidos, así que NO hay ranking ni conteo de ventas
     // que respalde la etiqueta. Quedan explícitos para que el día que exista el
@@ -688,19 +578,9 @@ const POS: React.FC = () => {
     // carrito vacío. En un mostrador, 200 ms bastan para que esto ocurra.
     const parkingLockRef = useRef(false);
 
-    // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
-    // Desacoplado del menú (utils/navigation.ts), pero alineado con su intención:
-    // todo comercio retail empieza con producto → venta → cobro. Las herramientas
-    // avanzadas siguen disponibles al elegir explícitamente el modo completo.
-    const [simpleMode] = useState<boolean>(() => {
-        try {
-            const user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
-            const tenant = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}');
-            const type = tenant?.type || user?.tenant?.type || '';
-            return firstSaleMode || resolvePosSimple(type, localStorage.getItem(UI_MODE_KEY));
-        } catch { return firstSaleMode; }
-    });
-    const guidedSimpleMode = simpleMode || firstSaleMode;
+    const [uiMode] = useUiMode();
+    const simpleMode = uiMode === 'simple';
+    const guidedSimpleMode = simpleMode;
     const [operatorRole] = useState<string>(() => currentOperatorRole());
     const canApproveScaleLabelTotal = canApproveExceptionalScaleLabel(operatorRole);
     const { toast, showToast, dismissToast } = useToast();
@@ -723,8 +603,6 @@ const POS: React.FC = () => {
     const [payingInUSD, setPayingInUSD] = useState(false);
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
-    const [cajaCategory, setCajaCategory] = useState('Todos');
-    const [cajaVisibleLimit, setCajaVisibleLimit] = useState(24);
     const [processing, setProcessing] = useState(false);
 
     // 🖨️ THERMAL PRINTER STATE
@@ -832,7 +710,7 @@ const POS: React.FC = () => {
 
     // QUICK CREATE MODAL STATE
     const [showQuickCreate, setShowQuickCreate] = useState(false);
-    const [quickProduct, setQuickProduct] = useState({ name: '', sku: '', price: '', cost: '', stock: '1' });
+    const [quickProduct, setQuickProduct] = useState({ name: '', sku: '', price: '', cost: '', stock: '' });
     const [quickSaving, setQuickSaving] = useState(false);
     const [quickErrors, setQuickErrors] = useState<QuickProductErrors>({});
     const [quickGeneralError, setQuickGeneralError] = useState('');
@@ -843,18 +721,6 @@ const POS: React.FC = () => {
     const checkoutAttemptRef = useRef<CheckoutAttempt | null>(null);
     const activationStartedAtRef = useRef(Date.now());
 
-    const openQuickCreate = useCallback(() => {
-        quickStartedAtRef.current = Date.now();
-        quickFallbackSkuRef.current = null;
-        setQuickErrors({});
-        setQuickGeneralError('');
-        setShowQuickCreate(true);
-        trackEvent('quick_product_started', {
-            source: firstSaleMode ? 'first_sale' : 'pos',
-            onboarding_step: 'product',
-            has_products: products.length > 0,
-        });
-    }, [firstSaleMode, products.length]);
 
     // EXCEL IMPORT MODAL STATE
     const [showImportModal, setShowImportModal] = useState(false);
@@ -941,9 +807,6 @@ const POS: React.FC = () => {
     // OFFLINE / PWA STATE
     // ==========================================
     const [isOnline, setIsOnline] = useState(navigator.onLine);
-    const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
-    const [reconciliationOfflineCount, setReconciliationOfflineCount] = useState(0);
-    const [syncingOffline, setSyncingOffline] = useState(false);
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
@@ -991,80 +854,23 @@ const POS: React.FC = () => {
         }
     }, [headers, identidad?.tenantId, token]);
 
-    // ==========================================
-    // FETCH PRODUCTS FROM DB
-    // ==========================================
-    const fetchProducts = useCallback(async () => {
-        try {
-            const res = await fetch('/api/products?includeSellableStock=true', { headers });
-            if (res.ok) {
-                const data = await res.json();
-                setProducts(data.map(mapApiProductForPos));
-                setProductsError(false);
-            } else {
-                // Falso empty-state (auditoría C8): un 500/402 mostraba "no tenés
-                // productos" a quien SÍ tiene. Ahora se distingue error de vacío.
-                setProductsError(true);
-            }
-        } catch (e) {
-            console.error('Error fetching products:', e);
-            setProductsError(true);
-        }
-    }, [headers]);
+    const { products, productsError, setProducts, fetchProducts, refreshSoldProducts } = usePosCatalog(headers);
 
-    // ==========================================
-    // OFFLINE SYNC ENGINE
-    // ==========================================
-    const syncOfflineSales = useCallback(async () => {
-        if (!identidad) return;
-        const pending = await getPendingSales(identidad);
-        if (pending.length === 0) return;
-        setSyncingOffline(true);
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const res = await fetch('/api/sales/sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ sales: pending }),
-            });
-            if (res.ok) {
-                const result = await res.json();
-                await recordOfflineSyncResults(result.results ?? []);
-                const syncedIds = result.results
-                    .filter((r: any) => r.status === 'created' || r.status === 'skipped')
-                    .map((r: any) => r.offlineId);
-                const reconciliationCount = result.results
-                    .filter((r: any) => r.status === 'reconciliation_required' || r.code === 'RECONCILIATION_REQUIRED')
-                    .length;
-                await markSalesSynced(syncedIds);
-                const remaining = await getPendingSales(identidad);
-                setPendingOfflineCount(remaining.length);
-                setReconciliationOfflineCount(
-                    remaining.filter((sale) => sale.syncState === 'RECONCILIATION_REQUIRED').length,
-                );
-                if (reconciliationCount > 0) {
-                    setLastScanFeedback({
-                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se modificó el comprobante`,
-                        type: 'error',
-                    });
-                    window.setTimeout(() => setLastScanFeedback(null), 8000);
-                }
-                await fetchProducts();
-            }
-        } catch (e) {
-            // Se intentará de nuevo cuando vuelva internet
-        } finally {
-            setSyncingOffline(false);
-        }
-    }, [fetchProducts, identidad]);
+    const openQuickCreate = useCallback(() => {
+        quickStartedAtRef.current = Date.now();
+        quickFallbackSkuRef.current = null;
+        setQuickErrors({});
+        setQuickGeneralError('');
+        setShowQuickCreate(true);
+        trackEvent('quick_product_started', {
+            source: firstSaleMode ? 'first_sale' : 'pos',
+            onboarding_step: 'product',
+            has_products: products.length > 0,
+        });
+    }, [firstSaleMode, products.length]);
 
-    const refreshOfflineCount = useCallback(async () => {
-        const pending = identidad ? await getPendingSales(identidad) : [];
-        setPendingOfflineCount(pending.length);
-        setReconciliationOfflineCount(
-            pending.filter((sale) => sale.syncState === 'RECONCILIATION_REQUIRED').length,
-        );
-    }, [identidad]);
+    const { pendingCount: pendingOfflineCount, reconciliationCount: reconciliationOfflineCount,
+        syncing: syncingOffline, sync: syncOfflineSales, refresh: refreshOfflineCount, recovery: offlineRecovery } = usePosOfflineQueue(identidad, fetchProducts);
 
     const refreshScaleContext = useCallback(async () => {
         const tenantId = identidad?.tenantId;
@@ -1363,12 +1169,12 @@ const POS: React.FC = () => {
     }, [firstSaleMode, shiftLoading, showOpenShift]);
 
     useEffect(() => {
-        refreshOfflineCount();
+        void refreshOfflineCount().catch(() => undefined);
         const handleOnline = () => {
             setIsOnline(true);
             void refreshScaleContext();
             void refreshFiscalSettings();
-            void syncOfflineSales();
+            void syncOfflineSales().catch(() => undefined);
         };
         const handleOffline = () => setIsOnline(false);
         window.addEventListener('online', handleOnline);
@@ -2323,6 +2129,11 @@ const POS: React.FC = () => {
     useEffect(() => {
         if (!scannerActive) return;
         const handleScannerKey = (event: KeyboardEvent) => {
+            if (document.querySelector('[data-operational-alerts]')) {
+                scanBufferRef.current = '';
+                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+                return;
+            }
             const target = event.target as HTMLElement;
             const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
             if (isInput) return;
@@ -2796,6 +2607,7 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
+            if (document.querySelector('[data-operational-alerts]')) return;
             const paymentSheetShortcut = ['F2', 'F4', 'F7', 'F8', 'F9'].includes(e.key) || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'k' || e.key === 'Enter'));
             if ((showPaymentOptions || showCashPreModal) && paymentSheetShortcut) {
                 e.preventDefault();
@@ -3036,7 +2848,7 @@ const POS: React.FC = () => {
         setQuickGeneralError('');
         if ('errors' in validated) {
             setQuickErrors(validated.errors);
-            if (validated.errors.cost || validated.errors.stock) setShowQuickDetails(true);
+            if (validated.errors.cost || validated.errors.sku) setShowQuickDetails(true);
             return;
         }
 
@@ -3054,7 +2866,7 @@ const POS: React.FC = () => {
             if (!res.ok) {
                 const failure = normalizeApiFailure(res.status, data, 'No pudimos guardar el producto.');
                 setQuickErrors(failure.fields);
-                if (failure.fields.cost || failure.fields.stock) setShowQuickDetails(true);
+                if (failure.fields.cost || failure.fields.sku) setShowQuickDetails(true);
                 setQuickGeneralError(
                     Object.keys(failure.fields).length > 0
                         ? 'Revisá los campos marcados.'
@@ -3072,6 +2884,7 @@ const POS: React.FC = () => {
                 price: data.price,
                 costPrice: data.cost,
                 stock: data.stock,
+                minStock: data.minStock,
                 category: data.category || 'General',
                 ...mapApiProductImage(data),
                 wholesalePrice: data.wholesalePrice ?? null,
@@ -3086,12 +2899,20 @@ const POS: React.FC = () => {
                 quantityStep: data.quantityStep ?? 1,
             };
             setProducts(prev => [newProd, ...prev]);
-            addToCart(newProd);
-            playBeep();
+            if (permiteStockNegativo !== true && newProd.stock <= 0) {
+                showToast({
+                    tone: 'success',
+                    title: 'Producto guardado sin existencia',
+                    message: 'Cargá la existencia real antes de agregarlo a una venta.',
+                });
+            } else {
+                addToCart(newProd);
+                playBeep();
+            }
 
             setShowQuickCreate(false);
             setShowQuickDetails(false);
-            setQuickProduct({ name: '', sku: '', price: '', cost: '', stock: '1' });
+            setQuickProduct({ name: '', sku: '', price: '', cost: '', stock: '' });
             quickFallbackSkuRef.current = null;
             setQuickErrors({});
             setQuickGeneralError('');
@@ -3144,7 +2965,7 @@ const POS: React.FC = () => {
     const storeCreditAppliedD = useStoreCredit ? Decimal.min(availableStoreCreditD, grandTotalD).toDecimalPlaces(2) : new Decimal(0);
     const amountDueD = grandTotalD.minus(storeCreditAppliedD).toDecimalPlaces(2);
     const cashPaymentValidation = amountDueD.isZero()
-        ? { ok: true as const, received: new Decimal(0), total: new Decimal(0), change: new Decimal(0) }
+        ? { ok: true as const, received: new Decimal(0), total: amountDueD, change: new Decimal(0) }
         : validateCashReceived(cashReceived, amountDueD);
     // El backend redondea total y exento a centavos antes del desglose. Este
     // espejo evita que una venta medida offline imprima un IVA distinto por un
@@ -3344,9 +3165,9 @@ const POS: React.FC = () => {
             payment_type: method,
         });
 
-        const trackFirstRealSale = () => {
+        const trackGuidedSaleCompletion = () => {
             if (!firstSaleMode) return;
-            trackEvent('first_real_sale_completed', {
+            trackEvent('first_sale_flow_completed', {
                 source: 'first_sale',
                 onboarding_step: 'completed',
                 has_products: true,
@@ -3372,21 +3193,10 @@ const POS: React.FC = () => {
                 items: saleItems,
                 createdAt: new Date().toISOString(),
             });
-            setPendingOfflineCount(p => p + 1);
-
-            // Sin red, el pulso avanza localmente; el próximo fetch online
-            // vuelve a establecer la cifra autoritativa.
-            setPulso(previous => previous && {
-                ...previous,
-                totalHoy: toDecimal(previous.totalHoy).plus(grandTotal).toFixed(2),
-                ventasHoy: previous.ventasHoy + 1,
-                rachaIncluyeHoy: true,
-                racha: previous.rachaIncluyeHoy ? previous.racha : previous.racha + 1,
-                esRecordHoy: previous.record !== null
-                    && toDecimal(previous.totalHoy).plus(grandTotal).greaterThan(toDecimal(previous.record)),
-            });
+            await refreshOfflineCount().catch(() => undefined);
 
             setCompletedSale({
+                syncStatus: 'pending',
                 items: [...cart],
                 subtotal: total,
                 discount: discountAmount,
@@ -3409,10 +3219,9 @@ const POS: React.FC = () => {
             setShowPaymentOptions(false);
             checkoutAttemptRef.current = null;
             setCashReceived('');
-            trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
-            trackFirstRealSale();
+            trackEvent('sale_queued', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
             if (measuredLines > 0) {
-                trackEvent('measured_sale_completed', { offline: true, measured_lines: measuredLines });
+                trackEvent('measured_sale_queued', { offline: true, measured_lines: measuredLines });
             }
         };
 
@@ -3486,13 +3295,14 @@ const POS: React.FC = () => {
             setFiscalSettings(authoritativeFiscalSettings);
             cacheFiscalSettingsForTenant(identidad?.tenantId, authoritativeFiscalSettings);
 
-            fetchProducts();
+            void refreshSoldProducts(cart.map(item => item.id));
             fetchPulso();
             // Aviso global (retención R2): el checklist de primeros pasos se
             // refresca en vivo y celebra la primera venta sin esperar un remount.
             window.dispatchEvent(new CustomEvent('nortex:data-changed'));
 
             setCompletedSale({
+                syncStatus: 'confirmed',
                 items: [...cart],
                 subtotal: total,
                 discount: discountAmount,
@@ -3518,7 +3328,7 @@ const POS: React.FC = () => {
             setCashReceived('');
             storeCreditCheckout.clear();
             trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
-            trackFirstRealSale();
+            trackGuidedSaleCompletion();
             if (measuredLines > 0) {
                 trackEvent('measured_sale_completed', { offline: false, measured_lines: measuredLines });
             }
@@ -3722,6 +3532,7 @@ const POS: React.FC = () => {
     const handleNewSale = () => {
         resetAfterSale();
         if (firstSaleMode) navigate('/app/pos', { replace: true });
+        window.requestAnimationFrame(() => searchRef.current?.focus());
     };
 
     const handleReturnHome = () => {
@@ -3794,7 +3605,7 @@ const POS: React.FC = () => {
 
     // El índice se arma UNA vez por catálogo. Antes se re-armaba el string
     // `name + sku + category` de cada producto en CADA tecla.
-    const indiceProductos = useMemo(() => indexarProductos(products), [products]);
+    const indiceProductos = usePosSearchIndex(products);
 
     // `useDeferredValue` (React 19) en lugar de un debounce: la grilla puede ir
     // un frame atrás sin bloquear el tipeo. NO toca el camino del escáner —
@@ -3807,49 +3618,6 @@ const POS: React.FC = () => {
         const t = terminoDiferido.trim();
         return buscarProductos(indiceProductos, t, t === '' ? TOPE_SIN_BUSQUEDA : TOPE_BUSCANDO);
     }, [indiceProductos, terminoDiferido]);
-
-    const filteredProducts = resultadoBusqueda.visibles;
-
-    // La caja simple no inventa un ranking de "más vendidos" mientras no haya
-    // datos reales. Presenta un estante corto de productos del negocio y permite
-    // cambiar de categoría sin convertir la pantalla en el módulo Inventario.
-    const cajaCategories = useMemo(() => {
-        const categories = Array.from(new Set(
-            products
-                .map(product => product.category?.trim())
-                .filter((category): category is string => Boolean(category)),
-        ));
-        return ['Todos', ...categories];
-    }, [products]);
-
-    useEffect(() => {
-        setCajaVisibleLimit(TOPE_SIN_BUSQUEDA);
-    }, [cajaCategory, searchTerm]);
-
-    const cajaCatalogResult = useMemo(() => {
-        const term = searchTerm.trim();
-        if (term !== '') return buscarProductos(indiceProductos, term, cajaVisibleLimit);
-
-        const activeCategory = cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos';
-        const byCategory = activeCategory === 'Todos'
-            ? products
-            : products.filter(product => product.category?.trim() === activeCategory);
-        const visibles = byCategory.slice(0, cajaVisibleLimit);
-        return {
-            visibles,
-            total: byCategory.length,
-            ocultos: byCategory.length - visibles.length,
-            coincidenciaExacta: false,
-        };
-    }, [cajaCategories, cajaCategory, cajaVisibleLimit, indiceProductos, products, searchTerm]);
-
-    const cajaProducts = cajaCatalogResult.visibles;
-
-    const cajaBlockedProductIds = useMemo(() => new Set(
-        permiteStockNegativo === true
-            ? []
-            : cajaProducts.filter(product => product.stock <= 0).map(product => product.id),
-    ), [cajaProducts, permiteStockNegativo]);
 
     // Estable, para que `React.memo` de la tarjeta sirva de algo. Mismo criterio
     // que el escáner: si el negocio permite vender sin existencia la tarjeta
@@ -4109,7 +3877,7 @@ const POS: React.FC = () => {
     if (shiftLoading) return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin" /> Cargando Sistema...</div>;
 
     return (
-        <div className="nx-app-shell nx-dark-context flex h-full bg-surface-950 relative">
+        <div className={`nx-app-shell flex h-full relative ${guidedSimpleMode ? 'nx-pos-workspace' : 'nx-dark-context bg-surface-950'}`}>
 
             {manualMeasuredProduct && (
                 <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="manual-measure-title">
@@ -4230,84 +3998,11 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            {/* HEADER BAR */}
-            <div className={`nx-dark-chrome absolute top-0 right-0 left-0 border-b border-white/[0.06] flex justify-between items-center gap-4 z-10 text-slate-100 ${guidedSimpleMode
-                ? 'h-16 bg-surface-950 px-4 lg:px-6'
-                : 'h-14 bg-surface-900 px-6'}`}>
-                <div className="font-bold text-slate-100 flex items-center gap-3 shrink-0 min-w-0">
-                    {guidedSimpleMode ? (
-                        <>
-                            <span className="min-w-0">
-                                <span className="block text-sm font-semibold tracking-[-0.02em] text-slate-100 leading-tight">
-                                    {firstSaleMode ? 'Primera venta' : 'Nueva venta'}
-                                </span>
-                                <span className="block max-w-[210px] truncate text-[11px] font-medium text-slate-500 leading-tight">
-                                    {tenantPrintDetails.tenantName}
-                                </span>
-                            </span>
-                        </>
-                    ) : (
-                        <>
-                            {firstSaleMode ? 'Tu primera venta' : 'Vender'}
-                            {currentShift && (
-                                <span className="text-xs bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full border border-green-500/20 flex items-center gap-1.5">
-                                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                                    {currentShift.employee
-                                        ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}`
-                                        : 'CAJA ABIERTA'}
-                                </span>
-                            )}
-                        </>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-2 min-w-0 md:justify-end whitespace-nowrap pl-4 overflow-x-auto">
-                    {/* Estado de conexión: informativo, no es una acción. Ámbar = requiere atención. */}
-                    {!isOnline && (
-                        <div className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-warning-soft text-amber-400 border border-amber-500/20">
-                            <WifiOff size={14} />
-                            <span className="hidden lg:inline">Sin internet</span>
-                            {pendingOfflineCount > 0 && (
-                                <span className="bg-surface-900 text-amber-400 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{pendingOfflineCount}</span>
-                            )}
-                        </div>
-                    )}
-                    {guidedSimpleMode && isOnline && pendingOfflineCount === 0 && (
-                        <div className="flex h-8 items-center gap-2 px-2 text-xs font-semibold text-slate-400" title="Conexión disponible">
-                            <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden="true" />
-                            <span className="hidden sm:inline">En línea</span>
-                        </div>
-                    )}
-                    {isOnline && pendingOfflineCount > 0 && (
-                        <button
-                            onClick={syncOfflineSales}
-                            disabled={syncingOffline}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-brand-soft text-brand border border-brand/20 hover:bg-brand/15 transition-colors disabled:opacity-60"
-                            title="Sincronizar ventas offline"
-                        >
-                            <RefreshCw size={14} className={syncingOffline ? 'animate-spin' : ''} />
-                            <span className="hidden lg:inline">{syncingOffline ? 'Sincronizando...' : `Sync (${pendingOfflineCount})`}</span>
-                        </button>
-                    )}
-                    {reconciliationOfflineCount > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => showToast({
-                                tone: 'warning',
-                                title: 'Conciliación pendiente',
-                                message: `${reconciliationOfflineCount} venta${reconciliationOfflineCount === 1 ? '' : 's'} permanece${reconciliationOfflineCount === 1 ? '' : 'n'} protegida${reconciliationOfflineCount === 1 ? '' : 's'} en este dispositivo. Un administrador debe conciliarla manualmente con soporte; Nortex no reinterpretará la etiqueta ni borrará la evidencia automáticamente.`,
-                            })}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-red-500/10 text-red-300 border border-red-500/20 hover:bg-red-500/15"
-                            title="Ventas offline que requieren conciliación"
-                        >
-                            <AlertTriangle size={14} />
-                            <span className="hidden lg:inline">Revisión ({reconciliationOfflineCount})</span>
-                        </button>
-                    )}
-
+            <PosSaleHeader simple={guidedSimpleMode} firstSale={firstSaleMode} businessName={tenantPrintDetails.tenantName}>
+                <OperationalNotifications local={{ isOnline, pendingCount: pendingOfflineCount, reconciliationCount: reconciliationOfflineCount, syncing: syncingOffline, onSync: syncOfflineSales, onRefresh: refreshOfflineCount, recovery: offlineRecovery }} />
                     {!guidedSimpleMode && pulso && pulso.ventasHoy > 0 && (
                         <div
-                            className="flex items-center gap-2 text-xs px-3 h-8 rounded-control bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                            className="flex items-center gap-2 text-xs px-3 min-h-tap rounded-control bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
                             title={pulso.metaDiaria ? `Vendido hoy · Meta del día: ${formatMoney(pulso.metaDiaria)}` : 'Vendido hoy'}
                         >
                             {pulso.racha >= 2 && (
@@ -4329,7 +4024,7 @@ const POS: React.FC = () => {
                     {currentShift && !guidedSimpleMode && cashBalance !== null && (
                         <button
                             onClick={() => setShowMovementsList(!showMovementsList)}
-                            className="flex items-center gap-1.5 text-xs px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                            className="flex items-center gap-1.5 text-xs px-3 min-h-tap rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                             title="Efectivo en caja"
                         >
                             <Wallet size={14} />
@@ -4338,7 +4033,7 @@ const POS: React.FC = () => {
                     )}
 
                     {guidedSimpleMode && currentShift && (
-                        <div className="hidden h-8 items-center border-l border-white/[0.08] pl-3 text-xs text-slate-400 md:flex">
+                        <div className="hidden min-h-tap items-center border-l border-white/[0.08] pl-3 text-xs text-slate-400 md:flex">
                             <span className="text-slate-300">Caja abierta</span>
                             <span className="px-1.5 text-slate-600">·</span>
                             <span className="max-w-[150px] truncate">
@@ -4353,7 +4048,7 @@ const POS: React.FC = () => {
                             onClick={() => showHeldCarts ? setShowHeldCarts(false) : openHeldCarts()}
                             aria-label={`${heldCarts.length} ${heldCarts.length === 1 ? 'venta aparcada' : 'ventas aparcadas'}`}
                             aria-expanded={showHeldCarts}
-                            className={`relative flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control border transition-colors ${
+                            className={`relative flex items-center gap-1.5 text-xs font-semibold px-2.5 min-h-tap rounded-control border transition-colors ${
                                 guidedSimpleMode
                                     ? 'bg-sky-500/10 text-sky-300 border-sky-500/20 hover:bg-sky-500/15'
                                     : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'
@@ -4378,7 +4073,7 @@ const POS: React.FC = () => {
                                 onClick={() => setShowCashActions(v => !v)}
                                 aria-haspopup="menu"
                                 aria-expanded={showCashActions}
-                                className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                                className="flex items-center gap-1.5 text-xs font-semibold px-3 min-h-tap rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                                 title="Acciones de caja"
                             >
                                 {guidedSimpleMode ? <MoreHorizontal size={15} /> : <SlidersHorizontal size={14} />}
@@ -4517,7 +4212,7 @@ const POS: React.FC = () => {
 
                     {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
                     {currentShift && !guidedSimpleMode ? (
-                        <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
+                        <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="nx-fluid-press text-xs font-semibold text-danger hover:bg-danger-soft px-3 min-h-tap rounded-control transition-colors flex items-center gap-1.5">
                             <Lock size={14} /> Cerrar caja
                         </button>
                     ) : !currentShift ? (
@@ -4526,14 +4221,13 @@ const POS: React.FC = () => {
                         // puerta de regreso, no un cartel muerto.
                         <button
                             onClick={() => { setErrorApertura({}); setShowOpenShift(true); }}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-300 border border-white/[0.07] hover:bg-white/[0.07] transition-colors"
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 min-h-tap rounded-control bg-white/[0.04] text-slate-300 border border-white/[0.07] hover:bg-white/[0.07] transition-colors"
                             title="Abrir la caja para poder cobrar"
                         >
                             <Lock size={14} /> Caja cerrada
                         </button>
                     ) : null}
-                </div>
-            </div>
+            </PosSaleHeader>
 
             {/* SCANNER FEEDBACK TOAST */}
             {lastScanFeedback && (
@@ -5265,7 +4959,7 @@ const POS: React.FC = () => {
                                     <PackagePlus size={19} className="text-brand" /> Agregar producto
                                 </h3>
                                 <p id="quick-product-description" className="text-xs text-slate-500 mt-1">
-                                    Nombre y precio. Lo demás es opcional.
+                                    Nombre, precio y existencia real. Código y costo son opcionales.
                                 </p>
                             </div>
                             <button type="button" onClick={() => setShowQuickCreate(false)} disabled={quickSaving} className="w-10 h-10 rounded-control text-slate-400 hover:text-white hover:bg-white/[0.05] flex items-center justify-center disabled:opacity-40" aria-label="Cerrar">
@@ -5314,6 +5008,24 @@ const POS: React.FC = () => {
                                 {quickErrors.price && <p id="quick-product-price-error" className="mt-1.5 text-xs text-red-300">{quickErrors.price}</p>}
                             </div>
 
+                            <div>
+                                <label htmlFor="quick-product-stock" className="block text-xs font-semibold text-slate-400 mb-1.5">Existencia</label>
+                                <input
+                                    id="quick-product-stock"
+                                    required type="text" inputMode="numeric" placeholder="Ej. 12"
+                                    value={quickProduct.stock}
+                                    aria-invalid={Boolean(quickErrors.stock)}
+                                    aria-describedby={quickErrors.stock ? 'quick-product-stock-help quick-product-stock-error' : 'quick-product-stock-help'}
+                                    onChange={e => {
+                                        setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) });
+                                        setQuickErrors(previous => ({ ...previous, stock: undefined }));
+                                    }}
+                                    className={`w-full h-touch px-3 border rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 outline-none tabular-nums ${quickErrors.stock ? 'border-red-500/70' : 'border-white/10'}`}
+                                />
+                                <p id="quick-product-stock-help" className="mt-1 text-[11px] text-slate-500">Unidades que tenés ahora. Escribí 0 si no hay existencia.</p>
+                                {quickErrors.stock && <p role="alert" id="quick-product-stock-error" className="mt-1 text-xs text-red-300">{quickErrors.stock}</p>}
+                            </div>
+
                             {simpleMode && (
                                 <button
                                     type="button"
@@ -5346,7 +5058,7 @@ const POS: React.FC = () => {
                                         />
                                         {quickErrors.sku && <p id="quick-product-sku-error" className="mt-1.5 text-xs text-red-300">{quickErrors.sku}</p>}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div>
                                         <div>
                                             <label htmlFor="quick-product-cost" className="block text-xs font-semibold text-slate-400 mb-1.5">Costo</label>
                                             <input
@@ -5364,22 +5076,6 @@ const POS: React.FC = () => {
                                             <p id="quick-product-cost-help" className="mt-1 text-[11px] text-slate-500">Vacío se guarda como C$0; nunca estimamos tu costo.</p>
                                             {quickErrors.cost && <p id="quick-product-cost-error" className="mt-1 text-xs text-red-300">{quickErrors.cost}</p>}
                                         </div>
-                                        <div>
-                                            <label htmlFor="quick-product-stock" className="block text-xs font-semibold text-slate-400 mb-1.5">Existencia</label>
-                                            <input
-                                                id="quick-product-stock"
-                                                type="text" inputMode="numeric"
-                                                value={quickProduct.stock}
-                                                aria-invalid={Boolean(quickErrors.stock)}
-                                                aria-describedby={quickErrors.stock ? 'quick-product-stock-error' : undefined}
-                                                onChange={e => {
-                                                    setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) });
-                                                    setQuickErrors(previous => ({ ...previous, stock: undefined }));
-                                                }}
-                                                className={`w-full h-touch px-3 border rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 outline-none tabular-nums ${quickErrors.stock ? 'border-red-500/70' : 'border-white/10'}`}
-                                            />
-                                            {quickErrors.stock && <p id="quick-product-stock-error" className="mt-1 text-xs text-red-300">{quickErrors.stock}</p>}
-                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -5396,308 +5092,58 @@ const POS: React.FC = () => {
                                 className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                             >
                                 {quickSaving ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-                                {quickSaving ? 'Guardando producto…' : 'Guardar y agregar'}
+                                {quickSaving ? 'Guardando producto…' : quickProduct.stock.trim() !== '' && Number(quickProduct.stock) === 0 && permiteStockNegativo !== true ? 'Guardar producto' : 'Guardar y agregar'}
                             </button>
                         </form>
                     </div>
                 </div>
             )}
 
-            {/* LEFT: PRODUCTS */}
-            <div className={`w-full flex-1 flex flex-col overflow-hidden ${guidedSimpleMode
-                ? 'nx-light-context nx-catalog-surface mt-16 p-4 text-slate-950 lg:px-6 lg:py-5 mb-0'
-                : 'mt-14 p-4 lg:p-6 mb-16 lg:mb-0'}`}>
-                {firstSaleMode && (
-                    <div className="mb-4 rounded-card border border-brand/25 bg-brand-soft px-4 py-3.5 sm:px-5">
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <p className={`text-sm font-bold ${guidedSimpleMode ? 'text-slate-950' : 'text-slate-100'}`}>Primera venta real</p>
-                                <p className={`text-xs mt-0.5 ${guidedSimpleMode ? 'text-slate-600' : 'text-slate-400'}`}>Al terminar se actualizan caja e inventario.</p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => navigate('/demo?source=first_sale')}
-                                className={`nx-fluid-press hidden sm:inline-flex min-h-tap px-3 rounded-control text-xs font-semibold items-center gap-2 shrink-0 ${guidedSimpleMode ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'}`}
-                            >
-                                <PlayCircle size={16} /> Practicar
-                            </button>
-                        </div>
-                        <ol className="mt-4 grid grid-cols-3" aria-label="Progreso de tu primera venta">
-                            {[
-                                { step: 1, label: 'Producto' },
-                                { step: 2, label: 'Cobro' },
-                                { step: 3, label: 'Venta lista' },
-                            ].map((item, index, steps) => {
-                                const done = firstSaleStage > item.step || (firstSaleStage === 3 && item.step === 3);
-                                const current = firstSaleStage === item.step && !done;
-                                return (
-                                    <li key={item.step} className="relative flex flex-col items-center text-center">
-                                        {index < steps.length - 1 && (
-                                            <span className={`absolute left-1/2 top-3 h-px w-full ${firstSaleStage > item.step ? 'bg-brand' : 'bg-white/[0.10]'}`} aria-hidden="true" />
-                                        )}
-                                        <span className={`relative z-[1] flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold ${done
-                                            ? 'border-brand bg-brand text-brand-on'
-                                            : current
-                                                ? `border-brand ${guidedSimpleMode ? 'bg-white' : 'bg-surface-900'} text-brand ring-4 ring-brand/10`
-                                                : `${guidedSimpleMode ? 'border-slate-300 bg-white' : 'border-white/[0.12] bg-surface-900'} text-slate-500`}`}
-                                        >
-                                            {done ? <Check size={13} strokeWidth={3} /> : item.step}
-                                        </span>
-                                        <span className={`mt-2 text-[11px] font-semibold ${done || current ? (guidedSimpleMode ? 'text-slate-800' : 'text-slate-200') : 'text-slate-500'}`}>{item.label}</span>
-                                    </li>
-                                );
-                            })}
-                        </ol>
-                        <button
-                            type="button"
-                            onClick={() => navigate('/demo?source=first_sale')}
-                            className={`nx-fluid-press sm:hidden mt-3 min-h-tap w-full rounded-control text-xs font-semibold inline-flex items-center justify-center gap-2 ${guidedSimpleMode ? 'text-slate-700 hover:bg-slate-100 hover:text-slate-950' : 'text-slate-300 hover:text-white hover:bg-white/[0.05]'}`}
-                        >
-                            <PlayCircle size={16} /> Practicar sin guardar
-                        </button>
-                    </div>
-                )}
-                <div className="mb-4 flex gap-2">
-                    <div className="flex-1">
-                        <div className="relative">
-                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                            {/* 56px + foco automático al montar: es el primer control de la
-                                pantalla donde el cajero pasa el 80% del turno. Antes había
-                                que hacer clic (o saber F2) antes de poder escanear. */}
-                            <input
-                                ref={searchRef}
-                                type="text"
-                                autoFocus
-                                placeholder={guidedSimpleMode ? 'Escaneá o buscá un producto' : 'Buscar o escanear'}
-                                className={`w-full h-pay pl-11 pr-4 rounded-control border focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 font-medium transition-colors ${guidedSimpleMode
-                                    ? 'bg-white border-slate-200 text-slate-950 placeholder:text-slate-500 shadow-sm'
-                                    : 'bg-surface-900 border-white/[0.06] text-slate-100'}`}
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                onKeyDown={handleSearchKeyDown}
-                            />
-                        </div>
-                        {guidedSimpleMode && <p className="mt-2 px-1 text-xs text-slate-500">Código, nombre o SKU</p>}
-                    </div>
-                    {/* Quick Create */}
-                    {!guidedSimpleMode && <button type="button"
-                        onClick={openQuickCreate}
-                        className="nx-fluid-press min-h-tap bg-amber-400 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-colors"
-                        title="Producto Rápido"
-                    >
-                        <Zap size={18} />
-                        <span>Rápido</span>
-                    </button>}
-                    <POSCatalogAdminTools
-                        guidedSimpleMode={guidedSimpleMode}
-                        headers={headers}
-                        showAddModal={showAddModal}
-                        showImportModal={showImportModal}
-                        onOpenAddModal={() => setShowAddModal(true)}
-                        onCloseAddModal={() => setShowAddModal(false)}
-                        onOpenImportModal={() => setShowImportModal(true)}
-                        onCloseImportModal={() => setShowImportModal(false)}
-                        onProductCreated={(product) => setProducts((previous) => [product, ...previous])}
-                        onProductsReload={fetchProducts}
-                        showToast={showToast}
-                    />
-                </div>
+            <PosCatalogPane
+                products={products}
+                quantitiesByProduct={cart.reduce((map, item) => map.set(item.id, (map.get(item.id) ?? 0) + item.quantity), new Map<string, number>())}
+                indiceProductos={indiceProductos}
+                resultadoBusqueda={resultadoBusqueda}
+                productsError={productsError}
+                guidedSimpleMode={guidedSimpleMode}
+                firstSaleMode={firstSaleMode}
+                firstSaleStage={firstSaleStage}
+                quickProductsLabel={rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
+                pageSize={TOPE_SIN_BUSQUEDA}
+                permiteStockNegativo={permiteStockNegativo}
+                searchTerm={searchTerm}
+                searchRef={searchRef}
+                setSearchTerm={setSearchTerm}
+                handleSearchKeyDown={handleSearchKeyDown}
+                agregarDesdeGrilla={agregarDesdeGrilla}
+                avisarProductoAgotado={avisarProductoAgotado}
+                fetchProducts={fetchProducts}
+                openQuickCreate={openQuickCreate}
+                adminTools={<POSCatalogAdminTools
+                    guidedSimpleMode={guidedSimpleMode}
+                    headers={headers}
+                    showAddModal={showAddModal}
+                    showImportModal={showImportModal}
+                    onOpenAddModal={() => setShowAddModal(true)}
+                    onCloseAddModal={() => setShowAddModal(false)}
+                    onOpenImportModal={() => setShowImportModal(true)}
+                    onCloseImportModal={() => setShowImportModal(false)}
+                    onProductCreated={(product) => setProducts(previous => [product, ...previous])}
+                    onProductsReload={fetchProducts}
+                    showToast={showToast}
+                />}
+                onPractice={(source) => navigate(`/demo?source=${source}`)}
+            />
 
-                {/* ACCESO RÁPIDO A PRODUCTOS
-                    Esta lista es `filteredProducts.slice(0, 5)`: el catálogo en su
-                    orden natural, NO un ranking de ventas — no existe endpoint de
-                    más-vendidos y no se inventa uno. Por eso el rótulo se calcula
-                    con `rotuloProductosRapidos`, que solo dice "Más vendidos"
-                    cuando hay un ranking real con suficientes ventas detrás. */}
-                {!guidedSimpleMode && searchTerm === '' && (
-                    <div className="mb-4">
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                            <Zap size={14} className="text-amber-500" /> {firstSaleMode ? 'Empezá por uno de estos' : rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
-                        </h3>
-                        <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
-                            {filteredProducts.slice(0, 5).map(product => (
-                                <button
-                                    key={`top-${product.id}`}
-                                    type="button"
-                                    onClick={() => agregarDesdeGrilla(product)}
-                                    className="nx-fluid-press bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-nortex-500 p-3 rounded-xl text-center transition-colors flex flex-col items-center justify-center gap-1 h-24 shadow-[0_0_15px_rgba(0,0,0,0.1)] group"
-                                >
-                                    <Package size={24} className="text-blue-400 group-hover:text-blue-300 transition-colors mb-1" />
-                                    <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{product.name}</span>
-                                    <span className="text-xs font-black text-emerald-400 mt-auto">{formatMoney(product.price)}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
+            <PosMobileCheckoutBar count={cart.length} total={grandTotal} directCash={guidedSimpleMode}
+                processing={processing} onReview={() => setShowMobileCart(true)} onCash={openCashCheckout} />
 
-                {guidedSimpleMode ? (
-                    cajaProducts.length === 0 ? (
-                        <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
-                            {searchTerm ? (
-                                <EmptyState
-                                    mode="no-results"
-                                    title="No encontramos ese producto"
-                                    description={`Probá con otro nombre, código o SKU para “${searchTerm}”.`}
-                                    action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
-                                />
-                            ) : productsError ? (
-                                <EmptyState
-                                    mode="error"
-                                    title="No pudimos cargar tus productos"
-                                    description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
-                                    action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
-                                />
-                            ) : (
-                                <EmptyState
-                                    icon={<Package size={32} />}
-                                    title="Agregá el primer producto"
-                                    description="Solo necesitamos un nombre y un precio. Después podés completar el resto."
-                                    action={{ label: 'Agregar producto', icon: <PackagePlus size={18} />, onClick: openQuickCreate }}
-                                    linkAction={{ label: 'Prefiero practicar sin guardar datos', onClick: () => navigate('/demo?source=empty_catalog') }}
-                                />
-                            )}
-                        </div>
-                    ) : (
-                        /* pb-24 debajo de `lg`: la barra de la venta es fija y ahora
-                           está siempre, así que sin colchón taparía la última fila
-                           de productos y la línea que declara el recorte. */
-                        <div className="nx-catalog-plane flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
-                            <CajaNicaCatalog
-                                products={cajaProducts}
-                                totalProducts={cajaCatalogResult.total}
-                                categories={searchTerm.trim() ? [] : cajaCategories}
-                                selectedCategory={cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos'}
-                                searchTerm={searchTerm}
-                                blockedProductIds={cajaBlockedProductIds}
-                                onCategoryChange={setCajaCategory}
-                                onAdd={agregarDesdeGrilla}
-                                onBlocked={avisarProductoAgotado}
-                                onShowMore={() => setCajaVisibleLimit(limit => limit + TOPE_SIN_BUSQUEDA)}
-                            />
-                        </div>
-                    )
-                ) : filteredProducts.length === 0 ? (
-                    <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
-                        {searchTerm ? (
-                            <EmptyState
-                                mode="no-results"
-                                title="Sin resultados"
-                                description={`Ningún producto coincide con "${searchTerm}".`}
-                                action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
-                            />
-                        ) : productsError ? (
-                            <EmptyState
-                                mode="error"
-                                title="No pudimos cargar tus productos"
-                                description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
-                                action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
-                            />
-                        ) : (
-                            <EmptyState
-                                icon={<Package size={32} />}
-                                title="Agregá el primer producto"
-                                description="Solo necesitamos un nombre y un precio. Después podés completar el resto."
-                                action={{ label: 'Agregar producto', icon: <PackagePlus size={18} />, onClick: openQuickCreate }}
-                                linkAction={{ label: 'Prefiero practicar sin guardar datos', onClick: () => navigate('/demo?source=empty_catalog') }}
-                            />
-                        )}
-                    </div>
-                ) : (
-                /* Grilla compacta: la tarjeta era `aspect-square` (≈230px en desktop)
-                   y esperaba una imagen que este componente nunca renderiza — 60%
-                   de vacío y solo ~6 productos visibles. A 96px de alto y hasta 5
-                   columnas entran ~20 sin scrollear, que es lo que hace rápido al
-                   mostrador. */
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar flex-1 min-h-0 content-start">
-                    {filteredProducts.map(product => (
-                        <TarjetaProducto
-                            key={product.id}
-                            product={product}
-                            bloqueada={permiteStockNegativo !== true && product.stock <= 0}
-                            onAgregar={agregarDesdeGrilla}
-                        />
-                    ))}
-                    {/* El recorte se DECLARA. Una lista cortada en silencio se lee
-                        como "esto es todo lo que tengo", y en un inventario eso
-                        hace que el dueño vuelva a comprar algo que ya tiene. */}
-                    {resultadoBusqueda.ocultos > 0 && (
-                        <p className="col-span-full text-center text-xs text-slate-400 py-3">
-                            {searchTerm.trim() === ''
-                                ? `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} productos — escaneá o escribí para buscar el resto.`
-                                : `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} coincidencias — afiná la búsqueda.`}
-                        </p>
-                    )}
-                </div>
-                )}
-
-                {/* ⌨️ HOTKEY CHEAT SHEET */}
-                {!guidedSimpleMode && !firstSaleMode && (
-                    <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
-                        <Keyboard size={13} className="text-slate-500" />
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+K</span> Buscar
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F7</span> Salida
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+Enter</span> Cobrar
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
-                    </div>
-                )}
-            </div>
-
-            {/* RIGHT: CART DRAWER (Responsive) */}
-            {/* Barra de la venta — SIEMPRE visible debajo de `lg`.
-
-                Antes se renderizaba solo con `cart.length > 0`. Medido en el
-                navegador con el carrito vacío: a 768px y a 390px no había NADA en
-                pantalla que hablara de la venta — ni total, ni carrito, ni cobrar;
-                el botón de cobro existía en el DOM pero fuera de la pantalla. Todo
-                lo visible era la grilla de productos. En la tablet del mostrador,
-                que es el aparato más probable en una ferretería, el cajero no tenía
-                cómo saber dónde vive la venta hasta que agregaba algo a ciegas.
-
-                Ahora la barra está siempre: apagada y neutra mientras no hay nada
-                —el total en cero no merece el verde de la acción principal— y en
-                verde con el conteo apenas hay algo que cobrar. En las dos formas
-                abre el panel de la venta, así que el camino existe desde el
-                primer segundo. */}
-            <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40">
-                <button
-                    onClick={() => setShowMobileCart(true)}
-                    aria-label={cart.length > 0
-                        ? `Revisar venta, ${cart.reduce((a, b) => a + b.quantity, 0)} productos, total ${formatMoney(grandTotal)}`
-                        : 'Abrir la venta actual, todavía sin productos'}
-                    className={`nx-fluid-press w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
-                        ? 'bg-brand text-brand-on shadow-premium'
-                        : 'bg-surface-900/95 backdrop-blur-sm border border-white/[0.08] text-slate-400'}`}
-                >
-                    <div className="flex items-center gap-2 min-w-0">
-                        <ShoppingCart size={21} className="shrink-0" />
-                        <span className="truncate">
-                            {cart.length > 0
-                                ? `Revisar venta · ${cart.reduce((a, b) => a + b.quantity, 0)}`
-                                : 'Tu venta está vacía'}
-                        </span>
-                    </div>
-                    <span className={cart.length > 0 ? '' : 'nx-num font-semibold text-slate-500'}>
-                        {formatMoney(grandTotal)}
-                    </span>
-                </button>
-            </div>
-
-            {/* Ticket: FluidSheet en movil; el selector de pago es la única capa modal activa. */}
+            {/* En móvil el efectivo guiado permanece en el ticket; otros pagos usan su propia hoja. */}
             <PosTicketShell
-                open={showMobileCart && !showPaymentOptions && !showCashPreModal} onOpen={() => setShowMobileCart(true)} onClose={() => setShowMobileCart(false)}
+                open={(showMobileCart || (guidedSimpleMode && showCashPreModal)) && !showPaymentOptions && ((guidedSimpleMode && !payingInUSD) || !showCashPreModal)} onOpen={() => setShowMobileCart(true)} onClose={() => setShowMobileCart(false)}
                 guidedSimpleMode={guidedSimpleMode} labelledBy="pos-ticket-title"
             >
-                <div className={`border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
+                <div className={`nx-pos-ticket-header border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
                     <h2 id="pos-ticket-title" className="font-bold text-slate-100 flex items-center gap-2">
                         {!guidedSimpleMode && <ShoppingCart size={20} />}
                         {guidedSimpleMode ? 'Venta actual' : 'Ticket'}
@@ -5719,7 +5165,7 @@ const POS: React.FC = () => {
                             </button>
                         )}
                         {/* Mobile Close Button */}
-                        <button type="button" onClick={() => setShowMobileCart(false)} data-fluid-sheet-initial-focus className="lg:hidden w-11 h-11 flex items-center justify-center bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
+                        <button type="button" onClick={() => setShowMobileCart(false)} data-fluid-sheet-initial-focus={showCashPreModal && guidedSimpleMode ? undefined : true} className="lg:hidden w-11 h-11 flex items-center justify-center bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
                             <ArrowDownCircle size={24} />
                         </button>
                     </div>
@@ -6031,9 +5477,9 @@ const POS: React.FC = () => {
                     </div>
                 )}
 
-                <div className={`flex-1 overflow-y-auto custom-scrollbar ${guidedSimpleMode ? 'px-5 lg:px-6' : 'p-4 space-y-3'}`}>
+                <div className={`nx-pos-ticket-lines flex-1 overflow-y-auto custom-scrollbar ${guidedSimpleMode ? 'px-5 lg:px-6' : 'p-4 space-y-3'}`}>
                     {cart.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                        <div className="nx-pos-ticket-empty h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
                             <div className="w-14 h-14 rounded-pill bg-white/[0.04] flex items-center justify-center"><ShoppingCart size={26} /></div>
                             <p className="text-sm font-semibold text-slate-300">Tu venta está vacía</p>
                             <p className="text-xs text-slate-500 text-center max-w-[220px]">Seleccioná un producto o escaneá su código para empezar.</p>
@@ -6073,7 +5519,7 @@ const POS: React.FC = () => {
                                 <div
                                     key={key}
                                     className={guidedSimpleMode
-                                        ? `py-4 border-b text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-brand/40 bg-brand-soft -mx-2 px-2' : 'border-white/[0.06]'}`
+                                        ? `nx-pos-line py-4 border-b text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-brand/40 bg-brand-soft -mx-2 px-2' : 'border-white/[0.06]'}`
                                         : `bg-surface-800/40 p-3 rounded-lg border text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-white/[0.04]'}`}
                                 >
                                     {/* FILA 1 · El nombre, a ancho completo (P0-3).
@@ -6086,19 +5532,19 @@ const POS: React.FC = () => {
                                         la tercera fila para abajo. */}
                                     <h4
                                         title={item.name}
-                                        className="text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
+                                        className="nx-pos-line-name text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
                                     >
                                         {item.name}
                                     </h4>
 
                                     {/* FILA 2 · precio · cantidad · total · quitar */}
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <div className="flex-1 min-w-0">
+                                    <div className="nx-pos-line-body flex items-center gap-2 mt-2">
+                                        <div className="nx-pos-line-price flex-1 min-w-0">
                                             <div className="text-xs text-slate-400 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
                                                 <span>
                                                     {packLine
                                                         ? `${formatQuantityValue(item.presentation?.quantity ?? 0)} ${packLabel} (${formatQuantityValue(displayedQuantity)} ${unit}) × ${formatMoney(item.price)} / ${unit}`
-                                                        : `${formatQuantityValue(displayedQuantity)} ${unit} × ${formatMoney(item.price)} / ${unit}`}
+                                                        : guidedSimpleMode ? `${formatMoney(item.price)} / ${unit}` : `${formatQuantityValue(displayedQuantity)} ${unit} × ${formatMoney(item.price)} / ${unit}`}
                                                 </span>
                                                 {isScaleLabel && (
                                                     <span className="px-1.5 py-0.5 bg-cyan-500/15 text-cyan-300 rounded text-[9px] font-bold tracking-wide">ETIQUETA</span>
@@ -6120,7 +5566,7 @@ const POS: React.FC = () => {
                                                     </button>
                                                 )}
                                             </div>
-                                            <div className="text-[15px] font-bold text-white font-mono tabular-nums mt-0.5">{formatMoney(lineTotalD)}</div>
+                                            <div className="nx-pos-line-total text-[15px] font-bold text-white font-mono tabular-nums mt-0.5">{formatMoney(lineTotalD)}</div>
                                         </div>
 
                                         {/* Objetivos táctiles de 44px (P0-4). Antes: −/+ de
@@ -6129,7 +5575,7 @@ const POS: React.FC = () => {
                                             y para cualquier prueba automatizada. */}
                                         {isScaleLabel || isQuotationLine ? (
                                             <div
-                                                className={`min-h-11 px-3 flex flex-col justify-center rounded-control shrink-0 ${isQuotationLine ? 'border border-violet-500/20 bg-violet-500/10 text-violet-100' : 'border border-cyan-500/20 bg-cyan-500/10 text-cyan-100'}`}
+                                                className={`nx-pos-line-quantity min-h-11 px-3 flex flex-col justify-center rounded-control shrink-0 ${isQuotationLine ? 'border border-violet-500/20 bg-violet-500/10 text-violet-100' : 'border border-cyan-500/20 bg-cyan-500/10 text-cyan-100'}`}
                                                 title={isQuotationLine
                                                     ? 'Cantidad y precio fijados por la cotización original'
                                                     : 'El servidor vuelve a derivar esta cantidad desde la etiqueta'}
@@ -6138,7 +5584,7 @@ const POS: React.FC = () => {
                                                 <span className="text-[9px] uppercase tracking-wide">{isQuotationLine ? 'fijado por cotización' : 'fijado por etiqueta'}</span>
                                             </div>
                                         ) : (
-                                            <div className="flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
+                                            <div className="nx-pos-line-quantity flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
                                                 <button
                                                     onClick={() => updateQuantity(key, -quantityStep)}
                                                     aria-label={`Restar ${formatQuantityValue(quantityStep)} ${unit} de ${item.name}`}
@@ -6167,7 +5613,7 @@ const POS: React.FC = () => {
                                         <button
                                             onClick={() => quitarLinea(key)}
                                             aria-label={`Quitar ${item.name} del ticket`}
-                                            className="w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
+                                            className="nx-pos-line-remove w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
                                         >
                                             <Trash2 size={18} />
                                         </button>
@@ -6279,7 +5725,7 @@ const POS: React.FC = () => {
 
                 {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
-                <div className={`sticky bottom-0 z-checkout border-t border-white/[0.06] text-slate-100 ${guidedSimpleMode ? 'bg-surface-950 px-5 py-4 lg:px-6 lg:py-5' : 'bg-surface-800 p-5'}`}>
+                <div data-empty={cart.length === 0} className={`nx-pos-ticket-footer sticky bottom-0 z-checkout border-t border-white/[0.06] text-slate-100 ${guidedSimpleMode ? 'bg-surface-950 px-5 py-4 lg:px-6 lg:py-5' : 'bg-surface-800 p-5'}`}>
                     {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
                     {!guidedSimpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
@@ -6335,7 +5781,7 @@ const POS: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => setShowSaleDetails(true)}
-                            className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-300 mb-2 py-1"
+                            className="nx-pos-tax-details w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-300 mb-2 py-1"
                         >
                             <span>Impuestos incluidos</span><ChevronDown size={15} />
                         </button>
@@ -6349,7 +5795,7 @@ const POS: React.FC = () => {
                         cifra que no decide nada y le robaba jerarquía al buscador, que
                         es por donde empieza la venta. En cero baja a tamaño de cuerpo y
                         color apagado; apenas hay algo que cobrar, recupera el display. */}
-                    <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
+                    <div className="nx-pos-total-row flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
                         <span className="nx-label">Total</span>
                         <span className={cart.length === 0 ? 'nx-num text-lg font-semibold text-slate-500' : 'nx-total'}>
                             {formatMoney(grandTotal)}
@@ -6952,7 +6398,7 @@ const POS: React.FC = () => {
             {/* =============================== */}
             {/* 💵 PRE-SALE CASH MODAL          */}
             {/* =============================== */}
-            {showCashPreModal && !guidedSimpleMode && (
+            {showCashPreModal && (!guidedSimpleMode || payingInUSD) && (
                 <PosCashSheet
                     open={showCashPreModal}
                     processing={processing}
@@ -6987,23 +6433,7 @@ const POS: React.FC = () => {
             )}
 
             {completedSale && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div role="dialog" aria-modal="true" aria-labelledby="completed-sale-title" className="bg-surface-900 rounded-card shadow-premium w-full max-w-md overflow-hidden border border-white/[0.08]">
-
-                        {/* Header - Success */}
-                        <div className="p-6 text-center border-b border-white/[0.06]">
-                            <div className="w-14 h-14 bg-brand-soft border border-brand/20 rounded-pill flex items-center justify-center mx-auto mb-3">
-                                <Check size={30} className="text-brand" />
-                            </div>
-                            <h2 id="completed-sale-title" className="text-xl font-bold text-slate-100">
-                                {firstSaleMode ? 'Tu primera venta quedó registrada' : 'Venta lista'}
-                            </h2>
-                            {firstSaleMode && (
-                                <p className="text-sm text-slate-300 mt-1.5">Caja, inventario y ticket quedaron actualizados.</p>
-                            )}
-                            <p className="text-slate-500 text-sm mt-1">{completedSale.date}</p>
-                        </div>
-
+                <PosSaleResultSheet pending={completedSale.syncStatus === 'pending'} firstSale={firstSaleMode} date={completedSale.date} onNewSale={handleNewSale}>
                         {/* Sale Summary */}
                         <div className="p-6">
                             {/* EL VUELTO PRIMERO Y MÁS GRANDE: es el único número que
@@ -7058,7 +6488,7 @@ const POS: React.FC = () => {
                                 )}
                             </div>
 
-                            {pulso && (
+                            {completedSale.syncStatus === 'confirmed' && pulso && (
                                 <div className={`rounded-xl p-4 mb-4 border ${pulso.esRecordHoy ? 'bg-amber-500/10 border-amber-500/25' : 'bg-surface-800/40 border-white/[0.04]'}`}>
                                     <div className="flex items-baseline justify-between">
                                         <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Hoy llevás</span>
@@ -7093,30 +6523,8 @@ const POS: React.FC = () => {
                                 </div>
                             )}
 
-                            {firstSaleMode ? (
-                                <div className="space-y-2">
-                                    <button
-                                        onClick={handleReturnHome}
-                                        className="w-full h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover transition-colors flex items-center justify-center gap-2"
-                                    >
-                                        Volver al inicio <ArrowRight size={18} />
-                                    </button>
-                                    <button
-                                        onClick={handleNewSale}
-                                        className="w-full h-touch border border-white/[0.08] text-slate-200 font-semibold rounded-control hover:bg-white/[0.05] transition-colors flex items-center justify-center gap-2"
-                                    >
-                                        <RotateCcw size={17} /> Hacer otra venta
-                                    </button>
-                                </div>
-                            ) : (
-                                <button
-                                    onClick={handleNewSale}
-                                    className="w-full h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover transition-colors flex items-center justify-center gap-2"
-                                >
-                                    <RotateCcw size={18} /> Hacer otra venta
-                                </button>
-                            )}
-
+                            {firstSaleMode && <button onClick={handleReturnHome} className="nx-fluid-press w-full min-h-tap rounded-control text-sm font-semibold text-slate-300">Ver mi negocio</button>}
+                            {completedSale.syncStatus === 'confirmed' && <>
                             <div className={`grid gap-2 mt-3 ${postSalePrintOptions.length > 2 ? 'grid-cols-1' : 'grid-cols-2'}`}>
                                 <button
                                     onClick={handleWhatsApp}
@@ -7145,12 +6553,13 @@ const POS: React.FC = () => {
                             >
                                 <FileText size={17} /> Ver factura A4
                             </button>
+                            </>}
+                            {completedSale.syncStatus === 'pending' && <p className="text-sm text-slate-300">El comprobante definitivo estará en Ventas cuando se confirme. Conservá los datos de este dispositivo.</p>}
                         </div>
-                    </div>
-                </div>
+                </PosSaleResultSheet>
             )}
             {/* HIDDEN RECEIPT COMPONENT FOR PRINTING */}
-            <ReceiptTicket data={completedSale ? {
+            <ReceiptTicket data={completedSale?.syncStatus === 'confirmed' ? {
                 tenantName: tenantPrintDetails.tenantName,
                 ruc: tenantPrintDetails.ruc,
                 address: tenantPrintDetails.address,

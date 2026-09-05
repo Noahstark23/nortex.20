@@ -68,7 +68,7 @@ export const PosTicketShell: React.FC<PosTicketShellProps> = ({
     if (desktop) {
         return (
             <aside
-                className={`nx-dark-context nx-ticket-surface z-auto flex flex-col border border-white/[0.06] ${
+                className={`nx-pos-receipt nx-dark-context nx-ticket-surface z-auto flex flex-col border border-white/[0.06] ${
                     guidedSimpleMode
                         ? 'mt-16 mr-3 mb-3 w-[38%] min-w-[420px] max-w-[560px] rounded-card'
                         : 'mt-14 w-96 shadow-xl'

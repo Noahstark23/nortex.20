@@ -139,6 +139,7 @@ export const CajaNicaCheckout = ({
                     <input
                         type="text"
                         inputMode="decimal"
+                        data-fluid-sheet-initial-focus
                         autoFocus
                         value={cashReceived}
                         disabled={disabled || processing}

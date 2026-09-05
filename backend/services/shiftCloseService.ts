@@ -1,6 +1,8 @@
 import Decimal from 'decimal.js';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import prisma from '../lib/prisma';
+import { CloseShiftSchema } from '../validation/schemas';
+import { buildLegacyShiftCloseIdentity } from './legacyShiftCloseService';
 import { claveDelDiaManagua } from './pulsoPos';
 import { CATEGORIA_AGENTE, calcularEfectivoTurno } from '../../utils/margen';
 import {
@@ -36,6 +38,8 @@ type LockedShiftRow = {
     status: string;
     startTime: Date;
     endTime: Date | null;
+    closeEventId: string | null;
+    closePayloadHash: string | null;
     finalCashDeclared: Prisma.Decimal | null;
     systemExpectedCash: Prisma.Decimal | null;
     difference: Prisma.Decimal | null;
@@ -126,6 +130,7 @@ export type CloseShiftCommand = {
     declaredCash: Decimal.Value;
     declaredCashUsd?: Decimal.Value;
     auditNotes?: string | null;
+    clientEventId?: string;
 };
 
 export class ShiftCloseError extends Error {
@@ -137,14 +142,6 @@ export class ShiftCloseError extends Error {
         super(message);
         this.name = 'ShiftCloseError';
     }
-}
-
-function decimal(value: Decimal.Value, field: string): Decimal {
-    const parsed = new Decimal(value);
-    if (!parsed.isFinite() || parsed.isNegative()) {
-        throw new ShiftCloseError('INVALID_CASH_COUNT', 400, `${field} debe ser un monto válido y no negativo`);
-    }
-    return parsed.toDecimalPlaces(2);
 }
 
 function toProductInput(row: SoldProductRow | ReturnedProductRow): ShiftCloseProductInput {
@@ -387,7 +384,8 @@ async function lockShift(
         SELECT
             id, tenantId, userId, employeeId, initialCash, initialCashUsd,
             status, startTime, endTime, finalCashDeclared, systemExpectedCash,
-            difference, finalCashDeclaredUsd, systemExpectedUsd, differenceUsd
+            difference, finalCashDeclaredUsd, systemExpectedUsd, differenceUsd,
+            closeEventId, closePayloadHash
         FROM \`Shift\`
         WHERE id = ${shiftId} AND tenantId = ${tenantId}
         LIMIT 1
@@ -660,10 +658,20 @@ export async function closeShiftWithReport(
     if (!command.tenantId || !command.userId || !command.shiftId) {
         throw new ShiftCloseError('SHIFT_IDENTITY_REQUIRED', 401, 'Identidad de cierre incompleta');
     }
-    const declaredNio = decimal(command.declaredCash, 'El efectivo declarado');
-    const declaredUsd = command.declaredCashUsd == null
-        ? new Decimal(0)
-        : decimal(command.declaredCashUsd, 'El efectivo USD declarado');
+    const parsed = CloseShiftSchema.safeParse({
+        shiftId: command.shiftId,
+        declaredCash: String(command.declaredCash),
+        declaredCashUsd: command.declaredCashUsd == null ? undefined : String(command.declaredCashUsd),
+        auditNotes: command.auditNotes ?? undefined,
+        clientEventId: command.clientEventId,
+    });
+    if (!parsed.success) {
+        throw new ShiftCloseError('INVALID_CLOSE_PAYLOAD', 400, parsed.error.issues[0].message);
+    }
+    const input = parsed.data;
+    const identity = buildLegacyShiftCloseIdentity(command, { ...input, declaredCash: input.declaredCash });
+    const declaredNio = new Decimal(input.declaredCash);
+    const declaredUsd = new Decimal(input.declaredCashUsd ?? 0);
 
     return client.$transaction(async (tx) => {
         const locked = await lockShift(tx, command.tenantId, command.shiftId);
@@ -672,6 +680,13 @@ export async function closeShiftWithReport(
         }
 
         if (locked.status !== 'OPEN') {
+            // No se infiere identidad a partir de importes parecidos. Los cierres
+            // históricos sin huella siguen disponibles por la consulta de reportes.
+            if (locked.status !== 'CLOSED'
+                || locked.closeEventId !== identity.closeEventId
+                || locked.closePayloadHash !== identity.closePayloadHash) {
+                throw new ShiftCloseError('SHIFT_ALREADY_CLOSED', 409, 'El turno ya fue cerrado con otra solicitud');
+            }
             const existing = await tx.shiftCloseReport.findUnique({
                 where: { shiftId: locked.id },
                 select: {
@@ -796,7 +811,7 @@ export async function closeShiftWithReport(
             })),
         });
         const differenceNio = declaredNio.minus(drawer.efectivoNIO).toDecimalPlaces(2);
-        const differenceUsd = declaredUsd.minus(drawer.efectivoUSD).toDecimalPlaces(2);
+        const differenceUsd = declaredUsd.minus(drawer.efectivoUSD).toDecimalPlaces(4);
         const huboUsd = !drawer.efectivoUSD.isZero()
             || !declaredUsd.isZero()
             || !new Decimal(locked.initialCashUsd.toString()).isZero();
@@ -844,7 +859,7 @@ export async function closeShiftWithReport(
                 openedBy: meta.user.name || meta.user.email || locked.userId,
                 cashierName,
                 closedBy: closedBy?.name || closedBy?.email || command.userId,
-                auditNotes: command.auditNotes ?? null,
+                auditNotes: input.auditNotes ?? null,
             },
             payments: paymentInputs,
             soldProducts: soldProducts.map(toProductInput),
@@ -883,13 +898,15 @@ export async function closeShiftWithReport(
             data: {
                 endTime: closedAt,
                 status: 'CLOSED',
+                closeEventId: identity.closeEventId,
+                closePayloadHash: identity.closePayloadHash,
                 finalCashDeclared: declaredNio.toFixed(2),
                 systemExpectedCash: drawer.efectivoNIO.toFixed(2),
                 difference: differenceNio.toFixed(2),
                 ...(huboUsd ? {
-                    finalCashDeclaredUsd: declaredUsd.toFixed(2),
-                    systemExpectedUsd: drawer.efectivoUSD.toFixed(2),
-                    differenceUsd: differenceUsd.toFixed(2),
+                    finalCashDeclaredUsd: declaredUsd.toFixed(4),
+                    systemExpectedUsd: drawer.efectivoUSD.toFixed(4),
+                    differenceUsd: differenceUsd.toFixed(4),
                 } : {}),
             },
         });
@@ -924,6 +941,8 @@ export async function closeShiftWithReport(
                 userId: command.userId,
                 action: 'SHIFT_CLOSED',
                 details: JSON.stringify({
+                    closeEventId: identity.closeEventId,
+                    closePayloadHash: identity.closePayloadHash,
                     shiftId: locked.id,
                     reportId: reportRow.id,
                     folio,
@@ -931,9 +950,9 @@ export async function closeShiftWithReport(
                     expectedNio: drawer.efectivoNIO.toFixed(2),
                     countedNio: declaredNio.toFixed(2),
                     differenceNio: differenceNio.toFixed(2),
-                    expectedUsd: drawer.efectivoUSD.toFixed(2),
-                    countedUsd: declaredUsd.toFixed(2),
-                    differenceUsd: differenceUsd.toFixed(2),
+                    expectedUsd: drawer.efectivoUSD.toFixed(4),
+                    countedUsd: declaredUsd.toFixed(4),
+                    differenceUsd: differenceUsd.toFixed(4),
                     grossSales: payload.summary.grossSales,
                     returnsTotal: payload.summary.returnsTotal,
                     netSales: payload.summary.netSales,
@@ -979,5 +998,12 @@ export async function closeShiftWithReport(
             theftAlert: closeMeta.theftAlert,
             idempotentReplay: false,
         };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch((error: unknown) => {
+        // El índice tenant/evento evita que la misma UUID cierre otro turno.
+        // Prisma revierte la transacción antes de devolver este conflicto.
+        if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'P2002') {
+            throw new ShiftCloseError('SHIFT_CLOSE_CONFLICT', 409, 'La solicitud de cierre ya fue usada');
+        }
+        throw error;
+    });
 }
