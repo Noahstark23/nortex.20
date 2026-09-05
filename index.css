@@ -2870,6 +2870,12 @@
    y sumarla al contrato o usar desde el componente la tinta semántica
    correspondiente. La prueba frontendColorSemantics mantiene la matriz. */
 
+/* Útil para iconos hijos de un relleno ámbar cuando el color vive en el SVG
+   y no en el botón/contenedor que recibe `bg-amber-*`. */
+.nx-on-warning-solid {
+  color: var(--nx-on-warning-solid);
+}
+
 /* Marca, aliases verdes y WhatsApp: el 700 todavía requiere tinta oscura. */
 :where(
   [class~="bg-brand"],

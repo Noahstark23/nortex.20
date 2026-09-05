@@ -68,8 +68,10 @@ El candidato local añade tintas de control explícitas y reglas de compatibilid
 de selector exacto en `index.css`. Cubren los botones sólidos existentes de
 marca (`brand`, `emerald`, `blue`, WhatsApp, etc.), danger/rose/red-500,
 warning/orange/amber-500/600 y sky-600, además de los hover que cruzan entre
-un tono claro y uno oscuro. Se preservan los rellenos con opacidad y los tonos
-ya legibles (`red-600+`, `amber-700+`, `sky-700+`, `green-800+`).
+un tono claro y uno oscuro. El icono de selección ámbar también usa una tinta
+semántica propia, porque su clase de color vive en el SVG y no en el contenedor.
+Se preservan los rellenos con opacidad y los tonos ya legibles (`red-600+`,
+`amber-700+`, `sky-700+`, `green-800+`).
 
 La matriz ejecutable ahora comprueba contraste AA de cada tinta y que el guard
 no use selectores amplios ni fondos con opacidad. En el mismo checkout del

@@ -132,7 +132,7 @@ const InventoryOracle: React.FC = () => {
                                 >
                                     {/* Selection indicator */}
                                     <div className={`absolute top-3 right-3 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors ${isSelected ? 'bg-amber-500 border-amber-500' : 'border-slate-600'}`}>
-                                        {isSelected && <CheckCircle size={14} className="text-white" />}
+                                        {isSelected && <CheckCircle size={14} className="nx-on-warning-solid" />}
                                     </div>
 
                                     <div className="flex items-start gap-3 mb-4">

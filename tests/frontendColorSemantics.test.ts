@@ -10,6 +10,7 @@ const themeColors = theme.colors as unknown as Record<string, ColorPalette>;
 const tokens = readFileSync(new URL('../nortex-tokens.css', import.meta.url), 'utf8');
 const styles = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 const contrastContract = styles.slice(styles.lastIndexOf('CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS'));
+const inventoryOracle = readFileSync(new URL('../components/InventoryOracle.tsx', import.meta.url), 'utf8');
 
 function rootToken(name: string): string {
     const root = tokens.match(/^:root\s*\{([\s\S]*?)^\}/m)?.[1] ?? '';
@@ -118,6 +119,8 @@ describe('contrato semántico del tema frontend', () => {
         expect(contrastContract).toContain('color: var(--nx-on-danger-solid) !important;');
         expect(contrastContract).toContain('color: var(--nx-on-warning-solid) !important;');
         expect(contrastContract).toContain('color: var(--nx-on-info-solid) !important;');
+        expect(contrastContract).toContain('.nx-on-warning-solid');
+        expect(inventoryOracle).toMatch(/bg-amber-500[\s\S]{0,500}nx-on-warning-solid/);
         expect(contrastContract).not.toMatch(/\[class~="(?:bg|hover:bg)-[^"]+\/[0-9]+"\]/);
         expect(contrastContract).not.toContain('[class*=');
     });
