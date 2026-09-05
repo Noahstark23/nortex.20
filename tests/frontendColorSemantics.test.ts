@@ -11,6 +11,8 @@ const tokens = readFileSync(new URL('../nortex-tokens.css', import.meta.url), 'u
 const styles = readFileSync(new URL('../index.css', import.meta.url), 'utf8');
 const contrastContract = styles.slice(styles.lastIndexOf('CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS'));
 const inventoryOracle = readFileSync(new URL('../components/InventoryOracle.tsx', import.meta.url), 'utf8');
+const quickAddProduct = readFileSync(new URL('../components/QuickAddProduct.tsx', import.meta.url), 'utf8');
+const layout = readFileSync(new URL('../components/Layout.tsx', import.meta.url), 'utf8');
 
 function rootToken(name: string): string {
     const root = tokens.match(/^:root\s*\{([\s\S]*?)^\}/m)?.[1] ?? '';
@@ -33,6 +35,14 @@ function contrastRatio(foreground: string, background: string): number {
 
     const [first, second] = [luminance(foreground), luminance(background)].sort((a, b) => b - a);
     return (first + 0.05) / (second + 0.05);
+}
+
+function over(foreground: string, background: string, opacity: number): string {
+    const channels = (hex: string) => hex.slice(1).match(/.{2}/g)?.map((channel) => Number.parseInt(channel, 16)) ?? [];
+    const foregroundChannels = channels(foreground);
+    const backgroundChannels = channels(background);
+    const result = foregroundChannels.map((channel, index) => Math.round(channel * opacity + (backgroundChannels[index] ?? 0) * (1 - opacity)));
+    return `#${result.map((channel) => channel.toString(16).padStart(2, '0')).join('')}`;
 }
 
 describe('contrato semántico del tema frontend', () => {
@@ -123,5 +133,17 @@ describe('contrato semántico del tema frontend', () => {
         expect(inventoryOracle).toMatch(/bg-amber-500[\s\S]{0,500}nx-on-warning-solid/);
         expect(contrastContract).not.toMatch(/\[class~="(?:bg|hover:bg)-[^"]+\/[0-9]+"\]/);
         expect(contrastContract).not.toContain('[class*=');
+    });
+
+    it('mantiene tinta semántica en iconos descendientes de rellenos sólidos', () => {
+        expect(quickAddProduct).toMatch(/bg-brand-600[\s\S]{0,300}<Zap size=\{20\} className="text-brand-on" \/>/);
+
+        const webOrderToast = layout.slice(layout.indexOf('Toast de pedidos web'));
+        expect(webOrderToast).toMatch(
+            /bg-brand[\s\S]{0,1400}className="[^"]*text-brand-on hover:bg-white\/10[^"]*"[\s\S]{0,300}aria-label="Cerrar notificación"/,
+        );
+        expect(webOrderToast).not.toContain('text-white/60 hover:bg-white/10 hover:text-white');
+        expect(webOrderToast).toContain('text-brand-on/80');
+        expect(contrastRatio(over(rootToken('nx-on-brand'), '#16C784', 0.8), '#16C784')).toBeGreaterThanOrEqual(4.5);
     });
 });

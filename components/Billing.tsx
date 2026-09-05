@@ -174,9 +174,9 @@ const Billing: React.FC = () => {
 
             {/* Status Card */}
             <div className={`p-6 rounded-2xl mb-6 relative overflow-hidden ${
-                isActive ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 text-white' :
-                isSuspended ? 'bg-gradient-to-br from-red-500 to-red-700 text-white' :
-                'bg-gradient-to-br from-amber-400 to-amber-600 text-white'
+                isActive ? 'bg-gradient-to-br from-emerald-500 to-emerald-700 text-brand-on' :
+                isSuspended ? 'nx-dark-island bg-gradient-to-br from-red-800 to-red-900 text-white' :
+                'bg-gradient-to-br from-amber-400 to-amber-600 nx-on-warning-solid'
             }`}>
                 <div className="absolute -right-8 -top-8 w-32 h-32 bg-white/10 rounded-full" />
                 <div className="relative z-10 flex items-center justify-between">

@@ -9,6 +9,10 @@ credenciales reales y sin tocar dinero, inventario ni usuarios. La observación
 autenticada provino de una sesión QA local ya abierta; es evidencia exploratoria,
 no una prueba amarrada al SHA. Nada de esta ronda acredita producción.
 
+El candidato se conserva localmente en la rama
+`codex/release-gate-20260905`; no se envió, integró ni desplegó a ningún
+entorno.
+
 ## Demostrado en navegador local
 
 | Recorrido | Día | Noche | Resultado observado |
@@ -31,7 +35,7 @@ formulario del producto.
 
 ## Evidencia ejecutable de este candidato
 
-La ronda focal pasó **54/54** pruebas en siete archivos:
+La ronda focal pasó **57/57** pruebas en ocho archivos:
 
 ```sh
 mise exec -- npm test -- --run \
@@ -39,6 +43,7 @@ mise exec -- npm test -- --run \
   tests/publicAppleRoutes.test.tsx \
   tests/publicLandingApple.test.ts \
   tests/lightWorkspaceFormContrast.test.ts \
+  tests/lightWorkspaceSurfaceInk.test.ts \
   tests/layoutThemeToggle.test.tsx \
   tests/publicEditorialApple.test.tsx \
   tests/moduleSurfaceTheme.test.ts
@@ -68,14 +73,19 @@ El candidato local añade tintas de control explícitas y reglas de compatibilid
 de selector exacto en `index.css`. Cubren los botones sólidos existentes de
 marca (`brand`, `emerald`, `blue`, WhatsApp, etc.), danger/rose/red-500,
 warning/orange/amber-500/600 y sky-600, además de los hover que cruzan entre
-un tono claro y uno oscuro. El icono de selección ámbar también usa una tinta
-semántica propia, porque su clase de color vive en el SVG y no en el contenedor.
+un tono claro y uno oscuro. La revisión del candidato detectó tres
+descendientes que no quedaban protegidos por una regla que coincidía sólo en
+el mismo elemento: el icono del acceso rápido con fondo `brand-600`, el cierre
+y el subtítulo del toast de pedidos. Ahora usan `text-brand-on` (el subtítulo a
+80 %, aún AA) de forma explícita. El icono de selección ámbar también usa una
+tinta semántica propia, porque su clase de color vive en el SVG y no en el
+contenedor.
 Se preservan los rellenos con opacidad y los tonos ya legibles (`red-600+`,
 `amber-700+`, `sky-700+`, `green-800+`).
 
-La matriz ejecutable ahora comprueba contraste AA de cada tinta y que el guard
-no use selectores amplios ni fondos con opacidad. En el mismo checkout del
-candidato pasaron:
+La matriz ejecutable ahora comprueba contraste AA de cada tinta, que el guard
+no use selectores amplios ni fondos con opacidad, y los pares reales de
+contenedor--icono descendiente. En el mismo checkout del candidato pasaron:
 
 ```sh
 mise exec -- npx --no-install prisma generate --schema backend/prisma/schema.prisma
@@ -87,17 +97,38 @@ mise exec -- npm test -- --run \
   tests/fluidMotion.test.ts \
   tests/fluidSheet.test.tsx \
   tests/lightWorkspaceFormContrast.test.ts \
+  tests/lightWorkspaceSurfaceInk.test.ts \
   tests/shellThemeContrast.test.ts
 mise exec -- npm run check:design
 mise exec -- npm run build
 ```
 
-Resultado: 45/45 pruebas focales, TypeScript, sistema de diseño y build
+Resultado: 49/49 pruebas focales, TypeScript, sistema de diseño y build
 correctos. También se recorrió localmente una venta de demostración hasta la
 selección de pago; los botones verdes mostraron tinta oscura legible. Esa
 demostración no escribió datos reales y no acredita los módulos autenticados:
 la validación de cada ruta permanece pendiente de tenant QA y del SHA que llegue
 a staging.
+
+## Reparación P0: puente Día para texto heredado
+
+La segunda revisión encontró la causa común de varios textos invisibles: el
+bridge Día ya convertía `surface` y `slate` a canvas claro, pero sólo traducía
+encabezados e inputs; párrafos, botones, badges e iconos con `text-white` o
+`text-slate-*` seguían sin una tinta contextual. No se corrigió pantalla por
+pantalla. El bridge ahora hereda una tinta desde las mismas superficies que
+convierte, usando variables de contexto y clases exactas.
+
+Los rellenos semánticos claros publican su propia tinta AA para descendientes.
+Los tickets, código, fondos oscuros y los gradientes oscuros marcados con
+`nx-dark-island` restablecen tinta clara. Los gradientes mixtos de facturación
+se ajustaron por estado: verde con tinta de marca, rojo `red-800` a `red-900`
+con texto secundario medido al 80 %, y ámbar con tinta de advertencia. Así no existe una regla plana que
+convierta a oscuro un recibo, un CTA oscuro o un gradiente de impuestos.
+
+`tests/lightWorkspaceSurfaceInk.test.ts` verifica el alcance, las islas, el
+orden frente al contrato de rellenos sólidos y los tres gradientes. El modo
+Noche queda fuera de este bridge y conserva sus propios tokens.
 
 ## Límites que impiden declarar “todo Nortex aprobado”
 

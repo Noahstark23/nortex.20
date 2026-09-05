@@ -56,6 +56,15 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
   `bg-danger`/`bg-warning` consumen canales RGB distintos del texto de estado.
   Mantén el alcance de los guards a clases opacas exactas; nunca a selectores
   amplios ni fondos con opacidad.
+- Si el color está en un icono o botón hijo, el guard del contenedor no lo
+  alcanza por sí solo: aplicar la tinta semántica al descendiente y cubrir la
+  pareja contenedor--descendiente en `frontendColorSemantics`.
+- Cuando el bridge Día convierte una superficie heredada en canvas claro,
+  `text-white` y las tintas `text-slate-*` también deben heredar el contexto
+  de esa superficie. Mantén esa traducción por token y clases exactas, corta
+  la herencia en una isla oscura real (`nx-ticket-*`, `nx-code-surface` o
+  `nx-dark-island`) y prueba ambos estados; nunca uses un selector de
+  subcadena o una excepción por pantalla.
 - Capturas o el demo local prueban un escenario visual, no el producto entero.
   Antes de una release, repite los recorridos de tenant QA sobre el SHA
   candidato y registra probado, pendiente y riesgo en la auditoría visual.

@@ -48,7 +48,14 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   relleno sólido con texto claro, medir estado base y hover, usar tinta
   semántica AA y cubrirlo en `tests/frontendColorSemantics.test.ts`. Los guards
   de compatibilidad en `index.css` deben usar clases exactas; no tocar fondos
-  translúcidos ni fusionar los tokens de estado con sus canales RGB.
+  translúcidos ni fusionar los tokens de estado con sus canales RGB. Si la
+  tinta vive en un descendiente, corregir y probar el par contenedor--hijo:
+  un selector que sólo coincide en el contenedor no protege el icono.
+- Bridge Día: si una utilidad de fondo se traduce a canvas claro, el
+  `text-white` o `text-slate-*` heredado debe tomar la tinta contextual de esa
+  superficie por token. Las islas oscuras reales cortan esa herencia con una
+  clase semántica y prueba; no se arregla con selectores de subcadena ni
+  excepciones por ruta.
 - Deploy: Docker + `prisma db push` (aplica **solo DDL**; los backfills de datos van
   en la aplicación con patrón perezoso). Prisma pinneado a **6.4.1** — correr
   `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
