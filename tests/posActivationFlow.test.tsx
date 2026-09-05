@@ -137,6 +137,8 @@ describe('primera venta con existencia real', () => {
         expect(screen.getByRole('textbox', { name: 'Cantidad de Suero oral en unidad' })).toHaveValue('1');
     });
 
+    // Es un recorrido de hasta 20 altas, edición y eliminación, no un benchmark.
+    // En el runner compartido de CI supera 5 s; el margen sólo aplica a este caso.
     it.each([5, 20])('conserva las %i líneas y permite ajustar la última o quitar la primera', async count => {
         catalog = Array.from({ length: count }, (_, i) => ({ ...product, id: `p${i}`, sku: `SKU-${i}`, name: `Producto ${i}` }));
         const user = userEvent.setup();
@@ -160,7 +162,7 @@ describe('primera venta con existencia real', () => {
         expect(screen.getAllByRole('textbox', { name: /^Cantidad de Producto/ })).toHaveLength(count - 1);
         expect(screen.queryByRole('textbox', { name: 'Cantidad de Producto 0 en unidad' })).not.toBeInTheDocument();
         expect(posts).toHaveLength(0);
-    });
+    }, 15_000);
 
     it('comparte el cambio de menú con POS sin desmontar carrito ni turno', async () => {
         catalog = [product];
