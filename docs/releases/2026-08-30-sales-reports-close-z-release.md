@@ -1,5 +1,11 @@
 # Release de reportes de ventas y cierre Z — 2026-08-30
 
+> **Registro histórico — no ejecutar como receta de release.** Este documento
+> conserva el contexto de 2026-08-30 y puede describir controles ya sustituidos.
+> Para toda promoción nueva, usá el [runbook canónico de
+> promoción](../runbooks/release-promotion.md): CI/staging no autorizan producción
+> y solo `release-production.yml` puede solicitarla manualmente.
+
 ## Resultado ejecutivo
 
 Esta release incorpora reportes íntegros de ventas por período, producto y

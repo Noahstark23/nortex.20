@@ -1,5 +1,11 @@
 # Reporte de mejora preproducción — auditoría frontend — 2026-09-01
 
+> **Registro histórico — no ejecutar como receta de release.** Este reporte
+> conserva evidencia local del 2026-09-01 y no declara estado actual de staging o
+> producción. Para una promoción nueva, usá el [runbook canónico de
+> promoción](../runbooks/release-promotion.md); CI, una demostración local y
+> staging no autorizan producción por inferencia.
+
 Estado: **QA LOCAL · WORKSPACE AUTENTICADO DÍA/NOCHE · MENÚ + TICKET + SELECTOR + EFECTIVO + ENTREGAS FLUIDOS · PROGRAMA APPLE INCOMPLETO · NO PRODUCCIÓN**
 
 Base local observada: `d326c589a756db7977d14c94a625b6c895cb3313`

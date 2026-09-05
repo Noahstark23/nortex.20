@@ -12,11 +12,12 @@
 Usá este runbook cuando una auditoría visual, funcional o de accesibilidad encuentre
 problemas en Nortex. Cada hallazgo debe recorrer, sin saltos:
 
-`auditoría → adjudicación → prioridad → reparación vertical → QA → evidencia visual local → staging → autorización de producción → verificación`
+`auditoría → adjudicación → prioridad → reparación vertical → QA → evidencia visual local → staging → autorización explícita de producto → workflow manual de producción → verificación`
 
 El resultado previo a producción es un candidato de SHA exacto, con evidencia
 reproducible y una demostración del producto final al responsable. Un parche local,
-una captura bonita, CI verde o staging saludable **no** autorizan producción.
+una captura bonita, CI verde o staging saludable **no** autorizan producción. La
+ruta técnica vinculante está en el [runbook canónico de promoción](release-promotion.md).
 
 ## 1. Límites operativos antes de comenzar
 
@@ -283,13 +284,19 @@ Autorizado por: <nombre> · Fecha: <ISO-8601>
 “Aprobado”, “se ve bien”, aprobación del PR o autorización de staging no bastan si no
 nombran producción. Sin esa autorización, detenerse en `LISTO PARA PRODUCCIÓN`.
 
-Después de una autorización válida:
+Después de una autorización válida, seguí el [runbook canónico de
+promoción](release-promotion.md). Producción solo se solicita mediante el workflow
+manual `release-production.yml`, ejecutado desde `main`, con el SHA completo y la
+confirmación exacta `PROMOTE <SHA>`, y la revalidación de `main` y staging después
+de la aprobación del environment. Un reviewer del environment es una defensa
+técnica adicional; no es la autorización de producto.
 
-- promover exactamente el SHA mostrado y verificado;
+Después de una promoción válida:
+
 - verificar salud, DB, SHA, rutas críticas y los ratchets en producción;
 - para cambios financieros, ejecutar smoke autenticado con tenant sintético y una
   observación mínima de 30 minutos;
-- si cambia el comportamiento esperado, detener la promoción y usar el rollback
+- si cambia el comportamiento esperado, detener el cierre y usar solo el rollback
   autorizado; nunca improvisar un rollback destructivo de schema.
 
 ## 10. Definition of Done

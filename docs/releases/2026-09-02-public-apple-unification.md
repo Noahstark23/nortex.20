@@ -1,6 +1,13 @@
 # Unificación Apple de superficies públicas — 2026-09-02
 
-## Estado
+> **Registro histórico — no ejecutar como receta de release.** Esta entrada
+> conserva evidencia del 2026-09-02, no el estado actual de producción. El
+> pipeline descrito entonces permitía que un push de solo documentación generara
+> una ruta a producción; ese diseño fue retirado. Para cualquier candidato nuevo,
+> usá el [runbook canónico de promoción](../runbooks/release-promotion.md) y el
+> workflow manual `release-production.yml`.
+
+## Estado histórico al 2026-09-02
 
 - Candidato preparado en los PR `#199`, `#200` y `#201`. El SHA promovido es
   `2834497f6090c2d55bcc48d5edb86887f6993ae3`.
@@ -8,25 +15,24 @@
   22:21:16Z → 22:25:18Z UTC). El paso `Verificar STAGING sano y en el commit
   esperado` exigió `ok`, `db: up` y ese commit exacto en `/api/health` antes de
   cerrar en verde.
-- **Producción promovida y verificada** el 2026-09-02. El responsable aprobó el
-  environment protegido; el job `deploy-production` del mismo run arrancó a las
-  23:13:47Z, disparó el webhook de Coolify a las 23:13:51Z y su paso `Verificar
-  PROD sano y en el commit esperado` cerró en verde a las 23:19:05Z tras 5 min
-  14 s de reintentos. `scripts/verify-deployed-release.mjs` solo pasa con `ok`,
-  `db: up` y el commit exacto, así que producción sirve ese SHA.
+- **Registro histórico de producción:** el 2026-09-02, el responsable aprobó el
+  environment protegido y el job `deploy-production` del run `33688959590` cerró
+  en verde. Su verificador exigió `ok`, `db: up` y el commit exacto en ese
+  momento. Esta observación no acredita qué SHA sirve producción hoy ni reemplaza
+  el smoke autenticado y la observación del ciclo.
 - **Falta cerrar el ciclo como `PRODUCCIÓN VERIFICADA`.** El runbook exige,
   además de la salud por SHA, un smoke autenticado con tenant sintético y una
   observación de 30 minutos. Ninguno de los dos se ejecutó en este ciclo.
 
-### Intento anterior de promoción
+### Incidente de control de promoción (corregido posteriormente)
 
-Un primer ciclo llegó a staging verde sobre
-`b6adb7d6005c2feb9dca5531b93e7e9e007c96e2` (run `33681015333`) y dejó
-`deploy-production` en `waiting`. El merge del PR `#201` avanzó `main` y la
-regla `concurrency` con `cancel-in-progress` canceló ese run junto con su
-aprobación pendiente. Aprendizaje operativo: **mientras un `deploy-production`
-esté en `waiting`, ningún merge a `main` es inocuo** — cancela la promoción y
-obliga a repetir staging sobre el SHA nuevo. Promover primero, mergear después.
+Un ciclo histórico llegó a staging verde sobre
+`b6adb7d6005c2feb9dca5531b93e7e9e007c96e2` (run `33681015333`) y dejó un job
+de producción en espera. El comportamiento de concurrencia y la ruta automática
+dejaban a los merges de `main` mezclados con una posible promoción. Eso era un
+defecto de diseño, no una secuencia que deba repetirse. La corrección separa CI y
+staging de producción: un push, incluso docs-only, no puede crear el job de
+producción; solo la intención manual documentada en el runbook puede hacerlo.
 
 ## Por qué existe este ciclo
 

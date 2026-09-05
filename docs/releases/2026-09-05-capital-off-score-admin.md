@@ -1,22 +1,30 @@
 # Release — Nortex Capital fuera de la interfaz del cliente — 2026-09-05
 
-Estado: **CANDIDATO PREPARADO · NO MERGEADO · PRODUCCIÓN NO AUTORIZADA**
+> **Registro histórico — no ejecutar como receta de release.** Los SHAs, PRs,
+> resultados y estado de producción de este documento son una fotografía del
+> momento en que se escribió; no declaran el estado actual. La secuencia de
+> promoción que sigue fue reemplazada porque mezclaba un push a `main` con una
+> ruta automática a producción. Para cualquier candidato nuevo usá el
+> [runbook canónico de promoción](../runbooks/release-promotion.md).
 
-Candidato: `b71942b194aaf3755ec470e681fb746e2c45022d` (PR `#203`, draft)
-Base: `2834497f6090c2d55bcc48d5edb86887f6993ae3` (= `origin/main` = **lo que sirve producción hoy**)
+Estado histórico al 2026-09-05: **CANDIDATO PREPARADO · NO MERGEADO · PRODUCCIÓN NO AUTORIZADA**
+
+Candidato histórico: `b71942b194aaf3755ec470e681fb746e2c45022d` (PR `#203`, draft)
+Base histórica: `2834497f6090c2d55bcc48d5edb86887f6993ae3` (no usar para inferir
+`origin/main` ni la versión actual de producción)
 
 ---
 
-## 1. Qué falta desplegar, en realidad
+## 1. Qué faltaba desplegar en la fotografía histórica
 
 El trabajo de Codex (PR `#196`–`#201`: blindaje de Entregas, identidad de
 motorizados, unificación Apple del shell público, default de bodega en compras)
-**ya está en producción**. El job `deploy-production` del run `33688959590` cerró
-en verde el 2026-09-02 a las 23:19:05Z y `verify-deployed-release.mjs` exigió
-`ok`, `db: up` y el commit exacto, así que producción sirve `2834497`
-(ver `docs/releases/2026-09-02-public-apple-unification.md`).
+quedó registrado como promovido el 2026-09-02. El job `deploy-production` del run
+`33688959590` cerró en verde en esa fecha y su verificador exigió salud y SHA
+exacto entonces (ver `docs/releases/2026-09-02-public-apple-unification.md`). No
+usar ese resultado como prueba del estado actual de producción.
 
-Lo que **no** está desplegado son dos cosas:
+En esa fotografía, había dos cosas que no estaban desplegadas:
 
 | # | PR | Contenido | Riesgo |
 |---|---|---|---|
@@ -97,31 +105,19 @@ WHERE walletBalance > 0 OR creditLimit > 0;
 
 ---
 
-## 4. Secuencia de promoción
+## 4. Secuencia de promoción histórica — sustituida
 
-El pipeline (`.github/workflows/ci.yml`) es: push a `main` → `verify` +
-`deploy-schema-smoke` + `backup-restore-smoke` → `deploy-staging` (webhook de
-Coolify + verificación de salud y SHA) → `deploy-production` (**environment
-protegido: requiere aprobación humana explícita**). Todo detrás de
-`vars.NORTEX_DEPLOY_ENABLED == 'true'`.
+La secuencia que aparecía aquí permitía que el mismo workflow de CI, activado por
+un push a `main`, construyera una ruta a producción. Esa propiedad hizo posible
+una promoción no solicitada de un cambio docs-only y queda retirada. No se deben
+seguir los pasos históricos de merge, espera y aprobación de environment.
 
-> ⚠️ **Trampa del pipeline, ya documentada y ya sufrida:** mientras un
-> `deploy-production` esté en `waiting`, cualquier merge a `main` lo cancela
-> (`concurrency` con `cancel-in-progress`) y obliga a repetir staging sobre el
-> SHA nuevo. **Promover primero, mergear después — nunca al revés.**
-
-Por eso los dos PR pendientes se mergean **juntos y antes** de abrir la
-promoción, y se promueve **una sola vez**:
-
-1. Sacar `#203` de draft y mergearlo a `main`.
-2. Mergear `#202` (docs) inmediatamente después. El run del paso 1 se cancela
-   solo; es esperado y correcto.
-3. Dejar que el run del último merge llegue a `deploy-staging` verde.
-4. Correr el smoke de staging (§5) sobre el SHA nuevo.
-5. Recién ahí, aprobar el environment `production`.
-6. Correr el smoke de producción (§5) y observar 30 minutos.
-
-Ninguno de estos seis pasos está ejecutado.
+La ruta vigente separa CI/staging de producción: después de CI y staging sanos para
+un SHA completo, se requiere autorización explícita de producto y el workflow
+manual `release-production.yml` con `PROMOTE <SHA>`. El workflow revalida `main` y
+staging tras la aprobación técnica. El procedimiento, la evidencia y la
+configuración externa requerida están en el [runbook canónico de
+promoción](../runbooks/release-promotion.md).
 
 ---
 

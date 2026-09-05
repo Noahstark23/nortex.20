@@ -1,66 +1,34 @@
-```markdown
-# nortex.20 Development Patterns
+---
+name: nortex-20
+description: Reglas reales de contribución y promoción para Nortex ERP/POS.
+---
 
-> Auto-generated skill from repository analysis
+# Nortex.20 — patrones de trabajo reales
 
-## Overview
-This skill teaches the core development patterns used in the `nortex.20` TypeScript codebase. It covers file and code organization, commit conventions, and testing patterns. While no specific frameworks or automated workflows are detected, this guide ensures consistency and clarity for contributors.
+Antes de editar, lee por completo `AGENTS.md` y `CLAUDE.md`, ejecuta
+`git status --short --branch` y conserva todo cambio ajeno. Nortex maneja dinero e
+inventario: el `tenantId` viene del JWT, dinero nuevo usa `decimal.js`, stock usa
+`applyStockDelta`, y las mutaciones requieren auditoría atómica.
 
-## Coding Conventions
+## Toolchain y pruebas
 
-### File Naming
-- Use **PascalCase** for file names.
-  - Example: `UserProfile.ts`, `OrderManager.test.ts`
+- Node `22.23.2` mediante `mise exec -- ...`; npm y `package-lock.json` son
+  canónicos. Prisma es `6.4.1` con `npx --no-install prisma`; MySQL 8, no Postgres.
+- La prueba es Vitest (`npm test`), con suites en `tests/**/*.test.ts` y verificación
+  de tipos `npx tsc --noEmit`. Usa `npm run check:design` y `npm run build` para
+  cambios de interfaz; no inventes comandos ni lockfiles alternos.
+- La app local segura es `nortex frontend` en `127.0.0.1:4174`; backend y Docker se
+  levantan solo según los límites de `AGENTS.md`.
 
-### Import Style
-- Use **relative imports** for referencing other modules.
-  - Example:
-    ```typescript
-    import { User } from './User';
-    ```
+## Releases y agentes
 
-### Export Style
-- Both named and default exports are used.
-  - Named export example:
-    ```typescript
-    export function calculateTotal() { ... }
-    ```
-  - Default export example:
-    ```typescript
-    export default class OrderManager { ... }
-    ```
+CI, staging, aprobación del environment y producción son estados separados. Un
+merge —incluido uno documental— puede actualizar staging, pero no autoriza
+producción. `ci.yml` no contiene producción; la única ruta técnica es
+`.github/workflows/release-production.yml`, que exige SHA candidato completo,
+`PROMOTE <SHA>`, staging sano y revalidación tras la aprobación.
 
-### Commit Messages
-- Use **conventional commits** with the `feat` prefix for new features.
-  - Example: `feat: add user authentication middleware`
-- Average commit message length: ~71 characters.
-
-## Workflows
-
-_No automated workflows detected in this repository._
-
-## Testing Patterns
-
-- **Test Framework:** Unknown (not explicitly detected).
-- **Test File Naming:** Suffix test files with `.test.` before the extension.
-  - Example: `OrderManager.test.ts`
-- **Test Placement:** Tests are located alongside the files they test or in dedicated test directories.
-- **Test Example:**
-  ```typescript
-  // OrderManager.test.ts
-  import { OrderManager } from './OrderManager';
-
-  test('creates a new order', () => {
-    const manager = new OrderManager();
-    expect(manager.createOrder()).toBeDefined();
-  });
-  ```
-
-## Commands
-| Command         | Purpose                                      |
-|-----------------|----------------------------------------------|
-| /new-feature    | Start work on a new feature (use `feat:`)    |
-| /run-tests      | Run all test files matching `*.test.*`        |
-| /check-imports  | Review code for correct relative imports      |
-| /format-files   | Ensure PascalCase file naming conventions     |
-```
+No hagas push, merge, deploy, webhook ni cambies secrets, variables, reglas de
+Environment o protección de ramas sin autorización explícita y separada. Consulta
+`docs/runbooks/release-promotion.md`; los informes en `docs/releases/` son evidencia
+histórica, no recetas ejecutables.

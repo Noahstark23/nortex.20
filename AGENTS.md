@@ -13,6 +13,19 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 - No hagas deploy, push, merge, cambios DNS, llamadas a webhooks ni mensajes externos
   salvo autorización explícita y separada.
 
+## Promoción de releases
+
+- CI verde, staging sano, una aprobación de GitHub Environment y una autorización
+  de producción son compuertas distintas. Ninguna implica las otras.
+- Un merge o un cambio documental puede llegar a staging, pero nunca autoriza ni
+  crea por sí solo una promoción a producción.
+- Producción solo se considera con una autorización explícita que nombre alcance,
+  SHA completo, ventana, responsable y rollback. El único flujo técnico permitido
+  es `release-production.yml`, con `candidate_sha` y `PROMOTE <SHA>` exactos.
+- No cambies variables, secrets, reglas de Environment, protección de rama ni
+  dispares ese workflow sin la autorización anterior. Sigue y actualiza
+  `docs/runbooks/release-promotion.md`; los informes históricos no son recetas.
+
 ## Toolchain canónico
 
 - Node `22.23.2`, fijado en `.mise.toml`; usa `mise install` y `mise exec -- ...`.

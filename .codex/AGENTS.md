@@ -21,6 +21,11 @@ The generated baseline enables GitHub, Context7, Exa, Memory, Playwright, and Se
 
 ## Workflow Files
 
-- No dedicated workflow command files were generated for this repo.
-
-Use these workflow files as reusable task scaffolds when the detected repository workflows recur.
+- `.github/workflows/ci.yml`: CI y staging automático exclusivamente para pushes a
+  `main`; no contiene ningún job ni secreto de producción.
+- `.github/workflows/release-production.yml`: único workflow con promoción manual
+  de producción. Exige `candidate_sha`, `PROMOTE <SHA>`, staging con ese SHA y
+  revalidación posterior a la aprobación del environment.
+- Sigue `docs/runbooks/release-promotion.md`. No trates un workflow, un Environment
+  verde ni una aprobación de GitHub como autorización de producto; no despaches,
+  apruebes ni modifiques su configuración sin autorización separada.

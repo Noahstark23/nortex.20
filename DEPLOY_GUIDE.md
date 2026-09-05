@@ -66,14 +66,19 @@ TTL: 300
 2. Coolify generará automáticamente el certificado SSL vía Let's Encrypt
 3. Habilitar **"Force HTTPS"** ✅
 
-### Paso 5: Pipeline con compuerta (CI verde → staging → prod)
+### Paso 5: Compuertas separadas (CI → staging; promoción manual a producción)
 
-El repo ya trae el pipeline completo en `.github/workflows/ci.yml`: en cada push
-a `main` corren typecheck + tests + mutación + build + smoke de schema contra
-MySQL 8. Los jobs `deploy-staging` y `deploy-production` solo se habilitan cuando
-la variable `NORTEX_DEPLOY_ENABLED` vale `true`; staging debe quedar sano en el
-SHA exacto del workflow antes de que producción pueda empezar. La misma compuerta
-puede ejecutarse manualmente con `workflow_dispatch`. Para activarla:
+La ruta vinculante de release está en
+[`docs/runbooks/release-promotion.md`](docs/runbooks/release-promotion.md). CI,
+staging, la aprobación técnica de un environment y la autorización de producto son
+estados distintos. Un push —incluido uno solo documental— puede actualizar staging,
+pero nunca crea una ruta automática a producción.
+
+`.github/workflows/ci.yml` ejecuta CI y, en pushes a `main`, puede actualizar
+staging. `.github/workflows/release-production.yml` es el único workflow de
+producción: se dispara manualmente con un SHA candidato completo y la confirmación
+`PROMOTE <SHA>`, comprueba staging/main antes y después del environment, y verifica
+que Coolify esté fijado al candidato. Para configurarlo:
 
 1. **Apagar el auto-deploy de Coolify** en las apps de staging y prod
    (Configuration → desactivar *Auto Deploy on push*). Si queda encendido,
@@ -86,17 +91,28 @@ puede ejecutarse manualmente con `workflow_dispatch`. Para activarla:
 3. **Activar `Include Source Commit in Build`** en ambas apps. Coolify inyecta
    ese SHA como `SOURCE_COMMIT`; Nortex lo devuelve en `/api/health`. Sin esta
    opción la compuerta falla con `COMMIT_MISSING` y no promueve la release.
-4. **Copiar los webhooks de deploy**: en cada app de Coolify, sección
+4. **Preparar el destino de producción en Coolify:** habilitar su API si es una
+   instalación self-hosted, mantener *Auto Deploy on push* apagado y comprobar que
+   la app construye desde Git (`dockerfile` o `dockercompose`). Antes de cada
+   promoción, fijar en la configuración de la app el `git_commit_sha` al SHA
+   candidato autorizado; no dejar `HEAD`, `main` ni una rama mutable. Esta guía no
+   da permiso al workflow para escribir ese pin: el workflow solo lo verifica.
+5. **Copiar los webhooks de deploy**: en cada app de Coolify, sección
    *Webhooks* → copiar la *Deploy Webhook URL*.
-5. **Crear las variables públicas en GitHub** (repo → Settings → Secrets and
-   variables → Actions → Variables):
+6. **Crear las variables públicas en GitHub** (repo u organización → Settings →
+   Secrets and variables → Actions → Variables):
    | Variable | Valor |
    |---|---|
    | `STAGING_URL` | `https://staging.somosnortex.com` |
    | `PROD_URL` | `https://somosnortex.com` |
-   | `NORTEX_DEPLOY_ENABLED` | `false` durante la preparación; `true` para habilitar la compuerta |
+   | `NORTEX_DEPLOY_ENABLED` | `false` durante la preparación; `true` solo habilita staging en push a `main` |
+   | `NORTEX_PRODUCTION_DEPLOY_ENABLED` | `false` por defecto; `true` solo después de endurecer controles externos y para permitir el preflight manual |
 
-6. **Crear los secrets dentro de cada environment de GitHub** (Settings →
+   `NORTEX_PRODUCTION_DEPLOY_ENABLED` debe existir a nivel repo u organización:
+   el preflight no entra al environment `production` y por diseño no puede leer
+   variables de ese environment. No equivale a una autorización de producto.
+
+7. **Crear los secrets dentro de cada environment de GitHub** (Settings →
    Environments). No guardarlos como secrets globales del repositorio:
 
    | Environment | Secret | Valor |
@@ -104,20 +120,27 @@ puede ejecutarse manualmente con `workflow_dispatch`. Para activarla:
    | `staging` | `COOLIFY_STAGING_WEBHOOK` | URL del webhook de la app staging |
    | `staging` | `COOLIFY_TOKEN` | Solo si el webhook de staging exige bearer token |
    | `production` | `COOLIFY_PROD_WEBHOOK` | URL del webhook de la app productiva |
-   | `production` | `COOLIFY_TOKEN` | Solo si el webhook productivo exige bearer token |
+   | `production` | `COOLIFY_PROD_READ_TOKEN` | Obligatorio: token API con permiso mínimo de lectura del destino de producción |
+   | `production` | `COOLIFY_PROD_DEPLOY_TOKEN` | Opcional: token de despliegue solo si ese webhook exige bearer; no reutilizar el token de lectura |
 
    La aprobación del environment `production` protege sus secretos: ningún job
    de staging ni otro job anterior a esa aprobación puede leerlos.
 
-   Con `NORTEX_DEPLOY_ENABLED` ausente o en `false`, ambos jobs aparecen
-   `skipped`. Si se cambia a `true` y falta cualquier webhook o URL, el workflow
-   falla cerrado; nunca debe activarse producción por separado de staging.
-7. **Configurar los environments de GitHub** `staging` y `production`; producción
-   debe exigir aprobación antes de iniciar su job.
-8. **Ejecutar el workflow `CI` sobre `main`** y registrar su `github.sha`. El
-   verificador acepta la release solo cuando `/api/health` devuelve HTTP 200,
-   `ok: true`, `db: "up"` y ese SHA exacto.
-9. **Monitoreo** (5 minutos de setup, gratis):
+   La promoción manual falla cerrada si Coolify no devuelve una aplicación única
+   con `git_commit_sha` igual al candidato, un build desde Git (`dockerfile` o
+   `dockercompose`) y `is_auto_deploy_enabled=false`. Nunca pongas este token en
+   CI o staging, ni le des permisos `write`, `read:sensitive` o `root`. El token de
+   despliegue, si se necesita, debe quedar separado y limitado a `deploy`.
+8. **Endurecer GitHub antes de habilitar producción:** proteger `main` con PR y
+   checks requeridos; limitar el environment `production` a `main`, usar reviewer
+   independiente, activar `prevent-self-review` y desactivar bypass administrativo.
+   Sin esos controles, el estado correcto es bloqueado.
+9. **Promover solo con el runbook canónico:** tras CI y staging del mismo SHA,
+   registrar autorización explícita de producto (alcance, SHA, ventana,
+   responsable, rollback). Recién entonces un responsable inicia **Promote
+   production** desde `main`; no uses `workflow_dispatch` de CI para staging ni
+   producción.
+10. **Monitoreo** (5 minutos de setup, gratis):
    - **Sentry**: crear proyecto Node en sentry.io y poner `SENTRY_DSN` en las
      variables de Coolify (el backend ya lo soporta — gate suave, sin DSN opera
      igual). Los errores 500 de prod llegan solos, con stack.

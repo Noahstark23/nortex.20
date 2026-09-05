@@ -1,0 +1,118 @@
+# NORTEX — Producción es una promoción manual de un candidato ya probado en staging.
+# Este archivo es la única ruta de GitHub Actions que puede leer el webhook de PROD.
+name: Promote production
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: SHA completo (40 minúsculas) ya sano en staging y actual en main
+        required: true
+        type: string
+      confirmation:
+        description: Escribe exactamente PROMOTE <candidate_sha>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Una promoción no debe ser cancelada por un push de CI ni por otra ejecución
+# accidental. La intervención humana debe cancelar explícitamente una promoción
+# abierta antes de iniciar otra.
+concurrency:
+  group: nortex-production-promotion
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: validate-production-candidate
+    runs-on: ubuntu-latest
+    steps:
+      # El ref elegido al despachar debe ser main. La compuerta valida después
+      # que GITHUB_SHA, el SHA introducido y origin/main sean exactamente iguales.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Verificar intención, main y staging del candidato
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+        run: node scripts/authorize-production-release.mjs
+
+  deploy-production:
+    name: deploy-production
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      # Se vuelve a fijar el checkout al candidato explícito, no a un SHA que
+      # haya cambiado mientras se esperaba la aprobación del environment.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # Esta segunda prueba ocurre DESPUÉS de la aprobación humana. Si main o
+      # staging avanzaron, falla cerrada antes de exponer el webhook de producción.
+      - name: Revalidar candidato después de la aprobación
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+        run: node scripts/authorize-production-release.mjs
+
+      # El webhook por sí solo despliega lo que tenga configurado Coolify. Antes
+      # de tocarlo, la aplicación debe estar fijada al mismo SHA y sin Auto Deploy.
+      - name: Verificar destino Coolify fijado al candidato
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          COOLIFY_PROD_WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          COOLIFY_TOKEN: ${{ secrets.COOLIFY_PROD_READ_TOKEN }}
+        run: node scripts/verify-coolify-production-target.mjs
+
+      - name: Validar configuración de PROD
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          APP_URL: ${{ vars.PROD_URL }}
+          READ_TOKEN: ${{ secrets.COOLIFY_PROD_READ_TOKEN }}
+        run: |
+          test -n "$WEBHOOK" || { echo "::error::Falta COOLIFY_PROD_WEBHOOK"; exit 1; }
+          test -n "$APP_URL" || { echo "::error::Falta la variable PROD_URL"; exit 1; }
+          test -n "$READ_TOKEN" || { echo "::error::Falta COOLIFY_PROD_READ_TOKEN"; exit 1; }
+          case "$APP_URL" in
+            https://*) ;;
+            *) echo "::error::PROD_URL debe usar https://"; exit 1 ;;
+          esac
+
+      - name: Desplegar PROD (webhook de Coolify)
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_PROD_DEPLOY_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            if ! curl --fail --silent --max-time 30 --retry 3 --output /dev/null \
+              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"; then
+              echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
+            fi
+          elif ! curl --fail --silent --max-time 30 --retry 3 --output /dev/null "$WEBHOOK"; then
+            echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
+          fi
+          echo "🚀 Deploy de prod disparado"
+
+      - name: Verificar PROD sano y en el candidato esperado
+        env:
+          APP_URL: ${{ vars.PROD_URL }}
+          EXPECTED_COMMIT: ${{ inputs.candidate_sha }}
+        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
