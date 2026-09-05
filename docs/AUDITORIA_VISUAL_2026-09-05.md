@@ -49,6 +49,13 @@ contraste/autofill de los campos claros, toggle del layout y contratos de los
 módulos. Son controles de regresión; no son una certificación completa de cada
 ruta ni de producción.
 
+Como verificación complementaria del checkout aislado, se generó el cliente
+Prisma con el schema local y `tsc --noEmit` terminó sin errores. `build:seo`
+también terminó correctamente, prerenderizó 71 rutas y dejó 72 URLs en el
+sitemap. La advertencia de Browserslist desactualizado y el chunk `xlsx` mayor
+de 500 kB quedan como deuda de mantenimiento; no fueron introducidos por esta
+ronda.
+
 ## Límites que impiden declarar “todo Nortex aprobado”
 
 - Las 33 rutas autenticadas no recibieron todavía un recorrido visual real con
