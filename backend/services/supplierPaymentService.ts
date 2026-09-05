@@ -12,6 +12,12 @@ import {
     type SupplierPaymentRequest,
 } from '../lib/supplierPayments';
 import { recordSupplierPayment } from './accounting';
+import {
+    MENSAJE_SIN_CAJA_ABIERTA,
+    registrarSalidaDeCajaPorAbonoProveedor,
+    type DebitoDeGaveta,
+    type PagoProveedorDeps,
+} from './supplierPayment';
 
 type PrismaTx = Prisma.TransactionClient;
 type SupplierPaymentReader = Pick<PrismaTx, 'supplierPayment'>;
@@ -20,6 +26,7 @@ interface LockedPurchase {
     id: string;
     tenantId: string;
     supplierId: string;
+    invoiceNumber: string;
     total: Decimal.Value;
     balanceDue: Decimal.Value | null;
     status: string;
@@ -89,8 +96,17 @@ export interface ExecuteSupplierPaymentInput {
     userId: string;
     purchaseId: string;
     request?: SupplierPaymentRequest;
+    /**
+     * Turno abierto del que sale el efectivo cuando el abono es en CASH. Lo
+     * resuelve el caller ANTES de abrir la transacción (mismo turno que ve la
+     * píldora del POS) y acá se re-lee bajo row-lock. `null` con method CASH
+     * es un 409 explícito: falta abrir caja, no "falta saldo".
+     */
+    shiftId?: string | null;
     /** Solo para pruebas deterministas; producción usa el reloj del proceso. */
     now?: Date;
+    /** Inyectables solo para pruebas: la salida de gaveta firmada. */
+    cajaDeps?: PagoProveedorDeps;
 }
 
 export interface ExecuteSupplierPaymentTransactionInput
@@ -183,11 +199,14 @@ export async function executeSupplierPayment({
     userId,
     purchaseId,
     request = {},
+    shiftId = null,
     now = new Date(),
+    cajaDeps,
 }: ExecuteSupplierPaymentInput): Promise<SupplierPaymentResult> {
     const scopedTenantId = tenantId.trim();
     const scopedUserId = userId.trim();
     const scopedPurchaseId = purchaseId.trim();
+    const scopedShiftId = shiftId?.trim() || null;
     if (!scopedTenantId || !scopedUserId || !scopedPurchaseId) {
         throw new SupplierPaymentError(
             'INVALID_PAYMENT_CONTEXT',
@@ -217,6 +236,7 @@ export async function executeSupplierPayment({
             \`id\`,
             \`tenantId\`,
             \`supplierId\`,
+            \`invoiceNumber\`,
             \`total\`,
             \`balanceDue\`,
             \`status\`,
@@ -296,21 +316,34 @@ export async function executeSupplierPayment({
         return assertReplayOrThrow(existing, payloadHash);
     }
 
+    // EL EFECTIVO SALE DE LA GAVETA, NO DE LA BILLETERA FINTECH.
+    //
+    // Hasta acá este bloque debitaba `Tenant.walletBalance` — el saldo de
+    // Nortex Capital, que se fondea con /api/loans/request y que ninguna
+    // ferretería tiene en cero coma algo. Resultado: TODO abono en efectivo a
+    // un proveedor moría con "No hay suficiente efectivo disponible" aunque la
+    // gaveta estuviera llena, y la CxP quedaba abierta para siempre.
+    //
+    // ORDEN DE BLOQUEO: Purchase (el FOR UPDATE de arriba) → Shift. El turno
+    // siempre se toma ÚLTIMO, igual que en /api/purchases (Supplier → Product
+    // → Shift) y en /api/returns (Sale → Product → Shift). Adelantarlo
+    // invertiría el orden y abriría un deadlock con esas dos transacciones.
+    let debitoDeGaveta: DebitoDeGaveta | null = null;
     if (normalizedRequest.method === 'CASH') {
-        const walletDebit = await tx.tenant.updateMany({
-            where: {
-                id: scopedTenantId,
-                walletBalance: { gte: plan.amount },
-            },
-            data: { walletBalance: { decrement: plan.amount } },
-        });
-        if (walletDebit.count !== 1) {
-            throw new SupplierPaymentError(
-                'INSUFFICIENT_CASH_BALANCE',
-                409,
-                'No hay suficiente efectivo disponible para pagar al proveedor',
-            );
+        if (!scopedShiftId) {
+            throw new SupplierPaymentError('NO_OPEN_SHIFT', 409, MENSAJE_SIN_CAJA_ABIERTA);
         }
+        debitoDeGaveta = await registrarSalidaDeCajaPorAbonoProveedor(
+            tx,
+            {
+                tenantId: scopedTenantId,
+                userId: scopedUserId,
+                shiftId: scopedShiftId,
+                invoiceNumber: purchase.invoiceNumber,
+                monto: plan.amount,
+            },
+            cajaDeps,
+        );
     }
 
     await recordSupplierPayment(
@@ -368,6 +401,15 @@ export async function executeSupplierPayment({
                     hasReference: normalizedRequest.reference !== null,
                     idempotencySource: suppliedClientEventId ? 'CLIENT' : 'LEGACY_BODYLESS',
                 },
+                caja: debitoDeGaveta
+                    ? {
+                        shiftId: scopedShiftId,
+                        cashMovementId: debitoDeGaveta.movimientoId,
+                        expenseId: debitoDeGaveta.expenseId,
+                        efectivoAntes: debitoDeGaveta.efectivoAntes.toFixed(2),
+                        efectivoDespues: debitoDeGaveta.efectivoDespues.toFixed(2),
+                    }
+                    : null,
             }),
         },
     });
@@ -419,7 +461,9 @@ export async function executeSupplierPaymentTransaction({
     userId,
     purchaseId,
     request = {},
+    shiftId = null,
     now,
+    cajaDeps,
 }: ExecuteSupplierPaymentTransactionInput): Promise<SupplierPaymentResult> {
     try {
         return await db.$transaction(
@@ -429,7 +473,9 @@ export async function executeSupplierPaymentTransaction({
                 userId,
                 purchaseId,
                 request,
+                shiftId,
                 now,
+                cajaDeps,
             }),
             { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
         );

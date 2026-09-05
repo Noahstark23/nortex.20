@@ -171,6 +171,7 @@ import { CUSTOMER_RETURN_HOLD_REASON_CODE } from './lib/productBatchHold';
 import { buildPharmacyExpiryAlert } from './lib/pharmacyExpiryAlerts';
 import { ProcurementMatchError } from './lib/procurementMatch';
 import {
+    normalizeSupplierPaymentMethod,
     PURCHASE_FISCAL_STATUSES,
     PURCHASE_PAYABLE_STATUSES,
     resolveEffectiveSupplierBalance,
@@ -10043,12 +10044,30 @@ app.post(
             });
             if (!payableAccount) await seedChartOfAccounts(authReq.tenantId!);
 
+            // Abono en EFECTIVO: la plata sale de la gaveta, así que exige caja
+            // abierta. Se resuelve ANTES de la tx (mismo turno que ve la píldora
+            // del POS) y el servicio lo re-lee bajo row-lock. Antes esto debitaba
+            // `Tenant.walletBalance` —la billetera de Nortex Capital— y todo
+            // abono en efectivo moría con "no hay suficiente efectivo".
+            // Misma normalización que usa el servicio (default CASH, mayúsculas):
+            // dos criterios distintos de "es en efectivo" abrirían la ventana de
+            // pagar de la gaveta sin turno, o de exigir turno sin necesitarlo.
+            const metodoDelAbono = normalizeSupplierPaymentMethod(req.body?.method);
+            const { shift: turnoDelAbono } = metodoDelAbono === 'CASH'
+                ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
+                : { shift: null };
+            if (metodoDelAbono === 'CASH' && !turnoDelAbono) {
+                const sinCaja = new CashSupplierPaymentError('SIN_CAJA_ABIERTA', MENSAJE_SIN_CAJA_ABIERTA);
+                return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
+            }
+
             const result = await executeSupplierPaymentTransaction({
                 db: prisma,
                 tenantId: authReq.tenantId!,
                 userId: authReq.userId!,
                 purchaseId: req.params.id,
                 request: req.body,
+                shiftId: turnoDelAbono?.id ?? null,
             });
 
             return res.json({
@@ -10060,7 +10079,7 @@ app.post(
                         : 'Abono a proveedor registrado.',
             });
         } catch (error: unknown) {
-            if (error instanceof PayableSupplierPaymentError) {
+            if (error instanceof PayableSupplierPaymentError || error instanceof CashSupplierPaymentError) {
                 return res.status(error.httpStatus).json({ error: error.message, code: error.code });
             }
             if (error instanceof PeriodLockedError) {
@@ -11306,6 +11325,82 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
         res.json({ message: `${tenant.businessName} REACTIVADA hasta ${newEndsAt.toISOString().slice(0, 10)}.`, tenant });
     } catch (error) {
         res.status(500).json({ error: 'Error al reactivar empresa' });
+    }
+});
+
+// POST /api/admin/tenants/:id/score — recalcular el Nortex Score de UNA empresa.
+//
+// POR QUÉ EXISTE: el score se persistía únicamente como efecto secundario de
+// que el dueño abriera su Dashboard (`GET /api/fintech/score`). Al sacar Nortex
+// Capital de la interfaz del tenant —no se le promete crédito a nadie— ese
+// disparador desaparece y el panel admin se quedaría mirando números congelados
+// (o `S/D` para siempre en una empresa nueva). Acá el recálculo es explícito y
+// del lado de quien mira el número.
+//
+// De a UNA empresa a propósito: `calculateTenantScore` levanta balance y estado
+// de resultados completos. Un "recalcular todas" en un handler síncrono
+// bloquearía el event loop a medida que crezca el padrón (guardrail #5).
+app.post('/api/admin/tenants/:id/score', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    const tenantId = String(req.params.id ?? '').trim();
+    if (!tenantId) return res.status(400).json({ error: 'Falta el id de la empresa.' });
+    try {
+        const empresa = await prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { id: true, businessName: true, creditScore: true, creditLimit: true },
+        });
+        if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada.' });
+
+        // FUERA de la transacción: el análisis hace muchas lecturas (guardrail #4).
+        const analisis = await calculateTenantScore(tenantId);
+
+        const actualizado = await prisma.$transaction(async (tx) => {
+            const tenant = await tx.tenant.update({
+                where: { id: tenantId },
+                data: { creditScore: analisis.score, creditLimit: analisis.creditLimit },
+                select: { id: true, businessName: true, creditScore: true, creditLimit: true },
+            });
+            // `creditLimit` habilita desembolsos: el cambio lleva before/after
+            // en la MISMA transacción (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: (req as AuthRequest).userId!,
+                    action: 'ADMIN_SCORE_RECALCULATED',
+                    details: JSON.stringify({
+                        before: {
+                            creditScore: empresa.creditScore,
+                            creditLimit: new Decimal(empresa.creditLimit.toString()).toFixed(4),
+                        },
+                        after: {
+                            creditScore: tenant.creditScore,
+                            creditLimit: new Decimal(tenant.creditLimit.toString()).toFixed(4),
+                        },
+                        rating: analisis.rating,
+                        factors: analisis.factors,
+                    }),
+                },
+            });
+            return tenant;
+        });
+
+        res.json({
+            tenant: {
+                id: actualizado.id,
+                businessName: actualizado.businessName,
+                creditScore: actualizado.creditScore,
+                creditLimit: new Decimal(actualizado.creditLimit.toString()).toFixed(4),
+            },
+            analysis: {
+                score: analisis.score,
+                rating: analisis.rating,
+                creditLimit: analisis.creditLimit,
+                factors: analisis.factors,
+                financialRatios: analisis.financialRatios ?? null,
+            },
+        });
+    } catch (error) {
+        console.error('Admin score recalculation error:', error);
+        res.status(500).json({ error: 'Error al recalcular el score de la empresa.' });
     }
 });
 

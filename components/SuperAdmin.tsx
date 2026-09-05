@@ -213,6 +213,32 @@ const SuperAdmin: React.FC = () => {
         finally { setActionLoading(null); }
     };
 
+    // El score se recalcula ACÁ, a pedido, y no como efecto secundario de que el
+    // dueño abra su Dashboard. Antes ese era el único disparador: al sacar Nortex
+    // Capital de la interfaz del cliente, sin este botón esta columna quedaría
+    // congelada (o en 'S/D' para siempre en cada empresa nueva).
+    const handleRecalcularScore = async (tenantId: string, name: string) => {
+        setActionLoading(tenantId);
+        try {
+            const res = await fetch(`/api/admin/tenants/${tenantId}/score`, { method: 'POST', headers: authHeaders() });
+            const json = await res.json();
+            if (!res.ok) {
+                alert(json.error || 'Error al recalcular el score');
+                return;
+            }
+            const puntaje = json.analysis?.score ?? null;
+            const factores: string[] = json.analysis?.factors ?? [];
+            alert(
+                `${name}\n\nScore: ${puntaje ?? 'sin historial suficiente'}`
+                + `${json.analysis?.rating ? ` (${json.analysis.rating})` : ''}`
+                + `\nLínea calculada: ${formatMoney(json.tenant?.creditLimit ?? 0)}`
+                + (factores.length ? `\n\n${factores.join('\n')}` : '')
+            );
+            refreshAll();
+        } catch (e) { alert('Error de conexión'); }
+        finally { setActionLoading(null); }
+    };
+
     const handleApproveLoan = async (orderId: string, amount: string) => {
         if (!confirm(`¿Aprobar préstamo de ${formatMoney(amount)}?`)) return;
         setActionLoading(orderId);
@@ -437,6 +463,16 @@ const SuperAdmin: React.FC = () => {
                                                 <td className="px-3 py-3 text-center">
                                                     <div className={`font-bold text-lg ${getScoreColor(t.creditScore)}`}>{t.creditScore ?? 'S/D'}</div>
                                                     <div className={`text-[9px] font-bold ${getScoreColor(t.creditScore)}`}>{getScoreLabel(t.creditScore)}</div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRecalcularScore(t.id, t.businessName)}
+                                                        disabled={actionLoading === t.id}
+                                                        className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 bg-white/[0.06] text-gray-400 text-[9px] font-bold rounded hover:bg-white/[0.12] hover:text-gray-200 transition-colors disabled:opacity-40"
+                                                        title="Recalcular el Nortex Score de esta empresa"
+                                                    >
+                                                        <RefreshCw size={9} className={actionLoading === t.id ? 'animate-spin' : ''} />
+                                                        {actionLoading === t.id ? '…' : 'Recalcular'}
+                                                    </button>
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
                                                     <span className="text-green-400 font-bold">{formatMoney(t.walletBalance)}</span>
