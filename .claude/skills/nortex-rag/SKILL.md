@@ -9,11 +9,22 @@ El subsistema vive en `backend/services/whatsapp/` y está diseñado con **costu
 explícitas**: se avanza enchufando piezas en las costuras, NO reescribiendo el
 pipeline. Antes de tocar nada, leé el archivo de la costura que vas a usar.
 
+## Revisión de seguridad del canal — 2026-09-04
+
+Ver docs/AUDITORIA_GENERAL_2026-09-04.md y docs/WHATSAPP_INFRA.md. El contexto tenant
+server-side no autentica a una persona. El código actual liga cliente por sufijo
+telefónico y expone tools B2B por scope del canal; son brechas pendientes, no
+patrones a copiar. Exigir vínculo exacto/verificado y rol vigente por tool.
+Inbox durable antes del ACK, claims/outbox y handoff atendible son gates del
+primer piloto, incluso con una instancia. La unicidad del mensaje no garantiza
+idempotencia del envío ni recuperación. No usar este documento como autorización
+para activar canales o enviar mensajes.
+
 ## Mapa (quién hace qué)
 
 | Pieza | Archivo | Costura de extensión |
 |---|---|---|
-| Webhook Meta (HMAC, 200 inmediato hoy) | `webhook.ts` | No tocar en cambios ordinarios; al escalar, mover el 200 detrás del inbox durable según la ruta de escala |
+| Webhook Meta (HMAC, 200 inmediato hoy) | `webhook.ts` | Antes del piloto, mover el 200 detrás del inbox durable según la ruta de escala |
 | Cola (per-proceso) | `queue.ts` | `InMemoryQueue` → BullMQ/Redis al escalar (SCALING_AUDIT) |
 | Pipeline entrante (dedupe + resume) | `inbound.ts` | — (idempotencia sagrada, ver gotchas) |
 | Identidad/tenant | `identity.ts` | — (principio inviolable, ver abajo) |
@@ -51,13 +62,15 @@ separados y escalar de forma independiente.
    jamás del mensaje, del LLM ni de los args de una tool. `ToolContext` lo inyecta
    el servidor; una tool que acepte `tenantId`/`customerId` en sus args está mal
    diseñada aunque "funcione" — es la puerta de la prompt injection cross-tenant.
-2. **`customerId` se resuelve del `waId` contra el MISMO tenant** (`identity.ts`,
-   `@@unique([tenantId, waId])`). Nunca confiar en lo que el cliente diga ser.
+2. **`customerId` requiere vínculo exacto y verificado dentro del MISMO tenant**.
+   La búsqueda actual por sufijo no satisface este requisito. Derivar principal
+   y rol desde vinculación autenticada; separar historial por canal/propósito.
 3. **SQL parametrizado siempre** (`$queryRaw` con `Prisma.sql`); la query del
    usuario nunca se concatena. En FULLTEXT, sanear tokens ANTES de armar el
    boolean query (ver `tokenize()` en `rag.ts`).
-4. **B2C solo ve `isPublished: true`**; B2B/BOTH ve todo. El `publicOnly` sale de
-   `ctx.botScope`, no de un arg.
+4. **B2C solo ve `isPublished: true`**. El scope B2B/BOTH no autoriza al remitente:
+   catálogo privado y métricas exigen principal/rol verificados. Los permisos
+   derivan del backend y de la elegibilidad del producto, nunca de args del LLM.
 5. **Dinero en `Decimal`** también en las respuestas del bot (`money()` en tools.ts).
 6. **Toda tool valida args con Zod en runtime** (además del JSON Schema que ve el
    LLM — el modelo puede mandar cualquier cosa; Zod es la frontera real).

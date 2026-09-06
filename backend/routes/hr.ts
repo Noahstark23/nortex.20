@@ -4,6 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
+import { pinNormalizado } from '../services/shiftIdentity';
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -88,9 +89,19 @@ async function ensureNationalHolidays(tenantId: string, year: number): Promise<v
 // 🕒 TERMINAL DE ASISTENCIA (CLOCK IN/OUT)
 // ==========================================
 
+// Misma normalización y formato que /employees/verify-pin. Es obligatorio:
+// Prisma omite undefined; dejarlo pasar escogería un empleado sin comprobar PIN.
+const AttendancePinSchema = z.object({
+    pin: z.union([z.string(), z.number().int()])
+        .transform(value => pinNormalizado(value) ?? '')
+        .pipe(z.string().regex(/^\d{4}$/)),
+});
+
 router.post('/clock-in', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { pin } = req.body; // El cajero/empleado digita su PIN en la tablet
+    const parsed = AttendancePinSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'El PIN debe ser exactamente 4 dígitos numéricos.' });
+    const { pin } = parsed.data;
 
     try {
         const employee = await prisma.employee.findFirst({
@@ -129,7 +140,9 @@ router.post('/clock-in', authenticate, async (req: any, res: any) => {
 
 router.post('/clock-out', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { pin } = req.body;
+    const parsed = AttendancePinSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'El PIN debe ser exactamente 4 dígitos numéricos.' });
+    const { pin } = parsed.data;
 
     try {
         const employee = await prisma.employee.findFirst({

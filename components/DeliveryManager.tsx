@@ -50,9 +50,81 @@ const getRiderFormError = (form: RiderForm): string | null => {
     return null;
 };
 
+const DELIVERY_PAGE_SIZE = 200;
+const MAX_DELIVERY_PAGES = 5;
+const MAX_VISIBLE_ORDERS = DELIVERY_PAGE_SIZE * MAX_DELIVERY_PAGES;
+
+interface PedidoPageInfo {
+    page?: number;
+    limit?: number;
+    hasMore?: boolean;
+    nextPage?: number | null;
+}
+
 interface PedidoListResponse {
     pedidos?: Pedido[];
+    pageInfo?: PedidoPageInfo;
 }
+
+interface PedidoPageLoadResult {
+    pedidos: Pedido[] | null;
+    warning: string;
+}
+
+const loadPedidoPages = async (
+    token: string | null,
+    isCurrentRequest: () => boolean,
+): Promise<PedidoPageLoadResult | null> => {
+    const pedidosById = new Map<string, Pedido>();
+    let page = 1;
+
+    try {
+        for (let loadedPages = 0; loadedPages < MAX_DELIVERY_PAGES; loadedPages += 1) {
+            const response = await fetch(
+                `/api/v1/pedidos?page=${page}&limit=${DELIVERY_PAGE_SIZE}`,
+                { headers: { Authorization: `Bearer ${token}` } },
+            );
+            if (!isCurrentRequest()) return null;
+            if (!response.ok) {
+                throw new Error(`El servidor rechazó la página ${page} de pedidos.`);
+            }
+
+            const body = await response.json() as PedidoListResponse;
+            if (!isCurrentRequest()) return null;
+            const pageOrders = Array.isArray(body.pedidos) ? body.pedidos : [];
+            pageOrders.forEach((pedido) => {
+                if (!pedidosById.has(pedido.id)) pedidosById.set(pedido.id, pedido);
+            });
+
+            // Compatibilidad: el contrato anterior no incluía pageInfo y representaba
+            // una sola lista completa. No inferimos más páginas a partir del tamaño.
+            if (!body.pageInfo || body.pageInfo.hasMore !== true) {
+                return { pedidos: [...pedidosById.values()], warning: '' };
+            }
+
+            if (loadedPages === MAX_DELIVERY_PAGES - 1) {
+                return {
+                    pedidos: [...pedidosById.values()],
+                    warning: `Hay más pedidos en el servidor. Por seguridad cargamos solo las primeras ${MAX_DELIVERY_PAGES} páginas (máximo ${MAX_VISIBLE_ORDERS.toLocaleString('en-US')}); el resto no está visible en este tablero.`,
+                };
+            }
+
+            const requestedNextPage = body.pageInfo.nextPage;
+            page = Number.isInteger(requestedNextPage) && Number(requestedNextPage) > page
+                ? Number(requestedNextPage)
+                : page + 1;
+        }
+    } catch (error) {
+        console.error('DeliveryManager pedidos pagination error:', error);
+        if (!isCurrentRequest()) return null;
+        return {
+            pedidos: null,
+            warning: 'No pudimos cargar todas las páginas de pedidos. Conservamos la última vista completa e intentaremos actualizarla nuevamente.',
+        };
+    }
+
+    return { pedidos: [...pedidosById.values()], warning: '' };
+};
 
 interface PedidoResponse {
     pedido?: Pedido;
@@ -105,6 +177,7 @@ const DeliveryManager: React.FC = () => {
     const [movingId, setMovingId]         = useState<string | null>(null);
     const [deliveryError, setDeliveryError] = useState('');
     const [deliveryMessage, setDeliveryMessage] = useState('');
+    const [pedidoLoadWarning, setPedidoLoadWarning] = useState('');
 
     const pedidosRef = useRef<Pedido[]>([]);
     const pendingTransitionsRef = useRef(new Set<string>());
@@ -121,16 +194,18 @@ const DeliveryManager: React.FC = () => {
 
     const fetchData = useCallback(async () => {
         const requestEpoch = dataEpochRef.current;
+        const isCurrentRequest = () => requestEpoch === dataEpochRef.current;
         try {
-            const [pRes, mRes] = await Promise.all([
-                fetch('/api/v1/pedidos', { headers: { Authorization: `Bearer ${token}` } }),
+            const [pedidoResult, mRes] = await Promise.all([
+                loadPedidoPages(token, isCurrentRequest),
                 fetch('/api/v1/motorizados', { headers: { Authorization: `Bearer ${token}` } }),
             ]);
-            if (pRes.ok) {
-                const body = await pRes.json() as PedidoListResponse;
-                if (requestEpoch !== dataEpochRef.current) return;
+            if (!isCurrentRequest() || !pedidoResult) return;
+
+            setPedidoLoadWarning(pedidoResult.warning);
+            if (pedidoResult.pedidos) {
                 updatePedidos((current) => mergePendingOrders(
-                    Array.isArray(body.pedidos) ? body.pedidos : [],
+                    pedidoResult.pedidos ?? [],
                     current,
                     pendingTransitionsRef.current,
                 ));
@@ -524,6 +599,19 @@ const DeliveryManager: React.FC = () => {
                         ))}
                     </div>
                 </section>
+            )}
+
+            {pedidoLoadWarning && (
+                <div className="px-4 pt-4 sm:px-6">
+                    <div
+                        role="alert"
+                        aria-live="polite"
+                        aria-atomic="true"
+                        className="rounded-control border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-900"
+                    >
+                        {pedidoLoadWarning}
+                    </div>
+                </div>
             )}
 
             {(deliveryError || deliveryMessage) && (

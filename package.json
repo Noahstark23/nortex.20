@@ -22,7 +22,8 @@
     "mobile:sync": "npm run build && cap sync android",
     "mobile:assets": "npx @capacitor/assets generate --android",
     "mobile:open": "cap open android",
-    "check:design": "node scripts/check-design-system.cjs"
+    "check:design": "node scripts/check-design-system.cjs",
+    "test:integration:required": "node scripts/run-quality-integration.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
@@ -82,7 +83,8 @@
     "vite": "^6.2.0",
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.1.10",
-    "workbox-window": "^7.4.0"
+    "workbox-window": "^7.4.0",
+    "yaml": "2.9.0"
   },
   "overrides": {
     "qs": "6.16.0"

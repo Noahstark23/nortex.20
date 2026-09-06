@@ -86,6 +86,7 @@ export interface BuildShiftCloseReportInput {
 
 const money = formatReportMoney;
 const quantity = formatReportQuantity;
+const moneyUsd = (value: Decimal.Value) => new Decimal(value).toFixed(4, Decimal.ROUND_HALF_UP);
 
 export function salesPaymentMethodLabel(method: string): string {
     const labels: Record<string, string> = {
@@ -231,7 +232,7 @@ export function buildShiftCloseReport(input: BuildShiftCloseReportInput) {
             currency: movement.currency || 'NIO',
             category: movement.category || 'SIN_CATEGORIA',
             count: movement.count,
-            amount: money(movement.amount),
+            amount: movement.currency === 'USD' ? moneyUsd(movement.amount) : money(movement.amount),
         }))
         .sort((left, right) => left.currency.localeCompare(right.currency)
             || left.type.localeCompare(right.type)
@@ -310,12 +311,12 @@ export function buildShiftCloseReport(input: BuildShiftCloseReportInput) {
             expectedNio: money(input.cash.expectedNio),
             countedNio: money(input.cash.countedNio),
             differenceNio: money(input.cash.differenceNio),
-            openingUsd: money(input.cash.openingUsd),
-            paidInUsd: money(sumReportValues(movementTotal('USD', 'IN'))),
-            paidOutUsd: money(sumReportValues(movementTotal('USD', 'OUT'))),
-            expectedUsd: money(input.cash.expectedUsd),
-            countedUsd: money(input.cash.countedUsd),
-            differenceUsd: money(input.cash.differenceUsd),
+            openingUsd: moneyUsd(input.cash.openingUsd),
+            paidInUsd: moneyUsd(sumReportValues(movementTotal('USD', 'IN'))),
+            paidOutUsd: moneyUsd(sumReportValues(movementTotal('USD', 'OUT'))),
+            expectedUsd: moneyUsd(input.cash.expectedUsd),
+            countedUsd: moneyUsd(input.cash.countedUsd),
+            differenceUsd: moneyUsd(input.cash.differenceUsd),
         },
         movementBreakdown,
     };

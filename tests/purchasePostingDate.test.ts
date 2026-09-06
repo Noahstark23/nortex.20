@@ -30,7 +30,7 @@ function transaction(periodStatus: 'OPEN' | 'CLOSED' | null = null) {
         },
         $queryRaw: vi.fn(async (sql: { values: unknown[] }) => [{ id: sql.values[1] }]),
         journalLine: { create: vi.fn().mockResolvedValue({}) },
-        account: { update: vi.fn().mockResolvedValue({}) },
+        account: { findUnique: db.accountFindUnique, update: vi.fn().mockResolvedValue({}) },
     };
 }
 

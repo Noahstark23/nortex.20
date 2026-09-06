@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { Prisma } from '@prisma/client';
+import { buildLegacyShiftCloseIdentity } from '../backend/services/legacyShiftCloseService';
 import { closeShiftWithReport } from '../backend/services/shiftCloseService';
 import { buildShiftCloseReport, hashShiftCloseReport } from '../backend/lib/shiftCloseReport';
 
@@ -233,7 +234,7 @@ describe('closeShiftWithReport', () => {
                         employeeId: 'emp-a',
                         initialCash: decimal('100.00'),
                         initialCashUsd: decimal('0.00'),
-                        status: 'CLOSED',
+                        status: 'CLOSED', ...buildLegacyShiftCloseIdentity(closeCommand, closeCommand),
                         startTime: new Date('2026-08-30T12:00:00.000Z'),
                         endTime: fixedNow(),
                         finalCashDeclared: decimal('215.00'),
@@ -312,7 +313,7 @@ describe('closeShiftWithReport', () => {
         const tx: any = {
             $queryRaw: vi.fn(async () => [{
                 id: 'shift-a', tenantId: 'tenant-a', userId: 'user-a', employeeId: null,
-                initialCash: decimal('0'), initialCashUsd: decimal('0'), status: 'CLOSED',
+                initialCash: decimal('0'), initialCashUsd: decimal('0'), status: 'CLOSED', ...buildLegacyShiftCloseIdentity(closeCommand, closeCommand),
                 startTime: new Date('2026-08-30T12:00:00.000Z'), endTime: fixedNow(),
                 finalCashDeclared: decimal('215'), systemExpectedCash: decimal('0'), difference: decimal('215'),
                 finalCashDeclaredUsd: decimal('0'), systemExpectedUsd: decimal('0'), differenceUsd: decimal('0'),

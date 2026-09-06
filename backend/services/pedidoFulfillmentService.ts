@@ -625,7 +625,7 @@ export async function reservePedidoInTransaction(
         throw new PedidoFulfillmentError(
             'PEDIDO_ALREADY_PREPARED',
             409,
-            'El pedido ya está preparado, entregado o cancelado.',
+            'El pedido ya fue preparado, entregado, cancelado o reclamado por otra operación.',
         );
     }
 

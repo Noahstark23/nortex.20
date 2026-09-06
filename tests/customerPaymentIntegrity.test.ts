@@ -123,8 +123,9 @@ describe('integridad de abonos de clientes', () => {
         const voidStart = server.indexOf("app.post('/api/cash-movements/:id/void'");
         const voidEnd = server.indexOf('// ==========================================\n// 📦 INVENTORY', voidStart);
         const voidHandler = server.slice(voidStart, voidEnd);
-        expect(voidHandler).toContain("if (movement.category === 'COBRO_CREDITO')");
-        expect(voidHandler).toContain("code: 'CREDIT_PAYMENT_CASH_MOVEMENT_IMMUTABLE'");
+        // El rechazo COBRO_CREDITO se prueba ejecutando el servicio en
+        // manualCashMovementVoid.test.ts y por HTTP + MySQL en su integración.
+        expect(voidHandler).toContain('voidManualCashMovement(');
     });
 
     it('persiste la llave idempotente aditiva sin obligar históricos', () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const db = vi.hoisted(() => ({
     accountFindUnique: vi.fn(),
@@ -39,7 +39,14 @@ function transaction() {
         },
         $queryRaw: vi.fn(async (sql: { values: unknown[] }) => [{ id: sql.values[1] }]),
         journalLine: { create: vi.fn().mockResolvedValue({}) },
-        account: { update: vi.fn().mockResolvedValue({}) },
+        account: {
+            findUnique: vi.fn(async ({ where }: any) => {
+                const { code, tenantId } = where.tenantId_code;
+                expect(tenantId).toBe('tenant-a');
+                return { id: `account-${code}`, code, type: accountTypes[code] };
+            }),
+            update: vi.fn().mockResolvedValue({}),
+        },
     };
 }
 
@@ -50,11 +57,10 @@ function postedLines(tx: ReturnType<typeof transaction>) {
 describe('contratos de los wrappers contables asíncronos', () => {
     beforeEach(() => {
         db.accountFindUnique.mockReset();
-        db.accountFindUnique.mockImplementation(({ where }: any) => {
-            const code = where.tenantId_code.code;
-            return Promise.resolve({ id: `account-${code}`, code, type: accountTypes[code] });
-        });
+        db.accountFindUnique.mockRejectedValue(new Error('No usar el pool global durante la transacción'));
     });
+
+    afterEach(() => { expect(db.accountFindUnique).not.toHaveBeenCalled(); });
 
     it('postea la nota de crédito con fecha, referencia y líneas exactas', async () => {
         const tx = transaction();

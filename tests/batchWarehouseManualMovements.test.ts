@@ -55,7 +55,7 @@ const kardexRecordRoute = between(
 const seedCatalogRoute = between(
     server,
     "app.post('/api/onboarding/seed-catalog'",
-    "app.get('/api/onboarding'",
+    "app.use('/api/onboarding'",
 );
 const createProductRoute = between(
     server,
@@ -321,8 +321,8 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
 // Verifica la clase por separado para que los callers puedan mapear siempre 409.
 expect(new ManualBatchMovementError('BATCH_SELECTION_REQUIRED', 409, 'x').httpStatus).toBe(409);
 
-// Ronda HTTP opcional contra una instancia MySQL descartable. La suite normal
-// la omite; CI/release puede activarla con NORTEX_QA_BASE_URL.
+// Ronda HTTP contra MySQL descartable. La suite normal la omite; la compuerta
+// test:integration:required exige estos dos casos con NORTEX_QA_BASE_URL.
 const QA_BASE_URL = process.env.NORTEX_QA_BASE_URL?.replace(/\/$/u, '');
 const qaDescribe = QA_BASE_URL ? describe.sequential : describe.skip;
 

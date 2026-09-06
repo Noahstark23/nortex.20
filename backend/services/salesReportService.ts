@@ -1,6 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
 import prisma from '../lib/prisma.js';
+import { CATEGORIA_PAGO_PROVEEDOR } from './supplierPayment.js';
 import {
     SALES_DOCUMENT_MAX_TRANSACTIONS,
     SALES_EXPORT_MAX_RETURNS,
@@ -572,6 +573,7 @@ async function buildReport(
                     COALESCE(SUM(e.\`amount\`), 0) AS expenses
                 FROM \`Expense\` e
                 WHERE e.\`tenantId\` = ${context.tenantId}
+                    AND e.\`category\` <> ${CATEGORIA_PAGO_PROVEEDOR}
                     AND e.\`createdAt\` >= ${range.start}
                     AND e.\`createdAt\` < ${range.endExclusive}
                 GROUP BY date

@@ -176,10 +176,10 @@ describe('POS · escanear y armar la venta', () => {
         const user = userEvent.setup();
         montarPOS();
 
-        expect(fetch).toHaveBeenCalledWith(
+        await waitFor(() => expect(fetch).toHaveBeenCalledWith(
             '/api/products?includeSellableStock=true',
             expect.objectContaining({ headers: expect.any(Object) }),
-        );
+        ));
 
         await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
         await asentar();
@@ -187,7 +187,7 @@ describe('POS · escanear y armar la venta', () => {
         const cuerpo = document.body.textContent ?? '';
         expect(cuerpo).toContain(`${PRODUCTO.name} está agotado`);
         expect(cuerpo).toContain('Tu venta está vacía');
-        expect(cuerpo).not.toContain('1 unidad × C$ 25.00');
+        expect(screen.queryByRole('textbox', { name: /Cantidad de Coca Cola/ })).not.toBeInTheDocument();
     });
 
     it('usa stock físico como fallback cuando sellableStock no viene en la respuesta', async () => {
@@ -200,7 +200,64 @@ describe('POS · escanear y armar la venta', () => {
 
         const cuerpo = document.body.textContent ?? '';
         expect(cuerpo).toContain(`${PRODUCTO.name} agregado`);
-        expect(cuerpo).toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: /Cantidad de Coca Cola/ })).toHaveValue('1');
+        expect(screen.getByRole('button', { name: /^Cobrar C\$ 25\.00 en efectivo/ })).toBeInTheDocument();
+    });
+
+    it('abre Nuevo y Excel desde una sola barra sin perder la venta al cerrar', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+        expect(screen.getAllByRole('button', { name: /^Nuevo$/ })).toHaveLength(1);
+        expect(screen.getAllByRole('button', { name: /^Excel$/ })).toHaveLength(1);
+        await user.click(screen.getByRole('button', { name: /^Nuevo$/ }));
+        expect(await screen.findByPlaceholderText('Ej. Taladro Percutor 500W')).toBeVisible();
+        await user.keyboard('{Escape}');
+        expect(screen.queryByPlaceholderText('Ej. Taladro Percutor 500W')).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: /^Excel$/ }));
+        expect(await screen.findByRole('heading', { name: /Importar/i })).toBeVisible();
+        await user.keyboard('{Escape}');
+        expect(screen.queryByRole('heading', { name: /Importar/i })).not.toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: /Cantidad de Coca Cola/ })).toHaveValue('1');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('presenta el reporte Z autoritativo al cerrar y conserva su folio para reimpresión', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        respuestas['/api/shifts/close'] = {
+            systemExpectedCash: '9999', difference: '9999',
+            closeReport: {
+                id: 'report-qa', shiftId: 's1', folio: 'Z-QA-0001', businessDate: '2026-09-04',
+                version: 1, contentHash: 'a'.repeat(64), createdAt: '2026-09-04T23:00:00.000Z',
+                documentUrl: '/api/reports/shifts/s1/document',
+                report: {
+                    version: 1, folio: 'Z-QA-0001', businessDate: '2026-09-04',
+                    timeZone: 'America/Managua', generatedAt: '2026-09-04T23:00:00.000Z',
+                    summary: { grossSales: '0', returnsTotal: '0', netSales: '0', transactionCount: 0,
+                        returnCount: 0, itemQuantityGross: '0', itemQuantityReturned: '0', itemQuantityNet: '0',
+                        discountTotal: '0', vatCollected: '0', cogs: '0', grossProfit: '0', averageTicket: '0' },
+                    paymentMethods: [], products: [],
+                    cash: { openingNio: '500', cashSalesNio: '0', cashRefundsNio: '0', paidInNio: '0',
+                        paidOutNio: '0', expectedNio: '500', countedNio: '499.99', differenceNio: '-0.01',
+                        openingUsd: '0', paidInUsd: '0', paidOutUsd: '0', expectedUsd: '0',
+                        countedUsd: '0', differenceUsd: '0' },
+                },
+            },
+        };
+        const user = userEvent.setup();
+        montarPOS();
+        await user.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
+        await user.type(screen.getByRole('textbox', { name: 'Efectivo contado en la gaveta' }), '499.99');
+        await user.click(screen.getByRole('button', { name: 'REALIZAR CORTE Z' }));
+        expect(await screen.findByRole('heading', { name: 'Resumen de cierre' })).toBeVisible();
+        expect(screen.getByText('Faltante de efectivo')).toBeVisible();
+        expect(screen.getByText('Folio Z-QA-0001')).toBeVisible();
+        expect(screen.getByRole('button', { name: /Ver \/ imprimir reporte completo/ })).toBeVisible();
+        expect(posteos.filter(p => p.ruta === '/api/shifts/close')).toEqual([
+            { ruta: '/api/shifts/close', cuerpo: { shiftId: 's1', declaredCash: 499.99 } },
+        ]);
     });
 
     it('mantiene legibles y táctiles las acciones rápidas de producto', async () => {
@@ -223,7 +280,8 @@ describe('POS · escanear y armar la venta', () => {
 
         const cuerpo = document.body.textContent ?? '';
         expect(cuerpo).toContain('Coca Cola 500ml agregado');
-        expect(cuerpo).toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
         // El total y el botón de cobro dicen el MISMO número: es la cifra que el
         // cajero le canta al cliente.
         expect(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i })).toBeTruthy();
@@ -245,8 +303,8 @@ describe('POS · escanear y armar la venta', () => {
         // deja registrado en vez de tapar. Cuando se arregle, hay que cambiar
         // esta línea A PROPÓSITO; lo que no puede pasar es que se arregle o se
         // rompa sin que nadie se entere.
-        expect(cuerpo).toContain('2 unidad × C$ 25.00');
-        expect(cuerpo).not.toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('2');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
         expect(await screen.findByRole('button', { name: /Cobrar C\$ 50\.00 en efectivo/i })).toBeTruthy();
     });
 
@@ -462,7 +520,8 @@ describe('POS · sin caja abierta', () => {
         expect(cuerpo).not.toContain('Caja abierta');
         // El carrito SÍ se arma: la cajera puede ir marcando mientras se abre
         // la caja. Lo que no puede es cerrar la venta sin turno.
-        expect(cuerpo).toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
     });
 
     it('intentar cobrar sin turno no manda la venta al servidor', async () => {

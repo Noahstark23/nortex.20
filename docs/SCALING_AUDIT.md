@@ -1,5 +1,18 @@
 # Auditoría de escalado — Monolito Nortex + RAG
 
+> **Revalidación 2026-09-04:** el cuerpo conserva el análisis histórico de su fecha.
+> La evidencia actual está en [AUDITORIA_GENERAL_2026-09-04.md](AUDITORIA_GENERAL_2026-09-04.md)
+> y la prioridad en [PLAN_TRANSFORMACION_TOTAL_2026.md](PLAN_TRANSFORMACION_TOTAL_2026.md).
+> No ejecutar una receta antigua sin contrastarla con código, pruebas y reglas de integridad.
+> Estado local, staging y producción se registran por separado.
+
+> Baseline actual: server 15.451 líneas, POS 7.579; 11 construcciones Prisma runtime
+> incl. singleton (10 fuera). El build ya se divide por chunks: principal 662,94 kB,
+> POS 529,78 kB; precache 6.874,50 KiB. No son tiempos de carga medidos.
+> Cola en memoria/estado por proceso siguen pendientes. El correlativo de venta ya
+> no se toma al inicio; recordSale ahora es hard-fail dentro de la transacción.
+> Los ejemplos destructivos del cuerpo son evidencia histórica, no comandos de operación.
+
 **Fecha:** 2026-07-08 · **Método:** análisis estático de código (multi-agente) · **Alcance:** `backend/server.ts` (9.213 líneas), `backend/services/*`, `backend/routes/*`, `backend/middleware/*`, `backend/prisma/schema.prisma`, `Dockerfile`, `docker-compose.yml`, `vite.config.ts`.
 
 > Auditoría **estática**, no de runtime. No se pudo levantar el stack (MySQL + `prisma generate`) en el entorno. Los tiempos/locks descritos son por lectura de código, no medidos. Validar bajo carga antes de dar por resuelto.
@@ -74,7 +87,7 @@ Un solo migration aditivo. Hoy estas tablas solo tienen `@@index([tenantId])` y 
 
 - **Hot-row lock del correlativo DGI:** `salesService.ts` toma el row-lock de `InvoiceSeries(tenantId,'A')` con el `increment` al **inicio** del `$transaction` y lo retiene mientras corren ~80–100 queries (stock + kardex + asiento contable **por ítem**). Con varias cajas/canales por tenant (POS + WhatsApp + público), las ventas del mismo tenant **se serializan a ~1 a la vez**.
 - **N+1 por ítem:** `saleItem.create` + `applyStockDelta` (~5–7 queries) + `kardexMovement.create` por ítem, más `recordSale`→`createJournalEntry` con `journalLine.create` + `account.update` por línea contable (`salesService.ts:263-317`; `accounting.ts:162-203`).
-- **Fix:** mover el `increment` del correlativo justo antes del `sale.create`; `saleItem.createMany`/`kardexMovement.createMany`; consolidar lecturas de cuentas en una `findMany`; sacar el asiento contable a job post-commit (ya es fail-soft). Mismo patrón N+1/tx-por-ítem en nómina (`server.ts:4761`), aguinaldo (`:5202`), compras (`:4319`), OC (`routes/purchaseOrders.ts:60`), sync (`routes/sync.ts:77`) y carga masiva (`:2884`).
+- **Fix:** mover el `increment` del correlativo justo antes del `sale.create`; `saleItem.createMany`/`kardexMovement.createMany`; consolidar lecturas de cuentas en una `findMany`; **corrección 2026-09-04:** conservar el asiento contable hard-fail en la misma transacción; optimizar consultas con el tx recibido. Mismo patrón N+1/tx-por-ítem en nómina (`server.ts:4761`), aguinaldo (`:5202`), compras (`:4319`), OC (`routes/purchaseOrders.ts:60`), sync (`routes/sync.ts:77`) y carga masiva (`:2884`).
 
 ### B3 — Reportes/exports que traen tablas enteras a memoria
 

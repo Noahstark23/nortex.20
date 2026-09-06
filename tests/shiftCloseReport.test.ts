@@ -87,6 +87,33 @@ const rotate = <T>(values: readonly T[], places: number): T[] => {
 };
 
 describe('snapshot puro del Reporte Z', () => {
+    it.each([
+        ['0.00004', '0.0000'], ['0.00005', '0.0001'], ['-0.00005', '-0.0001'],
+        ['20.12345', '20.1235'],
+    ])('redondea solo la quinta cifra USD con HALF_UP: %s → %s', (inputUsd, expected) => {
+        const input = makeInput();
+        input.cash.differenceUsd = inputUsd;
+        expect(buildShiftCloseReport(input).cash.differenceUsd).toBe(expected);
+    });
+
+    it('preserva el saldo y los movimientos USD de cuatro decimales en el snapshot', () => {
+        const input = makeInput();
+        input.cash.openingUsd = '20.1234';
+        input.cash.expectedUsd = '20.1236';
+        input.cash.countedUsd = '20.1235';
+        input.cash.differenceUsd = '-0.0001';
+        input.movements = [
+            { type: 'IN', currency: 'USD', category: 'CAMBIO', count: 1, amount: '0.0003' },
+            { type: 'OUT', currency: 'USD', category: 'CAMBIO', count: 1, amount: '0.0001' },
+        ];
+        const report = buildShiftCloseReport(input);
+        expect(report.cash).toMatchObject({
+            openingUsd: '20.1234', expectedUsd: '20.1236', countedUsd: '20.1235', differenceUsd: '-0.0001',
+            paidInUsd: '0.0003', paidOutUsd: '0.0001', countedNio: '193.30',
+        });
+        expect(report.movementBreakdown.map(row => row.amount)).toEqual(['0.0003', '0.0001']);
+    });
+
     it('cuadra ventas, devoluciones parciales, IVA, costo y utilidad con Decimal', () => {
         const report = buildShiftCloseReport(makeInput());
 
@@ -139,7 +166,7 @@ describe('snapshot puro del Reporte Z', () => {
             openingNio: '100.00', cashSalesNio: '115.10', cashRefundsNio: '28.78',
             paidInNio: '10.01', paidOutNio: '3.02', expectedNio: '193.31',
             countedNio: '193.30', differenceNio: '-0.01',
-            paidInUsd: '1.10', paidOutUsd: '0.10', expectedUsd: '21.00',
+            paidInUsd: '1.1000', paidOutUsd: '0.1000', expectedUsd: '21.0000',
         });
     });
 

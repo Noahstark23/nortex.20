@@ -230,7 +230,10 @@ export const CreateExpenseSchema = z.object({
 // POST /api/cash-movements
 export const CreateCashMovementSchema = z.object({
     type:        z.enum(['IN', 'OUT']),
-    amount:      moneyAmountPositive,
+    amount:      moneyAmountPositive
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, { message: 'El movimiento admite como máximo 2 decimales' })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('99999999.99'), { message: 'El movimiento excede el máximo permitido' }),
+    currency:    z.enum(['NIO', 'USD']).default('NIO'),
     category:    z.string().min(1, 'La categoría es obligatoria'),
     description: z.string().max(300).optional(),
     shiftId:     z.string().optional(),

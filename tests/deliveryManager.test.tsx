@@ -48,6 +48,10 @@ const isPedidosListGet = (url: string, init?: RequestInit): boolean => (
     requestPath(url) === '/api/v1/pedidos' && !init?.method
 );
 
+const requestPage = (url: string): number => Number(
+    new URL(url, 'http://nortex.test').searchParams.get('page') ?? '1',
+);
+
 const installReducedMotion = () => {
     vi.stubGlobal('matchMedia', vi.fn(() => ({
         matches: true,
@@ -84,18 +88,30 @@ describe('DeliveryManager — autoridad del servidor', () => {
             .toBe('pendiente');
     });
 
-    it('carga la lista completa del contrato vigente sin agregar paginación cliente', async () => {
-        const includedOrder = orderForPage('pedido-incluido', 'Cliente sin duplicar');
+    it('carga varias páginas, conserva el orden y deduplica pedidos por id', async () => {
+        const firstBoundaryOrder = orderForPage('pedido-limite', 'Cliente sin duplicar');
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
             const url = requestUrl(input);
             if (isPedidosListGet(url, init)) {
-                return jsonResponse({
-                    pedidos: [
-                        orderForPage('pedido-pagina-1', 'Cliente primera página'),
-                        includedOrder,
-                        orderForPage('pedido-pagina-2', 'Cliente segunda página'),
-                    ],
-                });
+                const page = requestPage(url);
+                if (page === 1) {
+                    return jsonResponse({
+                        pedidos: [
+                            orderForPage('pedido-pagina-1', 'Cliente primera página'),
+                            firstBoundaryOrder,
+                        ],
+                        pageInfo: { page: 1, limit: 200, hasMore: true, nextPage: 2 },
+                    });
+                }
+                if (page === 2) {
+                    return jsonResponse({
+                        pedidos: [
+                            { ...firstBoundaryOrder, clienteNombre: 'Duplicado tardío' },
+                            orderForPage('pedido-pagina-2', 'Cliente segunda página'),
+                        ],
+                        pageInfo: { page: 2, limit: 200, hasMore: false, nextPage: null },
+                    });
+                }
             }
             if (url === '/api/v1/motorizados' && !init?.method) {
                 return jsonResponse({ motorizados: [] });
@@ -109,12 +125,51 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(await screen.findByText('Cliente primera página')).toBeVisible();
         expect(screen.getByText('Cliente segunda página')).toBeVisible();
         expect(screen.getAllByText('Cliente sin duplicar')).toHaveLength(1);
+        expect(screen.queryByText('Duplicado tardío')).not.toBeInTheDocument();
 
         const listCalls = fetchMock.mock.calls.filter(([input, init]) => (
             isPedidosListGet(requestUrl(input), init)
         ));
-        expect(listCalls).toHaveLength(1);
-        expect(requestUrl(listCalls[0][0])).toBe('/api/v1/pedidos');
+        expect(listCalls.map(([input]) => requestPage(requestUrl(input)))).toEqual([1, 2]);
+        listCalls.forEach(([input]) => {
+            expect(new URL(requestUrl(input), 'http://nortex.test').searchParams.get('limit'))
+                .toBe('200');
+        });
+    });
+
+    it('detiene la carga en cinco páginas y advierte que quedan pedidos fuera del tablero', async () => {
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) {
+                const page = requestPage(url);
+                if (page < 1 || page > 5) {
+                    throw new Error(`Página fuera del límite: ${page}`);
+                }
+                return jsonResponse({
+                    pedidos: [orderForPage(`pedido-pagina-${page}`, `Cliente página ${page}`)],
+                    pageInfo: { page, limit: 200, hasMore: true, nextPage: page + 1 },
+                });
+            }
+            if (url === '/api/v1/motorizados' && !init?.method) {
+                return jsonResponse({ motorizados: [] });
+            }
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+
+        render(<DeliveryManager />);
+
+        expect(await screen.findByRole('alert')).toHaveTextContent(
+            /más pedidos en el servidor.*primeras 5 páginas.*máximo 1,000.*resto no está visible/i,
+        );
+        expect(screen.getByText('Cliente página 1')).toBeVisible();
+        expect(screen.getByText('Cliente página 5')).toBeVisible();
+
+        const listCalls = fetchMock.mock.calls.filter(([input, init]) => (
+            isPedidosListGet(requestUrl(input), init)
+        ));
+        expect(listCalls.map(([input]) => requestPage(requestUrl(input))))
+            .toEqual([1, 2, 3, 4, 5]);
     });
 
     it('revierte el movimiento y muestra el error cuando el servidor rechaza la reserva', async () => {

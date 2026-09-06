@@ -424,6 +424,34 @@ describe('fulfillment autoritativo de Pedido', () => {
         ])).toThrowError(expect.objectContaining({ code: 'PEDIDO_RESERVATION_MISMATCH' }));
     });
 
+    it('bloquea reservar desde en_camino aunque el pedido siga abierto', async () => {
+        applyStockDeltaMock.mockReset();
+        const tx = {
+            $queryRaw: pedidoLockMock(),
+            pedido: {
+                findFirst: vi.fn().mockResolvedValue({
+                    id: 'pedido-a',
+                    tenantId: 'tenant-a',
+                    estado: 'en_camino',
+                    facturaId: null,
+                    items: [],
+                }),
+                updateMany: vi.fn(),
+            },
+        } as any;
+
+        await expect(reservePedidoInTransaction(tx, {
+            pedidoId: 'pedido-a',
+            tenantId: 'tenant-a',
+            userId: 'user-a',
+        })).rejects.toMatchObject({
+            code: 'PEDIDO_INVALID_STATE_TRANSITION',
+            httpStatus: 409,
+        });
+        expect(tx.pedido.updateMany).not.toHaveBeenCalled();
+        expect(applyStockDeltaMock).not.toHaveBeenCalled();
+    });
+
     it('cancelar preparado restaura cantidad exacta, bodega y lote una sola vez', async () => {
         applyStockDeltaMock.mockReset();
         applyStockDeltaMock.mockResolvedValue({

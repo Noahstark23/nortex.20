@@ -8,17 +8,17 @@
  *
  * Precisión: decimal.js con ROUND_HALF_UP (norma DGI), igual que el ERP.
  */
-import Decimal from 'decimal.js';
+import DecimalJS from 'decimal.js';
+
+// Constructor aislado: mantiene HALF_UP aunque otro módulo cambie Decimal global.
+const Decimal = DecimalJS.clone({ defaults: true });
+type Decimal = DecimalJS;
 import {
   INSS_LABORAL_RATE, INSS_PATRONAL_RATE_DEFAULT, INSS_PATRONAL_RATE_PYME,
   INATEC_RATE, IVA_RATE,
   VACACIONES_DIAS_POR_MES, VACACIONES_TOPE_DIAS, HORAS_MES_ORDINARIAS,
   HORA_EXTRA_RECARGO, INDEMNIZACION_TOPE_MESES, DIAS_POR_MES_INDEMNIZACION,
 } from './tasas';
-
-// Los defaults de decimal.js ya son precisión 20 y ROUND_HALF_UP. Configurarlos
-// al importar era redundante y producía un mutante estático imposible de atribuir
-// a un test con coverage perTest.
 
 const money = (d: Decimal) => d.toDecimalPlaces(2).toNumber();
 

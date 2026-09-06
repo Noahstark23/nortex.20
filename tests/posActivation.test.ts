@@ -12,6 +12,28 @@ import {
 } from '../utils/posActivation';
 
 describe('alta rápida del POS', () => {
+    it.each(['', '   '])('exige una existencia explícita sin inventar cero: %j', (stock) => {
+        expect(validateQuickProductDraft({
+            name: 'Arroz', sku: '', price: '25', cost: '', stock,
+        }, 'SKU-AUTO')).toEqual({
+            ok: false,
+            errors: { stock: 'Ingresá la existencia real (0 si no tenés).' },
+        });
+    });
+
+    it.each(['0', '12'])('conserva la existencia explícita %s en el payload', (stock) => {
+        expect(validateQuickProductDraft({
+            name: 'Arroz', sku: 'ARR-1', price: '25', cost: '', stock,
+        }, 'SKU-AUTO')).toEqual({
+            ok: true,
+            payload: {
+                name: 'Arroz', sku: 'ARR-1', price: '25', cost: '0', stock,
+                minStock: '5', category: 'General', unit: 'unidad',
+                saleMode: 'COUNTED', quantityStep: '1', productFamily: 'GENERAL',
+            },
+        });
+    });
+
     it('crea unidades contables con paso 1 y costo desconocido en cero', () => {
         const result = validateQuickProductDraft({
             name: '  Gaseosa  ',
@@ -139,7 +161,7 @@ describe('alta rápida del POS', () => {
             sku: 'x'.repeat(100),
             price: ' 10.50 ',
             cost: '   ',
-            stock: '   ',
+            stock: ' 0 ',
         }, 'NO-USAR');
 
         expect(result).toEqual({
@@ -186,7 +208,7 @@ describe('alta rápida del POS', () => {
 
     it('normaliza SKU y conserva costo y existencia válidos', () => {
         const result = validateQuickProductDraft({
-            name: ' Clavos ', sku: ' cla-1 ', price: '10.00', cost: '4.50', stock: '',
+            name: ' Clavos ', sku: ' cla-1 ', price: '10.00', cost: '4.50', stock: '0',
         }, 'NO-USAR');
         expect(result).toEqual({
             ok: true,

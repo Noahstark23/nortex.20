@@ -592,6 +592,16 @@ router.post('/return-inspections/:id/resolve', authenticate, checkRole(APPROVAL_
             });
             if (!inspection) throw new ReturnResolutionError('INSPECTION_NOT_FOUND', 404, 'Inspección no encontrada');
             if (inspection.status !== 'PENDING') throw new ReturnResolutionError('INSPECTION_ALREADY_RESOLVED', 409, 'La inspección ya fue resuelta');
+            const status = req.body.resolution === 'RESTOCK' ? 'RESTOCKED' : 'DISCARDED';
+            // Reclamar la fila ANTES de mover stock o dinero. El UPDATE condicional
+            // usa una lectura actual de InnoDB, incluso si el SELECT anterior tomó
+            // un snapshot PENDING mientras otra caja estaba resolviendo la inspección.
+            // Un fallo posterior revierte también esta transición en la misma tx.
+            const claimed = await tx.returnInspection.updateMany({
+                where: { id: inspection.id, tenantId: authReq.tenantId!, status: 'PENDING' },
+                data: { status, resolvedBy: authReq.userId!, resolvedAt: new Date(), resolutionReason: req.body.reason },
+            });
+            if (claimed.count !== 1) throw new ReturnResolutionError('INSPECTION_ALREADY_RESOLVED', 409, 'La inspección ya fue resuelta');
             let stockBefore: number | null = null;
             let stockAfter: number | null = null;
             if (req.body.resolution === 'RESTOCK') {
@@ -658,8 +668,6 @@ router.post('/return-inspections/:id/resolve', authenticate, checkRole(APPROVAL_
                     { accountCode: '5.1.1', debit: 0, credit: cost.toNumber() },
                 ]);
             }
-            const status = req.body.resolution === 'RESTOCK' ? 'RESTOCKED' : 'DISCARDED';
-            await tx.returnInspection.update({ where: { id: inspection.id }, data: { status, resolvedBy: authReq.userId!, resolvedAt: new Date(), resolutionReason: req.body.reason } });
             await tx.auditLog.create({ data: {
                 tenantId: authReq.tenantId!, userId: authReq.userId!, action: 'RETURN_INSPECTION_RESOLVED',
                 details: JSON.stringify({ inspectionId: inspection.id, productId: inspection.productId, quantity: inspection.quantity.toString(), status, stockBefore, stockAfter }),

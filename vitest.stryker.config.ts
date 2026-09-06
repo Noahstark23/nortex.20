@@ -33,6 +33,8 @@ import path from 'path';
 const RENDER_LENTOS = [
     // Caracterización de la venta del POS: monta el componente entero.
     '**/tests/posVentaCritica.test.tsx',
+    // El flujo de activación también monta el POS completo; se ejecuta en npm test.
+    '**/tests/posActivationFlow.test.tsx',
 ];
 
 const INCOMPATIBLES_CON_INSTRUMENTACION = [

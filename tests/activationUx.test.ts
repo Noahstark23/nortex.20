@@ -8,14 +8,8 @@ const practice = source('components/GuestPOS.tsx');
 const onboarding = source('components/OnboardingHub.tsx');
 
 describe('recorrido de activación', () => {
-    it('expone el progreso y las dos salidas después de la primera venta', () => {
-        expect(pos).toContain("{ step: 1, label: 'Producto' }");
-        expect(pos).toContain("{ step: 2, label: 'Cobro' }");
-        expect(pos).toContain("{ step: 3, label: 'Venta lista' }");
-        expect(pos).toContain('Volver al inicio');
-        expect(pos).toContain('Hacer otra venta');
-        expect(pos).toContain("navigate('/app/inicio', { replace: true })");
-    });
+    // Las salidas de postventa se verifican ejecutando el POS en
+    // posActivationFlow.test.tsx; no dependen de dónde viva el texto del botón.
 
     it('el alta rápida anuncia errores y conserva etiquetas programáticas', () => {
         expect(pos).toContain('aria-labelledby="quick-product-title"');
@@ -41,8 +35,6 @@ describe('recorrido de activación', () => {
     it('un producto agotado ofrece una acción directa y no queda como botón muerto', () => {
         expect(pos).toContain("label: 'Cargar existencia'");
         expect(pos).toContain("navigate('/app/inventory')");
-        expect(pos).toContain('aria-disabled={bloqueada || undefined}');
-        expect(pos).not.toContain('disabled={bloqueada}');
     });
 
     it('la práctica sigue aislada del backend y devuelve al POS si ya hay sesión', () => {

@@ -340,53 +340,42 @@ function printTicketFromCurrentDocument(data: InvoiceData): boolean {
     // tickets largos ni caer en una hoja A4 por sintaxis inválida.
     const heightPx = Math.max(content.scrollHeight, content.getBoundingClientRect().height);
     const measuredMm = Math.ceil(heightPx * 25.4 / 96) + 10;
-    const estimatedMm = 60 + data.items.length * 7;
-    const heightMm = Math.max(60, heightPx > 0 ? measuredMm : estimatedMm);
-    let pageStyle = document.getElementById('nortex-ticket-page-size') as HTMLStyleElement | null;
-    if (!pageStyle) {
-        pageStyle = document.createElement('style');
-        pageStyle.id = 'nortex-ticket-page-size';
-        document.head.appendChild(pageStyle);
-    }
-    pageStyle.textContent = `@media print { @page { size: 80mm ${heightMm}mm; margin: 0; } }`;
+    const heightMm = Math.max(60, measuredMm);
 
-    try {
-        window.addEventListener('afterprint', () => pageStyle?.remove(), { once: true });
-        window.print();
-        return true;
-    } catch {
-        pageStyle.remove();
-        return false;
-    }
+    const pageStyle = document.createElement('style');
+    pageStyle.id = 'print-page-size';
+    pageStyle.textContent = `@media print { @page { size: 80mm ${heightMm}mm; margin: 0; } }`;
+    document.head.appendChild(pageStyle);
+
+    window.addEventListener('afterprint', () => pageStyle.remove(), { once: true });
+    window.print();
+    return true;
 }
 
 // =============================
-// FACTURA A4 (Corporate Invoice)
+// Formato A4 (Factura Comercial)
 // =============================
 export function buildA4Html(data: InvoiceData): string {
     const isFixedQuota = normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
-    const itemsHTML = data.items.map((item, i) => {
-        const line = printableLine(item, i);
-        const unitPrice = line.unit
-            ? `C$ ${line.unitPrice}/${escapeHtml(line.unit)}`
-            : `C$ ${line.unitPrice}`;
-        return (
-        `<tr>
-            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;color:#64748b">${i + 1}</td>
-            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;font-weight:500">${escapeHtml(line.name)}</td>
-            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:center">${escapeHtml(line.quantity)}</td>
-            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-family:monospace">${unitPrice}</td>
-            <td style="padding:10px 12px;border-bottom:1px solid #e2e8f0;text-align:right;font-weight:bold;font-family:monospace">C$ ${line.total}</td>
-        </tr>`
-        );
+    const itemsHTML = data.items.map((item, index) => {
+        const line = printableLine(item, index);
+        return `
+        <tr style="border-bottom: 1px solid #e2e8f0;">
+            <td style="padding: 10px 12px; font-weight: 500; color: #64748b;">${index + 1}</td>
+            <td style="padding: 10px 12px; font-weight: 600;">
+                <div>${escapeHtml(line.name)}</div>
+                ${line.unit ? `<div style="font-size: 11px; color: #64748b; font-weight: 500;">Medición: ${escapeHtml(line.equation)}</div>` : ''}
+            </td>
+            <td style="padding: 10px 12px; text-align: center; font-weight: 600; font-family: monospace;">${escapeHtml(line.quantity)}</td>
+            <td style="padding: 10px 12px; text-align: right; font-weight: 500; font-family: monospace;">C$ ${line.unitPrice}</td>
+            <td style="padding: 10px 12px; text-align: right; font-weight: 700; font-family: monospace;">C$ ${line.total}</td>
+        </tr>
+    `;
     }).join('');
 
-    const payLabel = data.paymentMethod === 'CREDIT' ? 'Credito (30 dias)' :
-                     data.paymentMethod === 'CASH' ? 'Efectivo' :
-                     data.paymentMethod === 'CARD' ? 'Tarjeta' : data.paymentMethod;
-
     const statusColor = data.paymentMethod === 'CREDIT' ? '#f59e0b' : '#10b981';
-    const statusText = data.paymentMethod === 'CREDIT' ? 'PENDIENTE' : 'PAGADO';
+    const statusText = data.paymentMethod === 'CREDIT' ? 'AL CRÉDITO' : 'PAGADO';
+    const payLabel = data.paymentMethod === 'CREDIT' ? 'Crédito' : 'Contado';
 
     return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Factura - ${escapeHtml(data.tenantName)}</title>
@@ -514,16 +503,14 @@ function openPrintWindow(html: string, options: OpenPrintWindowOptions): boolean
         if (printScheduled) return;
         printScheduled = true;
         setTimeout(() => {
-            if (options.thermal) {
-                // Un rollo térmico no tiene alto fijo. Medimos el contenido ya
-                // renderizado y generamos un par <ancho> <alto> válido para @page.
-                const ticket = printWindow.document.getElementById('ticket-content');
-                const pageStyle = printWindow.document.getElementById('ticket-page-size');
-                if (ticket && pageStyle) {
-                    const heightPx = Math.max(ticket.scrollHeight, ticket.getBoundingClientRect().height);
-                    const heightMm = Math.max(60, Math.ceil(heightPx * 25.4 / 96) + 10);
-                    pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
-                }
+            // Un rollo térmico no tiene alto fijo. Medimos el contenido ya
+            // renderizado y generamos un par <ancho> <alto> válido para @page.
+            const ticket = printWindow.document.getElementById('ticket-content');
+            const pageStyle = printWindow.document.getElementById('ticket-page-size');
+            if (ticket && pageStyle) {
+                const heightPx = Math.max(ticket.scrollHeight, ticket.getBoundingClientRect().height);
+                const heightMm = Math.max(60, Math.ceil(heightPx * 25.4 / 96) + 10);
+                pageStyle.textContent = `@page { size: 80mm ${heightMm}mm; margin: 0; }`;
             }
             printWindow.print();
         }, 300);

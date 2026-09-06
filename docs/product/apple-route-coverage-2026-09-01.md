@@ -206,3 +206,10 @@ Una ruta solo pasa de **Contractual** a **Sólida** cuando tiene captura fresca 
 sus estados relevantes en Día/Noche, QA focal, ausencia de mutaciones inesperadas y
 un límite escrito. El orden siguiente se decide por impacto y deuda visible, no por
 la facilidad de producir una captura.
+
+## Integración local del 4 de septiembre
+
+Se conserva el historial vigente de `main` (2834497). La entrega local posterior
+del POS, activación y avisos se documenta en `docs/VERIFICACION_MODULOS_2026-09-04.md`.
+Los resultados de esa copia anterior no acreditan este candidato integrado ni
+un despliegue: requiere nuevas pruebas sobre el árbol final.

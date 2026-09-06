@@ -1,9 +1,32 @@
 # Plan de ingeniería para refactorizar el POS Caja Nica
 
 **Fecha:** 2026-08-27  
-**Estado:** aprobado para planificación; implementación todavía no iniciada  
+**Estado al 2026-08-27:** aprobado para planificación; implementación todavía no iniciada
 **Veredicto de revisión:** `REQUEST CHANGES` antes de seguir agregando funciones a
 `components/POS.tsx`
+
+## Actualización local — 2026-09-04
+
+El [corte de POS y avisos](POS_Y_AVISOS_2026-09-04.md) extrae cabecera, resultado y motor offline: POS pasa de 7.245 a 7.081 líneas y de 121 a 118 referencias `useState`. El total de código afectado aumenta; ver deltas y límites en el informe.
+
+**IMPLEMENTADO_LOCAL parcial; QA del corte aprobado.** El catálogo visual y
+su estado de categoría/paginación se extrajeron a `components/pos/PosCatalogPane.tsx`.
+El alta rápida pide existencia real y admite guardar cero; con stock negativo
+deshabilitado no agrega ese producto al carrito. La postventa conserva volver a
+Inicio y prioriza atender otra venta. Los cambios de conducta de activación se
+identifican por separado de la extracción del catálogo.
+
+El [informe de activación y modularidad](ACTIVACION_Y_MODULARIDAD_2026-09-04.md)
+registra archivos, deltas, trinquete, pruebas conductuales y QA final. Es la fuente
+de esas cifras; la línea base de agosto que sigue aquí se conserva como histórica.
+Este corte aporta a T04/T14 del [plan maestro](PLAN_TRANSFORMACION_TOTAL_2026.md),
+pero no completa PR-00–PR-10, no resuelve por sí solo los hallazgos históricos y no
+acredita staging, producción ni adopción con comercios.
+
+La afirmación histórica sobre ausencia de un harness debe leerse con su fecha:
+ahora existen `tests/posVentaCritica.test.tsx`, `tests/posActivationFlow.test.tsx`
+y `tests/posCatalogPane.test.tsx`. Su alcance y resultados se comprueban en cada
+entrega; su existencia no acredita toda la matriz de PR-02.
 
 ## 1. Objetivo
 
@@ -40,7 +63,7 @@ No incluye:
 - hacer un big-bang rewrite;
 - mezclar esta deuda con funciones nuevas.
 
-## 3. Línea base verificada
+## 3. Línea base histórica verificada
 
 La medición se hizo sobre el worktree del 27 de agosto de 2026:
 
@@ -71,7 +94,7 @@ Ya existen buenos puntos de apoyo:
 La deuda está en la orquestación central: estado visual, reglas, red, almacenamiento,
 dispositivos y navegación comparten el mismo closure de React.
 
-## 4. Hallazgos de la revisión de código
+## 4. Hallazgos de la revisión de código del 2026-08-27
 
 ### P0 — una venta offline puede entrar sin turno
 
@@ -217,6 +240,12 @@ COMPLETED → SELLING
 
 Cada PR se integra antes de iniciar el siguiente. Un solo responsable modifica
 `POS.tsx` por PR para evitar conflictos y pérdida de cambios.
+
+Antes de cualquier trabajo paralelo, acordar contratos y una lista de archivos
+permitidos por agente, con un responsable de edición por dominio. Los archivos
+compartidos tienen un único integrador. Los flujos nuevos nacen fuera del monolito;
+cada extracción requiere una prueba de conducta y el delta de origen, destinos y
+total afectado. No aumentar presupuestos ni excepciones para hacer pasar tests.
 
 Precondición operativa: el worktree actual contiene cambios simultáneos de fiscal,
 clientes y POS. Antes de implementar este plan, esos cambios deben quedar separados y
@@ -479,7 +508,9 @@ Se registran en cada PR:
 - errores de consola y respuestas HTTP fallidas en smoke;
 - tiempo producto → cobro confirmado en móvil y escritorio.
 
-La línea nunca puede crecer sin una excepción explícita en la descripción del PR.
+El presupuesto de líneas y estado solo baja: nunca se eleva para hacer pasar un
+test. Reducirlo en el mismo cambio que extrae una responsabilidad y publicar el
+delta completo; mover código no implica por sí solo reducir el total del sistema.
 
 ## 11. Definición de terminado
 
@@ -496,7 +527,7 @@ La deuda se considera resuelta solo cuando:
 - TypeScript, Vitest, mutación aplicable, diseño, build e integración MySQL pasan;
 - staging pasa el smoke completo sobre el mismo SHA que se promovería.
 
-## 12. Primer corte recomendado
+## 12. Primer corte recomendado al 2026-08-27
 
 No comenzar moviendo JSX. El orden inmediato es:
 

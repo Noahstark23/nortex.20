@@ -12,11 +12,30 @@
  * dependen de que una tasa legal esté vigente (eso lo cubre la verificación
  * contra INSS/DGI/MITRAB documentada en utils/tasas.ts).
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     calcAguinaldo, calcVacaciones, calcHorasExtras,
     calcINSS, calcLiquidacion, calcIVA,
 } from '../utils/calc-laborales';
+
+describe('precisión al cargar la calculadora pública', () => {
+    it('preserva el centavo HALF_UP después de otro consumidor de Decimal', async () => {
+        // Decimal comparte configuración por constructor. La carga de este
+        // módulo debe establecer su contrato aun si otro consumidor la cambió.
+        vi.resetModules();
+        const { default: sharedDecimal } = await import('decimal.js');
+        const previous = { precision: sharedDecimal.precision, rounding: sharedDecimal.rounding };
+        try {
+            sharedDecimal.set({ precision: 8, rounding: sharedDecimal.ROUND_DOWN });
+            const calculators = await import('../utils/calc-laborales');
+            // 12,345.6789 / 12 = 1,028.806575: dos decimales HALF_UP → 1,028.81.
+            expect(calculators.calcAguinaldo(12345.6789, 1).aguinaldo).toBe(1028.81);
+        } finally {
+            sharedDecimal.set(previous);
+            vi.resetModules();
+        }
+    });
+});
 
 // ── Aguinaldo (13º mes) — (salario/12) × meses, Art. 93 ──────────────────────
 describe('Aguinaldo — calcAguinaldo', () => {
