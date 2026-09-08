@@ -16,14 +16,14 @@
     "phase0:camera:preview": "vite preview --config vite.phase0.config.ts",
     "phase0:camera:simulate": "tsx tools/camera-barcode-phase0/simulate.ts",
     "test": "vitest run",
+    "test:integration:required": "mise exec -- bash scripts/qa-integration-required.sh",
     "test:mutation": "stryker run && node scripts/check-mutation-scope.cjs",
     "build:seo": "vite build && tsx scripts/prerender.ts",
     "preview": "vite preview",
     "mobile:sync": "npm run build && cap sync android",
     "mobile:assets": "npx @capacitor/assets generate --android",
     "mobile:open": "cap open android",
-    "check:design": "node scripts/check-design-system.cjs",
-    "test:integration:required": "node scripts/run-quality-integration.mjs"
+    "check:design": "node scripts/check-design-system.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",

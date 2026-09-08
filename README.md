@@ -38,7 +38,7 @@ mise exec -- sh scripts/ci-local-safe.sh
 
 La compuerta genera Prisma, verifica tipos, ejecuta Vitest, diseño y build. Requiere configuración exclusivamente local. Si cambia lógica monetaria, ejecutar también la mutación con `NORTEX_CI_MUTATION=1`. Las suites HTTP/MySQL condicionadas necesitan un entorno QA efímero explícito: un `npm test` verde con omisiones no las reemplaza.
 
-Build normal: `npm run build`; build público con prerender: `npm run build:seo`. No ejecutar estos comandos con secretos de producción en el entorno: revisar las variables de build y mantener cualquier proveedor IA en backend.
+Build normal: `npm run build`; build público con prerender: `npm run build:seo`. No ejecutar estos comandos con secretos de producción en el entorno: revisar las variables de build y mantener cualquier proveedor IA en backend. Las claves de IA, pagos, correo y base de datos permanecen en backend; Nunca crear `.env.local` con una clave para que Vite la entregue al navegador.
 
 ## Mapa de código
 

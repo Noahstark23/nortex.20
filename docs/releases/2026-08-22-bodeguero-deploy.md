@@ -1,5 +1,11 @@
 # Despliegue del rol BODEGUERO — 2026-08-22
 
+> **Registro histórico — no ejecutar como receta de release.** Este documento
+> conserva el contexto de 2026-08-22 y puede describir controles ya sustituidos.
+> Para toda promoción nueva, usá el [runbook canónico de
+> promoción](../runbooks/release-promotion.md): CI/staging no autorizan producción
+> y solo `release-production.yml` puede solicitarla manualmente.
+
 Baseline funcional del rol: `ec8018443d3d1d00954823d1845d9e4ebf51b226`
 
 Versión anterior conocida en producción: `ba7beb9bdf8d0af025652e613609fb55741553c7`

@@ -1,22 +1,24 @@
 # Runbook de auditoría y mejora preproducción del frontend
 
-> **Estado del primer ciclo P0 (2026-09-01): QA LOCAL COMPLETA · PENDIENTE STAGING.** El
-> detalle y la evidencia están en
-> `docs/releases/2026-09-01-frontend-audit-remediation.md`. La auditoría de
-> producción es la línea base; no demuestra por sí sola qué sigue presente en el
-> candidato local ni que algún hallazgo ya esté reparado. No marcar este ciclo como
-> completado hasta cerrar adjudicación, QA, evidencia local, staging y sus compuertas.
+> **Registro histórico del primer ciclo P0 (2026-09-01): evidencia local parcial ·
+> staging pendiente.** El detalle y las mediciones de esa fecha están en
+> `docs/releases/2026-09-01-frontend-audit-remediation.md`. No prueban el estado del
+> candidato actual ni sustituyen recorridos autenticados, evidencia visual por ruta o
+> las compuertas posteriores. No marcar este ciclo como completado hasta cerrar
+> adjudicación, QA, evidencia local, staging y sus compuertas; para el candidato
+> actual, registrar límites y evidencia en `docs/AUDITORIA_VISUAL_2026-09-05.md`.
 
 ## Propósito y resultado esperado
 
 Usá este runbook cuando una auditoría visual, funcional o de accesibilidad encuentre
 problemas en Nortex. Cada hallazgo debe recorrer, sin saltos:
 
-`auditoría → adjudicación → prioridad → reparación vertical → QA → evidencia visual local → staging → autorización de producción → verificación`
+`auditoría → adjudicación → prioridad → reparación vertical → QA → evidencia visual local → staging → autorización explícita de producto → workflow manual de producción → verificación`
 
 El resultado previo a producción es un candidato de SHA exacto, con evidencia
 reproducible y una demostración del producto final al responsable. Un parche local,
-una captura bonita, CI verde o staging saludable **no** autorizan producción.
+una captura bonita, CI verde o staging saludable **no** autorizan producción. La
+ruta técnica vinculante está en el [runbook canónico de promoción](release-promotion.md).
 
 ## 1. Límites operativos antes de comenzar
 
@@ -254,13 +256,19 @@ equivale a autorización de push, staging ni producción.
 
 ## 8. Compuerta de staging
 
-Staging requiere autorización propia. Después de obtenerla:
+Staging requiere autorización propia. Después de obtenerla, un responsable inicia
+**Promote staging candidate** (`release-staging.yml`) desde `main` con el SHA
+completo y la confirmación exacta `STAGE <SHA>`. CI no puede desplegar por push ni
+por su propio `workflow_dispatch`. La identidad Coolify y el origen público deben
+haber quedado comprobados conforme al [runbook de promoción](release-promotion.md).
+Después:
 
 1. fijá el SHA candidato y revalidá que la base relevante no avanzó; CI verde de un
    SHA viejo no sirve;
 2. corré preflight de schema/backup cuando aplique y confirmá que no hay DDL
    destructivo ni `--accept-data-loss`;
-3. desplegá **solo staging** y verificá `/api/health`: `ok`, `db` y commit exacto;
+3. desplegá **solo staging** y verificá `/api/health`: `ok`, `db`, commit exacto y
+   encabezado `Cache-Control: no-store`;
 4. repetí las rutas, viewports, preferencias y contadores de la evidencia local;
 5. para dinero/stock, hacé smoke autenticado con tenant sintético, idempotencia y
    ausencia de movimientos no esperados;
@@ -283,13 +291,19 @@ Autorizado por: <nombre> · Fecha: <ISO-8601>
 “Aprobado”, “se ve bien”, aprobación del PR o autorización de staging no bastan si no
 nombran producción. Sin esa autorización, detenerse en `LISTO PARA PRODUCCIÓN`.
 
-Después de una autorización válida:
+Después de una autorización válida, seguí el [runbook canónico de
+promoción](release-promotion.md). Producción solo se solicita mediante el workflow
+manual `release-production.yml`, ejecutado desde `main`, con el SHA completo y la
+confirmación exacta `PROMOTE <SHA>`, y la revalidación de `main` y staging después
+de la aprobación del environment. Un reviewer del environment es una defensa
+técnica adicional; no es la autorización de producto.
 
-- promover exactamente el SHA mostrado y verificado;
+Después de una promoción válida:
+
 - verificar salud, DB, SHA, rutas críticas y los ratchets en producción;
 - para cambios financieros, ejecutar smoke autenticado con tenant sintético y una
   observación mínima de 30 minutos;
-- si cambia el comportamiento esperado, detener la promoción y usar el rollback
+- si cambia el comportamiento esperado, detener el cierre y usar solo el rollback
   autorizado; nunca improvisar un rollback destructivo de schema.
 
 ## 10. Definition of Done

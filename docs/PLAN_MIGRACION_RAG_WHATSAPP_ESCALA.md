@@ -60,6 +60,14 @@ Al terminar este plan, Nortex tendrá:
 El plan no autoriza un “big bang”. Cada fase es aditiva, desplegable y reversible
 sin borrar schema ni datos históricos.
 
+**Límite operativo (actualizado 2026-09-05):** aprobar este plan o una de sus
+fases no autoriza crear recursos, cambiar DNS, configurar Coolify/Meta/webhooks,
+usar credenciales, desplegar, hacer merge ni promover un SHA. Cada acción externa
+requiere autorización explícita y separada con destino, alcance, ventana,
+responsable y rollback. Un merge solo puede llegar a CI; la promoción automática
+está prohibida. Cualquier release sigue el
+[runbook canónico](runbooks/release-promotion.md).
+
 ## Estado de partida
 
 | Área | Estado real | Riesgo |
@@ -113,6 +121,8 @@ sin borrar schema ni datos históricos.
 
 Antes de crear recursos:
 
+- obtener autorización externa separada para la cuenta, proyecto, región y
+  recurso exactos; el acceso a un conector no sustituye esa autorización;
 - confirmar mediante el conector autorizado de DigitalOcean la cuenta/equipo y
   proyecto correctos;
 - inventariar Spaces existentes para no duplicar un bucket;
@@ -154,6 +164,9 @@ cumple la política fiscal/operativa vigente.
 
 ### 0.3 Conectar el servicio backup en Coolify
 
+Solo durante una ventana explícitamente autorizada para ese servicio y destino;
+esta lista no autoriza guardar variables ni iniciar un redeploy.
+
 Configurar como secretos o variables protegidas, según corresponda:
 
 | Nombre | Tratamiento |
@@ -180,6 +193,9 @@ puede escribir en el Space. La señal válida es un objeto verificado más el
 heartbeat remoto, no solo el estado del contenedor.
 
 ### 0.4 Crear el primer backup bajo control
+
+Realizar estos pasos solo con autorización explícita de backup/restore y sin
+convertir el backup en una vía de promoción de aplicación o schema.
 
 1. Mantener producción en el commit actual.
 2. Iniciar o redesplegar únicamente el servicio backup con las variables ya
@@ -234,8 +250,10 @@ Un deploy con cambio de schema puede avanzar solo si:
 - existe commit exacto y rollback identificado.
 
 Para el primer despliegue después de este plan, las condiciones anteriores
-aplican a la PR 184. Si el backup no pasa, no se hace merge: el merge a main
-puede activar promoción automática.
+aplican a la PR 184. Si el backup no pasa, no se hace merge. Un merge a `main`
+solo puede ejecutar CI: no activa staging ni producción. Staging requiere un run
+manual exitoso del SHA exacto y producción una autorización separada conforme al
+runbook canónico.
 
 ### Rollback de fase 0
 
@@ -330,7 +348,8 @@ Gate:
 
 Antes de N instancias:
 
-- ejecutar preflight y db push una sola vez como release job;
+- ejecutar preflight y `db push` una sola vez como release job autorizado y
+  controlado; nunca como comando ad hoc contra datos reales;
 - protegerlo con exclusión mutua por release;
 - arrancar contenedores web solo después del gate;
 - usar un usuario de migración distinto del usuario de aplicación;
@@ -654,7 +673,8 @@ Un trigger abre la fase; no omite sus prerrequisitos.
 
 ### 5.3 Provisionamiento
 
-Mediante el MCP autorizado:
+Solo después de una autorización externa separada para el recurso y cutover
+exactos, y mediante el conector autorizado:
 
 - crear Managed MySQL en la misma región/VPC que la aplicación cuando sea
   posible;
@@ -831,6 +851,9 @@ No se adjuntan dumps, variables, filas, números de teléfono, tokens ni captura
 de consolas con secretos.
 
 ## Checklist ejecutivo inmediato
+
+Cada elemento sigue pendiente hasta recibir la autorización específica indicada
+arriba; esta checklist no autoriza proveedores, variables, deploys ni promociones.
 
 - [ ] Crear Space privado con la cuenta autorizada.
 - [ ] Habilitar versionado y acceso mínimo.

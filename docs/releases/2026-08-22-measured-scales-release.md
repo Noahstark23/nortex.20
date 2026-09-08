@@ -1,5 +1,11 @@
 # Release de comercios medidos y balanzas — 2026-08-22
 
+> **Registro histórico — no ejecutar como receta de release.** Este documento
+> conserva el contexto de 2026-08-22 y puede describir controles ya sustituidos.
+> Para toda promoción nueva, usá el [runbook canónico de
+> promoción](../runbooks/release-promotion.md): CI/staging no autorizan producción
+> y solo `release-production.yml` puede solicitarla manualmente.
+
 PR candidato: [#170](https://github.com/Noahstark23/nortex.20/pull/170)
 
 Versión anterior observada en producción:

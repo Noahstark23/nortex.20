@@ -59,6 +59,7 @@ const TeamManagement = lazy(() => import('./components/TeamManagement'));
 const HelpCenter = lazy(() => import('./components/HelpCenter'));
 const PublicCatalog = lazy(() => import('./components/PublicCatalog'));
 const TrackPedido = lazy(() => import('./components/TrackPedido'));
+const AcceptInvitation = lazy(() => import('./components/AcceptInvitation'));
 
 // SEO Landing Pages (en prod las sirve el prerender estático; el chunk solo
 // baja si alguien navega a ellas DENTRO del SPA)
@@ -300,6 +301,7 @@ function RouteFallback() {
     || pathname === '/login'
     || pathname === '/register'
     || pathname === '/forgot-password'
+    || pathname.startsWith('/invite/')
     || pathname.startsWith('/reset-password/')
     || pathname === '/ferreterias'
     || pathname === '/farmacias'
@@ -332,6 +334,7 @@ function App() {
           <Route path="/register" element={<RegisterTenant />} />
           <Route path="/demo" element={<GuestPOS />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/invite/:token" element={<AcceptInvitation />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/ferreterias" element={<LandingFerreteria />} />

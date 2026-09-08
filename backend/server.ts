@@ -230,6 +230,7 @@ import {
     RegisterSchema,
     LoginSchema,
     ResetPasswordSchema,
+    AcceptInvitationSchema,
     KardexRecordSchema,
     UpdateFiscalSettingsSchema,
     CreateRetencionSufridaSchema,
@@ -380,6 +381,9 @@ app.use(express.json({ limit: '2mb' }) as any);
 // colgar también el healthcheck).
 const arranqueDelProceso = Date.now();
 app.get('/api/health', async (_req: any, res: any) => {
+    // El commit y la BD son evidencia de la instancia actual. Un CDN/proxy no
+    // puede reutilizar un 200 anterior como prueba de una promoción nueva.
+    res.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
     let db: 'up' | 'down' = 'down';
     try {
         await Promise.race([
@@ -481,6 +485,22 @@ const registerLimiter = rateLimit({
 app.use('/api/auth/register', registerLimiter as any);
 
 app.use('/api/sales/offline-evidence', offlineSaleEvidenceRoutes);
+// Aceptar una invitación es público y termina en bcrypt. La llave se ata al
+// token (no sólo a la IP, que en Nicaragua suele compartirse) para que conocer
+// un enlace no permita consumir CPU con reintentos ilimitados desde una botnet.
+// El token es opaco y sólo vive en el MemoryStore; no se registra ni se devuelve
+// por este middleware. Redis sigue siendo necesario antes de escalar procesos.
+const invitationAcceptLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    keyGenerator: (req: any) => {
+        const token = typeof req.params?.token === 'string' ? req.params.token : '';
+        return token ? `invite-accept:${token}` : `ip:${req.ip || 'unknown'}`;
+    },
+    message: { error: 'Demasiados intentos para esta invitación. Esperá 15 minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -926,9 +946,23 @@ app.get('/api/invite/:token', async (req: any, res: any) => {
             return res.status(400).json({ error: 'Esta invitación ya fue utilizada.' });
         }
 
-        if (new Date() > invitation.expiresAt) {
-            await prisma.invitation.update({
-                where: { id: invitation.id },
+        // Una invitación cancelada o marcada expirada no debe revelar a quien
+        // conserva el link el correo, rol ni negocio que ya no puede unirse.
+        if (invitation.status !== 'PENDING') {
+            return res.status(400).json({ error: 'Esta invitación ya no es válida.' });
+        }
+
+        const now = new Date();
+        if (now >= invitation.expiresAt) {
+            // La lectura pública puede quedar obsoleta mientras aceptar o
+            // cancelar reclama PENDING. Nunca reescribir un estado ganador:
+            // sólo vence la fila que aún está pendiente y sigue vencida ahora.
+            await prisma.invitation.updateMany({
+                where: {
+                    id: invitation.id,
+                    status: 'PENDING',
+                    expiresAt: { lte: now },
+                },
                 data: { status: 'EXPIRED' }
             });
             return res.status(400).json({ error: 'Esta invitación ha expirado. Solicita una nueva.' });
@@ -946,51 +980,104 @@ app.get('/api/invite/:token', async (req: any, res: any) => {
     }
 });
 
+class InvitationTransitionError extends Error {
+    constructor(readonly status: number, message: string) {
+        super(message);
+    }
+}
+
 // POST /api/invite/:token/accept — Aceptar invitación y crear usuario
-app.post('/api/invite/:token/accept', async (req: any, res: any) => {
+app.post('/api/invite/:token/accept', invitationAcceptLimiter as any, validate(AcceptInvitationSchema), async (req: any, res: any) => {
     const { token } = req.params;
     const { name, password } = req.body;
 
     try {
-        if (!name || !password) {
-            return res.status(400).json({ error: 'Nombre y contraseña son requeridos.' });
-        }
-
-        if (password.length < 6) {
-            return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
-        }
-
-        const invitation = await prisma.invitation.findUnique({
+        // Antes de pagar bcrypt, descartar de forma barata un token inexistente,
+        // usado, cancelado o vencido. Esta consulta sólo acelera el rechazo: el
+        // claim serializable más abajo sigue siendo la autoridad ante carreras.
+        const preflight = await prisma.invitation.findUnique({
             where: { token },
-            include: { tenant: true }
+            select: { id: true, status: true, expiresAt: true },
         });
-
-        if (!invitation) {
+        if (!preflight) {
             return res.status(404).json({ error: 'Invitación no encontrada.' });
         }
-
-        if (invitation.status !== 'PENDING') {
+        if (preflight.status !== 'PENDING') {
             return res.status(400).json({ error: 'Esta invitación ya no es válida.' });
         }
-
-        if (new Date() > invitation.expiresAt) {
-            await prisma.invitation.update({
-                where: { id: invitation.id },
-                data: { status: 'EXPIRED' }
+        const now = new Date();
+        if (now >= preflight.expiresAt) {
+            await prisma.invitation.updateMany({
+                where: {
+                    id: preflight.id,
+                    status: 'PENDING',
+                    expiresAt: { lte: now },
+                },
+                data: { status: 'EXPIRED' },
             });
             return res.status(400).json({ error: 'Esta invitación ha expirado.' });
         }
 
-        // Verificar que no exista ya un usuario con ese email
-        const existingUser = await prisma.user.findUnique({ where: { email: invitation.email } });
-        if (existingUser) {
-            return res.status(400).json({ error: 'Ya existe una cuenta con este email.' });
-        }
-
-        // Crear usuario y marcar invitación como aceptada
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        // El claim condicional y la creación viven en una transacción serializable:
+        // dos clicks/reintentos del mismo token no pueden crear dos respuestas
+        // divergentes ni convertir el segundo conflicto único en un 500.
         const result = await prisma.$transaction(async (tx: any) => {
+            const now = new Date();
+            const claimed = await tx.invitation.updateMany({
+                where: {
+                    token,
+                    status: 'PENDING',
+                    expiresAt: { gt: now },
+                },
+                // ACCEPTING solo existe dentro de esta transacción; al commit
+                // termina en ACCEPTED y un rollback conserva PENDING.
+                data: { status: 'ACCEPTING' },
+            });
+
+            if (claimed.count !== 1) {
+                const current = await tx.invitation.findUnique({
+                    where: { token },
+                    select: { id: true, status: true, expiresAt: true },
+                });
+                if (!current) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
+                if (current.status === 'PENDING' && now > current.expiresAt) {
+                    await tx.invitation.updateMany({
+                        where: { id: current.id, status: 'PENDING' },
+                        data: { status: 'EXPIRED' },
+                    });
+                    throw new InvitationTransitionError(400, 'Esta invitación ha expirado.');
+                }
+                throw new InvitationTransitionError(400, 'Esta invitación ya no es válida.');
+            }
+
+            const invitation = await tx.invitation.findUnique({
+                where: { token },
+                select: {
+                    id: true,
+                    tenantId: true,
+                    email: true,
+                    role: true,
+                    invitedBy: true,
+                    tenant: {
+                        select: {
+                            id: true,
+                            businessName: true,
+                        },
+                    },
+                },
+            });
+            if (!invitation) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
+
+            // Esta comprobación sucede tras reservar el token, no antes de la
+            // transacción. El índice único sigue siendo la defensa final para
+            // invitaciones concurrentes del mismo correo en distintos tenants.
+            const existingUser = await tx.user.findUnique({ where: { email: invitation.email } });
+            if (existingUser) {
+                throw new InvitationTransitionError(400, 'Ya existe una cuenta con este email.');
+            }
+
             const user = await tx.user.create({
                 data: {
                     tenantId: invitation.tenantId,
@@ -1017,20 +1104,29 @@ app.post('/api/invite/:token/accept', async (req: any, res: any) => {
                 }
             });
 
-            return user;
-        });
+            return { user, tenant: invitation.tenant };
+        }, { isolationLevel: 'Serializable' });
 
         // Generar JWT para auto-login
         const jwtToken = signAuthToken(
-            { userId: result.id, tenantId: result.tenantId, role: result.role, email: result.email }
+            { userId: result.user.id, tenantId: result.user.tenantId, role: result.user.role, email: result.user.email }
         );
 
         res.json({
             token: jwtToken,
-            user: { id: result.id, email: result.email, name: result.name, role: result.role },
-            tenant: invitation.tenant,
+            user: { id: result.user.id, email: result.user.email, name: result.user.name, role: result.user.role },
+            tenant: result.tenant,
         });
     } catch (error) {
+        if (error instanceof InvitationTransitionError) {
+            return res.status(error.status).json({ error: error.message });
+        }
+        if ((error as { code?: unknown })?.code === 'P2002') {
+            return res.status(400).json({ error: 'Ya existe una cuenta con este email.' });
+        }
+        if ((error as { code?: unknown })?.code === 'P2034') {
+            return res.status(409).json({ error: 'La invitación se está procesando. Esperá un momento e intentá de nuevo.' });
+        }
         console.error('Accept invitation error:', error);
         res.status(500).json({ error: 'Error aceptando invitación' });
     }
@@ -1046,22 +1142,28 @@ app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res:
             return res.status(403).json({ error: 'Solo el dueño puede cancelar invitaciones.' });
         }
 
-        const invitation = await prisma.invitation.findFirst({
-            where: { id: invitationId, tenantId: authReq.tenantId }
-        });
-
-        if (!invitation) {
-            return res.status(404).json({ error: 'Invitación no encontrada.' });
-        }
-
-        // Soft-cancel + auditoría, en línea con el endpoint hermano DELETE /api/team/:userId.
-        // La propiedad ya se verificó arriba con findFirst por tenantId. No borrar físicamente:
-        // se pierde la forensia de accesos (quién invitó/revocó a qué email con qué rol).
+        // Claim condicional: cancelar y aceptar compiten por PENDING, nunca por
+        // un estado ya aceptado. Así un owner no recibe un éxito ficticio de
+        // revocación después de que la cuenta ya se creó.
         await prisma.$transaction(async (tx: any) => {
-            await tx.invitation.update({
-                where: { id: invitationId },
+            const cancelled = await tx.invitation.updateMany({
+                where: { id: invitationId, tenantId: authReq.tenantId, status: 'PENDING' },
                 data: { status: 'CANCELLED' }
             });
+            if (cancelled.count !== 1) {
+                const current = await tx.invitation.findFirst({
+                    where: { id: invitationId, tenantId: authReq.tenantId },
+                    select: { id: true },
+                });
+                if (!current) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
+                throw new InvitationTransitionError(409, 'Esta invitación ya no está pendiente.');
+            }
+
+            const invitation = await tx.invitation.findFirst({
+                where: { id: invitationId, tenantId: authReq.tenantId },
+                select: { email: true, role: true },
+            });
+            if (!invitation) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
 
             await tx.auditLog.create({
                 data: {
@@ -1071,10 +1173,16 @@ app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res:
                     details: `Canceló invitación de ${invitation.email} (${invitation.role})`,
                 }
             });
-        });
+        }, { isolationLevel: 'Serializable' });
 
         res.json({ success: true, message: 'Invitación cancelada.' });
     } catch (error) {
+        if (error instanceof InvitationTransitionError) {
+            return res.status(error.status).json({ error: error.message });
+        }
+        if ((error as { code?: unknown })?.code === 'P2034') {
+            return res.status(409).json({ error: 'La invitación se está procesando. Esperá un momento e intentá de nuevo.' });
+        }
         console.error('Cancel invite error:', error);
         res.status(500).json({ error: 'Error cancelando invitación' });
     }
@@ -7393,7 +7501,6 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
         });
     } catch (error: any) {
         if (productQuantityErrorResponse(res, error)) return;
-        if (manualBatchErrorResponse(res, error)) return;
         if (error instanceof StockError) {
             const status =
                 error.code === 'PRODUCT_NOT_FOUND' ? 404
@@ -7401,6 +7508,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
                         : 400;
             return res.status(status).json({ error: error.message, code: error.code });
         }
+        if (manualBatchErrorResponse(res, error)) return;
         console.error('Error en ajuste de inventario:', error);
         res.status(error.message?.includes('no encontrado') || error.message?.includes('insuficiente') ? 400 : 500)
             .json({ error: error.message || 'Error procesando ajuste de inventario' });
@@ -9059,20 +9167,14 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
         if (!anchorPurchase || !ppvAccount) await seedChartOfAccounts(authReq.tenantId!);
         if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
 
-        // Compra de CONTADO: el efectivo sale de la gaveta, así que exige una
-        // caja abierta. Se resuelve ANTES de la tx (el turno es el mismo que ve
-        // la píldora del POS) y el error DICE que falta abrir caja — antes se
-        // debitaba la billetera fintech y respondía "recarga tu billetera".
+        // Compra de CONTADO: el efectivo sale de la gaveta. Capturamos el turno
+        // antes de la tx (es el mismo que ve la píldora del POS), pero no
+        // devolvemos todavía SIN_CAJA_ABIERTA: para una factura con OC, la
+        // conciliación debe poder rechazar primero una diferencia que hace
+        // inválida la compra CASH por sí misma.
         const { shift: turnoDeContado } = paymentMethod === 'CASH'
             ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
             : { shift: null };
-        if (paymentMethod === 'CASH' && !turnoDeContado) {
-            const sinCaja = new CashSupplierPaymentError(
-                'SIN_CAJA_ABIERTA',
-                'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.'
-            );
-            return res.status(sinCaja.httpStatus).json({ error: sinCaja.message, code: sinCaja.code });
-        }
         // Snapshot de la gaveta para la auditoría (se llena dentro de la tx).
         let efectivoAntesCompra: Decimal | null = null;
         let efectivoDespuesCompra: Decimal | null = null;
@@ -9443,6 +9545,17 @@ app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), valida
                 userId: authReq.userId!,
                 purchaseId: purchase.id,
             });
+            // `executeProcurementMatch` falla cerrado para CASH antes de crear
+            // allocations, tocar dinero o auditar cuando la OC/recepción/factura
+            // no se pueden conciliar. Si falta caja, su requisito operativo se
+            // evalúa solo después de esa validación de integridad; la excepción
+            // queda dentro de la misma tx y revierte la cabecera recién creada.
+            if (paymentMethod === 'CASH' && !turnoDeContado) {
+                throw new CashSupplierPaymentError(
+                    'SIN_CAJA_ABIERTA',
+                    'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.',
+                );
+            }
             // executeProcurementMatch materializa identidad OC y snapshots exactos
             // mediante UPDATE SQL. El objeto devuelto por purchase.create conserva
             // los items previos; refrescarlos evita responder costos/variancias stale.

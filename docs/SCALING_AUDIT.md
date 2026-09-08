@@ -40,17 +40,25 @@ Prioridad de arreglo: **C → índices de B → A (antes de multi-instancia) →
 
 ---
 
-## C — Riesgo de pérdida de datos (lo más urgente, no depende de escalar)
+## C — Riesgo de pérdida de datos (hallazgo histórico, no depende de escalar)
 
-El `CMD` del `Dockerfile` corre en **cada arranque**:
+La siguiente era la observación de la auditoría del 2026-07-08; queda como
+antecedente del riesgo, no como descripción ejecutable actual:
 
 ```
 npx prisma db push --schema=... --accept-data-loss && npm run start
 ```
 
-`db push` es el patrón de deploy elegido del proyecto (DDL aditivo, ver `nortex-migration`). El problema es el flag **`--accept-data-loss`**: si un cambio de schema deja de ser aditivo (drop/rename/narrow de columna), `db push` lo ejecuta **destructivamente y sin aviso** sobre la BD de producción. Con N contenedores arrancando a la vez, además, todos hacen `db push` concurrente sobre la misma BD.
+Ese flag fue retirado el 2026-07-14. La imagen actual usa un entrypoint con
+preflight DDL y `db push` sin `--accept-data-loss` únicamente como parte de una
+promoción controlada; ejecutar el comando a mano contra producción sigue prohibido.
+El riesgo histórico era que un cambio no aditivo pudiera ejecutarse destructivamente
+sin aviso, y que varios contenedores aplicaran schema a la vez.
 
-**Fix / guardrail:** mantener el schema **estrictamente aditivo** (nunca drop/rename/narrow); idealmente quitar `--accept-data-loss` del CMD de producción para que un cambio no-aditivo **falle el deploy** en vez de destruir datos. Para un sistema con dinero e inventario reales, este es el primer arreglo.
+**Guardrail vigente:** mantener el schema **estrictamente aditivo**
+(nunca drop/rename/narrow), validar el upgrade en MySQL descartable y fallar la
+promoción si el preflight detecta incompatibilidad. Para dinero e inventario reales,
+un cambio de schema nunca se resuelve con `--accept-data-loss` ni un comando ad hoc.
 
 ---
 

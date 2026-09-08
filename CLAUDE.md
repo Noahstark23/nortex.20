@@ -34,10 +34,28 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   libre suficiente en Colima y no es el flujo host predeterminado.
 - No iniciar jobs `deploy-*`, webhooks, backup remoto, push, merge o DNS sin una
   autorización explícita y separada. No asumir nunca que el worktree está limpio.
+- CI, staging, aprobación del environment y producción son cuatro compuertas
+  diferentes. Un estado verde o una aprobación técnica no autoriza producción por
+  inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
+  confirmación tipada y una autorización de producto que nombre alcance, ventana y
+  rollback; ver `docs/runbooks/release-promotion.md`.
 
 - Backend: `tsx backend/server.ts` (sin build). Verificar con `npx tsc --noEmit`.
 - Frontend: `npm run build` (Vite + PWA). Producción usa `npm run build:seo`
   (build + prerender por-ruta: 70+ HTML estáticos + sitemap — ver `scripts/prerender.ts`).
+- Contraste: los aliases Tailwind de color no representan una paleta independiente;
+  `blue`/`emerald` se remapean a marca y `orange`/`rose` a estados. Para un
+  relleno sólido con texto claro, medir estado base y hover, usar tinta
+  semántica AA y cubrirlo en `tests/frontendColorSemantics.test.ts`. Los guards
+  de compatibilidad en `index.css` deben usar clases exactas; no tocar fondos
+  translúcidos ni fusionar los tokens de estado con sus canales RGB. Si la
+  tinta vive en un descendiente, corregir y probar el par contenedor--hijo:
+  un selector que sólo coincide en el contenedor no protege el icono.
+- Bridge Día: si una utilidad de fondo se traduce a canvas claro, el
+  `text-white` o `text-slate-*` heredado debe tomar la tinta contextual de esa
+  superficie por token. Las islas oscuras reales cortan esa herencia con una
+  clase semántica y prueba; no se arregla con selectores de subcadena ni
+  excepciones por ruta.
 - Deploy: Docker + `prisma db push` (aplica **solo DDL**; los backfills de datos van
   en la aplicación con patrón perezoso). Prisma pinneado a **6.4.1** — correr
   `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.

@@ -159,7 +159,10 @@ const MOVEMENT_LABELS: Record<string, { label: string; color: string; icon: stri
     'OUT_SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
     'OUT': { label: 'Salida', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
     'SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
-    'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-orange-900/60 text-orange-300 border-orange-700', icon: '' },
+    // El Kardex vive dentro de una isla ticket que no cambia de material entre
+    // Día y Noche. Usar sus tokens explícitos evita que la traducción Día de
+    // `orange-*` deje una tinta clara sobre un fondo claro.
+    'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-[var(--nx-ticket-raised)] text-[var(--nx-ticket-warning)] border-[color:var(--nx-ticket-warning)]', icon: '' },
     'ADJUST_GAIN': { label: 'Ganancia', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
     'ADJUSTMENT': { label: 'Ajuste', color: 'bg-yellow-900/60 text-yellow-300 border-yellow-700', icon: '' },
     'RETURN': { label: 'Devolución', color: 'bg-purple-900/60 text-purple-300 border-purple-700', icon: '↩' },

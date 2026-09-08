@@ -1,11 +1,12 @@
 import path from 'path';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 
-export default defineConfig(({ mode }) => {
-    const env = loadEnv(mode, '.', '');
-    const apiProxyTarget = env.NORTEX_DEV_API_TARGET || 'http://127.0.0.1:3210';
+export default defineConfig(() => {
+    // Solo se lee un destino de loopback pasado explícitamente al proceso de
+    // desarrollo. No cargamos .env ni inyectamos variables privadas al bundle.
+    const apiProxyTarget = process.env.NORTEX_DEV_API_TARGET || 'http://127.0.0.1:3210';
     if (!/^http:\/\/127\.0\.0\.1:\d{2,5}$/u.test(apiProxyTarget)) {
       throw new Error('NORTEX_DEV_API_TARGET debe apuntar a http://127.0.0.1:<puerto>');
     }
@@ -100,10 +101,6 @@ export default defineConfig(({ mode }) => {
           },
         }),
       ],
-      define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
-      },
       resolve: {
         alias: {
           '@': path.resolve(__dirname, '.'),

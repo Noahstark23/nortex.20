@@ -77,6 +77,33 @@ webhook, configuración remota ni despliegue. Registrar preparación local, CI,
 staging y producción como estados separados. Un cambio de compuerta requiere
 pruebas negativas del YAML real y del comando ejecutado antes del webhook.
 
+## Promoción de producción: estados y autorización
+
+El estado de una release no se infiere. Regístralo separadamente como
+`LOCAL_VERIFICADO`, `CI_VERDE`, `STAGING_SHA_VERIFICADO`,
+`PRODUCCION_AUTORIZADA`, `PRODUCCION_SANA_SHA` y `OBSERVADA`; cada uno requiere su
+propia evidencia. Un Environment aprobado es una barrera técnica, no sustituye la
+autorización de producto.
+
+`ci.yml` puede actualizar staging desde un push a `main`, pero no contiene
+producción. La única ruta técnica a producción es
+`.github/workflows/release-production.yml`: el responsable autorizado selecciona
+`main`, aporta el SHA completo actual, escribe `PROMOTE <SHA>`, y el flujo comprueba
+staging y `main` antes y después de la aprobación del environment. Nunca ejecutes,
+apruebes, dispares webhooks ni cambies variables/secrets/protecciones de GitHub sin
+autorización explícita que incluya alcance, SHA, ventana, responsable y rollback.
+Antes del webhook, el flujo consulta Coolify con el secret de producción
+`COOLIFY_PROD_READ_TOKEN`: exige destino único fijado manualmente al SHA, build
+desde Git (`dockerfile` o `dockercompose`) y Auto Deploy apagado. Ese token de
+lectura es obligatorio, con privilegio mínimo, y nunca puede viajar a CI o staging.
+Si el webhook requiere bearer, `COOLIFY_PROD_DEPLOY_TOKEN` es un secret separado
+limitado a `deploy`; no combines `read`, `write`, `read:sensitive` ni `root` en
+una sola credencial. El workflow solo verifica el pin de Coolify, nunca lo escribe.
+
+La receta canónica, las condiciones externas y los pasos de rollback viven en
+`docs/runbooks/release-promotion.md`. Los documentos de `docs/releases/` son
+evidencia histórica, no instrucciones ejecutables.
+
 ## Smoke tests post-deploy
 Solo dentro de un despliegue autorizado. Primero usar
 `node scripts/verify-deployed-release.mjs <URL> <SHA-completo>`: una home sana no

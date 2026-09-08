@@ -889,6 +889,14 @@ export const ResetPasswordSchema = z.object({
     password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
 });
 
+// POST /api/invite/:token/accept
+// Una invitación crea una cuenta igual que registro o recuperación: no puede
+// abrir una excepción de seis caracteres ni dejar tipos inválidos llegar a bcrypt.
+export const AcceptInvitationSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre es obligatorio').max(120),
+    password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
+});
+
 // ============================================================
 // PRÉSTAMOS (Prestamista)
 // ============================================================

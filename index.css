@@ -1128,6 +1128,13 @@
   color-scheme: light;
   background: var(--nx-canvas);
   color: var(--nx-canvas-text);
+  /* Día parte del canvas claro. Las superficies semánticas y las islas
+     oscuras cambian estas tintas de forma explícita; no se agrega una
+     excepción visual por pantalla. */
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace .nx-dark-context:not(.nx-ticket-surface):not(.nx-ticket-dock) {
@@ -1147,6 +1154,10 @@
   [class~="bg-surface-950/70"]
 ) {
   background-color: var(--nx-canvas);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1158,6 +1169,10 @@
   [class~="bg-surface-900/95"]
 ) {
   background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1168,10 +1183,16 @@
   [class~="bg-surface-700/60"]
 ) {
   background-color: var(--nx-canvas-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 /* Variantes slate heredadas. Un backdrop `fixed` conserva su oscuridad; los
-   paneles contenidos dentro de él sí se convierten a superficie clara. */
+   paneles contenidos dentro de él sí se convierten a superficie clara. Cada
+   superficie traducida publica también sus tintas heredadas para texto e
+   iconos; no se mantiene una segunda lista de selectores. */
 .nx-apple-light-workspace :is(
   [class~="bg-slate-950"],
   [class~="bg-slate-900"],
@@ -1184,6 +1205,10 @@
   [class~="bg-slate-900/95"]
 ):not([class~="fixed"]) {
   background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1200,6 +1225,10 @@
   [class~="bg-slate-700/70"]
 ) {
   background-color: var(--nx-canvas-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1215,6 +1244,89 @@
   [class~="bg-white/[0.12]"]
 ) {
   background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+/* Los rellenos oscuros que pueden vivir dentro de una superficie traducida
+   vuelven a declarar su tinta. Las clases son intencionalmente exactas: no
+   convertir un nombre de Tailwind en una excepción global. */
+.nx-apple-light-workspace :is(
+  .nx-ticket-surface,
+  .nx-ticket-dock,
+  .nx-code-surface,
+  .nx-dark-island,
+  [class~="bg-black"],
+  [class~="bg-gray-700"],
+  [class~="bg-gray-800"],
+  [class~="bg-gray-900"],
+  [class~="bg-gray-950"],
+  [class~="bg-zinc-700"],
+  [class~="bg-zinc-800"],
+  [class~="bg-zinc-900"],
+  [class~="bg-zinc-950"],
+  [class~="bg-neutral-700"],
+  [class~="bg-neutral-800"],
+  [class~="bg-neutral-900"],
+  [class~="bg-neutral-950"],
+  [class~="bg-surface-600"],
+  [class~="bg-slate-600"],
+  [class~="bg-nortex-800"],
+  [class~="bg-nortex-900"],
+  [class~="bg-brand-800"],
+  [class~="bg-brand-900"],
+  [class~="bg-brand-950"],
+  [class~="bg-emerald-800"],
+  [class~="bg-emerald-900"],
+  [class~="bg-green-800"],
+  [class~="bg-green-900"],
+  [class~="bg-blue-800"],
+  [class~="bg-blue-900"],
+  [class~="bg-indigo-800"],
+  [class~="bg-indigo-900"],
+  [class~="bg-purple-800"],
+  [class~="bg-purple-900"],
+  [class~="bg-violet-800"],
+  [class~="bg-violet-900"],
+  [class~="bg-red-600"],
+  [class~="bg-red-600/90"],
+  [class~="bg-red-700"],
+  [class~="bg-red-800"],
+  [class~="bg-red-900"],
+  [class~="bg-rose-700"],
+  [class~="bg-rose-800"],
+  [class~="bg-rose-900"],
+  [class~="bg-orange-700"],
+  [class~="bg-orange-800"],
+  [class~="bg-orange-900"],
+  [class~="bg-amber-700"],
+  [class~="bg-amber-800"],
+  [class~="bg-amber-900"],
+  [class~="bg-sky-700"],
+  [class~="bg-sky-800"],
+  [class~="bg-sky-900"]
+) {
+  --nx-legacy-white-ink: var(--nx-ticket-text);
+  --nx-legacy-white-muted-ink: var(--nx-ticket-muted);
+  --nx-context-ink: var(--nx-ticket-text);
+  --nx-context-muted-ink: var(--nx-ticket-muted);
+  --nx-positive: var(--nx-ticket-positive);
+  --nx-warning: var(--nx-ticket-warning);
+  --nx-info: var(--nx-ticket-info);
+  --nx-danger: var(--nx-ticket-danger);
+}
+
+.nx-apple-light-workspace [class~="text-white"] {
+  color: var(--nx-legacy-white-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-legacy-white-muted-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1223,7 +1335,7 @@
   [class~="text-slate-200"],
   [class~="text-surface-950"]
 ) {
-  color: var(--nx-canvas-text);
+  color: var(--nx-context-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1233,7 +1345,7 @@
   [class~="text-surface-300"],
   [class~="text-surface-400"]
 ) {
-  color: var(--nx-canvas-muted);
+  color: var(--nx-context-muted-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1241,7 +1353,7 @@
   [class~="placeholder:text-slate-400"],
   [class~="placeholder:text-slate-500"]
 ) {
-  color: var(--nx-canvas-faint);
+  color: var(--nx-context-muted-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1249,7 +1361,7 @@
   [class~="placeholder:text-slate-500"]
 )::placeholder,
 .nx-apple-light-workspace .input-premium::placeholder {
-  color: var(--nx-canvas-faint);
+  color: var(--nx-context-muted-ink);
   opacity: 1;
 }
 
@@ -1257,11 +1369,11 @@
   color: var(--nx-canvas-muted);
 }
 
-/* Los títulos heredados usaban `text-white` porque antes vivían sobre un
-   lienzo negro. Solo se traduce jerarquía tipográfica; `text-white` en botones
-   y badges sólidos conserva su contraste. */
+/* Los títulos heredados permanecen explícitos para la jerarquía tipográfica.
+   La tinta de cualquier `text-white` ya se deriva arriba de su superficie, y
+   el contrato de rellenos sólidos al final conserva las acciones semánticas. */
 .nx-apple-light-workspace :is(h1, h2, h3, h4, h5, h6)[class~="text-white"] {
-  color: var(--nx-canvas-text);
+  color: var(--nx-legacy-white-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1302,6 +1414,10 @@
   border-color: var(--nx-canvas-border);
   color: var(--nx-canvas-text);
   box-shadow: var(--nx-shadow-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(input, textarea, select, .input-premium) {
@@ -1342,7 +1458,7 @@
   [class~="hover:text-slate-200"],
   [class~="hover:text-slate-300"]
 ):hover {
-  color: var(--nx-canvas-text);
+  color: var(--nx-legacy-white-ink);
 }
 
 /* Bloques oscuros de énfasis que se conservan dentro del workspace (p. ej.
@@ -1384,18 +1500,27 @@
 /* Contraste de estados heredados sobre canvas claro. Los tonos dejan de
    depender de que emerald-300/amber-300 fueran visibles sobre negro. */
 .nx-apple-light-workspace :is(
+  [class~="text-emerald-100"],
+  [class~="text-emerald-200"],
   [class~="text-emerald-300"],
   [class~="text-emerald-400"],
   [class~="text-emerald-500"],
   [class~="text-emerald-600"],
   [class~="text-emerald-700"],
   [class~="text-emerald-800"],
+  [class~="text-emerald-900"],
+  [class~="text-emerald-950"],
+  [class~="text-emerald-100/80"],
+  [class~="text-green-100"],
+  [class~="text-green-200"],
   [class~="text-green-300"],
   [class~="text-green-400"],
   [class~="text-green-500"],
   [class~="text-green-600"],
   [class~="text-green-700"],
-  [class~="text-green-800"]
+  [class~="text-green-800"],
+  [class~="text-green-900"],
+  [class~="text-green-950"]
 ) { color: var(--nx-positive); }
 
 /* `brand` es el relleno del CTA. Como tinta pequena sobre blanco no alcanza
@@ -1409,49 +1534,175 @@
 }
 
 .nx-apple-light-workspace :is(
+  [class~="text-amber-100"],
+  [class~="text-amber-200"],
   [class~="text-amber-300"],
   [class~="text-amber-400"],
   [class~="text-amber-500"],
   [class~="text-amber-600"],
   [class~="text-amber-700"],
   [class~="text-amber-800"],
+  [class~="text-amber-900"],
+  [class~="text-amber-950"],
+  [class~="text-amber-100/80"],
+  [class~="text-amber-200/80"],
+  [class~="text-amber-300/80"],
+  [class~="text-amber-400/80"],
+  [class~="text-amber-400/90"],
+  [class~="text-yellow-100"],
+  [class~="text-yellow-200"],
   [class~="text-yellow-300"],
   [class~="text-yellow-400"],
   [class~="text-yellow-500"],
   [class~="text-yellow-600"],
   [class~="text-yellow-700"],
-  [class~="text-yellow-800"]
+  [class~="text-yellow-800"],
+  [class~="text-yellow-900"],
+  [class~="text-yellow-950"],
+  [class~="text-orange-100"],
+  [class~="text-orange-200"],
+  [class~="text-orange-300"],
+  [class~="text-orange-400"],
+  [class~="text-orange-500"],
+  [class~="text-orange-600"],
+  [class~="text-orange-700"],
+  [class~="text-orange-800"],
+  [class~="text-orange-900"],
+  [class~="text-orange-950"],
+  [class~="text-orange-300/70"]
 ) { color: var(--nx-warning); }
 
 .nx-apple-light-workspace :is(
+  [class~="text-sky-100"],
+  [class~="text-sky-200"],
   [class~="text-sky-300"],
   [class~="text-sky-400"],
   [class~="text-sky-500"],
   [class~="text-sky-600"],
   [class~="text-sky-700"],
   [class~="text-sky-800"],
+  [class~="text-sky-900"],
+  [class~="text-sky-950"],
+  [class~="text-blue-100"],
+  [class~="text-blue-200"],
   [class~="text-blue-300"],
   [class~="text-blue-400"],
   [class~="text-blue-500"],
   [class~="text-blue-600"],
   [class~="text-blue-700"],
   [class~="text-blue-800"],
+  [class~="text-blue-900"],
+  [class~="text-blue-950"],
+  [class~="text-blue-300/80"],
+  [class~="text-cyan-100"],
+  [class~="text-cyan-200"],
   [class~="text-cyan-300"],
   [class~="text-cyan-400"],
   [class~="text-cyan-500"],
   [class~="text-cyan-600"],
   [class~="text-cyan-700"],
-  [class~="text-cyan-800"]
+  [class~="text-cyan-800"],
+  [class~="text-cyan-900"],
+  [class~="text-cyan-950"]
 ) { color: var(--nx-info); }
 
 .nx-apple-light-workspace :is(
+  [class~="text-red-100"],
+  [class~="text-red-200"],
   [class~="text-red-300"],
   [class~="text-red-400"],
   [class~="text-red-500"],
   [class~="text-red-600"],
   [class~="text-red-700"],
-  [class~="text-red-800"]
+  [class~="text-red-800"],
+  [class~="text-red-900"],
+  [class~="text-red-950"],
+  [class~="text-red-100/80"],
+  [class~="text-red-400/70"],
+  [class~="text-red-400/80"],
+  [class~="text-rose-100"],
+  [class~="text-rose-200"],
+  [class~="text-rose-300"],
+  [class~="text-rose-400"],
+  [class~="text-rose-500"],
+  [class~="text-rose-600"],
+  [class~="text-rose-700"],
+  [class~="text-rose-800"],
+  [class~="text-rose-900"],
+  [class~="text-rose-950"]
 ) { color: var(--nx-danger); }
+
+/* Tailwind colapsa estos aliases fríos a la marca. En Día, sus rampas claras
+   no sirven como tinta sobre canvas o materiales suaves: se vuelven positivo
+   accesible. Las islas oscuras ya redefinen --nx-positive a tinta de ticket. */
+.nx-apple-light-workspace :is(
+  [class~="text-brand"],
+  [class~="text-brand-200"],
+  [class~="text-brand-300"],
+  [class~="text-brand-400"],
+  [class~="text-brand-700"],
+  [class~="text-brand-800"],
+  [class~="text-nortex-400"],
+  [class~="text-nortex-500"],
+  [class~="text-nortex-600"],
+  [class~="text-nortex-700"],
+  [class~="text-nortex-accent"],
+  [class~="text-blue-200"],
+  [class~="text-blue-300"],
+  [class~="text-blue-300/80"],
+  [class~="text-blue-400"],
+  [class~="text-blue-500"],
+  [class~="text-blue-600"],
+  [class~="text-blue-700"],
+  [class~="text-blue-800"],
+  [class~="text-indigo-300"],
+  [class~="text-indigo-400"],
+  [class~="text-indigo-500"],
+  [class~="text-cyan-100"],
+  [class~="text-cyan-200"],
+  [class~="text-cyan-300"],
+  [class~="text-cyan-400"],
+  [class~="text-violet-100"],
+  [class~="text-violet-300"],
+  [class~="text-violet-500"],
+  [class~="text-violet-700"],
+  [class~="text-purple-300"],
+  [class~="text-purple-400"],
+  [class~="text-purple-700"]
+) { color: var(--nx-positive); }
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-brand"],
+  [class~="hover:text-brand-200"],
+  [class~="hover:text-brand-800"],
+  [class~="hover:text-blue-300"],
+  [class~="hover:text-blue-600"],
+  [class~="hover:text-nortex-accent"],
+  [class~="hover:text-emerald-300"]
+):hover { color: var(--nx-positive); }
+
+.nx-apple-light-workspace .group:hover :is(
+  [class~="group-hover:text-blue-300"],
+  [class~="group-hover:text-nortex-accent"],
+  [class~="group-hover:text-emerald-700"]
+) { color: var(--nx-positive); }
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-amber-200"],
+  [class~="hover:text-amber-800"],
+  [class~="hover:text-amber-900"],
+  [class~="hover:text-orange-400"]
+):hover,
+.nx-apple-light-workspace .group:hover [class~="group-hover:text-orange-400"] {
+  color: var(--nx-warning);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-red-300"],
+  [class~="hover:text-red-400"],
+  [class~="hover:text-red-500"],
+  [class~="hover:text-red-700"]
+):hover { color: var(--nx-danger); }
 
 /* ==========================================
    CONTRATO VISUAL AUTENTICADO — APPLE/HIG DARK
@@ -2855,4 +3106,289 @@
   .nx-prose-table-wrap {
     border-color: var(--nx-public-text-subtle);
   }
+}
+
+/* ==========================================
+   CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS
+   ==========================================
+   Tailwind conserva nombres heredados, pero varios aliases (`blue`,
+   `emerald`, `orange`, `rose`) se resuelven a las rampas semánticas de
+   Nortex. Blanco sobre sus tonos claros no alcanza AA. Estas reglas usan
+   selectores exactos y sólo para rellenos opacos: no modifican fondos con
+   `/opacidad`, superficies oscuras ni tarjetas. Además producen la tinta que
+   el bridge Día hereda a un icono o texto hijo del mismo control.
+
+   Cuando se agregue una combinación nueva de relleno + `text-white`, medirla
+   y sumarla al contrato o usar desde el componente la tinta semántica
+   correspondiente. La prueba frontendColorSemantics mantiene la matriz. */
+
+/* Útil para iconos hijos de un relleno ámbar cuando el color vive en el SVG
+   y no en el botón/contenedor que recibe `bg-amber-*`. */
+.nx-on-warning-solid {
+  color: var(--nx-on-warning-solid);
+}
+
+/* La variable hace que un SVG o span hijo no vuelva a heredar blanco dentro
+   de un relleno semántico. El color directo sigue protegido abajo con
+   `!important` frente a las utilidades heredadas de Tailwind. */
+.nx-apple-light-workspace :where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-brand);
+  --nx-legacy-white-muted-ink: var(--nx-on-brand);
+  --nx-context-ink: var(--nx-on-brand);
+  --nx-context-muted-ink: var(--nx-on-brand);
+}
+
+.nx-apple-light-workspace :where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-danger-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-danger-solid);
+  --nx-context-ink: var(--nx-on-danger-solid);
+  --nx-context-muted-ink: var(--nx-on-danger-solid);
+}
+
+.nx-apple-light-workspace :where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-warning-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-warning-solid);
+  --nx-context-ink: var(--nx-on-warning-solid);
+  --nx-context-muted-ink: var(--nx-on-warning-solid);
+}
+
+.nx-apple-light-workspace [class~="bg-sky-600"] {
+  --nx-legacy-white-ink: var(--nx-on-info-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-info-solid);
+  --nx-context-ink: var(--nx-on-info-solid);
+  --nx-context-muted-ink: var(--nx-on-info-solid);
+}
+
+/* Marca, aliases verdes y WhatsApp: el 700 todavía requiere tinta oscura. */
+:where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+/* Destructivo: rojo canónico 500 y aliases danger/rose. */
+:where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+/* Atención: amber canónico claro y aliases warning/orange. */
+:where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Info conserva sky separado de blue: sky-600 aún necesita tinta oscura. */
+[class~="bg-sky-600"]:is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-info-solid) !important;
+}
+
+/* El estado hover puede cruzar de un tono seguro a uno claro, o viceversa. */
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-brand);
+  --nx-legacy-white-muted-ink: var(--nx-on-brand);
+  --nx-context-ink: var(--nx-on-brand);
+  --nx-context-muted-ink: var(--nx-on-brand);
+}
+
+:where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-danger-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-danger-solid);
+  --nx-context-ink: var(--nx-on-danger-solid);
+  --nx-context-muted-ink: var(--nx-on-danger-solid);
+}
+
+:where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-warning-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-warning-solid);
+  --nx-context-ink: var(--nx-on-warning-solid);
+  --nx-context-muted-ink: var(--nx-on-warning-solid);
+}
+
+:where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Estos hover pasan a un tono oscuro y recuperan tinta blanca. */
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-ticket-text);
+  --nx-legacy-white-muted-ink: var(--nx-ticket-muted);
+  --nx-context-ink: var(--nx-ticket-text);
+  --nx-context-muted-ink: var(--nx-ticket-muted);
+}
+
+:where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: #FFFFFF !important;
 }

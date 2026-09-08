@@ -24,7 +24,15 @@
   --nx-brand-hover:   #13B476;
   --nx-brand-soft:    rgba(22, 199, 132, 0.10);  /* fondo de item activo */
   --nx-brand-ring:    rgba(22, 199, 132, 0.40);  /* focus ring */
-  --nx-on-brand:      #06231A;                    /* texto sobre verde */
+  --nx-on-brand:      #001B12;                    /* texto sobre verde */
+
+  /* Tintas para rellenos sólidos heredados. `danger` y `warning` también
+     se usan como texto de estado sobre superficies suaves, por eso estas
+     tintas de control no los reemplazan. Cada una supera 4.5:1 en el tono
+     sólido más oscuro que puede producir su grupo de utilidades. */
+  --nx-on-danger-solid:  #171A1F;
+  --nx-on-warning-solid: #171A1F;
+  --nx-on-info-solid:    #0B0D10;
 
   /* ---------- Semánticos (uso restringido) ----------
      Rojo   = destructivo o dinero que SALE.
@@ -218,7 +226,7 @@
 
   --nx-brand-rgb:         22 199 132;
   --nx-brand-hover-rgb:   19 180 118;
-  --nx-on-brand-rgb:      6 35 26;
+  --nx-on-brand-rgb:      0 27 18;
 
   --nx-danger-rgb:        240 72 62;
   --nx-warning-rgb:       245 165 36;

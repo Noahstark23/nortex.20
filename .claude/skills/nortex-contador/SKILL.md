@@ -187,5 +187,6 @@ cualquier refactor (un rango inválido da score NaN y sale con éxito —
 6. ¿decimal.js en todo cálculo, Decimal en campos nuevos del schema?
 7. Si moviste funciones puras: ¿rangos de Stryker actualizados y
    `npm run test:mutation` verde?
-8. ¿Cambio de schema estrictamente aditivo (deploy = `db push` sin
-   `--accept-data-loss`)?
+8. ¿Cambio de schema estrictamente aditivo (el entrypoint de la imagen promovida
+   usa `db push` sin `--accept-data-loss`; nunca ejecutar el comando ad hoc contra
+   datos reales)?

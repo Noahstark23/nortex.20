@@ -19,9 +19,9 @@ precedencia sobre supuestos generales del modelo.
 - No abras `.env*`, almacenes de credenciales ni llaves privadas.
 - No uses herramientas web o shell para desplegar, llamar webhooks, modificar DNS,
   enviar mensajes, hacer push o fusionar ramas sin autorización explícita.
-- No coloques `GEMINI_API_KEY` en el entorno del frontend: `vite.config.ts` puede
-  incorporarla al bundle cliente. Las credenciales de IA pertenecen al backend o al
-  almacén seguro de la herramienta.
+- No coloques `GEMINI_API_KEY` en el entorno del frontend. `vite.config.ts` no
+  expone claves al bundle cliente y esa frontera tiene una prueba de regresión;
+  las credenciales de IA pertenecen al backend o al almacén seguro de la herramienta.
 - Para comandos destructivos o con efectos externos, detente y solicita confirmación.
 - Ejecuta Antigravity inicialmente con `--mode plan --sandbox`. Nunca uses
   `--dangerously-skip-permissions` en Nortex.

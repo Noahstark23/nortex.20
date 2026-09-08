@@ -6,24 +6,17 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Por defecto verifica y despliega solo staging. Producción requiere una
-  # intención manual para un SHA completo y la aprobación del environment.
+  # Reejecuta únicamente las verificaciones. Un dispatch de CI no puede tocar
+  # staging ni producción: las promociones tienen flujos y contratos propios.
   workflow_dispatch:
-    inputs:
-      production_approved:
-        description: 'Promover a producción el SHA indicado; requiere aprobación de production'
-        type: boolean
-        required: false
-        default: false
-      production_sha:
-        description: 'SHA completo (40 caracteres) autorizado para producción; debe ser el HEAD de main'
-        type: string
-        required: false
-        default: ''
 
-# Un push nuevo invalida cualquier promoción anterior que aún esté verificando
-# staging o esperando aprobación de producción. Además, antes del webhook de
-# producción se vuelve a consultar main y a verificar staging por SHA.
+# CI solo lee el repositorio. Declararlo evita heredar un GITHUB_TOKEN más
+# amplio de una configuración de organización o repositorio.
+permissions:
+  contents: read
+
+# Un push nuevo invalida una verificación anterior del mismo ref. La promoción
+# de producción tiene concurrencia independiente y nunca nace desde este flujo.
 concurrency:
   group: nortex-ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -35,15 +28,15 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
       - run: npm ci
       - name: Auditoría de dependencias de producción
         run: npm audit --omit=dev --audit-level=moderate
       - name: Prisma generate (URL dummy — solo tipos)
-        run: DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
+        run: DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
       - name: Typecheck
-        run: npx tsc --noEmit
+        run: npx --no-install tsc --noEmit
       - name: Tests (vitest)
         run: npm test
 
@@ -54,11 +47,12 @@ jobs:
       - name: Sistema de diseño
         run: npm run check:design
 
-      # Pruebas de MUTACIÓN sobre los módulos de dinero: no basta con que los
-      # tests pasen, tienen que MATAR bugs. Stryker introduce fallas (invierte
-      # comparaciones, cambia signos, vacía cuerpos) y falla el CI si un mutante
-      # sobrevive por debajo del umbral. Alcance de lógica pura; duración variable.
+      # Mutación se solicita de forma explícita para cambios de lógica monetaria
+      # pura. El scope actual contiene 5,694 mutantes y tarda horas: ejecutarlo
+      # en cada cambio visual/documental haría que CI deje de ser una compuerta
+      # útil. Un push o PR jamás puede activarlo por accidente.
       - name: Mutación (Stryker — módulos de dinero)
+        if: github.event_name == 'workflow_dispatch' && vars.NORTEX_CI_MUTATION == 'true'
         run: npm run test:mutation
 
       # Si el score cae, el reporte HTML dice QUÉ mutante sobrevivió y dónde.
@@ -70,47 +64,8 @@ jobs:
           name: mutation-report
           path: reports/mutation/
           retention-days: 7
-      - name: Build frontend y prerender de producción
-        run: npm run build:seo
-
-  integration-required:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: qa-local-only
-          MYSQL_DATABASE: nortex_qa
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -h localhost -pqa-local-only"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=20
-    env:
-      DATABASE_URL: mysql://root:qa-local-only@127.0.0.1:3306/nortex_qa?connection_limit=8
-      NORTEX_QA_DATABASE_ACK: disposable-database
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npx prisma generate --schema=backend/prisma/schema.prisma
-      - name: Preparar únicamente la base descartable
-        run: npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
-      - name: HTTP y MySQL reales; cero casos omitidos
-        run: npm run test:integration:required
-      - name: Evidencia de integración
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: quality-integration
-          path: reports/quality-integration/
-          retention-days: 7
+      - name: Build frontend
+        run: npm run build
 
   deploy-schema-smoke:
     runs-on: ubuntu-latest
@@ -133,11 +88,11 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
       - run: npm ci
       - name: Prisma generate
-        run: DATABASE_URL="$DATABASE_URL" npx prisma generate --schema=backend/prisma/schema.prisma
+        run: DATABASE_URL="$DATABASE_URL" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
         env:
           DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
       - name: Preparar schema anterior a PR 158
@@ -190,7 +145,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
       - run: npm ci
 
@@ -212,8 +167,8 @@ jobs:
 
       - name: Crear el schema real en la BD de origen
         run: |
-          npx prisma generate --schema=backend/prisma/schema.prisma
-          npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+          npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
         env:
           DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
 
@@ -278,119 +233,18 @@ jobs:
           docker run --rm --entrypoint bash nortex-backup:ci -lc \
             'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
 
-  # ── Despliegue con COMPUERTA: solo corre en main, cuando la variable
-  # NORTEX_DEPLOY_ENABLED vale "true", y después de todas las compuertas.
-  # Sin esa variable el job aparece SKIPPED (no como un falso deploy verde).
-  # Cuando está habilitado, la configuración faltante falla de forma explícita.
-  # Coolify Auto Deploy debe permanecer APAGADO: GitHub es la única compuerta.
-  deploy-staging:
-    name: deploy-staging
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      vars.NORTEX_DEPLOY_ENABLED == 'true'
-    needs: [verify, integration-required, deploy-schema-smoke, backup-restore-smoke]
+  # Esta compuerta arranca su propia base MySQL 8 efímera y backend loopback.
+  # La imagen se obtiene únicamente en CI; el script local falla cerrado si no
+  # fue obtenida de forma explícita por la persona que ejecuta la verificación.
+  integration-required:
+    name: integration-required
+    needs: [verify]
     runs-on: ubuntu-latest
-    environment:
-      name: staging
-      url: ${{ vars.STAGING_URL }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Validar configuración de STAGING
-        env:
-          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
-          APP_URL: ${{ vars.STAGING_URL }}
-        run: |
-          test -n "$WEBHOOK" || { echo "::error::Falta COOLIFY_STAGING_WEBHOOK"; exit 1; }
-          test -n "$APP_URL" || { echo "::error::Falta la variable STAGING_URL"; exit 1; }
-          case "$APP_URL" in
-            https://*) ;;
-            *) echo "::error::STAGING_URL debe usar https://"; exit 1 ;;
-          esac
-
-      - name: Desplegar STAGING (webhook de Coolify)
-        env:
-          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
-          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-        run: |
-          if [ -n "$TOKEN" ]; then
-            curl --fail --show-error --silent --max-time 30 --retry 3 \
-              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
-          else
-            curl --fail --show-error --silent --max-time 30 --retry 3 "$WEBHOOK"
-          fi
-          echo "🚀 Deploy de staging disparado"
-
-      # No basta con que staging esté sano: tiene que servir ESTE commit. Así un
-      # webhook roto o un deploy que no avanzó nunca habilita producción.
-      - name: Verificar STAGING sano y en el commit esperado
-        env:
-          APP_URL: ${{ vars.STAGING_URL }}
-          EXPECTED_COMMIT: ${{ github.sha }}
-        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
-
-  deploy-production:
-    name: deploy-production
-    if: >-
-      github.ref == 'refs/heads/main' &&
-      github.event_name == 'workflow_dispatch' &&
-      vars.NORTEX_DEPLOY_ENABLED == 'true' &&
-      inputs.production_approved == true &&
-      inputs.production_sha == github.sha
-    needs: [deploy-staging]
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ vars.PROD_URL }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-
-      - name: Validar configuración de PROD
-        env:
-          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
-          APP_URL: ${{ vars.PROD_URL }}
-        run: |
-          test -n "$WEBHOOK" || { echo "::error::Falta COOLIFY_PROD_WEBHOOK"; exit 1; }
-          test -n "$APP_URL" || { echo "::error::Falta la variable PROD_URL"; exit 1; }
-          case "$APP_URL" in
-            https://*) ;;
-            *) echo "::error::PROD_URL debe usar https://"; exit 1 ;;
-          esac
-
-      # Corre después de la aprobación del environment. Los inputs viajan por
-      # env, nunca se interpolan como código shell. Un staging previo o una
-      # aprobación para un main antiguo no pueden autorizar el webhook.
-      - name: Autorizar PROD para el SHA vigente y staging verificado
-        env:
-          NORTEX_DEPLOY_ENABLED: ${{ vars.NORTEX_DEPLOY_ENABLED }}
-          PRODUCTION_APPROVED: ${{ inputs.production_approved }}
-          PRODUCTION_SHA: ${{ inputs.production_sha }}
-          STAGING_URL: ${{ vars.STAGING_URL }}
-          COOLIFY_PROD_WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
-          COOLIFY_TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-        run: node scripts/authorize-production-release.mjs
-
-      - name: Desplegar PROD (webhook de Coolify)
-        env:
-          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
-          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
-        run: |
-          test -n "$TOKEN" || { echo "::error::Falta COOLIFY_TOKEN"; exit 1; }
-          if ! curl --fail --silent --max-time 30 --retry 3 --output /dev/null \
-            -H "Authorization: Bearer $TOKEN" "$WEBHOOK"; then
-            echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
-          fi
-          echo "🚀 Deploy de prod disparado"
-
-      - name: Verificar PROD sano y en el commit esperado
-        env:
-          APP_URL: ${{ vars.PROD_URL }}
-          EXPECTED_COMMIT: ${{ github.sha }}
-        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
+      - uses: jdx/mise-action@v4
+      - run: npm ci
+      - name: Preparar MySQL 8 solo para la compuerta CI
+        run: docker pull mysql:8.0
+      - name: Integración obligatoria de dinero e inventario
+        run: npm run test:integration:required

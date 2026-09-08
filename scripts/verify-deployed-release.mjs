@@ -1,10 +1,24 @@
 import { pathToFileURL } from 'node:url';
 
-const DEFAULT_ATTEMPTS = 97;
-// Con respuestas inmediatas, 97 intentos dejan 96 pausas × 5 s = 480 s.
-// Así un rollout con 503 rápidos conserva una ventana efectiva de ocho minutos.
-const DEFAULT_INTERVAL_MS = 5_000;
-const DEFAULT_TIMEOUT_MS = 5_000;
+// Un reemplazo de contenedor puede devolver 503 mientras el nuevo proceso sube.
+// El reintento tiene una ventana total real de ocho minutos, incluso si cada
+// request consume sus cinco segundos de timeout. Nunca se acepta un 503 como una
+// release sana.
+/** @type {Readonly<{ attempts: number, intervalMs: number, timeoutMs: number, deadlineMs: number }>} */
+export const DEPLOYED_HEALTH_RETRY = Object.freeze({
+    attempts: 97,
+    intervalMs: 5_000,
+    timeoutMs: 5_000,
+    deadlineMs: 8 * 60_000,
+});
+
+const invalidAppUrl = () => new Error('APP_URL_INVALID');
+
+const hasNoStore = (headers) => {
+    const value = headers?.get?.('cache-control');
+    return typeof value === 'string'
+        && value.split(',').some((directive) => directive.trim().toLowerCase() === 'no-store');
+};
 
 export const assessReleaseHealth = (payload, expectedCommit) => {
     if (!expectedCommit || typeof expectedCommit !== 'string') {
@@ -20,22 +34,46 @@ export const assessReleaseHealth = (payload, expectedCommit) => {
         return { ready: false, reason: 'COMMIT_MISSING' };
     }
     if (payload.commit !== expectedCommit) {
-        return { ready: false, reason: 'COMMIT_MISMATCH', observedCommit: payload.commit ?? null };
+        return { ready: false, reason: 'COMMIT_MISMATCH' };
     }
     return { ready: true, reason: 'READY', observedCommit: payload.commit };
 };
 
 export const healthUrlFor = (baseUrl) => {
-    const url = new URL(baseUrl);
-    if (!['http:', 'https:'].includes(url.protocol)) {
-        throw new Error('APP_URL debe usar http:// o https://');
+    const rawAuthority = typeof baseUrl === 'string'
+        ? /^https?:\/\/([^/]+)/i.exec(baseUrl)?.[1]
+        : null;
+    if (typeof baseUrl !== 'string'
+        || !baseUrl
+        || baseUrl.trim() !== baseUrl
+        || /[\x00-\x20\x7f]/.test(baseUrl)
+        || baseUrl.includes('?')
+        || baseUrl.includes('#')
+        || !rawAuthority
+        || rawAuthority.includes('@')) {
+        throw invalidAppUrl();
     }
+
+    let url;
+    try {
+        url = new URL(baseUrl);
+    } catch {
+        throw invalidAppUrl();
+    }
+
+    if (!['http:', 'https:'].includes(url.protocol)
+        || !url.hostname
+        || url.username
+        || url.password
+        || url.search
+        || url.hash) {
+        throw invalidAppUrl();
+    }
+
     const cleanPath = url.pathname.replace(/\/+$/, '');
     url.pathname = cleanPath.endsWith('/api/health')
         ? cleanPath
         : `${cleanPath}/api/health`;
-    url.search = '';
-    url.hash = '';
     return url.toString();
 };
 
@@ -47,24 +85,38 @@ const positiveInteger = (value, fallback) => {
 export const waitForExpectedRelease = async ({
     baseUrl,
     expectedCommit,
-    attempts = DEFAULT_ATTEMPTS,
-    intervalMs = DEFAULT_INTERVAL_MS,
-    timeoutMs = DEFAULT_TIMEOUT_MS,
+    attempts = DEPLOYED_HEALTH_RETRY.attempts,
+    intervalMs = DEPLOYED_HEALTH_RETRY.intervalMs,
+    timeoutMs = DEPLOYED_HEALTH_RETRY.timeoutMs,
+    deadlineMs = DEPLOYED_HEALTH_RETRY.deadlineMs,
     fetchImpl = globalThis.fetch,
     sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms)),
+    now = () => Date.now(),
 }) => {
     const healthUrl = healthUrlFor(baseUrl);
     let lastReason = 'NOT_CHECKED';
+    const deadlineAt = now() + deadlineMs;
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+        const requestBudgetMs = deadlineAt - now();
+        if (requestBudgetMs <= 0) break;
         try {
             const response = await fetchImpl(healthUrl, {
-                headers: { accept: 'application/json' },
-                signal: AbortSignal.timeout(timeoutMs),
+                // La app responde no-store; pedirlo también evita que un proxy
+                // ignore por accidente esa política al observar el SHA vivo.
+                cache: 'no-store',
+                headers: { accept: 'application/json', 'cache-control': 'no-cache' },
+                redirect: 'error',
+                signal: AbortSignal.timeout(Math.min(timeoutMs, requestBudgetMs)),
             });
 
             if (!response.ok) {
-                lastReason = `HTTP_${response.status}`;
+                lastReason = Number.isInteger(response.status) ? `HTTP_${response.status}` : 'HTTP_UNEXPECTED';
+            } else if (!hasNoStore(response.headers)) {
+                // Un request no-cache no corrige un proxy que entrega una
+                // respuesta almacenada. Sin esta política observada, el SHA
+                // no es evidencia fresca del despliegue esperado.
+                lastReason = 'CACHE_POLICY_MISSING';
             } else {
                 const payload = await response.json();
                 const assessment = assessReleaseHealth(payload, expectedCommit);
@@ -74,19 +126,21 @@ export const waitForExpectedRelease = async ({
                 }
 
                 lastReason = assessment.reason;
-                if (assessment.observedCommit) {
-                    lastReason += `:${assessment.observedCommit}`;
-                }
             }
-        } catch (error) {
-            lastReason = error instanceof Error ? error.message : 'REQUEST_FAILED';
+        } catch {
+            // Los errores de red y de parseo pueden reflejar URL o contenido remoto.
+            // El job expone solamente un código estable para no filtrar esa entrada.
+            lastReason = 'REQUEST_FAILED';
         }
 
-        if (attempt < attempts) await sleep(intervalMs);
+        const sleepBudgetMs = deadlineAt - now();
+        if (attempt < attempts && sleepBudgetMs > 0) {
+            await sleep(Math.min(intervalMs, sleepBudgetMs));
+        }
     }
 
     throw new Error(
-        `La release ${expectedCommit} no apareció sana en ${healthUrl}. Último estado: ${lastReason}`,
+        `La release esperada no apareció sana. Último estado: ${lastReason}`,
     );
 };
 
@@ -101,11 +155,11 @@ if (isCli) {
             const result = await waitForExpectedRelease({
                 baseUrl,
                 expectedCommit,
-                attempts: positiveInteger(process.env.HEALTH_ATTEMPTS, DEFAULT_ATTEMPTS),
-                intervalMs: positiveInteger(process.env.HEALTH_INTERVAL_MS, DEFAULT_INTERVAL_MS),
-                timeoutMs: positiveInteger(process.env.HEALTH_TIMEOUT_MS, DEFAULT_TIMEOUT_MS),
+                attempts: positiveInteger(process.env.HEALTH_ATTEMPTS, DEPLOYED_HEALTH_RETRY.attempts),
+                intervalMs: positiveInteger(process.env.HEALTH_INTERVAL_MS, DEPLOYED_HEALTH_RETRY.intervalMs),
+                timeoutMs: positiveInteger(process.env.HEALTH_TIMEOUT_MS, DEPLOYED_HEALTH_RETRY.timeoutMs),
             });
-            console.log(`✅ ${result.healthUrl} sirve ${expectedCommit} y la base de datos está arriba.`);
+            console.log(`✅ La aplicación sirve ${expectedCommit} y la base de datos está arriba.`);
         } catch (error) {
             console.error(error instanceof Error ? error.message : error);
             process.exitCode = 1;

@@ -14,6 +14,7 @@ import {
     fetchAuthenticatedJson,
     openAuthenticatedPreview,
 } from '../utils/authenticatedDownload';
+import { DAY_DARK_SURFACE } from '../utils/daySurfaceInk';
 
 // Helpers
 const IVA_RATE = 0.15;
@@ -546,7 +547,7 @@ const Reports: React.FC = () => {
                         </div>
 
                         {/* Valor en Bodega */}
-                        <div className="bg-gradient-to-br from-nortex-900 to-nortex-800 text-white p-5 rounded-xl shadow-lg relative overflow-hidden">
+                        <div className={`${DAY_DARK_SURFACE.inventoryValue} p-5 rounded-xl shadow-lg relative overflow-hidden`}>
                             <div className="absolute -right-4 -top-4 w-20 h-20 bg-nortex-accent blur-[40px] opacity-20" />
                             <div className="flex items-center justify-between mb-3 relative z-10">
                                 <div className="p-2 bg-white/10 rounded-lg">
@@ -865,7 +866,7 @@ const Reports: React.FC = () => {
                                 </div>
                             )}
                             {/* MEGA CARD: Total a Pagar */}
-                            <div className="bg-gradient-to-br from-red-600 to-red-800 text-white p-8 rounded-2xl shadow-xl mb-8 relative overflow-hidden">
+                            <div className={`${DAY_DARK_SURFACE.taxTotal} p-8 rounded-2xl shadow-xl mb-8 relative overflow-hidden`}>
                                 <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/5 rounded-full" />
                                 <div className="absolute -right-5 bottom-0 w-24 h-24 bg-white/5 rounded-full" />
                                 <div className="relative z-10">
@@ -874,7 +875,7 @@ const Reports: React.FC = () => {
                                             ? 'OBLIGACIONES CALCULADAS DEL RÉGIMEN GENERAL'
                                             : 'IMPUESTOS A PAGAR ESTE MES'}
                                     </div>
-                                    <div className="text-xs opacity-60 mb-4">{monthNames[taxReport.month - 1]} {taxReport.year}</div>
+                                    <div className="text-xs opacity-80 mb-4">{monthNames[taxReport.month - 1]} {taxReport.year}</div>
                                     <div className="text-5xl font-bold mb-4">{formatC(taxReport.totalToPay)}</div>
                                     <div className="text-sm opacity-80">
                                         Fecha límite de presentación: 15 de {monthNames[taxReport.month] || monthNames[0]} {taxReport.month === 12 ? taxReport.year + 1 : taxReport.year}
