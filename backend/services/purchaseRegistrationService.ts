@@ -30,7 +30,7 @@ export interface RegisterPurchaseOptions {
     beforeCommit?: (tx: Prisma.TransactionClient, purchase: PurchaseReceipt) => Promise<void>;
 }
 
-async function resolvePurchaseShift(db: any, principal: PurchasePrincipal, paymentMethod: string) {
+async function resolvePurchaseShift(db: any, principal: PurchasePrincipal, paymentMethod: string, required = true) {
     if (paymentMethod !== 'CASH') return null;
     const shift = await db.shift.findFirst({
         where: { tenantId: principal.tenantId, userId: principal.userId, status: 'OPEN' },
@@ -41,7 +41,7 @@ async function resolvePurchaseShift(db: any, principal: PurchasePrincipal, payme
         orderBy: { startTime: 'desc' },
         include: { user: { select: { name: true } } },
     });
-    if (!shift) throw new SupplierPaymentError('SIN_CAJA_ABIERTA',
+    if (!shift && required) throw new SupplierPaymentError('SIN_CAJA_ABIERTA',
         'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.');
     return shift;
 }
@@ -119,7 +119,9 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
         const context = await preparePurchaseContext(tx, principal, input);
         const { operationWarehouse, linkedPurchaseOrder, fiscalRegimeAtPurchase, cuotaFijaPurchase,
             preparedItems, productsById, purchaseMoney, subtotalAmount, taxAmount, totalAmount, creditableTax } = context;
-        const turnoDeContado = await resolvePurchaseShift(tx, principal, paymentMethod);
+        // La factura OC valida primero la trazabilidad de recepción/conciliación.
+        // Capturar null no autoriza pago; la falta de caja se rechaza tras el match.
+        const turnoDeContado = await resolvePurchaseShift(tx, principal, paymentMethod, !linkedPurchaseOrder);
         if (expectedPreviewHash && buildPurchasePreview(input, context, turnoDeContado?.id ?? null, turnoDeContado).hash !== expectedPreviewHash) {
             throw new PurchaseRegistrationError('PURCHASE_PREVIEW_CHANGED', 409, 'La propuesta cambió. Revisá nuevamente sus efectos antes de confirmar.');
         }
@@ -221,6 +223,10 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             userId: principal.userId,
             purchaseId: purchase.id,
         });
+        if (paymentMethod === 'CASH' && !turnoDeContado) {
+            throw new SupplierPaymentError('SIN_CAJA_ABIERTA',
+                'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.');
+        }
         // executeProcurementMatch materializa identidad OC y snapshots exactos
         // mediante UPDATE SQL. El objeto devuelto por purchase.create conserva
         // los items previos; refrescarlos evita responder costos/variancias stale.

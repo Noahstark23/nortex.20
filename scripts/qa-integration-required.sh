@@ -108,6 +108,12 @@ for ((qa_attempt = 1; qa_attempt <= 60; qa_attempt += 1)); do
 done
 [ -n "$qa_database_port" ] || qa_die 'MySQL 8 efímero no quedó listo en 60 segundos.'
 
+# Solo este MySQL efímero: la prueba de concurrencia observa esperas reales
+# del motor sin sustituirlas por sleeps ni conceder permisos a producción.
+MYSQL_PWD="$qa_root_password" docker exec -e MYSQL_PWD "$qa_container" \
+    mysql -u root -e "GRANT SELECT ON performance_schema.data_lock_waits TO 'nortex_qa_required'@'%'; GRANT SELECT ON performance_schema.data_locks TO 'nortex_qa_required'@'%';" \
+    >/dev/null
+
 qa_database_url="mysql://${qa_user}:${qa_database_password}@127.0.0.1:${qa_database_port}/${qa_database}"
 
 # El proceso recibe solo este entorno mínimo: ninguna clave heredada puede abrir

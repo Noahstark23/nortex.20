@@ -10,12 +10,34 @@
     "designSystem": "passed",
     "npmAuditProductionVulnerabilities": 0,
     "general": {
-      "passed": 5731,
+      "passed": 5736,
       "failed": 0,
       "skipped": 318
     },
-    "mandatoryMysql": "running_after_contract_reconciliation",
-    "mutation": "running_threshold_100"
+    "mandatoryMysql": {
+      "status": "passed",
+      "suites": 37,
+      "passed": 332,
+      "failed": 0,
+      "skipped": 0,
+      "engine": "MySQL 8 disposable"
+    },
+    "mutation": {
+      "status": "passed",
+      "score": 100,
+      "modules": 64,
+      "killed": 5759,
+      "timeout": 4,
+      "survived": 0,
+      "noCoverage": 0,
+      "historicalIgnored": 20,
+      "reportSha256": "7adbae764a170d7d81b130f2efde8bf2747e1a58aa4c5160df1c449069b13ea6"
+    },
+    "reportHashes": {
+      "general": "742b963795c27d0664a550ccbed34ac329d60c888aa21c74dc663cc0d89640c2",
+      "mandatoryMysqlLog": "fa1aac3da13619ad9e293ecd961d267d009c0bd6c8969652c3101a2ef6cf7a0f",
+      "mutationLog": "186e6b19687115254fe4a641ebfccbb5fffdc15fc33193686143c1f1af7c9dbc"
+    }
   },
   "fiscalExtraction": {
     "behaviorBefore": 8,
@@ -37,5 +59,22 @@
     "remoteObjectHashMatches": true,
     "restoreDrill": "not_verified"
   },
-  "deployment": "not_performed"
+  "deployment": "not_performed",
+  "infrastructureSnapshot": {
+    "memoryMiB": {
+      "total": 3915,
+      "used": 2220,
+      "available": 1695
+    },
+    "swapMiB": {
+      "total": 2047,
+      "used": 879
+    },
+    "rootDiskGiB": {
+      "size": 77,
+      "used": 16,
+      "available": 61
+    },
+    "capacityConclusion": "instantaneous_snapshot_not_load_capacity"
+  }
 }

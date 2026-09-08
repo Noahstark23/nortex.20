@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import { describe, expect, it, vi } from 'vitest';
 import { registerPurchase, preparePurchasePreview } from '../backend/services/purchaseRegistrationService';
+import { ProcurementMatchError } from '../backend/lib/procurementMatch';
 
 const runtime = vi.hoisted(() => ({ current: null as any }));
 vi.mock('../backend/services/accounting', () => ({
@@ -294,6 +295,37 @@ describe('registro de compra — caracterización conservada contra el servicio 
         await expect(register(fake, input({ items: [{ productId: 'product-1', quantity: '2', unitCost: '10', salePrice: '25' }] })))
             .rejects.toThrow('price audit unavailable');
         expect(fake.state).toMatchObject({ price: 15, promotionVersion: 1, stock: 5, purchases: [] });
+    });
+
+    it('prioriza trazabilidad legacy de una factura OC de contado incluso cuando no hay caja abierta', async () => {
+        const fake = fixture();
+        fake.db.shift.findFirst.mockResolvedValue(null);
+        fake.db.purchaseOrder.findFirst.mockResolvedValue({ id: 'po-1', supplierId: 'supplier-1', status: 'RECEIVED',
+            items: [{ id: 'poi-1', productId: 'product-1', productName: 'Tornillo', quantityReceived: 2, quantityReceivedExact: '2' }], receipts: [] });
+        fake.context.executeProcurementMatch.mockRejectedValueOnce(new ProcurementMatchError(
+            'CASH_LEGACY_RECEIPT_TRACE_REQUIRES_RESOLUTION', 409, 'La recepción legacy requiere conciliación antes del pago'));
+        await expect(register(fake, input({ purchaseOrderId: 'po-1', paymentMethod: 'CASH' })))
+            .rejects.toMatchObject({ code: 'CASH_LEGACY_RECEIPT_TRACE_REQUIRES_RESOLUTION', httpStatus: 409 });
+        expect(fake.context.executeProcurementMatch).toHaveBeenCalledOnce();
+        expect(fake.state.purchases).toEqual([]);
+        expect(fake.state.stock).toBe(5);
+        expect(fake.context.registrarSalidaDeCajaPorCompra).not.toHaveBeenCalled();
+        expect(fake.context.recordPurchase).not.toHaveBeenCalled();
+        expect(fake.db.auditLog.create).not.toHaveBeenCalled();
+    });
+    it('una factura OC conciliada sin caja rechaza contado y revierte la cabecera provisional', async () => {
+        const fake = fixture();
+        fake.db.shift.findFirst.mockResolvedValue(null);
+        fake.db.purchaseOrder.findFirst.mockResolvedValue({ id: 'po-1', supplierId: 'supplier-1', status: 'RECEIVED',
+            items: [{ id: 'poi-1', productId: 'product-1', productName: 'Tornillo', quantityReceived: 2, quantityReceivedExact: '2' }], receipts: [] });
+        await expect(register(fake, input({ purchaseOrderId: 'po-1', paymentMethod: 'CASH' })))
+            .rejects.toMatchObject({ code: 'SIN_CAJA_ABIERTA' });
+        expect(fake.context.executeProcurementMatch).toHaveBeenCalledOnce();
+        expect(fake.state.purchases).toEqual([]);
+        expect(fake.state.stock).toBe(5);
+        expect(fake.context.registrarSalidaDeCajaPorCompra).not.toHaveBeenCalled();
+        expect(fake.context.recordPurchase).not.toHaveBeenCalled();
+        expect(fake.db.auditLog.create).not.toHaveBeenCalled();
     });
 
 });
