@@ -1,142 +1,186 @@
-# Auditoría de escalado — Monolito Nortex + RAG
+# Auditoría de escalado — Nortex y sus asistentes
 
-> **Revalidación 2026-09-04:** el cuerpo conserva el análisis histórico de su fecha.
-> La evidencia actual está en [AUDITORIA_GENERAL_2026-09-04.md](AUDITORIA_GENERAL_2026-09-04.md)
-> y la prioridad en [PLAN_TRANSFORMACION_TOTAL_2026.md](PLAN_TRANSFORMACION_TOTAL_2026.md).
-> No ejecutar una receta antigua sin contrastarla con código, pruebas y reglas de integridad.
-> Estado local, staging y producción se registran por separado.
+Revalidación estática del **2026-09-08**, candidato `484f58a`. Sustituye las recetas
+obsoletas del análisis inicial de julio; su historial permanece en Git. El inventario
+es del candidato, no una afirmación sobre el código que hoy sirve producción.
 
-> Baseline actual: server 15.451 líneas, POS 7.579; 11 construcciones Prisma runtime
-> incl. singleton (10 fuera). El build ya se divide por chunks: principal 662,94 kB,
-> POS 529,78 kB; precache 6.874,50 KiB. No son tiempos de carga medidos.
-> Cola en memoria/estado por proceso siguen pendientes. El correlativo de venta ya
-> no se toma al inicio; recordSale ahora es hard-fail dentro de la transacción.
-> Los ejemplos destructivos del cuerpo son evidencia histórica, no comandos de operación.
+`backend/server.ts` tiene **14.131 líneas** y `components/POS.tsx` **5.924**. Hay
+**10 construcciones Prisma runtime**, una compartida y nueve fuera. Se verificaron
+las ubicaciones de código; no se ejecutó una prueba de carga en esta auditoría.
+No inferir capacidad, corrupción o estabilidad a partir del tamaño de archivo.
 
-**Fecha:** 2026-07-08 · **Método:** análisis estático de código (multi-agente) · **Alcance:** `backend/server.ts` (9.213 líneas), `backend/services/*`, `backend/routes/*`, `backend/middleware/*`, `backend/prisma/schema.prisma`, `Dockerfile`, `docker-compose.yml`, `vite.config.ts`.
+La inspección del host, copia off-site y pendientes reales están separados en
+[Capacidad del Droplet](CAPACIDAD_DROPLET_NORTEX_2026-09-08.md). El candidato no está
+acreditado en staging/producción por haber aprobado pruebas locales o CI.
 
-> Auditoría **estática**, no de runtime. No se pudo levantar el stack (MySQL + `prisma generate`) en el entorno. Los tiempos/locks descritos son por lectura de código, no medidos. Validar bajo carga antes de dar por resuelto.
+## C — Schema, respaldo y recuperación
 
----
+El arranque usa `scripts/docker-entrypoint.sh`: espera MySQL, preflights conocidos y
+`db push --skip-generate`, sin `--accept-data-loss`. Incompatibilidad y timeout
+cierran el arranque; no se garantiza que la instancia anterior siga disponible.
+El comando no se debe ejecutar manualmente contra producción por seguir esta guía.
 
-> **Actualización 2026-07-14:** **C corregido** — el Dockerfile ya no lleva
-> `--accept-data-loss` (un cambio destructivo ahora falla el arranque en vez de
-> borrar datos). **B1 corregido** — migración `20260714_b1_composite_indexes`
-> agrega los compuestos de `Sale`, `AuditLog`, `KardexMovement`, `Expense`,
-> `Purchase`, `Payment`, `StockTransfer`. **A2 iniciado** — existe el singleton
-> `backend/lib/prisma.ts`; `stockTransfers.ts` es su primer consumidor (faltan
-> ~21 módulos legacy). El resto del bloque A (Redis para rate-limit/caché/cola,
-> crons fuera del proceso) y B2–B6 siguen abiertos.
+Los índices compuestos agregados desde julio y los preflights nuevos existen en
+schema/código. Una definición versionada no demuestra aplicación en la base real,
+uso por el optimizador ni ausencia de metadata locks. Verificar upgrade/idempotencia
+con datos, `EXPLAIN` y latencias para el volumen objetivo.
 
-## Veredicto
+`backup-db.sh` genera y sube SQL off-site; `verify-backup-restore.sh` restaura en
+MySQL descartable. La copia real observada el 8 de septiembre tiene hash remoto
+coincidente, pero el restore real sigue **no acreditado**. Además, el dump SQL no
+incluye los originales privados de facturas: el respaldo/restore del asistente debe
+conciliar DB, archivos y hashes. Aplicar `nortex-backup-recovery` antes de promover schema.
 
-**No hay una bomba encendida hoy, pero sí armada.** Producción corre como **un solo proceso** (`tsx backend/server.ts`, un contenedor, sin cluster/PM2, sin Redis), así que todo el estado en memoria funciona *ahora*. Los problemas se agrupan en tres clases:
+## A — Condiciones antes de añadir réplicas API
 
-- **A — Bloqueos de escalado horizontal:** detonan el día que agregás una 2.ª instancia detrás de un balanceador (que es "escalar").
-- **B — Bombas de volumen de datos:** detonan a medida que crecen las tablas, **aunque quedes en 1 instancia**.
-- **C — Riesgo de pérdida de datos:** independiente de todo lo anterior; es lo más urgente.
+La ausencia de Redis no prueba que todo sea en memoria: el asistente privado ya
+utiliza trabajos durables en MySQL. Tampoco la existencia de esas tablas permite
+replicar todo Nortex: quedan controles legacy por proceso.
 
-Prioridad de arreglo: **C → índices de B → A (antes de multi-instancia) → resto de B.**
+### A1 — Límites de peticiones
 
----
+`backend/server.ts` configura limiters con store por proceso, incluidos autenticación
+y rutas públicas. Por ejemplo, `globalLimiter` está en la línea 458 y `loginLimiter`
+en 477. Dos instancias no comparten el conteo. Antes de replicar, implementar y
+probar un store compartido con caída segura y límites coherentes; no desactivar
+rate limits para resolver errores de coordinación.
 
-## C — Riesgo de pérdida de datos (hallazgo histórico, no depende de escalar)
+### A2 — Clientes Prisma runtime
 
-La siguiente era la observación de la auditoría del 2026-07-08; queda como
-antecedente del riesgo, no como descripción ejecutable actual:
+Inventario de expresiones `new PrismaClient()`, excluyendo comentarios, tests y
+`backend/scripts`:
 
-```
-npx prisma db push --schema=... --accept-data-loss && npm run start
-```
+| Módulo | Línea |
+|---|---:|
+| `backend/lib/prisma.ts` — compartido | 16 |
+| `backend/server.ts` | 284 |
+| `backend/routes/hr.ts` | 9 |
+| `backend/routes/loans.ts` | 24 |
+| `backend/routes/serials.ts` | 20 |
+| `backend/routes/warehouses.ts` | 19 |
+| `backend/services/audit.ts` | 12 |
+| `backend/services/depreciation.ts` | 16 |
+| `backend/services/stripe.ts` | 11 |
+| `backend/services/whatsapp/db.ts` | 6 |
 
-Ese flag fue retirado el 2026-07-14. La imagen actual usa un entrypoint con
-preflight DDL y `db push` sin `--accept-data-loss` únicamente como parte de una
-promoción controlada; ejecutar el comando a mano contra producción sigue prohibido.
-El riesgo histórico era que un cambio no aditivo pudiera ejecutarse destructivamente
-sin aviso, y que varios contenedores aplicaran schema a la vez.
+`scoring.ts` ya usa el compartido; no repetir el conteo anterior de 11 ni el de
+~21 de julio. Diez construcciones no son diez conexiones: cada cliente puede abrir
+un pool. La demanda depende de procesos, módulos cargados, límites y consultas.
+Consolidar gradualmente conservando logging y semántica transaccional; medir conexiones
+abiertas/activas, espera y P2024/P2028. No fijar `connection_limit` arbitrario ni
+consultar el cliente global dentro de una transacción que debe usar `tx`.
 
-**Guardrail vigente:** mantener el schema **estrictamente aditivo**
-(nunca drop/rename/narrow), validar el upgrade en MySQL descartable y fallar la
-promoción si el preflight detecta incompatibilidad. Para dinero e inventario reales,
-un cambio de schema nunca se resuelve con `--accept-data-loss` ni un comando ad hoc.
+### A3 — Caché de permisos/suscripción
 
----
+`backend/middleware/auth.ts:16` usa `NodeCache` con TTL de 300 segundos. La
+invalidación local no comunica cambios a otra instancia. Probar suspensión,
+reactivación y revocación entre procesos antes de habilitar réplicas. Un JWT válido
+no sustituye la comprobación vigente de usuario, tenant y capacidad.
 
-## A — Bloqueos de escalado horizontal (1 → N instancias)
+### A4 — Jobs en el proceso web
 
-Ninguno está resuelto: no hay `redis`/`ioredis`/`bullmq`/`rate-limit-redis` en `package.json`. Todo el estado compartido es in-process.
+`backend/server.ts:14107–14118` programa suscripciones, depreciación y emails.
+Depreciación tiene protección idempotente por cuota; eso no evita repetir lecturas
+ni competir con ventas. El recorrido de tenants con activos comienza en
+`backend/services/depreciation.ts:214`. Separar scheduler/worker o claims durables,
+concurrencia acotada y recuperación. Caracterizar cada job; no afirmar duplicación
+de cargos/emails por la sola presencia de `setInterval`.
 
-| # | Bomba | Ubicación | Qué pasa a N instancias | Clase de fix |
-|---|---|---|---|---|
-| A1 | **Rate limiters en `MemoryStore`** (7+): login, register, forgot-password, **PIN de caja**, **PIN de motorizado**, público, pedidos | `server.ts:189,199,209,795,2005,8445,8514` · `routes/pedidos.ts:23` · `routes/driver.ts:38,44` | El límite se multiplica ×N; login "5/h" → `5×N/h`. Es **agujero de seguridad** (brute-force de credenciales/PIN), no solo de escala. | `rate-limit-redis` + Redis |
-| A2 | **~21 `new PrismaClient()`** (uno por módulo) **sin `connection_limit`** | `server.ts:75`, `middleware/auth.ts:6`, `services/{accounting,audit,depreciation,nicaTax,salesService,scoring,stripe,whatsapp/db}.ts`, `routes/{purchaseOrders,motorizados,hr,loans,driver,sync,serials,pedidos,warehouses}.ts` | `N × 21 × pool` conexiones → **agota `max_connections` de MySQL** enseguida | Singleton `lib/prisma.ts` importado por todos + `connection_limit` en la URL |
-| A3 | **Caché de paywall** (`node-cache`) invalidado **solo local** | `middleware/auth.ts:16,55,59` | Tenant suspendido/reactivado queda **inconsistente hasta 5 min** según qué instancia atienda | Caché en Redis o invalidación por pub/sub |
-| A4 | **Crons `setInterval` in-process** (suscripciones, depreciación) | `server.ts:9202,9207` | Se ejecutan **duplicados en cada instancia** (trabajo desperdiciado + posible carrera) | Scheduler externo / leader-election; sacar del proceso web |
-| A5 | **Cola de WhatsApp en memoria** (`InMemoryQueue`) | `services/whatsapp/queue.ts` · `inbound.ts` · `webhook.ts` | Jobs **se pierden al reiniciar** (deploy/crash) y **no se reparten**; el reintento de Meta puede caer en otra instancia | BullMQ/Redis con la misma interfaz `enqueue` (ya está diseñada para el swap) |
+### A5 — WhatsApp comercial y privado son transportes distintos
 
-Revisado y **sin hallazgos**: no hay escrituras a disco local (solo `sendFile` de HTML prerenderizado, lectura), no hay WebSockets/socket.io con estado de sesión, y los `Map`/`Set` a nivel handler son scratch por-request (no cachés compartidos). El keyring JWT es per-proceso pero deriva de env idéntica → consistente.
+| Canal | Contrato observado | Pendiente |
+|---|---|---|
+| Comercial (`services/whatsapp/*`) | `webhook.ts:63` responde 200 antes de encolar; `queue.ts` usa RAM con concurrencia 2. `inbound.ts:103` envía antes de persistir salida/estado. | Persistir antes del ACK, claims/orden por conversación, outbox y tratamiento del envío incierto. Probar reinicios y duplicados concurrentes. |
+| Privado (`services/assistant/privateWhatsapp/*`) | La ruta espera inbox persistido antes del 200; leases/orden en MySQL; `outbox.ts` pasa envíos interrumpidos a UNKNOWN y no los reenvía automáticamente. | Verificar workers reales, heartbeat, retención, reinicios, revocación y proveedor. Código/pruebas sintéticas no acreditan tráfico real. |
 
----
+La unicidad de `waMessageId` por sí sola no conserva un trabajo que nunca se guardó
+ni garantiza exactamente un envío externo. No migrar el privado a otra cola por
+confundirlo con el comercial; evaluar necesidad con métricas.
 
-## B — Bombas de volumen de datos (crecen con los datos, aun en 1 instancia)
+## B — Carga y crecimiento aun con una sola instancia
 
-### B1 — Índices faltantes en las tablas más grandes y calientes (barato, alto impacto)
+### B1 — Índices y datos
 
-Un solo migration aditivo. Hoy estas tablas solo tienen `@@index([tenantId])` y filtran/ordenan el resto en memoria:
+`Sale`, `AuditLog`, `KardexMovement`, `Expense`, `Purchase`, `Payment` y
+`StockTransfer` ya tienen índices compuestos en el schema. El trabajo pendiente es
+validar consultas actuales y su plan en datos representativos, no volver a crear
+la migración histórica como si faltara. Nuevas queries deben acompañarse de límites
+e índices según filtros/orden; no usar una base vacía para acreditar rendimiento.
 
-- **`Sale`** → falta `@@index([tenantId, createdAt])` y `@@index([tenantId, paymentMethod, balance])`. Alimenta **todos** los reportes, cobranza, libros DGI y scoring (`server.ts:1060,4097,6124,6178,6249,7324`; `nicaTax.ts:70`; `scoring.ts:27`).
-- **`AuditLog`** → la tabla que más rápido crece (1 fila por venta/ajuste/pago/cierre), solo `[tenantId]`/`[userId]`. Falta `@@index([tenantId, createdAt])` y `@@index([tenantId, action, createdAt])` (`server.ts:1107,2382`). Considerar retención/particionado.
-- **`KardexMovement`** → índices de **una** columna para queries de dos/tres (`tenantId+type+date`, `tenantId+productId+date`). Falta `@@index([tenantId, type, date])` y `@@index([tenantId, productId, date])` (`server.ts:3386,7488,7559`).
-- **`Expense`** → falta `@@index([tenantId, createdAt])` (`server.ts:1090,4134,4231`).
-- **`Purchase`** → falta `@@index([tenantId, date])` (`server.ts:8982`; `nicaTax.ts:87`; `accounting.ts:663`).
-- **`Payment`** → solo `[saleId]`; el agregado de cobros del día filtra `sale.tenantId + createdAt` (`server.ts:6216`).
+### B2 — Transacción de venta
 
-### B2 — La venta (ruta más caliente) tiene N+1 + un lock que serializa
+En `salesService.ts:1035`, el correlativo se reclama **después** de validaciones y
+normalización; la receta de moverlo desde el inicio ya está superada. Aún precede
+al bucle por ítem (`:1079`) y conserva lock hasta commit. Ítems, stock, FEFO y Kardex
+implican consultas secuenciales. Medir queries, espera de locks y p95/p99 para
+5/20/50 líneas y varias cajas del mismo tenant antes de optimizar.
 
-- **Hot-row lock del correlativo DGI:** `salesService.ts` toma el row-lock de `InvoiceSeries(tenantId,'A')` con el `increment` al **inicio** del `$transaction` y lo retiene mientras corren ~80–100 queries (stock + kardex + asiento contable **por ítem**). Con varias cajas/canales por tenant (POS + WhatsApp + público), las ventas del mismo tenant **se serializan a ~1 a la vez**.
-- **N+1 por ítem:** `saleItem.create` + `applyStockDelta` (~5–7 queries) + `kardexMovement.create` por ítem, más `recordSale`→`createJournalEntry` con `journalLine.create` + `account.update` por línea contable (`salesService.ts:263-317`; `accounting.ts:162-203`).
-- **Fix:** mover el `increment` del correlativo justo antes del `sale.create`; `saleItem.createMany`/`kardexMovement.createMany`; consolidar lecturas de cuentas en una `findMany`; **corrección 2026-09-04:** conservar el asiento contable hard-fail en la misma transacción; optimizar consultas con el tx recibido. Mismo patrón N+1/tx-por-ítem en nómina (`server.ts:4761`), aguinaldo (`:5202`), compras (`:4319`), OC (`routes/purchaseOrders.ts:60`), sync (`routes/sync.ts:77`) y carga masiva (`:2884`).
+`recordSale` (`:1257`) y auditoría siguen en la misma transacción. Consolidar
+lecturas/escrituras únicamente si preserva dinero, stock, lote, idempotencia y
+rollback. No mover el asiento fuera de la transacción ni elevar timeouts como
+sustituto de una medición.
 
-### B3 — Reportes/exports que traen tablas enteras a memoria
+### B3 — Reportes y XLSX
 
-- `findMany` **sin `take`** que suman en JS: `/api/reports/sales` (`server.ts:4097`), inventario (`:4180`), Oráculo/Reorden (`:7504,7568`), cobranza debtors/worklist/statement/aging (`:6124,6178,6249,7324`), Estado de Resultados por período (`accounting.ts:580`). **Fix:** agregación en DB (`groupBy`/`aggregate`), no traer filas.
-- **XLSX síncrono en el event loop:** libros DGI y VET arman y serializan el archivo en el hilo de la request (`server.ts:8949,9037,9087`), tras un `findMany` sin `take` del mes. Un mes grande **congela TODAS las requests**. **Fix:** generar en background/worker y streamear.
+La extracción local creó `backend/routes/fiscalExports.ts` y redujo el servidor.
+No convirtió la exportación en background: todavía hay `findMany` mensual sin
+paginación (`:75`, `:150`) y `XLSX.write` síncrono (`:124`, `:219`). El límite temporal
+del mes no limita su número de ventas. Falta medir heap/event-loop y cobros mientras
+se exporta; después aislar generación pesada y paginar/stream según el contrato.
+No declarar que congela todas las peticiones sin una reproducción de carga.
 
-### B4 — Amplificación de escritura escondida
+### B4 — Escrituras desde lecturas
 
-`getBalanceGeneral`/`getEstadoResultados` llaman `seedChartOfAccounts` (`createMany` de ~40 cuentas, `accounting.ts:74`) en **cada** carga de dashboard/estado financiero (`server.ts:1118`). **Fix:** sembrar el catálogo contable una sola vez en el onboarding, no en lecturas.
+`accounting.ts:1241` y `:1284` todavía invocan `seedChartOfAccounts` al preparar balance
+y estado de resultados. El seed usa `createMany` idempotente, pero puede amplificar
+trabajo en lecturas. Caracterizar reparación de cuentas faltantes y trasladarla a
+un punto de escritura apropiado sin romper catálogos legacy ni agotar el pool.
 
-### B5 — Dashboard SUPER_ADMIN
+### B5 — Agregaciones de plataforma
 
-`sale.aggregate` **sin filtro de tenant** sobre `createdAt` (escanea toda la tabla `Sale` de la plataforma, sin índice) + `_count` correlacionado por tenant (`server.ts:5573,5568`). **Fix:** métricas materializadas/rollup.
+Las métricas administrativas pueden consultar varios tenants por autorización de
+SUPER_ADMIN; eso no es en sí una brecha. Revisar volumen, selectividad, índices y
+necesidad de rollups con mediciones actuales. Los números de líneas y conclusiones
+de escaneos de julio no son evidencia de planes de ejecución de este candidato.
 
-### B6 — Frontend: bundle inicial pesado
+### B6 — Frontend
 
-El chunk principal del SPA es **~2.14 MB** (`~594 KB` gzip) y el PWA precachea ~2.3 MB. En POS sobre Android barato (mercado real) la primera carga duele. El blog ya está lazy-loaded (bien); el resto del SPA no está code-split por ruta. **Fix:** `manualChunks`/lazy por módulo pesado (recharts, xlsx del importador).
+El POS tiene 5.924 líneas y módulos extraídos; Vite divide chunks. No conservar como
+actual el bundle monolítico de 2,14 MB de julio. Medir artefacto del candidato y
+recorrido real en móvil/equipo económico: carga inicial, lector, entrada de teclado,
+carrito, reconexión y actualización PWA. Menos líneas no acredita menos renderizados
+ni menor latencia, y el JavaScript del POS corre en el dispositivo, no en el Droplet.
 
----
+## RAG y consumo
 
-## RAG de ingeniería — sano en el eje de escala
+El catálogo comercial usa FULLTEXT MySQL parametrizado y filtrado por tenant en
+`backend/services/whatsapp/rag.ts`. Si no hay resultados o falla FULLTEXT, usa
+`contains` en nombre/categoría/SKU con `take:100` y ranking local. Ese límite acota
+filas devueltas y ranking, **no las filas que MySQL examina** para `LIKE '%texto%'`.
+No afirmar ausencia de scan ni búsqueda semántica/híbrida vectorial: medir `EXPLAIN`
+y latencia, también cuando faltan índices o hay términos ambiguos.
 
-El retriever (`backend/services/whatsapp/rag.ts`) es **búsqueda híbrida por FULLTEXT de MySQL** (`MATCH(name, category) AGAINST(... IN BOOLEAN MODE)`), con el índice **realmente creado** (`@@fulltext([name, category])` en `schema.prisma:815` + migración `20260629_product_fulltext_catalog`), tenant-scoped y parametrizado (`$queryRaw` con `Prisma.sql` → sin inyección). El fallback léxico (`LIKE '%term%'`, `take:100` + re-rank en JS) **solo corre si el FULLTEXT no devuelve nada** → acotado. **No es un scan O(n) oculto.**
+NortexGPT interno recupera ayuda aprobada/versionada y opera con herramientas
+cerradas. Su orquestador limita cuatro iteraciones y 60 segundos, con reservas de
+presupuesto y permisos. La implementación no acredita calidad real de Haiku,
+recuperación semántica ni capacidad ilimitada. La extracción de documentos y el
+WhatsApp privado tienen workers separados en código; su despliegue y volumen
+persistente deben comprobarse, no inferirse del repositorio.
 
-Límites reales del RAG (no de escala de búsqueda):
-- **Calidad:** es keyword/FULLTEXT, no semántico — no entiende sinónimos/intención. La interfaz `CatalogRetriever` ya está lista para enchufar un vector store (Qdrant/Pinecone) sin tocar al agente.
-- **Throughput del LLM:** cada mensaje entrante dispara una llamada al modelo dentro de la `InMemoryQueue` (concurrencia fija = 2/proceso, ver A5). El cuello de botella al escalar WhatsApp es el LLM + la cola, no el retrieval.
+## Orden de trabajo y criterios de cierre
 
----
+1. D08/D09: backup real restaurable, SQL+originales, inventario de procesos y métricas
+   de cola/latencia/recursos. Sin restore vigente no promover schema.
+2. D06: consolidar pools por módulos pequeños; prueba de una conexión, concurrencia,
+   callbacks/auditoría y medición de conexiones antes/después.
+3. D10: aislar exportación pesada después de caracterizarla; mantener transacciones
+   financieras completas y medir consultas/locks antes de optimizarlas.
+4. Antes de réplicas: límites, caché, jobs y transporte comercial compartidos y
+   probados ante caída. Redis/BullMQ son opciones, no pruebas de que el sistema escala.
+5. Ejecutar la matriz sintética de 10/25/50/100 cajas del informe de capacidad en
+   hardware equivalente. Son escenarios, no capacidades aprobadas. Conciliar cada
+   escalón; registrar p95/p99, carga sostenida, margen y recuperación.
 
-## Plan priorizado
-
-1. **`Dockerfile` → schema aditivo garantizado** (quitar `--accept-data-loss` o gate). 1 línea, mata el peor riesgo (C).
-2. **Migración de índices** (B1): `Sale`, `AuditLog`, `KardexMovement`, `Expense`, `Purchase`, `Payment`. Barato, alto impacto, no cambia lógica.
-3. **Antes de la instancia #2** (A): singleton Prisma + `connection_limit`; rate-limit y caché de paywall a Redis; crons fuera del proceso web; cola WhatsApp a BullMQ.
-4. **Después** (B2–B6): paginar/agregar reportes, batchear el N+1 de la venta + acortar la tx, XLSX en background, no sembrar el catálogo por lectura, code-split del SPA.
-
----
-
-## No verificado (requiere entorno con BD)
-
-- Tiempos reales de lock/tx bajo concurrencia (B2).
-- `EXPLAIN` de las queries de reporte para confirmar el uso de índices (B1).
-- Comportamiento de `db push --accept-data-loss` ante un cambio no-aditivo real (C).
+No se midieron aquí capacidad sostenible, EXPLAIN bajo volumen, locks de producción
+ni recuperación real completa. Son pendientes verificables, no garantías ni incidentes
+productivos demostrados.

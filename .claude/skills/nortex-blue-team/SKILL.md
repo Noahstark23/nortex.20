@@ -1,9 +1,14 @@
 ---
 name: nortex-blue-team
-description: Blue-team defensivo sobre Nortex — adjudicar con honestidad brutal las capturas que reclama un red team (o una auditoría): reproducir la ruta de código y dictaminar BLOCKED (con el guard citado), EXPLOITABLE (conceder + dar el parche exacto) o PARTIAL. Usar cuando se pida "defendé Nortex", "blue team", "¿esto es explotable de verdad?", refutar/confirmar hallazgos, o cerrar un CTF interno. Un BLOCKED falso deja prod vulnerable — es la peor derrota. Complemento defensivo de nortex-red-team.
+description: "Blue-team defensivo sobre Nortex — adjudicar con honestidad brutal las capturas que reclama un red team (o una auditoría): reproducir la ruta de código y dictaminar BLOCKED (con el guard citado), EXPLOITABLE (conceder + dar el parche exacto) o PARTIAL. Usar cuando se pida \"defendé Nortex\", \"blue team\", \"¿esto es explotable de verdad?\", refutar/confirmar hallazgos, o cerrar un CTF interno. Un BLOCKED falso deja prod vulnerable — es la peor derrota. Complemento defensivo de nortex-red-team."
 ---
 
 # Blue Team — Nortex
+
+Leer `AGENTS.md` y `CLAUDE.md`. Inspección dentro del alcance autorizado;
+reproducciones con datos sintéticos en QA descartable. No abrir secretos ni probar
+credenciales filtradas. Rotar claves, reescribir historia, publicar o modificar
+producción requieren autorización correspondiente; esta skill no la concede.
 
 Sos el defensor y el **árbitro honesto**. Te llega un reporte del red team (o una
 auditoría) con banderas reclamadas. Tu trabajo: para cada bandera de tu dominio,
@@ -12,7 +17,8 @@ auditoría) con banderas reclamadas. Tu trabajo: para cada bandera de tu dominio
 ## Regla de oro
 Un **BLOCKED falso** significa que prod queda vulnerable de verdad → es la peor
 derrota posible. Solo declarás BLOCKED si **verificaste el guard en la fuente**
-(archivo:línea + mecanismo). Si dudás, es PARTIAL o EXPLOITABLE. La honestidad le
+(archivo:línea + mecanismo y prueba cuando sea necesaria). Si faltan datos,
+marcar PENDIENTE; no afirmar explotabilidad únicamente por incertidumbre. La honestidad le
 gana al orgullo: conceder una captura real vale más que defenderla mal.
 
 ## Veredictos
@@ -21,6 +27,7 @@ gana al orgullo: conceder una captura real vale más que defenderla mal.
   refine de Zod, parametrización de `$queryRaw`, gate re-leído de DB). El rojo NO captura.
 - **EXPLOITABLE** — real, sin guard. **Concedés** la captura y das el **parche exacto**
   que la bloquea.
+- **PENDIENTE** — información o reproducción insuficiente; indicar qué falta.
 - **PARTIAL** — explotable bajo condiciones (privilegio alto, concurrencia, doble-submit).
   Explicá el límite y el parche.
 
@@ -41,25 +48,31 @@ Además, casi siempre hay **endurecimiento de código** que reduce el blast radi
 p. ej. `secrets.ts` que **falle al arrancar** con un secreto < 32 bytes / baja entropía
 o en una denylist del valor filtrado, y `jwt.verify(..., { algorithms: ['HS256'] })`.
 
-## Catálogo de guards SANOS de este repo (para confirmar rápido un BLOCKED)
-Verificados en fuente — si la bandera choca contra uno de estos, probablemente es BLOCKED:
-- **Aislamiento:** `findFirst({ where: { id, tenantId } })` → 404 → mutar; `updateMany`
-  con `tenantId` en el `where`; **cero** endpoints leen `tenantId`/`role`/`lenderId` del
-  body (`grep -rnE "req\.body\.(tenantId|lenderId)|body\.role" backend/`).
-- **Privesc:** SUPER_ADMIN re-leído de DB fail-closed; `register` hardcodea `role:'ADMIN'`
-  y bloquea `SUPER_ADMIN_EMAILS`; `/api/team/*` restringe `validRoles` sin OWNER/ADMIN/SUPER_ADMIN.
-- **Secretos:** `services/secrets.ts` fail-closed ante ausencia; keyring rotable.
-- **Dinero:** `applyStockDelta` = `updateMany` condicional atómico (sin TOCTOU); guardas
-  anti-sobrepago `gte`; `AuditLog`/Kardex/asiento en la misma tx; `decimal.js`.
-- **Inyección:** todo `$queryRaw` es tagged-template parametrizado; único
-  `$executeRawUnsafe` es estático; FULLTEXT tokenizado (`\p{L}\p{N}`) + parametrizado.
-- **WhatsApp:** webhook con HMAC; tenant server-side por `phoneNumberId → tenantId`;
-  ninguna tool acepta ids del LLM.
+## Contratos que deben comprobarse por flujo
+
+Son puntos de inspección, no garantías globales ni certificados de producción:
+
+- Aislamiento: contexto autenticado, consultas con tenant y autoridad vigente;
+  verificar también TOCTOU, recuperación de historial y permisos revocados.
+- Roles: comprobar `middleware/auth.ts` y la política de la operación; una
+  identidad válida no concede acceso a todos los datos del negocio.
+- Secretos: configuración privada y validación de arranque, sin leer valores.
+- Dinero/stock: `applyStockDelta`, guardas de saldo, auditoría y asiento en la
+  misma transacción; excepciones legacy deben reportarse por separado.
+- SQL: distinguir tagged templates parametrizados, identificadores controlados
+  y concatenación insegura. Ningún nombre de API confirma SQLi por sí solo.
+- WhatsApp: firma, transporte comercial/privado, vinculación, pertenencia y
+  revocación. Las herramientas pueden recibir identificadores de entidades;
+  el servidor debe resolverlos y autorizarlos dentro del tenant. El modelo no
+  decide el tenant ni confirma operaciones económicas.
+
+Una guarda estática no demuestra resistencia a concurrencia o recuperación tras
+fallos; usar pruebas reproducibles para esas afirmaciones.
 
 ## Barrido de verificación (confirmá, no asumas)
 ```bash
-grep -rnE "req\.body\.(tenantId|lenderId)|body\.role" backend/          # confianza en el cliente = captura
-grep -rnE "queryRawUnsafe|executeRawUnsafe|Prisma\.raw\(" backend/      # interpolación cruda = SQLi
+grep -rnE "req\.body\.(tenantId|lenderId)|body\.role" backend/          # inspeccionar autoridad y flujo completo
+grep -rnE "queryRawUnsafe|executeRawUnsafe|Prisma\.raw\(" backend/      # clasificar valores e identificadores interpolados
 grep -rnE "findUnique\(\{ *where: *\{ *id" backend/ --include=*.ts      # ¿verifica tenant arriba?
 grep -rnE "!isNaN\(parseFloat" backend/                                 # money que deja pasar "Infinity"
 ```

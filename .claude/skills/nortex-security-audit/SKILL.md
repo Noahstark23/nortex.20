@@ -1,12 +1,15 @@
 ---
 name: nortex-security-audit
-description: Auditoría de seguridad e integridad de Nortex (auditar endpoints, buscar brechas cross-tenant, revisar manejo de dinero). Usar cuando se pida auditar, revisar seguridad, o antes de declarar seguro un subsistema. Los hallazgos van numerados (S-n) a docs/SECURITY_AUDIT.md.
+description: "Auditoría de seguridad e integridad de Nortex (auditar endpoints, buscar brechas cross-tenant, revisar manejo de dinero). Usar cuando se pida auditar, revisar seguridad, o antes de declarar seguro un subsistema. Los hallazgos van numerados (S-n) a docs/SECURITY_AUDIT.md."
 ---
 
 # Auditoría de seguridad de Nortex
 
-Las 6 capas del Security & Integrity Loop (CLAUDE.md) convertidas en **búsquedas
-concretas**. Cada clase de bug de abajo YA ocurrió en este repo — buscarlas primero.
+Leer `AGENTS.md` y `CLAUDE.md`. Las búsquedas siguientes localizan candidatos,
+no confirman vulnerabilidades. Auditar el checkout y alcance solicitados;
+reproducir únicamente con datos sintéticos y servicios QA descartables.
+No leer ni mostrar archivos de secretos, usar credenciales reales ni atacar
+sistemas vivos. Una auditoría no autoriza despliegues, rotaciones o mensajes.
 
 ## Barrido por clase de bug (greps de arranque)
 
@@ -33,28 +36,37 @@ grep -rnE "Math\.round\(.*\* *100\)" backend/    # redondeo float manual (usar D
 
 **Capa 5 — Entradas/inyección:**
 ```bash
-grep -rnE "queryRawUnsafe|\\\$queryRaw\(\`" backend/    # raw SQL sin Prisma.sql = hallazgo
+grep -rnE "queryRawUnsafe|\\\$queryRaw\(\`" backend/    # revisar parametrización; un tagged template no es SQL inseguro por sí mismo
 grep -rnE "app\.(post|put|patch)" backend/server.ts | grep -v "validate("   # rutas de dinero sin Zod
 ```
 - Tokens/operadores del usuario hacia FULLTEXT/SQL: sanear a alfanumérico Y parametrizar.
-- Secretos: `grep -rnE "(secret|password|key) *[:=] *['\"]" backend/` (fallbacks literales = hallazgo).
+- Secretos: usar escaneo redactado o inventario de nombres de archivos sobre el
+  código autorizado; no imprimir coincidencias con posibles claves/passwords.
+  No abrir archivos de configuración privada ni contenido histórico de secretos.
 
 **Trampas Prisma/concurrencia (clases reales del repo):**
 - `select` + `include` en la misma relación → throw silencioso.
 - Leer→validar→escribir en pasos separados (TOCTOU) → debe ser UPDATE condicional
-  (`updateMany({ where: {..., stock: { gte: qty } } })`).
-- `upsert`/`create` sobre unique sin catch `P2002`.
+  (`updateMany` condicional, bloqueo o identidad persistente según el contrato).
+  Stock nuevo se mueve mediante `applyStockDelta`, no con un segundo motor.
+- `upsert`/`create` sobre unique: comprobar contrato de conflicto/reintento; un
+  error explícito no es por sí mismo una pérdida de integridad.
 - `take: N` + re-rank en JS → resultados arbitrarios a escala.
 
 ## Verificación adversarial
 Todo hallazgo se **confirma con el código completo del handler** (leer el flujo
-entero, no solo la línea del grep) antes de reportarlo: ¿hay una verificación de
+entero, no solo la línea del grep) antes de reportarlo. Separar evidencia
+estática, defecto reproducido y riesgo pendiente. Para concurrencia, permisos
+revocados o rollback, una búsqueda no reemplaza la prueba ejecutable: ¿hay una verificación de
 propiedad arriba? ¿el middleware ya lo cubre? Falso positivo → descartar.
 
 ## Reporte
 - Numerar S-n continuando `docs/SECURITY_AUDIT.md`; tabla: id · descripción ·
-  archivo:línea · severidad (🔴/🟠/🟡) · estado (✅ FIXED / 📋 PLAN).
-- Hotfixes de aislamiento/dinero: **corregir en el mismo PR** de la auditoría.
-  Lo estructural (migraciones, soft-deletes) → plan por fases, un PR cada una.
+  archivo:línea · severidad · candidato · estado (riesgo, reproducido, reparado,
+  verificado) · evidencia y límites.
+- Si el alcance autoriza reparación, corregir y ejecutar QA proporcional; una
+  auditoría solo lectura entrega el hallazgo. Dinero/inventario requiere la
+  integración obligatoria con MySQL descartable. Un PR o producción necesitan
+  la autorización vigente correspondiente.
 - Actualizar el estado en `CLAUDE.md` §Estado actual si cambia lo "ya cumplido".
 - Nunca declarar "seguro a nivel sistema": declarar el **alcance** auditado.

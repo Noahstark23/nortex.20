@@ -6,6 +6,9 @@ La prioridad del ciclo iniciado el 2026-09-04 es validar activación y recurrenc
 
 ## Empezar por aquí
 
+- [Estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md): corte de código, QA, CI y bloqueos de promoción.
+- [Equipo de desarrollo](docs/EQUIPO_DESARROLLO_NORTEX.md): perfiles de Codex/Claude, responsabilidades y reglas de integración.
+
 - [RAG y consolidación de cuatro clientes](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md): desarrollo por etapas, recuperación, rendimiento y revisión humana.
 - [Plan de transformación](docs/PLAN_TRANSFORMACION_TOTAL_2026.md): prioridades, fases, responsables, métricas y aceptación.
 - [Auditoría general del 4 de septiembre](docs/AUDITORIA_GENERAL_2026-09-04.md): evidencia local, hallazgos y límites.
@@ -37,7 +40,7 @@ Backend: `127.0.0.1:3210`; frontend seguro: `127.0.0.1:4174`. El comando `nortex
 mise exec -- sh scripts/ci-local-safe.sh
 ```
 
-La compuerta genera Prisma, verifica tipos, ejecuta Vitest, diseño y build. Requiere configuración exclusivamente local. Si cambia lógica monetaria, ejecutar también la mutación con `NORTEX_CI_MUTATION=1`. Las suites HTTP/MySQL condicionadas necesitan un entorno QA efímero explícito: un `npm test` verde con omisiones no las reemplaza.
+La compuerta genera Prisma, verifica tipos, ejecuta Vitest, diseño y build. Requiere configuración exclusivamente local. Si cambia lógica monetaria, ejecutar también la mutación con `NORTEX_CI_MUTATION=1`. Para dinero/inventario ejecutar además `mise exec -- npm run test:integration:required`: el wrapper crea MySQL 8 descartable y exige todas las suites registradas sin omisiones. Un `npm test` verde con omisiones no reemplaza esta compuerta.
 
 Build normal: `npm run build`; build público con prerender: `npm run build:seo`. No ejecutar estos comandos con secretos de producción en el entorno: revisar las variables de build y mantener cualquier proveedor IA en backend. Las claves de IA, pagos, correo y base de datos permanecen en backend; nunca crear `.env.local` con una clave para que Vite la entregue al navegador.
 

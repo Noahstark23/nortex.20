@@ -46,3 +46,31 @@ config_file = "agents/reviewer.toml"
 [agents.docs_researcher]
 description = "Documentation specialist that verifies APIs, framework behavior, and release notes."
 config_file = "agents/docs-researcher.toml"
+
+[agents.nortex_integrator]
+description = "Integra contratos, cambios compartidos y evidencia del candidato."
+config_file = "agents/nortex-integrator.toml"
+
+[agents.nortex_finance]
+description = "Implementa compras, ventas, caja, stock y contabilidad con integridad transaccional."
+config_file = "agents/nortex-finance.toml"
+
+[agents.nortex_platform]
+description = "Trabaja en persistencia, workers, capacidad, observabilidad y recuperación."
+config_file = "agents/nortex-platform.toml"
+
+[agents.nortex_pos]
+description = "Implementa experiencia POS, accesibilidad y extracción de componentes conservando el cobro."
+config_file = "agents/nortex-pos.toml"
+
+[agents.nortex_intelligence]
+description = "Desarrolla RAG, orquestación, evaluación y canales privados autorizados."
+config_file = "agents/nortex-intelligence.toml"
+
+[agents.nortex_qa]
+description = "Verifica resultados independientes, regresión y límites de cada entrega."
+config_file = "agents/nortex-qa.toml"
+
+[agents.nortex_clean_code]
+description = "Reduce acoplamiento y tamaño por dominios con pruebas de conducta previas."
+config_file = "agents/nortex-clean-code.toml"

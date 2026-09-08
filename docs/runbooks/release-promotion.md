@@ -97,11 +97,13 @@ credenciales, query ni fragmento. El verificador de salud rechaza redirecciones 
 solo acepta API/base sanas con el SHA esperado y una respuesta que incluya
 `Cache-Control: no-store`; solicitar `no-cache` no compensa una respuesta almacenada.
 
-**Bloqueo externo actual:** este candidato no configuró ni comprobó variables,
-UUIDs, tokens o apps de Coolify reales. Tampoco existe aún una evidencia verificable
-que relacione cada URL pública con la app Coolify validada por UUID. Infraestructura
-debe proporcionar esa relación de forma saneada y registrarla antes de habilitar
-staging o producción; hasta entonces, el estado correcto es bloqueado.
+**Registro externo:** la presencia del contrato en Git no acredita configuración
+real. El estado observado se conserva en `docs/ESTADO_ACTUAL_NORTEX.md` y el
+expediente del candidato. Revalidar variables, UUID, token, relación URL↔app y pin
+antes de cada promoción. Tokens separados en GitHub no implican ACL por app en
+Coolify: si el proveedor los limita al equipo, registrar ese alcance y mantener la
+validación del UUID; no atribuir aislamiento por aplicación que el token no ofrece.
+La identidad pública no comprobada sigue bloqueando el webhook.
 
 ## Requisitos antes de solicitar producción
 

@@ -5,128 +5,97 @@ description: Despliegue y operaciones de Nortex — Docker, variables de entorno
 
 # Deploy y operaciones de Nortex
 
-Para configurar o auditar el respaldo off-site, medir RPO/RTO o ejecutar una prueba
-de restauración, cargar primero `nortex-backup-recovery`; esa skill define la compuerta.
+Leer `CLAUDE.md`, `AGENTS.md` y `docs/runbooks/release-promotion.md` antes de actuar.
+Para respaldos o un cambio de schema, aplicar también `nortex-backup-recovery`.
+Revisión documental del 2026-09-08 contra el candidato `484f58a`; comprobar nuevamente
+los contratos si los workflows o verificadores cambian.
 
-## Pipeline
-`Dockerfile`: `npm ci` → Prisma local 6.4.1 (URL dummy para generar tipos) →
-`npm run build:seo` (frontend + prerender por ruta + sitemap) →
-`npm prune --omit=dev` → `CMD ["sh", "scripts/docker-entrypoint.sh"]`.
-- El entrypoint espera conectividad MySQL, ejecuta preflights DDL acotados y luego
-  `prisma db push --skip-generate`. Arranca `NODE_ENV=production npm run start`
-  solo al terminar correctamente. `db push` no ejecuta los archivos de migración
-  ni sus backfills; revisar por separado el DDL y la migración de datos.
-- Nunca usar `--accept-data-loss`. Preflights inseguros, timeouts y advertencias
-  destructivas detienen el arranque. Esto protege datos, pero **no garantiza que
-  la instancia vieja siga sirviendo**: la disponibilidad depende de la estrategia
-  real de reemplazo de Coolify. Verificar rollback y recuperación antes de promover.
-- `NODE_ENV=production` activa el serving: `/` → `landing.html`; rutas de
-  marketing → `dist/<ruta>/index.html` prerenderizado; resto → shell del SPA;
-  assets con hash → cache 1 año.
+## Imagen y arranque
 
-## Variables de entorno críticas
-| Var | Rol |
+`Dockerfile`: `npm ci` → generar Prisma 6.4.1 con URL dummy → `npm run build:seo`
+→ `npm prune --omit=dev` → `sh scripts/docker-entrypoint.sh`.
+El runtime de desarrollo/CI se fija a Node 22.23.2; la imagen todavía declara
+`node:22-slim`, sin fijar el parche. No afirmar que esa imagen garantiza 22.23.2.
+
+El entrypoint espera MySQL, ejecuta preflights DDL acotados y luego `db push
+--skip-generate`; inicia el servidor solo si terminan correctamente. Actualmente
+usa `npx prisma`, resuelto desde las dependencias instaladas. Los comandos manuales
+de QA usan el binario local con `npx --no-install prisma`; nunca descargar otra versión.
+`db push` no ejecuta los archivos de migración ni sus backfills.
+
+Nunca usar `--accept-data-loss`. Preflight inseguro, timeout o warning destructivo
+cierran el arranque. Esto no garantiza que la instancia anterior siga sirviendo:
+comprobar la estrategia real de reemplazo y rollback de Coolify.
+
+## Contrato de promoción vigente
+
+| Etapa | Ruta y condición |
 |---|---|
-| `DATABASE_URL` | MySQL 8. Rotar si se expuso (estuvo commiteada en el historial) |
-| `JWT_SECRETS` | Keyring `"nuevo,viejo"` — el 1º firma, todos verifican → rotación sin desloguear. (`JWT_SECRET` legacy funciona) |
-| `NORTEX_LEDGER_KEYS` | `"v1:<clave>"` activa el libro firmado de caja; sin ella el sistema opera igual (gate suave) |
-| `NORTEX_DATA_KEYS` | Cifrado field-level AES-GCM (tokens WhatsApp) |
-| `ANTHROPIC_API_KEY` + `WHATSAPP_LLM=claude` | Activan el brain LLM del bot (default: MenuBot sin LLM) |
-| `STRIPE_*` | Suscripciones |
+| CI | `ci.yml`: solo verificación, sin staging, producción, webhooks ni secretos de despliegue. |
+| Staging | `release-staging.yml`, dispatch manual en `main`, `candidate_sha` completo y `confirmation=STAGE <SHA>`. Exige CI terminal exitoso del candidato y `NORTEX_DEPLOY_ENABLED=true`. |
+| Producción | `release-production.yml`, dispatch manual en `main`, `candidate_sha` completo y `confirmation=PROMOTE <SHA>`. Exige `NORTEX_PRODUCTION_DEPLOY_ENABLED=true`, CI terminal exitoso, staging manual exitoso y salud del mismo SHA. |
+| Revalidación | Después de aprobar el environment se vuelven a comprobar main, candidato, evidencia y destino antes del webhook. El checkout y el health quedan fijados al SHA. |
 
-**Jamás** commitear `.env*` (ya pasó: `.env.backup` con JWT_SECRET en el
-historial → por eso la política de rotación).
+Un push, merge o dispatch de CI no promueve ningún entorno. No reutilizar la receta
+histórica `production_approved`/`production_sha` dentro de CI. Una autorización de
+producto y una aprobación técnica del environment son evidencias distintas.
+No solicitar de nuevo autorización para una acción ya cubierta explícitamente por
+la sesión; verificar que cubra el candidato y entorno concretos antes de ejecutarla.
 
-## Checklist de release
-1. Identificar el SHA completo candidato, base `main`, alcance autorizado y diff.
-   Preservar cambios locales; preparar en un candidato aislado cuando corresponda.
-2. Ejecutar Prisma generate, TypeScript, Vitest, diseño, auditoría de dependencias,
-   mutación sin bajar umbrales y `npm run build:seo`. Para dinero/inventario,
-   `npm run test:integration:required` exige MySQL descartable y cero omitidos.
-3. Exigir CI terminado y verde para el mismo SHA: `verify`, `integration-required`,
-   `deploy-schema-smoke` y `backup-restore-smoke`. Verificación local no equivale a CI.
-4. Revisar diff de schema aditivo y probar upgrade con datos, estados parciales y
-   reejecución. Verificar backfills si desglosa agregados.
-5. Backup ANTES de desplegar cambios de schema: aplicar la compuerta de
-   `nortex-backup-recovery` y exigir evidencia off-site restaurable de la base real.
-6. Verificar staging: HTTP correcto, `ok=true`, `db=up` y `commit` igual al SHA.
-   Ejecutar el smoke autenticado de negocio en un tenant sintético.
-7. Producción requiere autorización explícita y trazable para ese SHA, distinta
-   de merge o staging. En el workflow preparado el 2026-09-04, un `push` jamás
-   habilita producción. Solo `workflow_dispatch` con `production_approved=true`
-   y `production_sha` completo igual al SHA del workflow puede solicitar la
-   aprobación del environment `production`. Los valores por defecto no promueven.
-8. Después de esa aprobación, `authorize-production-release.mjs` vuelve a comprobar
-   staging y el HEAD remoto de main antes del webhook. Luego consulta, solo por
-   GET, la aplicación Coolify indicada por un único UUID del webhook HTTPS:
-   `git_commit_sha` debe coincidir exactamente, `build_pack` debe ser `dockerfile`
-   y `settings.is_auto_deploy_enabled` debe ser el booleano `false`. Exige token
-   API; no sigue redirecciones ni imprime la respuesta. Ausencia, error de red,
-   pin `HEAD`/rama, SHA distinto o configuración incompleta cierran la compuerta.
-9. Inspeccionar también las protecciones vivas de GitHub y la configuración de
-   Coolify: auto deploy apagado, aprobación de production, ramas permitidas y
-   fijación probada por SHA. El operador debe fijar el commit de la aplicación con
-   autorización para el candidato concreto; esta compuerta nunca lo modifica.
-   Hasta verificar el pin, el bloqueo es ejecutable, no solo una regla documental.
-   No cambiar configuración de Coolify durante la promoción; una lectura no impide
-   escrituras administrativas concurrentes. Verificar el SHA servido al terminar.
-   Estado y pruebas del parche: `docs/releases/2026-09-04-production-gate.md`.
+El contrato Coolify vive en `scripts/verify-coolify-staging-target.mjs` y
+`scripts/verify-coolify-production-target.mjs`. Cada environment debe configurar:
 
-Este runbook no autoriza push, merge, dispatch, aprobación de environment,
-webhook, configuración remota ni despliegue. Registrar preparación local, CI,
-staging y producción como estados separados. Un cambio de compuerta requiere
-pruebas negativas del YAML real y del comando ejecutado antes del webhook.
+- Origen HTTPS confiable `COOLIFY_*_API_ORIGIN`, UUID `COOLIFY_*_APPLICATION_UUID`
+  y webhook del mismo origen/UUID. No derivar la identidad desde el webhook.
+- `COOLIFY_*_READ_TOKEN` de solo lectura en su environment. El verificador no sigue
+  redirecciones ni imprime respuestas; el token no debe viajar a CI ni al otro entorno.
+- `git_commit_sha` exactamente igual al candidato, build desde Git **`dockerfile`
+  o `dockercompose`**, y `settings.is_auto_deploy_enabled` booleano `false`.
+- Si el webhook exige bearer, un `COOLIFY_*_DEPLOY_TOKEN` separado con permiso
+  `deploy`; no mezclar lectura con `write`, `read:sensitive` o `root`.
 
-## Promoción de producción: estados y autorización
+Tokens distintos por environment no prueban aislamiento entre aplicaciones. Comprobar
+su equipo y alcance efectivo; registrar vencimiento y responsable de renovación.
+Los verificadores leen el pin, nunca lo escriben. Un token existente, una app sana
+con otro SHA o un environment aprobado no subsanan identidad/pin incompletos.
 
-El estado de una release no se infiere. Regístralo separadamente como
-`LOCAL_VERIFICADO`, `CI_VERDE`, `STAGING_SHA_VERIFICADO`,
-`PRODUCCION_AUTORIZADA`, `PRODUCCION_SANA_SHA` y `OBSERVADA`; cada uno requiere su
-propia evidencia. Un Environment aprobado es una barrera técnica, no sustituye la
-autorización de producto.
+## Variables del producto
 
-`ci.yml` puede actualizar staging desde un push a `main`, pero no contiene
-producción. La única ruta técnica a producción es
-`.github/workflows/release-production.yml`: el responsable autorizado selecciona
-`main`, aporta el SHA completo actual, escribe `PROMOTE <SHA>`, y el flujo comprueba
-staging y `main` antes y después de la aprobación del environment. Nunca ejecutes,
-apruebes, dispares webhooks ni cambies variables/secrets/protecciones de GitHub sin
-autorización explícita que incluya alcance, SHA, ventana, responsable y rollback.
-Antes del webhook, el flujo consulta Coolify con el secret de producción
-`COOLIFY_PROD_READ_TOKEN`: exige destino único fijado manualmente al SHA, build
-desde Git (`dockerfile` o `dockercompose`) y Auto Deploy apagado. Ese token de
-lectura es obligatorio, con privilegio mínimo, y nunca puede viajar a CI o staging.
-Si el webhook requiere bearer, `COOLIFY_PROD_DEPLOY_TOKEN` es un secret separado
-limitado a `deploy`; no combines `read`, `write`, `read:sensitive` ni `root` en
-una sola credencial. El workflow solo verifica el pin de Coolify, nunca lo escribe.
+| Variable | Contrato |
+|---|---|
+| `DATABASE_URL` | MySQL 8 privado. No leer ni mostrar su valor. |
+| `JWT_SECRETS` | Keyring rotable; `JWT_SECRET` sigue siendo compatibilidad legacy. |
+| `NORTEX_LEDGER_KEYS` | Habilita firmas. Sin claves, el código conserva movimientos sin firma; no acreditar integridad criptográfica por salud HTTP. |
+| `NORTEX_DATA_KEYS` | Cifrado de campos sensibles; verificar presencia sin exponer claves. |
+| `ANTHROPIC_API_KEY` | Privada del proceso autorizado. La clave sola no habilita NortexGPT ni acredita evaluación real. |
+| `WHATSAPP_LLM` | Selector del brain comercial; separado de los flags del asistente privado. |
+| `NORTEX_ASSISTANT_*` / `NORTEX_PROMOTIONS_ENABLED` | Interruptores independientes de capacidades; además rigen configuración de tenant, usuario y permisos. |
+| `NORTEX_ASSISTANT_STORAGE_DIR` | Ruta privada absoluta fuera del proyecto; en producción su ausencia bloquea adjuntos. Requiere persistencia y acceso compartido con workers. |
 
-La receta canónica, las condiciones externas y los pasos de rollback viven en
-`docs/runbooks/release-promotion.md`. Los documentos de `docs/releases/` son
-evidencia histórica, no instrucciones ejecutables.
+No guardar claves en `.env*` versionados, argumentos, logs, capturas o `VITE_*`.
+El despliegue completo del asistente también requiere declarar sus workers, salud,
+volumen privado y respaldo SQL+originales; el Compose del repo por sí solo no lo acredita.
 
-## Smoke tests post-deploy
-Solo dentro de un despliegue autorizado. Primero usar
-`node scripts/verify-deployed-release.mjs <URL> <SHA-completo>`: una home sana no
-demuestra versión ni integridad de negocio. Para SEO, comprobar contenido, assets
-y marcadores `data-prerender="seo"` / `nx-public-prerender` en las rutas generadas.
-```bash
-curl -s https://somosnortex.com/ | grep -c "Tu negocio ya vende"      # landing viva
-curl -s https://somosnortex.com/ferreterias | grep -o '<title>[^<]*'  # prerender por-ruta
-curl -s https://somosnortex.com/sitemap.xml | grep -c "<loc>"         # sitemap (70+)
-# Con token SUPER_ADMIN:
-#   GET /api/admin/metrics        → montos como string decimal
-#   GET /api/admin/ledger/verify/<tenantId> → { ok: true }
-```
-Para releases financieras: venta, pago, devolución, reportes, cierre, aislamiento
-tenant e idempotencia en un tenant sintético autorizado; reconciliar stock,
-Kardex, asiento, auditoría y recibo. En producción autorizada, observar al menos
-30 minutos. Un 503 transitorio solo se acepta después de recuperar salud y SHA
-con reintentos acotados. Reportar omisiones; no usar datos de clientes como fixtures.
+## Compuertas y cierre
 
-## Diagnóstico rápido
-- Build falla en Docker con error de sintaxis TS → casi siempre `data/blog-posts.ts`
-  o un merge apilado (ver nortex-seo §trampas).
-- `prisma` se queja del schema con mensajes de v7 → `node_modules` desincronizado.
-- Panel admin vacío → revisar `select`+`include` en la misma relación (throw silencioso).
-- El bot de WhatsApp no responde → ¿`WHATSAPP_LLM`/`ANTHROPIC_API_KEY`? ¿la
-  conversación quedó en `HUMAN` (handoff)?
+1. Fijar candidato completo, diff de schema, alcance, responsable y recuperación.
+2. Ejecutar Prisma validate/generate, tipos, Vitest, diseño, build/SEO y auditoría
+   de dependencias. Dinero/inventario exige integración MySQL descartable sin casos
+   omitidos y mutación pertinente; no reducir alcance, pisos ni umbral.
+3. Comprobar CI terminal verde del SHA: `verify`, `integration-required`,
+   `deploy-schema-smoke`, `backup-restore-smoke`. El smoke de CI usa datos sintéticos.
+4. Para schema, exigir respaldo real off-site reciente y restore drill vigente
+   conforme a `nortex-backup-recovery`; revisar upgrade, estados parciales y reejecución.
+5. Verificar protecciones GitHub vivas, Auto Deploy apagado, identidad y pin Coolify.
+   Ejecutar la promoción manual y el smoke autenticado de staging en tenant sintético.
+6. Promover producción solo dentro de autorización vigente. Comprobar salud con
+   `scripts/verify-deployed-release.mjs`: HTTP, API/base, `Cache-Control: no-store`
+   y SHA exacto. Verificar SEO y activos cuando corresponda.
+7. Para flujos financieros, conciliar venta/pago/devolución/cierre con stock,
+   Kardex, deuda, asiento, auditoría y recibo, sin usar clientes como fixtures.
+   Observar al menos 30 minutos tras producción autorizada; reportar omisiones.
+
+Registrar por separado código local, CI, staging, autorización, producción sana y
+observación. Un rollback de aplicación conserva la migración aditiva: no borrar
+columnas para volver atrás. Los informes de `docs/releases/` son evidencia histórica;
+la receta vigente es `docs/runbooks/release-promotion.md`.

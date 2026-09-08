@@ -6,8 +6,10 @@ description: Configura, audita y prueba respaldos MySQL 8 de Nortex en almacenam
 # Backup y recuperación de Nortex
 
 El resultado válido es un respaldo **off-site, reciente y restaurable**, con evidencia
-redactada. Un job verde, un dump local o el smoke de CI no prueban que producción esté
-respaldada.
+redactada. Distinguir copia remota existente de recuperación acreditada: un objeto
+con hash correcto demuestra transferencia íntegra, pero no demuestra que MySQL lo
+importe ni que la aplicación recupere sus invariantes. Un job verde, un dump local
+o el smoke de CI tampoco sustituyen un restore drill de la base real.
 
 ## Límites operativos
 
@@ -16,14 +18,18 @@ respaldada.
   `scripts/verify-backup-restore.sh`.
 - MySQL 8 es canónico. El destino debe estar separado del Droplet y ser privado;
   preferir una credencial limitada al bucket y una política de retención del proveedor.
-- Nunca leer, copiar ni mostrar valores de variables, `.env*`, URLs con credenciales,
-  access keys, dumps o datos de clientes. Verificar solo presencia, estado y metadata
-  no sensible. No usar `set -x`, `env`, `printenv` ni `docker inspect` sobre producción.
+- No abrir ni mostrar valores de variables, `.env*`, URLs con credenciales, access
+  keys o contenido de dumps/clientes en el chat o herramientas que lo devuelvan. El
+  traslado/importación autorizado procesa el archivo dentro del entorno controlado;
+  la evidencia visible contiene solo presencia, estado y metadata no sensible. No usar
+  `set -x`, `env`, `printenv` ni `docker inspect` sobre producción.
 - Si una herramienta no puede crear o cargar una credencial sin devolverla en claro,
   detenerse y pedir que el operador la cargue directamente en el gestor de secretos.
 - Provisionar recursos con costo, crear/rotar credenciales, ejecutar jobs contra
   producción, restaurar, mergear y desplegar son mutaciones distintas: confirmar que
-  cada una está cubierta por autorización explícita. Nunca restaurar sobre producción.
+  cada una está cubierta por autorización explícita. No solicitar otra vez una
+  autorización ya presente en la sesión; delimitar el destino y la operación
+  concretos. Nunca restaurar sobre producción.
 
 ## Configuración
 
@@ -53,15 +59,30 @@ respaldada.
    salida exitosa. Confirmar en el almacenamiento remoto el objeto y
    `last-backup.json`; validar únicamente timestamp UTC, bytes, SHA-256, número de
    tablas y `verificado=true`, sin imprimir el documento completo ni el destino.
-3. Descargar el objeto real más reciente a un entorno controlado y efímero. Comparar
-   su SHA-256 con la evidencia y ejecutar `scripts/verify-backup-restore.sh` contra una
+3. Descargar el objeto real más reciente a un entorno controlado y efímero, con
+   destino descartable y recursos delimitados antes de empezar. Preferir un entorno
+   separado; si se autoriza compartir host, medir memoria disponible/swap y fijar
+   límites de memoria/CPU sin modificar los contenedores ni volúmenes del negocio.
+   Comparar su SHA-256 con la evidencia y ejecutar `scripts/verify-backup-restore.sh` contra una
    base MySQL 8 desechable cuyo nombre contenga `restore`, `test`, `tmp` o `scratch`.
    No usar `BACKUP_RESTORE_FORCE=1`. No apuntar `RESTORE_DATABASE_URL` a producción.
 4. Para comparar conteos, usar un origen congelado/coherente con el dump; no comparar
    horas después contra una producción que continúa recibiendo ventas. Registrar
    inicio/fin, tablas, filas y resultado; destruir la copia temporal de forma segura
    cuando la política y la autorización lo permitan.
-5. Medir RPO como la antigüedad del último backup recuperable y RTO como el tiempo
+5. Para NortexGPT, respaldar y restaurar también el volumen privado de originales.
+   `backup-db.sh` genera el SQL; no copia adjuntos. Conservar un manifiesto coherente
+   de referencias/archivos y hashes, con acceso privado. Durante el drill mantener
+   ejecución, extracción, promociones y envíos apagados. Validar referencias,
+   permisos, archivos faltantes/alterados y evidencia vinculada a compras antes de
+   habilitar workers. El archivo sintético de QA no sustituye esta recuperación.
+6. Si la terminal trunca un comando o no se obtiene estado final verificable,
+   clasificar el intento como no acreditado. No darlo por iniciado o aprobado por
+   ver el comando escrito. Comprobar por separado proceso/contenedor, resultado de
+   importación y cleanup de los recursos exactos creados. No repetir operaciones
+   con efectos inciertos hasta verificar su estado; no dejar dumps en `/tmp` al
+   cerrar el ensayo.
+7. Medir RPO como la antigüedad del último backup recuperable y RTO como el tiempo
    completo desde iniciar la recuperación hasta validar base y aplicación, no solo el
    tiempo de importar el dump. Repetir el drill después de cambiar proveedor, scripts,
    credenciales o versión de MySQL, y con la cadencia operativa aprobada.
@@ -72,7 +93,8 @@ Antes de un cambio de schema exigir, para la base real:
 
 - backup off-site posterior al punto de corte acordado y dentro del RPO;
 - integridad y presencia remota confirmadas;
-- restore drill vigente y exitoso sobre MySQL 8 desechable;
+- restore drill vigente y exitoso sobre MySQL 8 desechable, con originales privados
+  reconciliados cuando el flujo incluya adjuntos;
 - CI, preflight aditivo y plan de rollback verdes.
 
 Si falta cualquiera, **fail closed**: no marcar listo, no solicitar staging ni
@@ -86,3 +108,7 @@ Reportar proveedor/región, bucket identificado de forma no sensible, hora y eda
 último backup, checksum comparado (abreviado), resultado y duración del restore drill,
 RPO/RTO observado, retención, alertas y decisión `GO`/`NO-GO`. No afirmar “backup
 resuelto” sin objeto remoto y restauración real verificados.
+
+La evidencia operativa fechada vive en `docs/CAPACIDAD_DROPLET_NORTEX_2026-09-08.md`.
+Volver a comprobar frescura, destino, retención y restore vigente en cada promoción;
+una observación histórica no mantiene abierta la compuerta indefinidamente.

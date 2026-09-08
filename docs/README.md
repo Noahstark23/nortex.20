@@ -1,3 +1,5 @@
+> **Entrada vigente:** [estado actual](ESTADO_ACTUAL_NORTEX.md), [plan de estabilidad y RAG](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md), [equipo](EQUIPO_DESARROLLO_NORTEX.md) y [mantenimiento documental](MANTENIMIENTO_DOCUMENTAL_NORTEX.md). Los informes fechados conservan evidencia histórica; su presencia en este índice no acredita su vigencia operativa.
+
 # Documentación de Nortex
 
 Actualización del índice: 2026-09-08. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.

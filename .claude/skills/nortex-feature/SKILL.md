@@ -1,125 +1,71 @@
 ---
 name: nortex-feature
-description: Loop de ingeniería para construir features en Nortex de punta a punta (recon → rama → schema/backend/frontend → rondas de QA → PR draft). Usar SIEMPRE que se implemente, refactorice o corrija código de Nortex — es el método de trabajo del proyecto, no una guía opcional.
+description: Método para implementar, reparar e integrar cambios de Nortex en un candidato aislado, con contratos, propietarios y verificación proporcional. Publicar o desplegar exige el alcance autorizado.
 ---
 
-# Loop de ingeniería de Nortex
+# Método de desarrollo Nortex
 
-Método probado con el que se construyó el sistema (mayoreo, multi-bodega, OC, series,
-RAG de WhatsApp, dashboard admin). La regla madre: **verificar > asumir** — cada
-edición se ancla leyendo el código real primero, y cada entrega se prueba antes
-del push. Nada de "debería funcionar".
+Fuentes canónicas: `AGENTS.md` y `CLAUDE.md`. Leelas completas y ejecutá
+`git status --short --branch` antes de editar. Esta skill organiza el trabajo;
+`nortex-clean-code` detalla el diseño y `nortex-qa` las compuertas.
 
-## Flujo (en orden, sin saltarse pasos)
+## 1. Preparar y caracterizar
 
-### 0 · Entorno
-- Leer `AGENTS.md`, `CLAUDE.md`, `git status --short --branch` y versiones del runtime.
-- Con cambios existentes, conservar checkout, índice y rama. Preparar un candidato
-  aislado que incluya esos cambios si son parte del producto revisado; documentar
-  origen y comparar hashes antes de reintegrar. No usar `checkout -B`, reset, clean,
-  rebase o reemplazos completos de archivos para preparar una reparación.
-- Usar dependencias bloqueadas (`npm ci` en el candidato cuando haga falta).
-  El proyecto fija Prisma 6.4.1; no descargar una versión distinta con `npx`.
-- No leer secretos ni conectar una base real para pruebas. Generar credenciales
-  efímeras y mantenerlas fuera del repositorio y de los reportes.
+- Preservá rama, índice y cambios existentes. Trabajá en el candidato aislado
+  autorizado; puede ser una copia ordinaria, no necesariamente un worktree.
+  No crear/cambiar ramas o worktrees, limpiar, restaurar ni hacer rebase sin el
+  alcance correspondiente. Registrá origen y hashes antes de reintegrar.
+- Node `22.23.2` vía `mise exec --`, npm y `package-lock.json`; dependencias con
+  `mise exec -- npm ci` en el candidato. Prisma local `6.4.1` mediante
+  `mise exec -- npx --no-install prisma`. No descargar otro binario con npx.
+- Candidato y fixtures sin archivos de secretos ni datos de producción. No leer
+  `.env*`, tokens o credenciales. Un entorno vacío no impide que una herramienta
+  cargue archivos locales automáticamente; no copiarlos al candidato de QA.
+- Buscá con `rg` el flujo real, sus consumidores, schemas, permisos y pruebas.
+  Para un defecto, reproducí entrada y salida incorrecta. Para una extracción,
+  ejecutá primero una prueba de la conducta que debe conservarse.
 
-### 1 · Recon (antes de diseñar)
-- `rg -n` los términos del dominio: ¿ya existe algo? ¿dónde viven los patrones?
-- Leer el modelo Prisma tocado, el handler análogo más cercano y el componente destino.
-- Ubicar **anclas de edición exactas** (Read del bloque) — los line numbers se mueven;
-  editar por string único, nunca por número de línea recordado.
-- Si el pedido nombra un archivo ("Dashboard.tsx"), confirmar que ES el archivo real
-  (el Command Center resultó ser `SuperAdmin.tsx`; la landing de prod es `landing.html`,
-  no `LandingPage.tsx`).
+## 2. Contrato y ejecución
 
-### 2 · Diseño mínimo
-- Definir contrato, propietario de cada archivo y comprobación de aceptación.
-- Reparar la autoridad existente de dinero/inventario; no construir un motor
-  alternativo para esquivar el defecto. Extraer responsabilidades al intervenirlas
-  con pruebas del comportamiento previo. No elevar presupuestos para acomodar deuda.
-- Elegir el cambio más pequeño que resuelve el caso y sus efectos relacionados.
-  Un cambio aditivo también puede aumentar riesgo: justificarlo con evidencia.
+- Definí resultado, errores, permisos, efectos e identidad idempotente. Asigná un
+  propietario por dominio y un integrador por archivo compartido antes de delegar.
+- Módulos nuevos fuera de `backend/server.ts` y `components/POS.tsx`; estos componen.
+  Reutilizá servicios del dominio, cliente Prisma compartido, Decimal,
+  `applyStockDelta` y auditoría atómica. Políticas de roles se consultan en código.
+- Modificá schema solo si hace falta, con cambios aditivos y migración MySQL.
+  El despliegue vigente usa preflight y `db push`; SQL/DML versionado no demuestra
+  que un backfill se ejecutó. Seguí `nortex-migration` y comprobá expansión,
+  reconciliación y reejecución. Nunca `--accept-data-loss`.
+- Conservá contratos compartidos de API/UI. Para cantidades, usá validadores
+  existentes: no truncar medidas ni permitir fracciones en unidades contadas.
+- Actualizá generación Prisma cuando cambie schema; probá funciones importadas del
+  producto. No crear fórmulas paralelas ni trasladar todo el monolito a un hook.
+- En extracciones, reportá delta de origen, destinos y suma; bajá los presupuestos
+  ejecutables en el mismo cambio y conservá las garantías de pruebas existentes.
 
-### 3 · Implementación (orden fijo)
-1. **Schema** (`backend/prisma/schema.prisma`): cambios **aditivos** con comentario
-   del porqué. Validar: `DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma validate --schema=backend/prisma/schema.prisma`
-2. **Migración** (`backend/prisma/migrations/<fecha>_<nombre>/migration.sql`):
-   SQL MySQL (backticks). ⚠️ El deploy usa `prisma db push` que **solo aplica DDL,
-   nunca DML** → los backfills de datos van en la aplicación (patrón perezoso:
-   la primera escritura siembra la fila; carrera P2002 → el perdedor reintenta
-   como incremento).
-3. **Backend**: endpoints/handlers siguiendo los patrones obligatorios (abajo).
-4. **Tipos compartidos** (`types.ts`) y **frontend** (interfaz local del componente
-   también — varios componentes duplican su `interface Product`).
-5. `npx prisma generate` tras tocar el schema (el router nuevo lo necesita para tipar).
+## 3. Verificar y resolver
 
-### 4 · Rondas de QA
-1. **Reproducción**: una prueba contra la función o ruta real falla antes de la
-   reparación. No copiar fórmulas a `.cjs`: una réplica puede pasar mientras el
-   producto sigue roto. Aseverar resultados independientes y efectos persistidos.
-2. **Regresión y tipos**: casos límite, errores, tenant/roles y sesión; `tsc --noEmit`,
-   Prisma validate y build si corresponde. No rebajar aserciones para ocultar fallos.
-3. **Dinero e inventario**: `npm run test:integration:required` con MySQL 8 local,
-   `DATABASE_URL` de base `nortex_qa`, `nortex_quality` o `nortex_test` y
-   `NORTEX_QA_DATABASE_ACK=disposable-database`. Preparar el schema únicamente allí.
-   El runner inicia su backend, genera claves temporales, exige salud y ejecuta todas
-   las suites requeridas sin omisiones. Reintentos, duplicados, rollback y conflictos
-   se verifican por sus efectos, no solo por HTTP 200.
-4. **Diseño y mutación**: `npm run check:design` y `npm run test:mutation` cuando aplica.
-   Realinear rangos Stryker si se mueven funciones; mantener el umbral y comprobar
-   mutantes ejecutados. No presentar un porcentaje parcial como cobertura global.
-5. **Navegador**: recorrer el flujo afectado en el candidato y documentar resolución,
-   datos sintéticos y resultado. Separar QA de software de equipos físicos y usuarios.
+Aplicá `nortex-qa`: pruebas focales y regresión, Prisma generate/validate,
+TypeScript, Vitest, sistema de diseño y build. Dinero/inventario exige además
+`mise exec -- npm run test:integration:required`: el wrapper crea MySQL 8 efímero,
+no requiere suministrarle una conexión. Mutación cuando corresponda, sin reducir
+umbrales ni alcance. UI requiere recorrido afectado, carrito, lector/atajos y
+estados de error; una pantalla abierta no prueba una venta.
 
-### 5 · Entrega
-- Registrar archivos, motivación, pruebas con conteos, fallos resueltos y límites.
-- Reintegrar solo cambios propios después de comprobar que el origen no cambió;
-  preservar el trabajo previo y el estado del índice.
-- Un commit o PR autorizado describe el problema y el comportamiento resultante.
-  No ejecutar push, merge o despliegue por ser el siguiente paso de esta guía.
-- Antes de promover se exige CI del candidato y staging del mismo SHA; producción
-  conserva su autorización y verificación propias. Un resultado local no las sustituye.
+Un fallo material de integridad bloquea la entrega del flujo. Corregilo dentro del
+alcance y repetí la verificación afectada. Un bloqueo externo se informa con
+acción pendiente; no se convierte en PASS ni obliga por sí solo a pedir una nueva
+autorización para trabajo ya autorizado.
 
-### 6 · Integración y conflictos
-- Inspeccionar ambos lados y el ancestro. Resolver en aislamiento, conservando los
-  cambios ajenos; no reemplazar archivos enteros con `--theirs` ni con versiones viejas.
-- Volver a ejecutar las comprobaciones afectadas por la resolución y documentar el
-  candidato preciso. Si cambian los archivos originales, integrar el cambio nuevo
-  antes de aplicar el parche, sin sobreescribirlo.
+## 4. Integrar y entregar
 
-## Patrones obligatorios del repo
-
-| Regla | Cómo |
-|---|---|
-| Tenant SOLO del JWT | `req.tenantId`/`req.userId`/`req.role` (los pone `authenticate`); JAMÁS del body/query. Toda query de negocio filtra por `tenantId`; `update/delete` por id → `findFirst({id, tenantId})` primero |
-| Dinero | `decimal.js` (`new Decimal(x.toString())`), nunca `parseFloat` para calcular. `price/cost/wholesale/pack` siguen siendo Float legacy en este schema; su migración exige expansión, backfill y conciliación por agregado, sin sweep global. Campos monetarios nuevos: `Decimal` con precisión explícita |
-| Stock | SIEMPRE vía `applyStockDelta` (`backend/services/stockService.ts`): UPDATE condicional atómico + row-lock + read-back; acepta `warehouseId` opcional. Nunca `product.update({stock})` directo |
-| Auditoría | Operación que mueve dinero/inventario → `auditLog.create` con before/after **dentro de la misma transacción** |
-| Validación | Zod en el body cuando hay dinero; inputs opcionales numéricos: `''`/null limpia → null, si viene valor → `> 0` finito; validación cruzada de updates parciales sobre el **estado final** (leer la fila existente) |
-| Roles | Mutaciones sensibles: `checkRole(['OWNER','ADMIN','MANAGER'])` según el caso |
-| Kardex | Todo movimiento de stock deja `KardexMovement` con `stockBefore/After` reales (del read-back, no calculados aparte) |
-| Concurrencia | Guard + escritura en el MISMO UPDATE (`updateMany({where: {..., stock: {gte: qty}}})`); upsert con unique → catch `P2002` y reintentar como update |
-| Respuestas | Errores en español nica; `res.status(4xx).json({error})`; 500 con `console.error` |
-
-## Trampas conocidas (todas pasaron de verdad)
-- **`npx` sin node_modules sincronizado** → prisma 7 fantasma. `npm install` primero.
-- **`take: N` y re-rank en JS** → top-N arbitrario a escala; el ranking va en SQL
-  (`ORDER BY` relevancia / FULLTEXT).
-- **Prisma `select` + `include` en la misma relación** → throw silencioso (lista vacía).
-- **Backfill que siembra con el agregado completo** → doble conteo si otras filas ya
-  atribuyen parte; sembrar con `agregado − Σ otras` (SUM con `FOR UPDATE`).
-- **`<button>` dentro de `<button>`** → HTML inválido; la affordance extra va en otra
-  zona (la línea del carrito, no la tarjeta).
-- **`parseInt` sobre cantidades** → trunca fraccionables (kg/litro); usar `parseFloat`.
-- **Línea de carrito que sobreescribe `price`** sin guardar `basePrice` → no puede
-  volver al precio de detalle al bajar cantidad.
-- **Merges manuales de ramas paralelas** → versiones apiladas + build roto; ver §6.
-
-## Definition of Done
-- [ ] `tsc --noEmit` 0 errores nuevos · `prisma validate` OK
-- [ ] Rondas de QA corridas y hallazgos corregidos (no documentados-y-dejados)
-- [ ] Aislamiento por tenant verificado en todo lo nuevo
-- [ ] Sin regresión: defaults preservan comportamiento; servicios core intactos
-- [ ] `npm run build` OK si se tocó frontend
-- [ ] Migración aditiva presente si se tocó el schema
-- [ ] PR draft con QA documentada · `✓ Security & Integrity Loop superado` con su alcance
+- Compará fuente y candidato antes de reintegrar solo archivos propios. Si cambió
+  el origen, incorporá esa diferencia sin sobrescribir el trabajo ajeno.
+- Conflictos: inspeccioná ambos lados y ancestro; resolvé semánticamente y repetí
+  pruebas. No usar `--ours`/`--theirs` indiscriminadamente ni apilar duplicados.
+- Entregá candidato identificable, diff, resultados ejecutados, omisiones, fallos
+  y riesgos pendientes. Separá código, QA local, modelo real, piloto y despliegue.
+- Commit/PR/push/merge solo si están autorizados; no son un requisito implícito
+  para cerrar una reparación. Release sigue `docs/runbooks/release-promotion.md`:
+  CI terminal, staging del mismo SHA y autorización de producción son evidencias
+  separadas. Un reporte histórico no sustituye ninguna de ellas.

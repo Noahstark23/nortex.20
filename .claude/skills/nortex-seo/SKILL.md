@@ -1,9 +1,14 @@
 ---
 name: nortex-seo
-description: Trabajo de SEO/marketing en Nortex — landing, blog, prerender, sitemap, keywords. Usar al tocar contenido de marketing, artículos del blog, landings de nicho, o al investigar por qué algo no indexa. El sistema tiene arquitectura propia que NO es el SPA.
+description: "Trabajo de SEO/marketing en Nortex — landing, blog, prerender, sitemap, keywords. Usar al tocar contenido de marketing, artículos del blog, landings de nicho, o al investigar por qué algo no indexa. El sistema tiene arquitectura propia que NO es el SPA."
 ---
 
 # SEO y marketing de Nortex
+
+Leer `AGENTS.md` y `CLAUDE.md`. Preservar trabajo existente y diseño aprobado.
+Datos fiscales/comerciales publicados requieren fuente vigente y revisión humana;
+una constante del ERP no certifica una afirmación legal. Esta skill no autoriza
+publicar, modificar DNS, desplegar ni contactar terceros.
 
 ## Arquitectura (lo no-obvio primero)
 - **La home `/` de producción es `public/landing.html`** (estática, editorial,
@@ -34,19 +39,24 @@ description: Trabajo de SEO/marketing en Nortex — landing, blog, prerender, si
 
 ## Verificación (siempre tras tocar marketing)
 ```bash
-npx tsc --noEmit                 # blog-posts.ts es TS: una coma rota tumba el build
-npm run build:seo                # debe terminar "✅ Prerender: N rutas ... sitemap"
+mise exec -- npx --no-install tsc --noEmit                 # blog-posts.ts es TS: una coma rota tumba el build
+mise exec -- npm run build:seo   # debe terminar "✅ Prerender: N rutas ... sitemap"
 grep -c "<title>" dist/blog/<slug-nuevo>/index.html   # título único presente
 ```
 - N rutas debe CRECER al agregar contenido; si cae, algo se desconectó.
-- Tag-balance si se editó `landing.html`: `grep -o '<div' | wc -l` == `</div>`.
+- Comprobar HTML generado, enlaces/canonical, contenido visible y recorrido
+  móvil/escritorio del mismo escenario. Contar etiquetas es un diagnóstico
+  auxiliar, no una prueba de estructura ni evidencia visual suficiente.
 
 ## Trampas reales del repo
 - Ediciones paralelas del blog en dos ramas → merges manuales apilaron versiones
   y **destruyeron 46 artículos** + rompieron el build. Si un archivo de blog
-  aparece con campos duplicados/arrays sin cerrar: reconstruir desde git history
-  (último estado limpio = `<merge>^1`), no re-mezclar a mano.
+  aparece con campos duplicados/arrays sin cerrar, inspeccionar base y ambos
+  padres; preservar artículos/cambios válidos de cada lado. No suponer que
+  `<merge>^1` es el último estado correcto ni restaurarlo a ciegas. Comparar
+  slugs y contenido antes/después y ejecutar build y pruebas correspondientes.
 - `App.tsx` con `Blog/BlogPost` lazy: verificar que no queden declaraciones
   duplicadas tras un merge y que el param de ruta coincida con el `useParams`
   del componente (`:slug`).
-- No agregar dependencias para SEO: el precache del PWA está al límite.
+- Justificar dependencias nuevas y medir su efecto en bundle/precache contra los
+  límites actuales; no subir presupuestos para hacer pasar el build.

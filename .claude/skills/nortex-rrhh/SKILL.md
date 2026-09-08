@@ -1,14 +1,14 @@
 ---
 name: nortex-rrhh
-description: Dominio de nómina y RRHH de Nortex — Ley 185 de Nicaragua tal como vive en el código - INSS/IR/aguinaldo/vacaciones/indemnización Art. 45, planilla mensual, liquidaciones, deducciones judiciales, y qué está marcado VERIFICAR. Usar SIEMPRE que se toque nicaLabor.ts, calc-laborales.ts, hr.ts, los endpoints /api/payroll|/api/hrm|/api/me, o cualquier cálculo laboral. El motor puro es la única fuente de fórmulas - no reintroducir cálculos fuera de él.
+description: "Dominio de nómina y RRHH de Nortex — Ley 185 de Nicaragua tal como vive en el código - INSS/IR/aguinaldo/vacaciones/indemnización Art. 45, planilla mensual, liquidaciones, deducciones judiciales, y qué está marcado VERIFICAR. Usar SIEMPRE que se toque nicaLabor.ts, calc-laborales.ts, hr.ts, los endpoints /api/payroll|/api/hrm|/api/me, o cualquier cálculo laboral. El motor puro es la única fuente de fórmulas - no reintroducir cálculos fuera de él."
 ---
 
 # Nómina y RRHH en Nortex (Ley 185 Nicaragua)
 
 La nómina mueve el dinero más sensible del sistema: salarios de gente real. Las
-fórmulas viven en **UN solo motor puro** y todo lo demás orquesta. Referencias
-archivo:línea verificadas contra el código real; si no coinciden, el código se
-movió — verificá, pero las reglas de dominio no cambian.
+fórmulas viven en **UN solo motor puro** y todo lo demás orquesta. Leer `AGENTS.md` y `CLAUDE.md`. Esta guía describe el código; las fórmulas y tasas
+requieren revisión humana contra fuentes oficiales vigentes. No acredita
+cumplimiento legal ni autoriza cambios de dinero por sí misma.
 
 ## 1. Mapa del subsistema
 
@@ -28,7 +28,7 @@ movió — verificá, pero las reglas de dominio no cambian.
 - `backend/routes/hr.ts` (montado en `/api/hr`) — asistencia (clock-in/out por
   PIN), adelantos, ausencias, expediente, contratos, judiciales, feriados.
   `requireHRAdmin` = OWNER|ADMIN|SUPER_ADMIN|MANAGER (**no incluye ACCOUNTANT** —
-  inconsistencia conocida con la planilla, que sí lo incluye).
+  la planilla tiene su propio contrato de permisos; no unificar roles por suposición).
 - `backend/server.ts` — **la nómina real vive acá**, no en hr.ts:
   `POST /api/payroll/calculate` (el corazón), `POST /api/payroll/:id/pay`,
   aguinaldo (`GET|POST /api/payroll/aguinaldo/:year[/run]`), liquidación
@@ -98,16 +98,12 @@ Idempotente por `Aguinaldo @@unique([employeeId, year])`.
   por algoritmo gregoriano). Los `national: true` no se pueden borrar.
 - Día calendario **local Nicaragua = UTC-6** al mapear turnos a feriados.
 
-### ⚠️ Vigencia de tasas (repetir siempre al usuario)
+### Vigencia de tasas (verificar cuando el cambio dependa de ellas)
 `utils/tasas.ts` declara **`TASAS_VERIFICADAS_AL = null`** → sin verificar, no
-publicar. CONFIRMADO por fuentes secundarias concordantes (no por fuente primaria: los
-dominios de INSS y DGI no son alcanzables desde el entorno de desarrollo): INSS
-laboral 7%, patronal 21.5/22.5, INATEC 2%, primer tramo del IR exento hasta
-C$100,000 anuales, y el **techo cotizable DEROGADO** (ya borrado del código).
-Siguen SIN confirmar: los tramos 15/20/25/30% con sus bases, IVA 15%, anticipo
-IR 1%, IMI 1%. El salario mínimo NO se hardcodea — vive en
-`TaxConfig.salarioMinimo` (por sector/MITRAB). Fuentes: inss.gob.ni, dgi.gob.ni,
-MITRAB.
+publicar cambios de tasas sin revisión. Comprobar primero la fuente oficial vigente
+(DGI, INSS o MITRAB), la fecha y el alcance; las verificaciones históricas con
+fuentes secundarias no sustituyen esa revisión. El salario mínimo vive en
+`TaxConfig.salarioMinimo`; no agregar una cifra universal para todos los sectores.
 
 ## 3. Flujos canónicos
 
@@ -127,8 +123,10 @@ MITRAB.
   (cuota `grossSalary/12` por concepto, fail-soft) + `vacationDays += 2.5`
   (Art. 76) + **AuditLog `PAYROLL_PAID`** con before/after. Si un asiento se
   omitió: AuditLog `PAYROLL_JOURNAL_SKIPPED` + `advertencia` en la respuesta.
-  **Patrón fail-soft de Nortex: el pago se confirma, la omisión nunca queda
-  silenciosa.**
+  **Conducta legacy pendiente de endurecimiento, no patrón normativo.** La traza
+  `PAYROLL_JOURNAL_SKIPPED` se escribe después de la transacción. El control previo
+  `PAGADO` no prueba idempotencia concurrente: caracterizar doble pago y fallo de
+  asiento/auditoría antes de cambiar este flujo.
 - **Liquidar** (`GET settlement-preview` → `POST settlement`): empleado por
   `{id, tenantId}` → promedio 6 meses → `calculateSettlement` → `$transaction`:
   `TerminationSettlement` + `recordSettlement` (fail-soft) + `TERMINATED` +
@@ -144,13 +142,13 @@ MITRAB.
 2. **Tenant siempre del JWT**; updates con `findFirst({id, tenantId})` previo o
    `updateMany({where:{id, tenantId}})` (anti-IDOR).
 3. **Cálculo puro separado de Prisma.** La fórmula va al motor puro; la
-   orquestación a server.ts/hr.ts. **No meter I/O en el motor. No reintroducir
+   orquestación a servicios y rutas; los monolitos solo componen módulos. **No meter I/O en el motor. No reintroducir
    cálculos laborales fuera de `nicaLabor.ts`** (los endpoints demo que lo hacían
    fueron eliminados a propósito).
 4. **Espejo blog ↔ ERP**: cambiar una fórmula en `nicaLabor.ts` obliga a cambiar
    `utils/calc-laborales.ts` y viceversa.
-5. **Mutation testing — el umbral SOLO SUBE** (`stryker.config.json`, base
-   95.59%). Si un cambio hunde el score, se arregla el test, no el umbral. Los
+5. **Mutation testing — el umbral SOLO SUBE** (`stryker.config.json`, ver configuración
+   vigente). Si un cambio hunde el score, se arregla el test, no el umbral. Los
    rangos de línea del `mutate` se desfasan con refactors **y Stryker no avisa**
    (rango inválido = NaN = éxito falso): al mover funciones, actualizá los rangos
    en el mismo PR. `scripts/check-mutation-scope.cjs` fija pisos de mutantes por
@@ -161,15 +159,18 @@ MITRAB.
    fraccionarios en indemnización.
 7. **Idempotencia del dinero**: no re-pagar (`PAGADO` → 400), no recalcular una
    pagada, no re-liquidar (unique), aguinaldo único por `(employeeId, year)`.
-8. **Fail-soft contable + AuditLog dentro de la misma `$transaction`.**
+8. **Los nuevos efectos financieros y su auditoría deben ser atómicos.** El
+   fail-soft legacy descrito arriba es deuda; no copiarlo a otros flujos.
 
 ## 5. Gotchas y deuda conocida (no "arreglar" a ciegas)
 
-**Autorización intra-tenant incompleta** (cross-tenant SÍ está cubierto):
-`GET /api/labor-liabilities`, `settlement-preview`, `hrm/dashboard`,
-`GET aguinaldo/:year`, `hr/alerts` van solo con `authenticate` — un CASHIER ve
-salarios y finiquitos de todo el tenant. `clock-in/out` autentica por PIN de 4
-dígitos **sin rate limiting**.
+**Autorización por ruta (lectura de código, no prueba dinámica nueva):**
+`settlement-preview`, `hrm/dashboard` y `GET aguinaldo/:year` usan
+`HR_READ_ROLES`. `GET /api/labor-liabilities` y `GET /api/hr/alerts` conservan
+`authenticate` sin ese guard explícito. Verificar el montaje, reproducir el
+alcance por rol y corregirlo antes de declarar aislamiento intra-tenant completo.
+`clock-in/out` en `backend/routes/hr.ts` usa PIN sin un limitador explícito en la
+ruta; no confundirlo con `/api/employees/verify-pin`, que tiene su propio limiter.
 
 **Validación**: Zod solo en 3 lugares (`AdvanceRequestSchema`,
 `CreateEmployeeSchema`, `PayrollCalculateSchema`); el resto valida a mano.
@@ -198,8 +199,8 @@ dígitos **sin rate limiting**.
   diasFeriados/diasAusencia`, `Shift.*Hours`, `JudicialDeduction.percentage`. Los
   montos sí son Decimal — correcto.
 
-**Prometido en `docs/PLAN_RRHH_NICARAGUA.md` y NO construido** (no asumir que
-existe): subsidio INSS 60% por enfermedad desde el día 4, maternidad Art. 141
+**Backlog histórico en `docs/PLAN_RRHH_NICARAGUA.md`, por revalidar en código y
+pruebas antes de afirmar que falta:** subsidio INSS 60% por enfermedad desde el día 4, maternidad Art. 141
 (4+8 semanas + complemento), constancia anual de retenciones por empleado, alerta
 del tope 3 h extra/día, séptimo día/descanso semanal remunerado, adjuntos en el
 expediente.
@@ -222,7 +223,8 @@ que inyectarle la fecha.
 2. ¿Decimal end-to-end, con `.toString()` al salir de Prisma?
 3. ¿Tenant del JWT + anti-IDOR en todo update?
 4. ¿Idempotencia respetada (pagos, liquidaciones, aguinaldo)?
-5. ¿AuditLog dentro de la tx y patrón fail-soft con advertencia visible?
+5. ¿Efectos y auditoría atómicos? ¿Las excepciones legacy quedan caracterizadas
+   sin copiar ni ocultar sus riesgos?
 6. ¿Tests con valores absolutos que matan mutantes; rangos de Stryker
    actualizados si moviste funciones?
 7. ¿Tasas nuevas verificadas contra fuente oficial y actualizadas en AMBOS lados

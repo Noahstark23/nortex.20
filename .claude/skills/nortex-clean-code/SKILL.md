@@ -1,88 +1,75 @@
 ---
 name: nortex-clean-code
-description: Buenas prácticas de código y tests en Nortex — cómo escribir código limpio, testeable y que pase el mutation testing (separar lógica pura de Prisma, decimal.js, Zod, naming en español, vitest + Stryker). Usar al escribir o refactorizar cualquier módulo nuevo, al agregar funciones de dinero, o cuando un test/mutante falle. Complementa nortex-feature (método) y nortex-qa (verificación) — esta skill es el CÓMO se escribe.
+description: Diseñar y refactorizar módulos de Nortex con contratos pequeños, precisión financiera y pruebas de conducta. Complementa nortex-feature y nortex-qa; no autoriza cambios de rama ni releases.
 ---
 
-# Clean code y tests en Nortex
+# Código mantenible en Nortex
 
-Nortex maneja dinero real en un monolito grande (server.ts ~9.7k líneas). Código
-nuevo NO agranda el problema: se escribe modular, puro donde se pueda, y testeable
-desde el día uno. Regla madre: **si una función calcula dinero, tiene que poder
-correrse sin base de datos** — eso decide toda la estructura.
+Leé `AGENTS.md` y `CLAUDE.md` completos antes de modificar producto. Usá
+`nortex-feature` para ejecutar el cambio y `nortex-qa` para verificarlo. Estas
+fuentes gobiernan integridad, entorno y autorización; esta skill concreta el diseño.
 
-## 1. Estructura: separá lo puro de lo impuro
+## Contratos y propietarios
 
-- **Lógica pura** (cálculos, reglas de precio, fiscal, laboral) → función exportada
-  SIN imports de Prisma/Express, que recibe valores y devuelve valores. Vive en
-  `utils/` (frontend/compartido) o al tope del service (backend), ANTES de cualquier
-  código con I/O. Ejemplos del repo: la regla de precios al tope de
-  `components/POS.tsx`, `utils/calc-laborales.ts`, las funciones puras de
-  `backend/services/nicaTax.ts`.
-- **Orquestación impura** (Prisma, transacciones, HTTP) → llama a las puras. Nunca
-  mezclar un cálculo de dinero inline dentro de un handler de 200 líneas.
-- ¿Por qué tan estricto? El **mutation testing** (Stryker) solo puede morder lógica
-  pura, y los archivos con Prisma se mutan por rango de líneas
-  (`stryker.config.json` → `mutate`). Función de dinero nueva enterrada en un
-  handler = invisible para la red de seguridad.
+- Ubicá el dueño existente con `rg` antes de crear helpers. Reutilizá políticas de
+  acceso, validadores de cantidades, fechas Managua, servicios y cliente Prisma.
+- Cada módulo tiene una responsabilidad y un contrato pequeño: entradas tipadas,
+  salida, errores, autoridad y efectos. Los cálculos reciben valores; la capa de
+  aplicación coordina permisos, persistencia y transacciones.
+- Lógica pura nueva vive en módulos sin I/O de `utils/` o `backend/lib/`, o en un
+  servicio acotado. No la agregués al inicio de `POS.tsx` ni de `server.ts`.
+- Estado, eventos y recursos se quedan junto a su dueño. Extraer JSX sin trasladar
+  el estado correspondiente puede ordenar el archivo sin reducir acoplamiento.
+  Tampoco trasladés el monolito completo a un hook.
+- Antes de trabajo paralelo, fijá archivos permitidos por agente y un único
+  integrador de archivos compartidos; revisar un archivo no autoriza editarlo.
 
-## 2. Dinero
+## Integridad del dominio
 
-- **`decimal.js` siempre**; `Number`/`parseFloat` prohibidos en cálculos. Cadena
-  completa en Decimal y redondeo explícito (`ROUND_HALF_UP`) solo al presentar.
-- Campos nuevos de schema: `Decimal(18,4)`. (`Product.price/cost` son Float legacy
-  — NO copiar ese patrón; migran en su propio sweep.)
-- Serialización: `Prisma.Decimal` → JSON emite **string**. El frontend tipa
-  `string | number` y convierte con Decimal, no con `+valor`.
-- Totales autoritativos **server-side** (patrón `executeSale`): el cliente propone,
-  el servidor calcula y manda.
+- Dinero nuevo usa Decimal desde entrada hasta persistencia. Elegí precisión y
+  redondeo explícitos según el contrato: contabilización, impuesto, cantidad o
+  presentación pueden tener límites distintos. No redondear solo al mostrar.
+- Los Float legacy no justifican campos monetarios nuevos Float; migrarlos exige
+  expansión, comparación, backfill y reconciliación por agregado, sin sweep global.
+- El servidor calcula importes y permisos. `tenantId` proviene de la identidad
+  autenticada; una selección por ID no sustituye la verificación de propiedad.
+- Stock usa `applyStockDelta`. Stock, efectos financieros, idempotencia y auditoría
+  comparten transacción. Pasá esa transacción a los colaboradores; no abrir otra
+  conexión global dentro de ella ni llamar proveedores externos.
+- Validá con los schemas Zod existentes y reglas de acceso del dominio. No inventés
+  un listado universal de roles ni conviertas un dato ausente en cero.
+- Usá los contratos de cantidades: cajas/unidades contadas y unidades medidas no
+  son equivalentes. No truncar ni sustituir la validación por `parseInt`/`parseFloat`.
+- Tipá límites nuevos sin propagar `any`. `tsconfig.json` no implica modo estricto
+  global; tipar un módulo no acredita haber migrado todo el proyecto.
+- Errores de negocio son explícitos y conservan el trabajo recuperable. Los logs
+  no incluyen secretos, documentos completos ni datos privados innecesarios.
 
-## 3. Entradas y errores
+## Extracciones con evidencia
 
-- Toda ruta que mueve dinero valida `req.body` con **Zod** (schema arriba del
-  handler, `safeParse`, 400 con detalle). El tenant NUNCA viene del body/query:
-  `req.tenantId` del middleware `authenticate`.
-- Errores: fallar ruidoso y temprano. Nada de `catch {}` silencioso; si se traga
-  un error a propósito (best-effort: email, evento), comentario de una línea con
-  el porqué.
-- No inventar helpers duplicados: antes de escribir uno, grep — el repo ya tiene
-  `applyStockDelta`, `audit`, `ledger`, `secrets`. Reusar es la primera opción.
+1. Caracterizá la conducta antes de mover: función real importada, render real o
+   HTTP/MySQL según el flujo. Conservá URL, permisos, errores, estado e identidad.
+2. Extraé por responsabilidad y revisá dependencias/ciclos. No introducir nuevos
+   clientes Prisma, motores de cola ni lógica financiera duplicada.
+3. Reejecutá los mismos escenarios y las compuertas correspondientes al cambio.
+4. Medí líneas de origen, destinos y conjunto. Reducí en el mismo cambio los
+   límites de `tests/presupuestoBackend.test.ts` y `tests/presupuestoPos.test.ts`;
+   son la fuente vigente, no las cifras de un informe anterior. `useState` allí es
+   un conteo textual, no una medición AST ni de rendimiento.
+5. No elevar presupuestos ni ampliar excepciones textuales para pasar; tampoco
+   bajar umbrales o pisos de cobertura. Migrá aserciones de ubicación a conducta
+   cuando corresponda, conservando garantías.
 
-## 4. Estilo del repo
+## Pruebas que detectan errores
 
-- **Español nicaragüense**: mensajes de UI y comentarios (voseo en UI). Nombres de
-  código en inglés está bien (convención existente); textos al usuario jamás.
-- Comentarios explican el **porqué** (decisión, trampa, regulación), no el qué.
-  Densidad como la del archivo vecino — ni novela ni desierto.
-- TypeScript estricto: sin `any` nuevos; tipos compartidos en `types.ts` cuando
-  frontend y backend los comparten.
-- Sin dependencias pesadas nuevas sin justificación (el bundle roza el límite de
-  precache del PWA). Sin `new PrismaClient()` nuevos: importar
-  `backend/lib/prisma.ts`.
-
-## 5. Tests: la pirámide de Nortex
-
-1. **Vitest** (`tests/*.test.ts`, `npm test`) para toda lógica pura nueva. Casos
-   que valen: **bordes exactos** (el umbral justo, techo INSS, tope 30 días), el
-   caso cero/negativo, y un caso de **número dorado** calculado a mano (no
-   comparar la función contra sí misma — el bug clásico de aserción-identidad).
-2. **Sondas `.cjs`** en el scratchpad para verificar comportamiento real en QA
-   (`require('decimal.js')` con ruta absoluta) — desechables, no se commitean.
-3. **Mutation testing** (`npm run test:mutation`, Stryker, en CI): si tocás
-   `utils/calc-laborales`, `utils/pricing`, `services/loanMath` o las zonas puras
-   de `nicaTax`/`stockService`/`accounting`, los tests deben **matar mutantes**,
-   no solo pasar. Reglas duras:
-   - El umbral (`stryker.config.json`) **solo sube**. Si tu cambio lo hunde, se
-     arregla el test — nunca se baja el umbral ni se debilita una aserción.
-   - Función de dinero nueva → agregarla al array `mutate` (por rango de líneas
-     si el archivo toca Prisma) y al piso de `scripts/check-mutation-scope.cjs`.
-   - Un mutante que sobrevive = un bug que tus tests no verían en prod. Se caza
-     con una aserción de valor absoluto, no ajustando el mutante.
-
-## 6. Definition of done
-
-`npx tsc --noEmit` limpio (contra línea base) · tests nuevos verdes y matando
-mutantes si aplica · `npm run build` si tocaste frontend · queries nuevas con
-`tenantId` + índice en el mismo cambio · sin estado en memoria nuevo (ver
-guardrails de CLAUDE.md) · commit `feat|fix(<área>):` con el porqué y el resumen
-de QA. Para el proceso completo: skill **nortex-feature**; para verificación por
-lentes: **nortex-qa**.
+- Importá implementación real y compará resultados esperados independientes. Una
+  copia de la fórmula, coincidencia de texto o porcentaje verde no prueba el flujo.
+- Para dinero/inventario, añadí escenarios de concurrencia, rechazo y rollback en
+  MySQL descartable; el comando canónico está en `nortex-qa`.
+- Stryker puede mutar código con I/O; la separación pura facilita pruebas rápidas
+  y deterministas. Reconciliá `stryker.config.json`, sus rangos y
+  `scripts/check-mutation-scope.cjs` cuando cambie el alcance. No bajar umbral ni
+  pisos; verificá que se instrumentó la función completa y que el reporte coincide
+  con la fuente. Un sobreviviente se investiga; no se oculta con exclusiones.
+- Reducción de líneas no demuestra menor latencia, memoria ni incidentes. Si esa
+  es la mejora prometida, medila sobre el mismo escenario antes y después.
