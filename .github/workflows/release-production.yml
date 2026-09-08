@@ -69,10 +69,10 @@ jobs:
                   && run.head_branch === 'main'
                   && run.event === 'push')
               : [];
-            const expectedPath = '.github/workflows/ci.yml@';
+            const expectedPath = '.github/workflows/ci.yml';
             const terminalSuccess = runs.length > 0 && runs.every((run) =>
               typeof run.path === 'string'
-              && run.path.startsWith(expectedPath)
+              && run.path === expectedPath
               && run.status === 'completed'
               && run.conclusion === 'success');
             if (!terminalSuccess) {
@@ -106,10 +106,10 @@ jobs:
                   && run.head_branch === 'main'
                   && run.event === 'workflow_dispatch')
               : [];
-            const expectedPath = '.github/workflows/release-staging.yml@';
+            const expectedPath = '.github/workflows/release-staging.yml';
             const successfulManualStaging = runs.some((run) =>
               typeof run.path === 'string'
-              && run.path.startsWith(expectedPath)
+              && run.path === expectedPath
               && run.status === 'completed'
               && run.conclusion === 'success');
             if (!successfulManualStaging) {
@@ -167,10 +167,10 @@ jobs:
                   && run.head_branch === 'main'
                   && run.event === 'push')
               : [];
-            const expectedPath = '.github/workflows/ci.yml@';
+            const expectedPath = '.github/workflows/ci.yml';
             const terminalSuccess = runs.length > 0 && runs.every((run) =>
               typeof run.path === 'string'
-              && run.path.startsWith(expectedPath)
+              && run.path === expectedPath
               && run.status === 'completed'
               && run.conclusion === 'success');
             if (!terminalSuccess) {
@@ -202,10 +202,10 @@ jobs:
                   && run.head_branch === 'main'
                   && run.event === 'workflow_dispatch')
               : [];
-            const expectedPath = '.github/workflows/release-staging.yml@';
+            const expectedPath = '.github/workflows/release-staging.yml';
             const successfulManualStaging = runs.some((run) =>
               typeof run.path === 'string'
-              && run.path.startsWith(expectedPath)
+              && run.path === expectedPath
               && run.status === 'completed'
               && run.conclusion === 'success');
             if (!successfulManualStaging) {

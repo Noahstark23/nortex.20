@@ -10,12 +10,12 @@ Revisión documental: 2026-09-08. Corte de producto verificado: `484f58a4e31ad74
 | QA local | Prisma generate/validate, TypeScript, diseño, build SEO; 5.736 pruebas generales aprobadas, cero fallidas | 318 omitidas no cuentan como aprobadas; QA visual/dispositivos y jornada real no sustituidas |
 | Integración financiera | 37 suites, 332 casos HTTP/MySQL 8 descartable, cero omisiones | Solo escenarios y candidato ejecutados |
 | Mutación local | 64 módulos, 100%; 5.759 eliminados + cuatro timeouts, cero sobrevivientes/sin cobertura; 20 exclusiones históricas | No es cobertura global ni mutación ejecutada en el run de PR |
-| CI | Cuatro jobs exitosos del [run 34286306801](https://github.com/Noahstark23/nortex.20/actions/runs/34286306801) para el PR | Promoción exige además CI terminal del SHA exacto en main |
+| CI | Cuatro jobs exitosos en main `ca8e31da4d49f85a54817d0000d272cfec85bdc2`, [run 34290504701](https://github.com/Noahstark23/nortex.20/actions/runs/34290504701) | La reparación posterior del verificador de promoción requiere CI de su SHA definitivo |
 | RAG | 12 artículos, búsqueda léxica/top-2 y filtros; datos del negocio desde herramientas deterministas | Curación, citas visibles del recorrido operativo, benchmark reservado y evaluación real siguen pendientes |
 | Infraestructura | Droplet 2 vCPU, 4 GiB RAM, 80 GiB; producción y staging comparten host. Muestra: 1.695 MiB disponibles y 879 MiB de swap usados | No existe capacidad de clientes concurrentes acreditada; faltan series, carga y p95 |
-| Respaldo real | Objeto externo 2026-09-08T09:15:09Z, 1.150.696 bytes, 111 tablas declaradas; metadata y hash remoto coinciden | Restauración real aislada todavía NO acreditada; CI sí restauró datos sintéticos |
-| Configuración | Tokens separados de lectura guardados en GitHub staging/production; vencen 2026-10-08; Auto Deploy de producción observado apagado | Alcance de tokens es Root Team, no una ACL por aplicación. Faltan identidad HTTPS/variables, pin exacto y protecciones de promoción |
-| Despliegue | Cambios publicados en PR; producción observada en `2834497f6090c2d55bcc48d5edb86887f6993ae3` | No se fusionó ni desplegó el candidato; staging/piloto no acreditados |
+| Respaldo real | Respaldo remoto restaurado en MySQL 8 aislado; schema candidato aplicado dos veces, con filas y agregados preservados y relaciones verificadas; cleanup aprobado | No acredita recuperación completa de la aplicación ni de originales privados; evidencia operativa conservada fuera del repositorio público |
+| Configuración | Identidad HTTPS/UUID y webhooks verificados; tokens de lectura separados y token de deploy de producción; ambos Auto Deploy apagados; main requiere PR/checks y environments solo main sin bypass administrativo | Tokens limitados al equipo, no por app. El usuario eligió su propia cuenta para revisar production: excepción explícita, no revisión independiente. Pins deben corresponder al próximo SHA definitivo |
+| Despliegue | PR 207 fusionada en main; producción sigue sana en `2834497f6090c2d55bcc48d5edb86887f6993ae3` | El intento de staging se detuvo antes del webhook por formato incorrecto de la ruta REST del workflow. Reparación y nueva promoción pendientes; piloto no acreditado |
 
 [Evidencia local y manifiesto](releases/evidence/2026-09-08-consolidated/local-verification.json) · [expediente del candidato](releases/2026-09-08-consolidated-candidate.md). Los datos de entorno de esta tabla son observaciones fechadas; revalidar antes de operar.
 
@@ -25,7 +25,7 @@ Revisión documental: 2026-09-08. Corte de producto verificado: `484f58a4e31ad74
 
 El tamaño sigue siendo deuda de mantenimiento. El riesgo de caída también depende de consultas, conexiones, trabajos durables, recursos y recuperación: no se puede afirmar que cuatro clientes son una carga segura solo por su cantidad. El usuario indicó cuatro negocios; no se midió su simultaneidad. Hay 10 construcciones runtime de Prisma en el corte (nueve fuera del cliente compartido), además de estado por proceso en límites/caché y canal comercial. La cola privada ya es durable; no confundirla con la comercial.
 
-Prioridad inmediata **C00**: restauración SQL+adjuntos, ventanas de observación, carga representativa fuera de producción, conciliación de venta/caja y primeros lotes de modularización. Los objetivos se fijan antes de medir aceptación; no se promete disponibilidad ni número de clientes sin evidencia.
+Prioridad inmediata **C00**: mantener la restauración SQL ya ensayada, acreditar recuperación de adjuntos antes de habilitarlos, ventanas de observación, carga representativa fuera de producción, conciliación de venta/caja y primeros lotes de modularización. Los objetivos se fijan antes de medir aceptación; no se promete disponibilidad ni número de clientes sin evidencia.
 
 ## Desarrollo siguiente
 
@@ -38,3 +38,5 @@ Prioridad inmediata **C00**: restauración SQL+adjuntos, ventanas de observació
 La revisión encontró deuda heredada que requiere reproducciones específicas: paginación/totales CxP, transiciones de seriales, decisiones/pagos de RRHH, caja bancaria y precios de B2B. Un total verde no demuestra el cierre de todos esos riesgos. No convertir recetas antiguas de efectos financieros fuera de transacción en reglas para código nuevo.
 
 La ferretería del piloto tiene una referencia de contacto aportada por el usuario. Faltan identificación del tenant/revisores, farmacia y evaluación humana de escenarios; no publicar datos personales ni inventar aprobaciones. Ayuda ampliada, valor del piloto y calidad del modelo se acreditan independientemente de QA determinista.
+
+Actualización del intento de promoción: [incidente del verificador REST y reparación](releases/2026-09-08-workflow-run-path.md). La producción observada no tiene el asistente ni la extracción activos; publicar código no sustituye habilitación, workers, volumen privado y evaluación del piloto.
