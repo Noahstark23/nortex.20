@@ -7,6 +7,7 @@ import {
     CUSTOMER_CREATE_ROLES,
     CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_IDENTITY_UPDATE_ROLES,
+    CUSTOMER_PORTFOLIO_READ_ROLES,
     CUSTOMER_READ_ROLES,
     CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
@@ -89,6 +90,27 @@ describe('autorizacion del modulo de clientes', () => {
             expect(portfolio.res.statusCode).toBe(403);
         }
         const unauthenticated = runGuard(CUSTOMER_HUB_READ_ROLES, '');
+        expect(unauthenticated.next).not.toHaveBeenCalled();
+        expect(unauthenticated.res.statusCode).toBe(401);
+    });
+
+    it('EMPLOYEE conserva el selector POS pero no accede a cartera ni historiales enriquecidos', () => {
+        expect(runGuard(CUSTOMER_READ_ROLES, 'EMPLOYEE').next).toHaveBeenCalledOnce();
+        const portfolio = runGuard(CUSTOMER_PORTFOLIO_READ_ROLES, 'EMPLOYEE');
+        expect(portfolio.next).not.toHaveBeenCalled();
+        expect(portfolio.res.statusCode).toBe(403);
+    });
+
+    it('preserva los lectores autorizados de cartera y rechaza bodega o roles desconocidos', () => {
+        for (const role of ['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER', 'VIEWER', 'VENDEDOR', 'ACCOUNTANT']) {
+            expect(runGuard(CUSTOMER_PORTFOLIO_READ_ROLES, role).next).toHaveBeenCalledOnce();
+        }
+        for (const role of ['BODEGUERO', 'UNKNOWN']) {
+            const portfolio = runGuard(CUSTOMER_PORTFOLIO_READ_ROLES, role);
+            expect(portfolio.next).not.toHaveBeenCalled();
+            expect(portfolio.res.statusCode).toBe(403);
+        }
+        const unauthenticated = runGuard(CUSTOMER_PORTFOLIO_READ_ROLES, '');
         expect(unauthenticated.next).not.toHaveBeenCalled();
         expect(unauthenticated.res.statusCode).toBe(401);
     });
@@ -205,14 +227,8 @@ describe('autorizacion del modulo de clientes', () => {
     it('protege clientes y cobranza con guards y scope de cartera propia', () => {
         expect(server).toContain("app.post('/api/customers', authenticate, checkRole(CUSTOMER_CREATE_ROLES), validate(CreateCustomerSchema)");
         expect(server).toContain("app.get('/api/customers', authenticate, checkRole(CUSTOMER_READ_ROLES), async");
-        for (const path of [
-            '/api/customers/hub',
-            '/api/customers/:id/hub',
-            '/api/credits/debtors',
-            '/api/collections/worklist',
-            '/api/customers/:id/statement',
-        ]) {
-            expect(server).toContain(`app.get('${path}', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async`);
+        for (const path of ['/api/customers/hub', '/api/customers/:id/hub', '/api/credits/debtors', '/api/collections/worklist', '/api/customers/:id/statement']) {
+            expect(server).toContain(`app.get('${path}', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async`);
         }
         expect(server).toContain('function applySellerCustomerScope(authReq: AuthRequest, whereClause: Record<string, unknown>)');
         expect(server).toContain('function receivableCustomerScope(authReq: AuthRequest)');
@@ -224,7 +240,7 @@ describe('autorizacion del modulo de clientes', () => {
         const debtorsEnd = server.indexOf("app.get('/api/collections/worklist'", debtorsStart);
         const debtors = server.slice(debtorsStart, debtorsEnd);
         expect(debtors).toContain(
-            "app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async",
+            "app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async",
         );
         expect(debtors).toContain('...receivableCustomerScope(authReq),');
     });

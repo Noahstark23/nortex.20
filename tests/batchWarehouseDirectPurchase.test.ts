@@ -6,12 +6,15 @@ import { describe, expect, it, vi } from 'vitest';
 import {
     applyBatchWarehouseDelta,
 } from '../backend/services/productBatchWarehouseLedgerService';
+import { parsePurchaseInput } from '../backend/services/purchaseRegistrationAuthority';
 
-const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
-const routeStart = server.indexOf("app.post('/api/purchases'");
-const routeEnd = server.indexOf('// POST /api/purchases/:id/pay', routeStart);
-if (routeStart < 0 || routeEnd < 0) throw new Error('No se encontró POST /api/purchases');
-const purchaseRoute = server.slice(routeStart, routeEnd);
+// La ruta compone este servicio; las invariantes de inventario viven aquí.
+const registrationSource = readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationService.ts'), 'utf8');
+const registrationStart = registrationSource.indexOf('export async function registerPurchase(');
+if (registrationStart < 0) throw new Error('No se encontró registerPurchase');
+const purchaseRoute = registrationSource.slice(registrationStart)
+    + '\n' + readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationPreparation.ts'), 'utf8')
+    + '\n' + readFileSync(resolve(process.cwd(), 'backend/routes/purchases.ts'), 'utf8');
 
 const sqlText = (query: unknown): string => {
     const sql = query as { strings?: readonly string[]; sql?: string };
@@ -181,9 +184,14 @@ describe('ingreso lote+bodega en compra directa', () => {
             'productsById.get(item.productId)?.requiresBatchTracking === true',
         );
         expect(purchaseRoute).toContain(
-            'await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)',
+            'await resolveBatchWarehouseLedgerMode(tx, principal.tenantId)',
         );
-        expect(purchaseRoute).not.toMatch(/req\.body[^;]*batchWarehouseLedgerMode/u);
+        const parsed = parsePurchaseInput({
+            supplierId: 'supplier-1', invoiceNumber: 'FAC-1', date: '2026-09-05', paymentMethod: 'CASH',
+            batchWarehouseLedgerMode: 'ENFORCED',
+            items: [{ productId: 'product-1', quantity: '1', unitCost: '10' }],
+        });
+        expect(parsed).not.toHaveProperty('batchWarehouseLedgerMode');
     });
 
     it('SHADOW aplica el borde Decimal 0.0001 sin convertir el delta del core a Number', async () => {
@@ -292,7 +300,7 @@ describe('ingreso lote+bodega en compra directa', () => {
 
     it('usa la bodega operacional real tanto cuando es explícita como cuando cae al default', async () => {
         expect(purchaseRoute).toContain(
-            'await resolveOperationalWarehouse(tx, authReq.tenantId!, warehouseId)',
+            'await resolveOperationalWarehouse(tx, principal.tenantId, warehouseId)',
         );
         expect(purchaseRoute).toContain('warehouseId: operationWarehouse?.id');
         expect(purchaseRoute).toContain('warehouseId: purchaseWarehouseId');
@@ -315,7 +323,7 @@ describe('ingreso lote+bodega en compra directa', () => {
     it('bloquea la identidad producto+lote antes de incrementar una compra directa', () => {
         const productLock = purchaseRoute.indexOf('await applyStockDelta(tx');
         const batchIdentityLock = purchaseRoute.indexOf('SELECT id, expiryDate', productLock);
-        const tenantScope = purchaseRoute.indexOf('WHERE tenantId = ${authReq.tenantId!}', batchIdentityLock);
+        const tenantScope = purchaseRoute.indexOf('WHERE tenantId = ${principal.tenantId}', batchIdentityLock);
         const forUpdate = purchaseRoute.indexOf('FOR UPDATE', batchIdentityLock);
         const identityGuard = purchaseRoute.indexOf('assertProductBatchExpiryIdentity({', forUpdate);
         const batchUpdate = purchaseRoute.indexOf('tx.productBatch.updateMany({', identityGuard);
@@ -354,7 +362,7 @@ describe('ingreso lote+bodega en compra directa', () => {
         expect(fake.mocks.ledgerCreate).toHaveBeenCalledTimes(1);
         expect(afterSidecar).not.toHaveBeenCalled();
 
-        const transactionStart = purchaseRoute.indexOf('const result = await prisma.$transaction');
+        const transactionStart = purchaseRoute.indexOf('return db.$transaction');
         const batchIdentityLock = purchaseRoute.indexOf('SELECT id, expiryDate', transactionStart);
         const identityGuard = purchaseRoute.indexOf('assertProductBatchExpiryIdentity', batchIdentityLock);
         const batchMutation = purchaseRoute.indexOf('tx.productBatch.updateMany', identityGuard);

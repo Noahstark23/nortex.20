@@ -1,0 +1,38 @@
+#!/bin/bash
+# Doble de prueba del comando `security` de macOS.
+#
+# Existe para que scripts/qa/nortexgpt-launcher-selftest.mjs pueda ejercitar la
+# lógica del lanzador donde no hay llavero (Linux, CI). NO sustituye la prueba en
+# macOS: no verifica el llavero real, sólo la conducta del lanzador alrededor de él.
+# Guarda valores en texto plano bajo NORTEX_QA_FAKE_KEYCHAIN, así que se usa
+# únicamente con credenciales sintéticas.
+set -euo pipefail
+STORE="${NORTEX_QA_FAKE_KEYCHAIN:?El doble de prueba requiere NORTEX_QA_FAKE_KEYCHAIN}"
+mkdir -p "$STORE"
+command="${1:-}"; shift || true
+service=""; account=""; value=""; want_value=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -s) service="${2:-}"; shift 2 ;;
+    -a) account="${2:-}"; shift 2 ;;
+    -w) want_value=1
+        if [ "$#" -ge 2 ] && [ "${2#-}" = "${2:-}" ]; then value="$2"; shift 2; else shift; fi ;;
+    -U) shift ;;
+    -D|-j) shift 2 ;;
+    *) shift ;;
+  esac
+done
+entry="$STORE/${service}__${account}"
+case "$command" in
+  find-generic-password)
+    [ -f "$entry" ] || exit 44
+    [ "$want_value" -eq 1 ] && cat "$entry"
+    exit 0 ;;
+  add-generic-password)
+    if [ -n "$value" ]; then printf '%s' "$value" > "$entry"; else head -n 1 > "$entry"; fi
+    chmod 600 "$entry"; exit 0 ;;
+  delete-generic-password)
+    [ -f "$entry" ] || exit 44
+    rm -f "$entry"; exit 0 ;;
+  *) exit 64 ;;
+esac

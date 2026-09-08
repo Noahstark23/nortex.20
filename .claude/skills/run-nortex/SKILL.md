@@ -1,64 +1,57 @@
 ---
 name: run-nortex
-description: Ejecutar un smoke aislado de la app real Nortex contra MySQL 8 efímero y datos sintéticos. Úsalo para comprobar un flujo local de API y build, nunca contra una base compartida, staging o producción.
+description: Ejecutar un smoke local de Nortex con MySQL 8 efímero y datos sintéticos, separado de integración obligatoria, revisión visual y producción.
 ---
 
-# Correr Nortex con smoke aislado
+# Smoke local de Nortex
 
-Nortex mueve dinero e inventario. Esta skill verifica una instancia **local y
-efímera**, no sustituye la compuerta de integración obligatoria ni acredita un
-tenant real, staging o producción.
+Leé `AGENTS.md` y `CLAUDE.md`. Usá un candidato aislado sin archivos de secretos;
+no usar una base compartida, staging ni producción. Esta skill arranca y destruye
+sus recursos propios: para una demostración persistente usá el flujo local de
+`AGENTS.md` y registrá la revisión por separado.
 
-## Camino seguro del agente
+## Preparación y ejecución
 
-Desde la raíz del repositorio:
+- Runtime canónico Node `22.23.2` con mise, npm y Prisma local `6.4.1`.
+- Prepará dependencias con `mise exec -- npm ci` y generá el cliente Prisma del
+  schema actual según `nortex-qa`; el smoke hace `db push --skip-generate` y no
+  sustituye esa preparación.
+- Docker debe estar disponible por **socket Unix local**, con `mysql:8.0` ya
+  descargada explícitamente. El script no instala dependencias ni obtiene imágenes.
 
-```bash
+Desde la raíz del candidato:
+
+```sh
 mise exec -- bash .claude/skills/run-nortex/smoke.sh
 ```
 
-El script falla cerrado si no encuentra Docker local, la imagen local
-`mysql:8.0`, Node 22 o las dependencias ya instaladas. No instala paquetes, no
-hace `docker pull`, no inicia MySQL del sistema y no acepta una `DATABASE_URL`,
-un puerto, credenciales o una carpeta de salida del entorno llamante.
+El script rechaza parámetros de conexión y `--keep`. Crea MySQL en tmpfs con
+credenciales efímeras y puertos loopback propios; aplica schema sin
+`--accept-data-loss`, construye SPA/prerender y arranca un backend con entorno
+mínimo. Comprueba registro/login, producto con mayoreo/empaque, lectura autenticada,
+landing y sitemap con datos sintéticos. No prueba por eso todos los roles, otra
+identidad de tenant, venta/cobro ni los flujos completos de NortexGPT.
 
-Durante una sola ejecución el script:
+## Aislamiento y límites
 
-1. crea un contenedor MySQL 8 propio en `tmpfs`, con nombre, usuario,
-   contraseña, base y puerto loopback aleatorios;
-2. aplica el schema solo a esa base descartable con el binario local de Prisma,
-   sin `--accept-data-loss`;
-3. construye el frontend localmente y arranca un backend propio solo en
-   `127.0.0.1` con un JWT aleatorio;
-4. desactiva correo, Stripe, WhatsApp, LLM y telemetría al ejecutar el backend
-   en un entorno mínimo;
-5. prueba datos sintéticos: registro, producto con mayoreo/empaque, login,
-   lectura aislada por tenant, landing, prerender y sitemap;
-6. detiene exclusivamente el grupo de procesos que creó, borra exclusivamente
-   su contenedor etiquetado y elimina sus archivos temporales, incluso ante
-   error o señal.
+- No sustituye `npm run test:integration:required`, el QA visual autenticado ni
+  las compuertas de release. El runner obligatorio y este smoke son distintos.
+- El script retira configuración heredada de proveedores; una herramienta aún
+  puede cargar archivos locales por su cuenta. Por eso el candidato no debe
+  contener `.env*` ni archivos de secretos. No inspeccionarlos ni copiarlos.
+- No ejecutar con `bash -x`, volcar entornos ni capturar argumentos de procesos:
+  las credenciales de esta corrida también son privadas. No hay evaluación pagada.
+- Su limpieza normal no deja servidor, base, token, capturas ni logs activos de
+  la corrida. El build `dist/` permanece en el candidato. No prometer limpieza
+  completada si Docker/host falló: verificar exclusivamente recursos propios.
+- Un smoke correcto acredita solo sus aserciones. Un HTTP autenticado no equivale
+  a una prueba de aislamiento entre dos tenants; una página abierta no prueba POS.
 
-La opción histórica `--keep` queda rechazada a propósito: una prueba aislada no
-deja servidor, base, token, capturas ni logs activos. Para una revisión visual
-del candidato, abrí una instancia local controlada por la persona operadora y
-registra ese recorrido por separado; una captura no prueba todo el ERP.
+## Ante fallos
 
-## Límites y evidencia
-
-- El smoke usa un tenant recién registrado y datos sintéticos. No lee `.env`,
-  usuarios, credenciales ni bases existentes.
-- El build y las solicitudes HTTP son locales; la imagen debe existir antes de
-  empezar. La compuerta no descarga imágenes ni llama servicios externos.
-- Si Docker apunta a un contexto que no sea un socket Unix local, el script se
-  niega a continuar.
-- No sustituye `npm run test:integration:required` para cambios de dinero o
-  inventario, ni el QA visual autenticado, ni una compuerta de release.
-
-## Diagnóstico seguro
-
-| Situación | Acción segura |
-|---|---|
-| Falta Docker, Node 22, dependencias o `mysql:8.0` | Preparar explícitamente el entorno local; no instalar ni descargar desde este script. |
-| Docker no es un socket local | Corregir o seleccionar un contexto local; nunca usar un daemon remoto para este smoke. |
-| El backend o una aserción falla | El script limpia sus recursos y termina no cero. Investigar con pruebas focales; no reutilizar una BD de desarrollo. |
-| Se requiere una pantalla para revisión | Ejecutar el flujo visual autorizado por separado contra un candidato local; no usar `--keep`. |
+Si falta runtime, dependencias, imagen o Docker local, preparar ese prerrequisito
+sin sustituir la base por una compartida. Un fallo de schema/build/HTTP termina
+no cero y ejecuta limpieza; reproducir con una prueba focal en el candidato.
+No matar procesos por nombre ni borrar contenedores ajenos. Conservar una síntesis
+sin credenciales del escenario, candidato, salida y límites; los logs temporales
+no son un archivo de evidencia permanente.

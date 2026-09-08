@@ -42,5 +42,7 @@ pnpm-workspace.yaml
 # Dumps locales del smoke de backup (CI y pruebas a mano)
 tmp-backups/
 
+# Informes locales de evaluación de NortexGPT: contienen respuestas privadas
+reports/assistant-evaluation/
 # Evidencia local efímera de integración (fixtures y respuestas de QA).
 reports/quality-*/

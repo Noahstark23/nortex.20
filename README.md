@@ -6,6 +6,10 @@ La prioridad del ciclo iniciado el 2026-09-04 es validar activación y recurrenc
 
 ## Empezar por aquí
 
+- [Estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md): corte de código, QA, CI y bloqueos de promoción.
+- [Equipo de desarrollo](docs/EQUIPO_DESARROLLO_NORTEX.md): perfiles de Codex/Claude, responsabilidades y reglas de integración.
+
+- [RAG y consolidación de cuatro clientes](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md): desarrollo por etapas, recuperación, rendimiento y revisión humana.
 - [Plan de transformación](docs/PLAN_TRANSFORMACION_TOTAL_2026.md): prioridades, fases, responsables, métricas y aceptación.
 - [Auditoría general del 4 de septiembre](docs/AUDITORIA_GENERAL_2026-09-04.md): evidencia local, hallazgos y límites.
 - [Índice de documentación](docs/README.md): planes de dominio, historial y estados de verificación.
@@ -36,9 +40,9 @@ Backend: `127.0.0.1:3210`; frontend seguro: `127.0.0.1:4174`. El comando `nortex
 mise exec -- sh scripts/ci-local-safe.sh
 ```
 
-La compuerta genera Prisma, verifica tipos, ejecuta Vitest, diseño y build. Requiere configuración exclusivamente local. Si cambia lógica monetaria, ejecutar también la mutación con `NORTEX_CI_MUTATION=1`. Las suites HTTP/MySQL condicionadas necesitan un entorno QA efímero explícito: un `npm test` verde con omisiones no las reemplaza.
+La compuerta genera Prisma, verifica tipos, ejecuta Vitest, diseño y build. Requiere configuración exclusivamente local. Si cambia lógica monetaria, ejecutar también la mutación con `NORTEX_CI_MUTATION=1`. Para dinero/inventario ejecutar además `mise exec -- npm run test:integration:required`: el wrapper crea MySQL 8 descartable y exige todas las suites registradas sin omisiones. Un `npm test` verde con omisiones no reemplaza esta compuerta.
 
-Build normal: `npm run build`; build público con prerender: `npm run build:seo`. No ejecutar estos comandos con secretos de producción en el entorno: revisar las variables de build y mantener cualquier proveedor IA en backend. Las claves de IA, pagos, correo y base de datos permanecen en backend; Nunca crear `.env.local` con una clave para que Vite la entregue al navegador.
+Build normal: `npm run build`; build público con prerender: `npm run build:seo`. No ejecutar estos comandos con secretos de producción en el entorno: revisar las variables de build y mantener cualquier proveedor IA en backend. Las claves de IA, pagos, correo y base de datos permanecen en backend; nunca crear `.env.local` con una clave para que Vite la entregue al navegador.
 
 ## Mapa de código
 
@@ -54,8 +58,10 @@ Build normal: `npm run build`; build público con prerender: `npm run build:seo`
 
 ## Estado de WhatsApp/RAG
 
-Hay webhook firmado, routing por canal, menú/LLM opcional y búsqueda FULLTEXT de productos. Están pendientes identidad privada fuerte, recepción/salida durable, bandeja humana y RAG documental con permisos/citas. Consultar [infraestructura actual](docs/WHATSAPP_INFRA.md) y [plan de migración](docs/PLAN_MIGRACION_RAG_WHATSAPP_ESCALA.md) antes de activar un canal.
+El canal comercial conserva webhook firmado, identidad verificada y catálogo FULLTEXT. NortexGPT agrega ayuda versionada, consultas y propuestas mediante un núcleo compartido con WhatsApp privado (vinculación e inbox/outbox durables). Promociones se revisan y cobran sólo online. Los interruptores permanecen apagados por defecto; implementación local, evaluación del modelo, piloto y despliegue son estados distintos. Consultar [entrega operativa](docs/NORTEXGPT_OPERATIVO_2026-09-05.md), [infraestructura](docs/WHATSAPP_INFRA.md) y [evaluación pendiente](docs/NORTEXGPT_EVALUACION_OPERATIVA_2026-09-05.md).
 
 ## Integridad y releases
 
 El tenant se deriva del contexto autenticado; dinero nuevo usa Decimal; stock usa applyStockDelta; auditoría y efectos financieros permanecen atómicos. Preservar cambios locales existentes. La documentación no autoriza deploy, push, merge, DNS ni mensajes externos. Una release debe conservar evidencia de CI, SHA exacto, backup/restore, staging y verificaciones del dominio.
+
+Nunca crear `.env.local` con una clave de IA: las credenciales del proveedor pertenecen exclusivamente al backend o al proceso aislado de evaluación.

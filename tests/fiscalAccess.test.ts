@@ -10,7 +10,7 @@ import {
     parseFiscalPeriod,
 } from '../backend/lib/fiscalAccess';
 
-const serverSource = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
+const serverSource = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8').replace('registerRetentionCertificate(app);\nregisterFiscalExports(app);', readFileSync('backend/routes/retentionCertificate.ts', 'utf8') + '\n' + readFileSync('backend/routes/fiscalExports.ts', 'utf8'));
 
 function sourceBetween(start: string, end: string): string {
     const from = serverSource.indexOf(start);

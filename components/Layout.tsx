@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { AlertTriangle, LayoutGrid, ShoppingCart, LogOut, Wallet, PieChart, FileText, Users, Truck, Briefcase, Package, ClipboardList, CreditCard, UserPlus, Monitor, Clock, BarChart3, Shield, Zap, Menu, X, BookOpen, UserCircle, Home, ChevronDown, SlidersHorizontal, Moon, Sun } from 'lucide-react';
 import { OperationalNotifications } from './notifications/OperationalNotifications';
+import NortexAssistantLauncher from './assistant/NortexAssistantLauncher';
 import { formatMoney } from '../utils/money';
 import { PinPadClock } from './PinPadClock';
 import { useVentaEnCurso } from './VentaEnCursoContext';
@@ -159,6 +160,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </header>
           {children}
         </main>
+        <NortexAssistantLauncher />
       </div>
     );
   }
@@ -574,6 +576,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         <main className={`nx-workspace ${workspaceModeClass} relative min-h-0 flex-1 overflow-hidden`}>
           {children}
         </main>
+        <NortexAssistantLauncher />
       </div>
 
       {/* Aviso de salida con venta en curso (P0-1). El texto dice la VERDAD:

@@ -1,5 +1,11 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { buildPromotionSaleIntent } from '../components/pos/PromotionSaleIntent';
+import { resolvePosCartTotals } from '../components/pos/PromotionTotals';
+import type { CartItem } from '../types';
+
+const quotedLine = { id: 'p1', name: 'Cotizado QA', price: 100, quantity: 0.125, quantityExact: '0.125000', quotationItemId: 'quote-line1', costPrice: 60, discount: 30, unit: 'metro' } as CartItem & { discount: number };
+const saleIntent = (cart = [quotedLine]) => buildPromotionSaleIntent({ cart, shiftId: 'shift1', paymentMethod: 'CASH', customerName: 'Cliente QA', globalDiscount: 0, fiscalRegimeVersion: 7, storeCreditAmount: '0.00', total: 12.5 });
 
 const posSource = readFileSync(new URL('../components/POS.tsx', import.meta.url), 'utf8');
 const quotationSource = readFileSync(new URL('../components/QuotationManager.tsx', import.meta.url), 'utf8');
@@ -57,9 +63,10 @@ describe('puente cotización → POS', () => {
     });
 
     it('conserva quotationItemId y cantidad exacta en el payload online/offline', () => {
-        expect(posSource).toContain("...(isQuotationCartLine(c) ? { quotationItemId: c.quotationItemId } : {})");
-        expect(posSource).toContain("isQuotationCartLine(c) && c.quantityExact");
-        expect(posSource).toContain("? c.quantityExact");
+        expect(saleIntent().items[0]).toMatchObject({ quotationItemId: 'quote-line1', quantity: '0.125000', price: 100 });
+        const unquoted = { ...quotedLine, quotationItemId: undefined, quantityExact: undefined, quantity: 2 };
+        expect(saleIntent([unquoted]).items[0]).not.toHaveProperty('quotationItemId');
+        expect(saleIntent([unquoted]).items[0].quantity).toBe('2');
     });
 
     it('no fusiona, reprecifica ni edita una línea cotizada', () => {
@@ -70,8 +77,13 @@ describe('puente cotización → POS', () => {
     });
 
     it('impide descuentos y mezcla con líneas libres antes de cobrar', () => {
-        expect(posSource).toContain('const globalDiscountD = hasQuotationLines');
-        expect(posSource).toContain('discount: isQuotationCartLine(c) ? 0');
+        const quotedTotals = resolvePosCartTotals([quotedLine], '15', 'GENERAL');
+        expect(quotedTotals.globalDiscountNum).toBe(0);
+        expect(quotedTotals.grandTotal).toBe(12.5);
+        expect(saleIntent().items[0].discount).toBe(0);
+        const freeLine = { ...quotedLine, quotationItemId: undefined, quantityExact: undefined };
+        expect(saleIntent([freeLine]).items[0].discount).toBe(30);
+        expect(resolvePosCartTotals([freeLine], '15', 'GENERAL').globalDiscountNum).toBe(15);
         expect(posSource).toContain('hasQuotationLines && quotationLineCount !== cart.length');
         expect(posSource).toContain('disabled={hasQuotationLines}');
     });
@@ -79,19 +91,21 @@ describe('puente cotización → POS', () => {
 
 describe('simetría del intento online y su replay offline', () => {
     it('comparte una sola versión fiscal en ambos transportes', () => {
-        const inicio = posSource.indexOf('const saleTransportPayload = {');
+        expect(saleIntent().transport.fiscalRegimeVersion).toBe(7);
+        const inicio = posSource.indexOf('const intent = buildPromotionSaleIntent({');
         const fin = posSource.indexOf("trackEvent('real_sale_submit_attempted'", inicio);
         const contrato = posSource.slice(inicio, fin);
         expect(inicio).toBeGreaterThan(-1);
         expect(contrato).toContain('fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion');
-
+        expect(contrato).toContain('const saleTransportPayload = { offlineId, ...intent.transport }');
         const inicioCola = posSource.indexOf('await saveSaleOffline({', fin);
         const finCola = posSource.indexOf('});', inicioCola);
         expect(posSource.slice(inicioCola, finCola)).toContain('...saleTransportPayload');
-
-        const inicioOnline = posSource.indexOf("const res = await fetch('/api/sales'", finCola);
+        const inicioOnline = posSource.indexOf('const preparedPayload = await promotionCheckout.prepare(', finCola);
         const finOnline = posSource.indexOf('const data = await res.json()', inicioOnline);
+        expect(inicioOnline).toBeGreaterThan(finCola);
         expect(posSource.slice(inicioOnline, finOnline)).toContain('...saleTransportPayload');
+        expect(posSource.slice(inicioOnline, finOnline)).toContain('body: JSON.stringify(preparedPayload)');
     });
 });
 

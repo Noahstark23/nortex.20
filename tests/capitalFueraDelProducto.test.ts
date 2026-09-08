@@ -69,7 +69,7 @@ describe('el abono en efectivo sale de la caja, no de la billetera fintech', () 
 
     it('traduce los errores de la gaveta a su propio status, no a un 500 genérico', () => {
         expect(rutaDePago).toContain(
-            'error instanceof PayableSupplierPaymentError || error instanceof CashSupplierPaymentError',
+            'error instanceof PayableSupplierPaymentError || error instanceof SupplierPaymentCajaError',
         );
         expect(rutaDePago).toContain('res.status(error.httpStatus)');
     });

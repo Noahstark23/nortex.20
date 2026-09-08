@@ -36,6 +36,12 @@ import { PosPaymentSheet } from './pos/PosPaymentSheet';
 import { PosTicketShell } from './pos/PosTicketShell';
 import { NumberDraftInput } from './pos/NumberDraftInput';
 import { StoreCreditPaymentOption } from './pos/StoreCreditPaymentOption';
+import { usePromotionCheckout } from '../hooks/usePromotionCheckout';
+import { persistPromotionCart } from './pos/PromotionCartPersistence';
+import { promotionRecoveredSale } from './pos/PromotionRecoveredSale';
+import { PromotionCheckoutSheet } from './pos/PromotionCheckoutSheet';
+import { buildPromotionSaleIntent } from './pos/PromotionSaleIntent';
+import { resolvePosCartTotals, promotionReceiptCart } from './pos/PromotionTotals';
 import { usePosOfflineQueue } from '../hooks/usePosOfflineQueue';
 import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
 import POSCatalogAdminTools from './pos/POSCatalogAdminTools';
@@ -48,8 +54,6 @@ import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
 import { buildPostSalePrintCash } from '../utils/postSalePrintCash';
 import {
-    FISCAL_REGIME_CUOTA_FIJA,
-    includedVatFromGross,
     normalizeFiscalRegime,
     resolveSaleFiscalAmounts,
     type FiscalRegime,
@@ -740,6 +744,11 @@ const POS: React.FC = () => {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
     }), [token]);
+    const promotionCheckout = usePromotionCheckout(
+        token,
+        JSON.stringify([identidad?.tenantId, cart, globalDiscount, selectedCustomer?.id, currentShift?.id, fiscalSettings.fiscalRegimeVersion]),
+        `${identidad?.tenantId ?? ''}:${identidad?.userId ?? ''}`, () => { checkoutAttemptRef.current = null; },
+    );
     const storeCreditCheckout = useStoreCreditCheckout(token, headers, showToast);
     const { useStoreCredit, setUseStoreCredit, sourceReturnId: storeCreditSourceReturnId } = storeCreditCheckout;
 
@@ -2819,66 +2828,15 @@ const POS: React.FC = () => {
         }
     };
 
-    // 💰 Totales 100% en Decimal.js (sin float). El descuento global es string
-    // controlado; se clampa 0–100 y se parsea aquí. El IVA también en Decimal.
-    const quotationLineCount = cart.filter(isQuotationCartLine).length;
-    const hasQuotationLines = quotationLineCount > 0;
-    const globalDiscountD = hasQuotationLines
-        ? new Decimal(0)
-        : Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
-    const cartTotalsD = cart.reduce((acc, item) => {
-        const lineDiscount = isQuotationCartLine(item)
-            ? new Decimal(0)
-            : toDecimal((item as CartLine).discount ?? 0);
-        const factor = new Decimal(1).minus(lineDiscount.div(100));
-        const quantity = isQuotationCartLine(item) && item.quantityExact
-            ? toDecimal(item.quantityExact)
-            : toDecimal(item.quantity);
-        const lineTotal = toDecimal(item.price).mul(quantity).mul(factor);
-        return {
-            gross: acc.gross.plus(lineTotal),
-            taxableGross: item.ivaExento ? acc.taxableGross : acc.taxableGross.plus(lineTotal),
-        };
-    }, { gross: new Decimal(0), taxableGross: new Decimal(0) });
-    const totalD = cartTotalsD.gross;
-    const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
-    // IVA 15% Nicaragua — DESGLOSE, no recargo. El precio de mostrador ya
-    // incluye el IVA (convención nica) y el backend registra exactamente
-    // discountedTotal como Sale.total (executeSale ignora el total del
-    // cliente; nicaTax trata Sale.total como IVA incluido). Antes se sumaba
-    // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
-    // fantasma en todos los arqueos y fiado registrado 15% por debajo.
-    const grandTotalD = discountedTotalD;
+    const { quotationLineCount, hasQuotationLines, globalDiscountD, totalD, grandTotalD,
+        fiscalTotalD, generalTaxD, fiscalAmounts, taxD, isFixedQuota, total, discountAmount,
+        tax, grandTotal, globalDiscountNum } = resolvePosCartTotals(cart, globalDiscount, fiscalSettings.fiscalRegime, promotionCheckout.quoted);
     const availableStoreCreditD = Decimal.max(0, toDecimal(selectedCustomer?.storeCreditBalance ?? 0));
     const storeCreditAppliedD = useStoreCredit ? Decimal.min(availableStoreCreditD, grandTotalD).toDecimalPlaces(2) : new Decimal(0);
     const amountDueD = grandTotalD.minus(storeCreditAppliedD).toDecimalPlaces(2);
     const cashPaymentValidation = amountDueD.isZero()
         ? { ok: true as const, received: new Decimal(0), total: amountDueD, change: new Decimal(0) }
         : validateCashReceived(cashReceived, amountDueD);
-    // El backend redondea total y exento a centavos antes del desglose. Este
-    // espejo evita que una venta medida offline imprima un IVA distinto por un
-    // centavo cuando finalmente sincronice.
-    const fiscalTotalD = grandTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const exemptGrandTotalD = cartTotalsD.gross.minus(cartTotalsD.taxableGross)
-        .mul(new Decimal(1).minus(globalDiscountD.div(100)))
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const taxableGrandTotalD = fiscalTotalD.minus(exemptGrandTotalD);
-    const generalTaxD = includedVatFromGross(taxableGrandTotalD);
-    const fiscalAmounts = resolveSaleFiscalAmounts(
-        fiscalTotalD,
-        generalTaxD,
-        fiscalSettings.fiscalRegime,
-    );
-    const taxD = fiscalAmounts.vatAmount; // informativo (incluido); cero en cuota fija
-    const isFixedQuota = fiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
-
-    // Proyecciones numéricas (2 decimales) para UI y payload; la verdad es Decimal.
-    const total = totalD.toDecimalPlaces(2).toNumber();
-    const discountAmount = totalD.minus(grandTotalD).toDecimalPlaces(2).toNumber();
-    const discountedTotal = discountedTotalD.toDecimalPlaces(2).toNumber();
-    const tax = taxD.toDecimalPlaces(2).toNumber();
-    const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
-    const globalDiscountNum = globalDiscountD.toNumber();
     // El menú que rodea al POS necesita saber si hay una venta abierta para
     // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
     // el carrito sigue en pantalla hasta "Nueva venta", pero salir ahí no
@@ -2938,17 +2896,6 @@ const POS: React.FC = () => {
             });
             return;
         }
-        if (method === 'CASH' && amountDueD.greaterThan(0)) {
-            const cashValidation = validateCashReceived(cashReceived, amountDueD);
-            if (cashValidation.ok === false) {
-                setShowCashPreModal(true);
-                setShowMobileCart(true);
-                setLastScanFeedback({ message: cashValidation.message, type: 'error' });
-                playErrorBeep();
-                window.setTimeout(() => setLastScanFeedback(null), 3500);
-                return;
-            }
-        }
         if (hasQuotationLines && quotationLineCount !== cart.length) {
             setLastScanFeedback({ message: 'La cotización debe cobrarse sola; aparcá o quitá las otras líneas.', type: 'error' });
             playErrorBeep();
@@ -2997,33 +2944,14 @@ const POS: React.FC = () => {
         checkoutLockRef.current = true;
         setProcessing(true);
         const measuredLines = cart.filter(item => item.saleMode === 'MEASURED' || Boolean(item.measurement)).length;
-        const saleItems = cart.map(c => ({
-            id: c.id,
-            name: c.name,
-            ...(isQuotationCartLine(c) ? { quotationItemId: c.quotationItemId } : {}),
-            quantity: isQuotationCartLine(c) && c.quantityExact
-                ? c.quantityExact
-                : formatQuantityValue(c.quantity),
-            price: c.price,
-            costPrice: c.costPrice,
-            discount: isQuotationCartLine(c) ? 0 : ((c as CartLine).discount || 0),
-            presentation: c.presentation ?? {
-                quantity: formatQuantityValue(c.quantity),
-                unit: c.unit || 'unidad',
-            },
-            ...(c.measurement ? { measurement: c.measurement } : {}),
-        }));
-        const saleIntentSignature = JSON.stringify({
-            shiftId: currentShift.id,
-            paymentMethod: method,
-            customerId: selectedCustomer?.id ?? null,
-            employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
-            globalDiscount: globalDiscountD.toString(),
-            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
-            storeCreditAmount: storeCreditAppliedD.toFixed(2),
-            storeCreditSourceReturnId,
-            items: saleItems.map(({ name: _name, ...item }) => item),
+        const intent = buildPromotionSaleIntent({
+            cart, shiftId: currentShift.id, paymentMethod: method,
+            customerId: selectedCustomer?.id, customerName: selectedCustomer?.name ?? 'Cliente General',
+            employeeId: currentShift.employeeId ?? currentShift.employee?.id,
+            globalDiscount: globalDiscountNum, fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+            storeCreditAmount: storeCreditAppliedD.toFixed(2), storeCreditSourceReturnId, total: grandTotal,
         });
+        const saleItems = intent.items; const saleIntentSignature = intent.signature;
         const attempt = checkoutAttemptFor(
             checkoutAttemptRef.current,
             saleIntentSignature,
@@ -3034,18 +2962,7 @@ const POS: React.FC = () => {
         // Identidad canónica del intento: el POST online y el replay diferido
         // comparten este objeto. Si la respuesta online se pierde, IndexedDB
         // reenvía la misma versión fiscal y conserva la misma huella idempotente.
-        const saleTransportPayload = {
-            offlineId,
-            paymentMethod: method,
-            customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
-            customerId: selectedCustomer?.id ?? null,
-            total: grandTotal,
-            globalDiscount: globalDiscountNum,
-            employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
-            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
-            storeCreditAmount: storeCreditAppliedD.toFixed(2),
-            ...(storeCreditSourceReturnId ? { storeCreditSourceReturnId } : {}),
-        };
+        const saleTransportPayload = { offlineId, ...intent.transport };
         trackEvent('real_sale_submit_attempted', {
             source: firstSaleMode ? 'first_sale' : 'pos',
             onboarding_step: 'checkout',
@@ -3114,10 +3031,24 @@ const POS: React.FC = () => {
         };
 
         try {
+            const preparedPayload = await promotionCheckout.prepare(saleIntentSignature, { ...saleTransportPayload, items: saleItems.map(({ name: _name, ...item }) => item) }, currentShift.id);
+            if (!preparedPayload) return;
+            if (method === 'CASH' && amountDueD.greaterThan(0)) {
+                const cashValidation = validateCashReceived(cashReceived, amountDueD);
+                if (cashValidation.ok === false) {
+                    setShowCashPreModal(true);
+                    setShowMobileCart(true);
+                    setLastScanFeedback({ message: cashValidation.message, type: 'error' });
+                    playErrorBeep();
+                    window.setTimeout(() => setLastScanFeedback(null), 3500);
+                    return;
+                }
+            }
             const token = localStorage.getItem('nortex_token');
 
             // ── OFFLINE PATH ──────────────────────────────────────────
             if (!navigator.onLine) {
+                if (promotionCheckout.blocksOffline) throw new Error('Conectate para cobrar con el precio revisado. Conservamos el carrito.');
                 await queueSaleOffline();
                 return;
             }
@@ -3126,15 +3057,16 @@ const POS: React.FC = () => {
             // Timeout de 8 s: en lie-fi (wifi "conectado" que no pasa datos)
             // el fetch no resuelve nunca y el cobro quedaba congelado para
             // siempre; al vencer, la venta cae a la cola offline.
-            const res = await fetch('/api/sales', {
+            if (promotionCheckout.blocksOffline) persistPromotionCart(identidad, {
+                shiftId: currentShift.id, lineas: cart.map(aLineaGuardada),
+                clienteId: selectedCustomer?.id ?? null, descuentoGlobal: globalDiscount,
+            });
+            const res = await promotionCheckout.submit(() => fetch('/api/sales', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 signal: AbortSignal.timeout(8000),
-                body: JSON.stringify({
-                    ...saleTransportPayload,
-                    items: saleItems.map(({ name: _name, ...item }) => item),
-                })
-            });
+                body: JSON.stringify(preparedPayload)
+            }));
 
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -3191,7 +3123,7 @@ const POS: React.FC = () => {
 
             setCompletedSale({
                 syncStatus: 'confirmed',
-                items: [...cart],
+                items: promotionReceiptCart(cart, promotionCheckout.quoted),
                 subtotal: total,
                 discount: discountAmount,
                 tax: authoritativeVat.toDecimalPlaces(2).toNumber(),
@@ -3214,7 +3146,7 @@ const POS: React.FC = () => {
             setShowPaymentOptions(false);
             checkoutAttemptRef.current = null;
             setCashReceived('');
-            storeCreditCheckout.clear();
+            storeCreditCheckout.clear(); promotionCheckout.complete();
             trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
             trackGuidedSaleCompletion();
             if (measuredLines > 0) {
@@ -3233,11 +3165,12 @@ const POS: React.FC = () => {
             // misma clave de idempotencia. Un rechazo de NEGOCIO (stock
             // insuficiente, caja cerrada) sí se muestra: reintentarlo a
             // ciegas duplicaría el problema, no lo resolvería.
+            promotionCheckout.onFailure();
             const isNetworkFailure =
                 error?.name === 'TimeoutError' ||
                 error?.name === 'AbortError' ||
                 error instanceof TypeError; // fetch: "Failed to fetch"
-            if (isNetworkFailure && storeCreditAppliedD.isZero()) {
+            if (isNetworkFailure && storeCreditAppliedD.isZero() && !promotionCheckout.blocksOffline) {
                 try {
                     await queueSaleOffline();
                     return;
@@ -3555,6 +3488,16 @@ const POS: React.FC = () => {
 
     return (
         <div className={`nx-app-shell flex h-full relative ${guidedSimpleMode ? 'nx-pos-workspace' : 'nx-dark-context bg-surface-950'}`}>
+            <PromotionCheckoutSheet
+                controller={promotionCheckout}
+                onRecovered={data => {
+                    setCompletedSale(promotionRecoveredSale(cart, data));
+                    promotionCheckout.complete(); checkoutAttemptRef.current = null;
+                    setShowCashPreModal(false); setShowPaymentOptions(false); setCashReceived('');
+                    void refreshSoldProducts(cart.map(item => item.id)); fetchCashBalance(); fetchCashMovements();
+                }}
+                onContinue={method => { void handleCheckout(method as 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT'); }}
+            />
 
             {manualMeasuredProduct && (
                 <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="manual-measure-title">
@@ -5504,7 +5447,7 @@ const POS: React.FC = () => {
                             cashReceived={cashReceived}
                             cashOpen={showCashPreModal}
                             processing={processing}
-                            disabled={cart.length === 0 || turnoAjeno}
+                            disabled={cart.length === 0 || turnoAjeno || Object.keys(quantityErrors).length > 0}
                             onCashReceivedChange={setCashReceived}
                             onOpenCash={openCashCheckout}
                             onCancelCash={() => {

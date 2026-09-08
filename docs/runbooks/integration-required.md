@@ -14,7 +14,7 @@ toque dinero, stock, correcciones, compras, devoluciones o cierres:
 mise exec -- npm run test:integration:required
 ```
 
-Requiere Node 22, dependencias locales y Docker disponible. La imagen
+Requiere Node 22.23.2 mediante mise, dependencias locales y Docker disponible. La imagen
 `mysql:8.0` debe existir previamente: la ruta local falla cerrada si no está, para
 no descargar imágenes ni iniciar red inesperada. En CI, el workflow obtiene esa
 imagen de forma explícita antes de invocar la compuerta.
@@ -22,7 +22,7 @@ imagen de forma explícita antes de invocar la compuerta.
 ## Aislamiento que impone
 
 El script no usa una `DATABASE_URL` heredada y crea un contenedor MySQL 8 con
-nombre, puerto, credenciales y base aleatorios. El directorio de datos está en
+nombre y puerto efímeros, credenciales aleatorias y una base exclusiva de QA. El directorio de datos está en
 `tmpfs`, el puerto se publica sólo en `127.0.0.1`, y un `trap` elimina el backend
 y el contenedor al terminar, incluso ante fallo o interrupción. No usa
 `docker-compose`, volúmenes de desarrollo, bases compartidas ni credenciales
@@ -41,42 +41,34 @@ SHA de una release acepte una respuesta en caché como si fuera salud actual.
 
 ## Recorridos exigidos
 
-La lista cerrada está en `scripts/qa-integration-required.sh`. El script descubre
-todos los archivos versionados `*.integration.test.ts` y `*.mysql.test.ts`; además
-incluye cualquier prueba que lea `process.env.NORTEX_QA_BASE_URL` o
-`process.env.NORTEX_MYSQL_INTEGRATION`, aunque su nombre no lleve el sufijo
-habitual. Si una prueba descubierta no está inscrita, la compuerta falla. Esta
-forma evita incluir tests que solo mencionan esos nombres al comprobar el workflow,
-sin ocultar una ronda que sí los consume.
+La lista cerrada vive en `scripts/quality-gate-contract.mjs`
+(`REQUIRED_INTEGRATION_SUITES`); el wrapper `scripts/qa-integration-required.sh`
+provisiona MySQL y delega en `scripts/run-quality-integration.mjs`. El registro
+contiene 37 suites en el corte `484f58a`: incluye compras y precios, NortexGPT,
+promociones, WhatsApp privado, caja, inventario, fiscal, RRHH y delivery.
+No mantener una segunda lista manual en este documento.
 
-Actualmente exige estos diecinueve recorridos:
-
-1. asiento con una sola conexión MySQL;
-2. identidad WhatsApp;
-3. cierre de caja y asientos concurrentes;
-4. integridad del POS;
-5. anulación de movimientos manuales de caja;
-6. cliente/cartera;
-7. acceso RRHH;
-8. refresco de catálogo;
-9. fiscal;
-10. ajuste de inventario;
-11. movimientos manuales de lote y bodega;
-12. compras — fase uno;
-13. compras — fase dos;
-14. pedidos/correcciones — fase dos B;
-15. flujo de compra;
-16. compra y cambio de precio de venta;
-17. devolución idempotente;
-18. conteo físico por bodega;
-19. delivery aislado por tenant.
+El runner comprueba suites descubiertas, incluyendo convenciones de nombre y
+consumidores de las variables de integración. Una suite obligatoria no registrada
+falla cerrada. El MySQL descartable permite triggers de fallo controlado y lectura
+de `performance_schema.data_lock_waits`/`data_locks` para observar concurrencia real.
+Estos permisos pertenecen únicamente al contenedor QA; no son instrucciones para
+producción.
 
 Cada archivo corre por separado y su reporte JSON se valida antes de continuar.
 Una suite inexistente, sin casos, fallida, omitida o marcada `todo` cierra la
 compuerta. Prisma sincroniza una base recién creada y descartable sin
 `--accept-data-loss`.
 
-## Evidencia registrada — 2026-09-05
+## Evidencia vigente del candidato
+
+El corte `484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b` ejecutó localmente
+**37 suites y 332 casos aprobados, cero omitidos o todo**. CI del mismo head de PR
+terminó exitoso en [run 34286306801](https://github.com/Noahstark23/nortex.20/actions/runs/34286306801).
+La evidencia y manifiesto están en [el expediente consolidado](../releases/2026-09-08-consolidated-candidate.md).
+Una edición posterior requiere las verificaciones proporcionales de su candidato.
+
+## Evidencia histórica — 2026-09-05 (no es la cuenta actual)
 
 La primera ejecución detectó una discrepancia reproducible: el ajuste de
 inventario devolvía `409` para `WAREHOUSE_REQUIRED` e `INSUFFICIENT_STOCK`, aunque

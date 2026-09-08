@@ -149,6 +149,16 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 
 ## Promoción de producción
 
-Seguir `docs/releases/2026-09-04-production-gate.md`: staging y producción son
+Seguir `docs/runbooks/release-promotion.md`: staging y producción son
 compuertas distintas. Un push/documento no constituye intención de promoción.
 La autorización debe identificar el SHA completo; no inferirla de un verde local.
+
+## Equipo y documentación vigente
+
+- Consultar `docs/ESTADO_ACTUAL_NORTEX.md` y `docs/EQUIPO_DESARROLLO_NORTEX.md` antes
+  de repartir trabajo. Los perfiles no otorgan ownership ni autorización externa.
+- Las cifras de un informe histórico conservan su fecha/candidato. Actualizar la
+  guía operativa y enlazar la evidencia nueva; no reescribir resultados antiguos
+  como si fueran una ejecución actual.
+- Conservar límites de concurrencia, presupuestos de monolitos y aislamiento.
+  Corregir una skill no autoriza implementar o desplegar todo su dominio.

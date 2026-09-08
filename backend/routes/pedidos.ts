@@ -37,6 +37,10 @@ const PEDIDO_PRODUCT_OPERATIONAL_SELECT = {
 } as const;
 
 
+export const PedidoMotorizadoAssignmentSchema = z.object({
+    motorizadoId: z.string().trim().min(1).max(191).nullable(),
+});
+
 export const PedidoListQuerySchema = z.object({
     page: z.coerce.number().int().min(1).optional().default(1),
     limit: z.coerce.number().int().min(1).max(MAX_PEDIDO_LIST_LIMIT).optional().default(DEFAULT_PEDIDO_LIST_LIMIT),

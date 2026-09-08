@@ -31,7 +31,9 @@ const writeoffRoute = between(
     server,
     "app.post('/api/inventory/batches/:batchId/writeoff'",
     "app.get('/api/inventory/expiring-soon'",
-);
+) + readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffService.ts'), 'utf8');
+const writeoffAuthority = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffPreparation.ts'), 'utf8');
+const writeoffValue = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffValue.ts'), 'utf8');
 const adjustRoute = between(
     server,
     "app.post('/api/inventory/adjust'",
@@ -220,14 +222,16 @@ describe('integridad transaccional de alta y merma manual', () => {
         expect(createBatchRoute).toContain('resultAuditId');
         expect(createBatchRoute).toContain('movementId');
         expect(createBatchRoute).not.toMatch(/findMany[\s\S]*MANUAL_BATCH_COMMAND/u);
-        expect(writeoffRoute).toContain('loadManualBatchReplay({');
-        expect(writeoffRoute).toContain('isUniqueConstraintFailure(error)');
+        expect(writeoffRoute).toContain('loadBatchWriteoffReplay(');
+        expect(writeoffRoute).toContain("error.code === 'P2002'");
     });
 
     it('merma exige ubicación/cantidad, descuenta local y agregado sin poner el lote en cero', () => {
         expect(writeoffRoute).toContain('validate(WriteoffBatchSchema)');
         expect(writeoffRoute.match(/resolveBatchWarehouseLedgerMode\(/gu)).toHaveLength(1);
-        expect(writeoffRoute).toContain("status: 'ACTIVE'");
+        expect(writeoffRoute).toContain('await assertBatchWriteoffPrincipal(principal, tx, true)');
+        expect(writeoffAuthority).toContain("actor.status !== 'ACTIVE'");
+        expect(writeoffAuthority).toContain('actor.role !== principal.role');
         expect(writeoffRoute).toContain("movementType: 'WRITEOFF'");
         expect(writeoffRoute).toContain('warehouseId: operationWarehouse.id');
         expect(writeoffRoute).toContain('enforceSufficient: true');
@@ -239,7 +243,9 @@ describe('integridad transaccional de alta y merma manual', () => {
     });
 
     it('valúa la merma con Decimal 2dp y mantiene asiento/auditoría en la misma tx', () => {
-        expect(writeoffRoute).toContain('.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)');
+        expect(writeoffRoute).toContain('calculateBatchWriteoffValue(writeoffQuantity,');
+        expect(writeoffAuthority).toContain('calculateBatchWriteoffValue(quantity, cost)');
+        expect(writeoffValue).toContain('.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)');
         expect(writeoffRoute).toContain('const journalValue = lossValue.toNumber()');
         expect(writeoffRoute).toContain("{ accountCode: '5.1.2', debit: journalValue, credit: 0 }");
         expect(writeoffRoute).toContain("{ accountCode: '1.1.4', debit: 0, credit: journalValue }");

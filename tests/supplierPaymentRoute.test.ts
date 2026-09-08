@@ -17,10 +17,11 @@ const paymentEnd = server.indexOf('// GET /api/purchases/pending', paymentStart)
 if (paymentStart < 0 || paymentEnd < 0) throw new Error('No se encontró la ruta de pago a proveedor');
 const paymentRoute = server.slice(paymentStart, paymentEnd);
 
-const purchaseStart = server.indexOf("app.post('/api/purchases'");
-const purchaseEnd = server.indexOf("// POST /api/purchases/:id/pay", purchaseStart);
-if (purchaseStart < 0 || purchaseEnd < 0) throw new Error('No se encontró la ruta de compras');
-const purchaseRoute = server.slice(purchaseStart, purchaseEnd);
+const purchaseRoute = [
+    'backend/services/purchaseRegistrationService.ts',
+    'backend/services/purchaseRegistrationPreparation.ts',
+    'backend/routes/purchases.ts',
+].map(path => readFileSync(resolve(process.cwd(), path), 'utf8')).join('\n');
 
 const cashMovementStart = server.indexOf("app.post('/api/cash-movements'");
 const cashMovementEnd = server.indexOf("app.get('/api/cash-movements'", cashMovementStart);

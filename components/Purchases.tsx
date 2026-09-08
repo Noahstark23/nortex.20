@@ -493,6 +493,8 @@ export default function Purchases() {
     const [cart, setCart] = useState<CartItem[]>([]);
     const [productSearch, setProductSearch] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    // Un reintento del mismo formulario conserva la identidad tras perder la respuesta.
+    const registrationAttempt = useRef<{ payload: string; key: string } | null>(null);
     const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
     const [paymentToConfirm, setPaymentToConfirm] = useState<PaymentDialogState | null>(null);
     const [supplierPaymentForm, setSupplierPaymentForm] = useState<SupplierPaymentForm>(EMPTY_SUPPLIER_PAYMENT_FORM);
@@ -1114,11 +1116,7 @@ export default function Purchases() {
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
-            const res = await fetch('/api/purchases', {
-                method: 'POST',
-                headers,
-                signal: controller.signal,
-                body: JSON.stringify({
+            const payload = JSON.stringify({
                     supplierId: selectedSupplier,
                     warehouseId: selectedPO ? undefined : effectiveSelectedWarehouseId || undefined,
                     invoiceNumber: invoiceNumber.trim(),
@@ -1143,12 +1141,21 @@ export default function Purchases() {
                             expiryDate: c.expiryDate || undefined
                         };
                     })
-                })
+                });
+            if (!registrationAttempt.current || registrationAttempt.current.payload !== payload) {
+                registrationAttempt.current = { payload, key: crypto.randomUUID() };
+            }
+            const res = await fetch('/api/purchases', {
+                method: 'POST',
+                headers: { ...headers, 'Idempotency-Key': registrationAttempt.current.key },
+                signal: controller.signal,
+                body: payload,
             });
 
             const data = await res.json().catch(() => ({}));
 
             if (res.ok) {
+                registrationAttempt.current = null;
                 showToast({
                     tone: 'success',
                     title: 'Compra registrada',

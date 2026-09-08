@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
-const server = source('backend/server.ts');
+const server = source('backend/server.ts').replace('registerRetentionCertificate(app);\nregisterFiscalExports(app);', source('backend/routes/retentionCertificate.ts') + '\n' + source('backend/routes/fiscalExports.ts'));
 const accounting = source('backend/services/accounting.ts');
 
 const routeSlice = (startMarker: string, endMarker: string) => {
@@ -45,10 +45,7 @@ describe('documentStatus autoritativo en libros fiscales y CxP', () => {
         expect(service).toContain("documentStatus: 'POSTED'");
         expect(service).toContain("purchase.documentStatus !== 'POSTED'");
 
-        const purchaseRoute = routeSlice(
-            "app.post('/api/purchases'",
-            '// POST /api/purchases/:id/pay',
-        );
+        const purchaseRoute = source('backend/services/purchaseRegistrationService.ts');
         const matchAt = purchaseRoute.indexOf('await executeProcurementMatch({');
         const refreshAt = purchaseRoute.indexOf('await tx.purchaseItem.findMany({');
         expect(matchAt).toBeGreaterThan(-1);
@@ -58,7 +55,7 @@ describe('documentStatus autoritativo en libros fiscales y CxP', () => {
             purchaseRoute.indexOf('if (matchedPurchaseItems.length', refreshAt),
         );
         expect(refreshBlock).toContain('purchaseId: purchase.id');
-        expect(refreshBlock).toContain('purchase: { tenantId: authReq.tenantId! }');
+        expect(refreshBlock).toContain('purchase: { tenantId: principal.tenantId }');
         expect(refreshBlock).not.toMatch(/where:\s*\{\s*tenantId:/);
         expect(purchaseRoute).toContain('matchedPurchaseItems.length !== purchase.items.length');
         expect(purchaseRoute).toContain('items: matchedPurchaseItems');

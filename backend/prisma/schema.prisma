@@ -138,6 +138,31 @@ model Tenant {
   customerCreditEntries        CustomerCreditEntry[]
   productReturnItems           ProductReturnItem[]
 
+  // NortexGPT: aislamiento y activación por negocio.
+  assistantConfig        AssistantTenantConfig?
+  assistantConversations AssistantConversation[]
+  assistantMessages      AssistantMessage[]
+  assistantAttachments   AssistantAttachment[]
+  assistantJobs          AssistantJob[]
+  assistantProposals     AssistantProposal[]
+  assistantUsage         AssistantUsage[]
+  purchaseCommands       PurchaseCommand[]
+  assistantRuns          AssistantRun[]
+  assistantDailyBriefs   AssistantDailyBrief[]
+  assistantActionProposals AssistantActionProposal[]
+  assistantActionCommands AssistantActionCommand[]
+  purchaseOrderDraftCommands PurchaseOrderDraftCommand[]
+  purchaseOrderDraftSequence PurchaseOrderDraftSequence?
+  assistantCatalogAliases AssistantCatalogAlias[]
+  promotions Promotion[]
+  promotionItems PromotionItem[]
+  promotionCommands PromotionCommand[]
+  promotionCheckouts PromotionCheckout[]
+  assistantWaChallenges AssistantWaChallenge[]
+  assistantWaBindings AssistantWaBinding[]
+  assistantWaInbox AssistantWaInbox[]
+  assistantWaOutbox AssistantWaOutbox[]
+
   // HR Module
   leaveRequests          LeaveRequest[]
   payrollRuns            PayrollRun[]
@@ -209,9 +234,468 @@ model User {
   @@index([lastLogin])
 }
 
+/// Activación explícita por negocio; ningún tenant se habilita por migración.
+model AssistantTenantConfig {
+  tenantId          String @id
+  enabled           Boolean @default(false)
+  extractionEnabled Boolean @default(false)
+  executionEnabled  Boolean @default(false)
+  operationsEnabled Boolean @default(false)
+  actionsEnabled Boolean @default(false)
+  promotionsEnabled Boolean @default(false)
+  privateWhatsappEnabled Boolean @default(false)
+  monthlyBudgetUsd  Decimal @default(10) @db.Decimal(18, 6)
+  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+model AssistantConversation {
+  id             String @id @default(cuid())
+  tenantId       String
+  userId         String
+  roleAtCreation String @db.VarChar(32)
+  /// Captura privada de hechos declarados; cada turno aplica CAS dentro de la transacción de mensajes.
+  metadata       Json?
+  stateVersion   Int @default(0)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  expiresAt      DateTime
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  messages       AssistantMessage[]
+  @@index([tenantId, userId, createdAt])
+  @@index([expiresAt])
+}
+
+model AssistantMessage {
+  id             String @id @default(cuid())
+  tenantId       String
+  userId         String
+  conversationId String
+  requestId      String @db.VarChar(64)
+  role           String @db.VarChar(16)
+  content        Json
+  createdAt      DateTime @default(now())
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  conversation   AssistantConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  @@unique([conversationId, requestId, role])
+  @@index([tenantId, userId, conversationId, createdAt])
+}
+
+model AssistantAttachment {
+  id             String @id @default(cuid())
+  tenantId       String
+  userId         String
+  roleAtCreation String @db.VarChar(32)
+  name           String @db.VarChar(255)
+  mediaType      String @db.VarChar(64)
+  storageKey     String @db.VarChar(255)
+  sha256         String @db.Char(64)
+  bytes          Int
+  pages          Int @default(0)
+  status         String @default("UPLOADED") @db.VarChar(24)
+  purchaseId     String?
+  createdAt      DateTime @default(now())
+  expiresAt      DateTime?
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, userId, createdAt])
+  @@index([tenantId, purchaseId])
+  @@index([expiresAt, status])
+}
+
+model AssistantJob {
+  id             String @id @default(cuid())
+  tenantId       String
+  userId         String
+  roleAtCreation String @db.VarChar(32)
+  attachmentIds  Json
+  /// Snapshot autorizado de la conversación; nunca acepta hechos del navegador.
+  intakeContext  Json?
+  status         String @default("PENDING") @db.VarChar(24)
+  attempts       Int @default(0)
+  leaseToken     String? @db.VarChar(64)
+  leaseUntil     DateTime?
+  availableAt    DateTime @default(now())
+  proposalId     String?
+  errorCode      String? @db.VarChar(64)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt, leaseUntil])
+  @@index([tenantId, userId, createdAt])
+  @@index([status, updatedAt])
+}
+
+/// Propuesta revisable, nunca una Purchase contabilizada antes de confirmación.
+model AssistantProposal {
+  id             String @id @default(cuid())
+  tenantId       String
+  userId         String
+  roleAtCreation String @db.VarChar(32)
+  attachmentIds  Json
+  /// null conserva el contrato documental; MANUAL requiere procedencia privada del servidor.
+  source         Json?
+  version        Int @default(1)
+  status         String @default("DRAFT") @db.VarChar(24)
+  draft          Json
+  issues         Json
+  preview        Json?
+  payloadHash    String? @db.Char(64)
+  operationId    String? @db.VarChar(64)
+  result         Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  expiresAt      DateTime
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, userId, createdAt])
+  @@index([tenantId, userId, operationId])
+  @@index([expiresAt, status])
+}
+
+/// Reservas conservadoras de presupuesto, fuera de transacciones de negocio.
+model AssistantBudget {
+  id          String @id @db.VarChar(191)
+  scope       String @db.VarChar(160)
+  month       String @db.VarChar(7)
+  limitUsd    Decimal @db.Decimal(18, 6)
+  reservedUsd Decimal @default(0) @db.Decimal(18, 6)
+  blocked     Boolean @default(false)
+  spentUsd    Decimal @default(0) @db.Decimal(18, 6)
+  updatedAt   DateTime @updatedAt
+  @@unique([scope, month])
+}
+
+model AssistantUsage {
+  id                String @id @default(cuid())
+  tenantId          String
+  userId            String
+  month             String @db.VarChar(7)
+  reservedUsd       Decimal @db.Decimal(18, 6)
+  actualUsd         Decimal? @db.Decimal(18, 6)
+  status            String @default("RESERVED") @db.VarChar(16)
+  providerRequestId String? @db.VarChar(191)
+  usage             Json?
+  // Ejecución que originó el consumo. Se escribe al CREAR la reserva, antes de
+  // llamar al proveedor, y se conserva al liquidar: así también quedan vinculados
+  // los fallos, los reinicios y los costos inciertos (UNKNOWN). Sin este vínculo
+  // el consumo por ejecución no es acreditable.
+  runId             String? @db.VarChar(191)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, month, createdAt])
+  @@index([status, createdAt])
+  @@index([runId])
+}
+
+/// Un solo efecto financiero por solicitud. Resultado se escribe junto con compra y auditoría.
+model PurchaseCommand {
+  id          String @id @default(cuid())
+  tenantId    String
+  userId      String
+  requestKey  String @db.VarChar(191)
+  payloadHash String @db.Char(64)
+  purchaseId  String?
+  result      Json?
+  createdAt   DateTime @default(now())
+  tenant      Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, purchaseId])
+  @@index([tenantId, createdAt])
+}
+
 // ==========================================
 // INVITACIONES DE EQUIPO
 // ==========================================
+
+/// Ejecución acotada: sus pasos son evidencia, nunca autorización de una mutación.
+model AssistantRun {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  conversationId String
+  requestId String @db.VarChar(64)
+  payloadHash String @db.Char(64)
+  inputText String @db.Text
+  status String @default("PENDING") @db.VarChar(24)
+  version Int @default(0)
+  iterations Int @default(0)
+  leaseToken String? @db.VarChar(64)
+  leaseUntil DateTime?
+  startedAt DateTime?
+  deadlineAt DateTime?
+  checkpoint Json?
+  result Json?
+  errorCode String? @db.VarChar(64)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  expiresAt DateTime
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([conversationId, requestId])
+  @@index([tenantId, userId, conversationId, createdAt])
+  @@index([status, leaseUntil])
+  @@index([expiresAt])
+  @@index([tenantId, createdAt])
+}
+
+/// Una presentación por usuario y día civil; no se comparte contenido entre roles.
+model AssistantDailyBrief {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  localDay String @db.VarChar(10)
+  items Json
+  dismissedIds Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  expiresAt DateTime
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, userId, localDay])
+  @@index([expiresAt])
+}
+
+/// Propuestas operativas separadas del contrato histórico de facturas de compra.
+model AssistantActionProposal {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  // Asociación durable aunque se cancele o venza la consulta que lo preparó.
+  runId String?
+  roleAtCreation String @db.VarChar(32)
+  kind String @db.VarChar(32)
+  status String @default("DRAFT") @db.VarChar(24)
+  version Int @default(1)
+  draftJson Json
+  previewJson Json?
+  previewHash String? @db.Char(64)
+  requestKey String @db.VarChar(128)
+  payloadHash String @db.Char(64)
+  expiresAt DateTime
+  operationId String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, userId, requestKey])
+  @@index([tenantId, userId, updatedAt])
+  @@index([status, expiresAt])
+  @@index([tenantId, userId, runId])
+}
+
+/// Comprobante escrito en la transacción que registra el efecto del dominio.
+model AssistantActionCommand {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  requestKey String @db.VarChar(128)
+  payloadHash String @db.Char(64)
+  proposalId String
+  proposalVersion Int
+  kind String @db.VarChar(32)
+  resultJson Json?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, userId, createdAt])
+  @@index([tenantId, proposalId])
+  @@index([tenantId, createdAt])
+}
+
+model PurchaseOrderDraftCommand {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  requestKey String @db.VarChar(128)
+  payloadHash String @db.Char(64)
+  purchaseOrderId String?
+  resultJson Json?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, userId, createdAt])
+}
+
+/// Correlativo aislado: evita upgrades de locks compartidos del tenant por las FKs.
+model PurchaseOrderDraftSequence {
+  tenantId String @id
+  lastNumber BigInt @default(0)
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+/// Alias aprobados explícitamente por administración; el modelo sólo puede leerlos.
+model AssistantCatalogAlias {
+  id String @id @default(cuid())
+  tenantId String
+  productId String
+  alias String @db.VarChar(100)
+  normalizedAlias String @db.VarChar(100)
+  approvedBy String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, normalizedAlias, productId])
+  @@index([tenantId, productId, active])
+}
+
+/// Promoción temporal independiente del precio permanente del catálogo.
+model Promotion {
+  id String @id @default(cuid())
+  tenantId String
+  name String @db.VarChar(191)
+  percent Decimal @db.Decimal(5, 2)
+  status String @default("PUBLISHED") @db.VarChar(24)
+  version Int @default(1)
+  startsAt DateTime
+  endsAt DateTime
+  createdBy String
+  cancelledBy String?
+  cancelledAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  items PromotionItem[]
+  @@index([tenantId, status, startsAt, endsAt])
+}
+
+model PromotionItem {
+  id String @id @default(cuid())
+  tenantId String
+  promotionId String
+  productId String
+  configHash String @db.VarChar(64)
+  configSnapshot Json
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  promotion Promotion @relation(fields: [promotionId], references: [id], onDelete: Restrict)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict)
+  @@unique([promotionId, productId])
+  @@index([tenantId, productId, promotionId])
+}
+
+model PromotionCommand {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  requestKey String @db.VarChar(128)
+  payloadHash String @db.VarChar(64)
+  promotionId String?
+  resultJson Json?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+}
+
+/// Una cotización de cobro nunca registra una venta por sí misma.
+model PromotionCheckout {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  offlineId String @db.VarChar(191)
+  version Int @default(1)
+  requestHash String @db.VarChar(64)
+  priceHash String @db.VarChar(64)
+  quoteJson Json
+  expiresAt DateTime
+  saleId String?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, userId, offlineId])
+  @@index([tenantId, expiresAt])
+}
+
+/// Se persiste únicamente la huella del código emitido en una sesión autenticada.
+model AssistantWaChallenge {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  codeHash String @unique @db.Char(64)
+  expiresAt DateTime
+  consumedAt DateTime?
+  createdAt DateTime @default(now())
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([tenantId, userId, expiresAt])
+  @@index([tenantId, userId, createdAt])
+  @@index([expiresAt, createdAt])
+}
+
+model AssistantWaBinding {
+  id String @id @default(cuid())
+  userId String @unique
+  tenantId String
+  roleAtBinding String @db.VarChar(32)
+  waId String @db.VarChar(32)
+  phoneNumberId String @db.VarChar(64)
+  version Int @default(1)
+  active Boolean @default(true)
+  conversationId String?
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([phoneNumberId, waId])
+  @@index([tenantId, userId, active])
+}
+
+/// Inbox técnico: el tenant sólo se asigna desde una vinculación verificada.
+model AssistantWaInbox {
+  id String @id @default(uuid())
+  sequence BigInt @unique @default(autoincrement())
+  providerMessageId String @unique @db.VarChar(191)
+  phoneNumberId String @db.VarChar(64)
+  waId String @db.VarChar(32)
+  bindingId String?
+  bindingVersion Int?
+  tenantId String?
+  userId String?
+  roleAtReceipt String? @db.VarChar(32)
+  kind String @db.VarChar(32)
+  payload Json
+  status String @default("PENDING") @db.VarChar(24)
+  attempts Int @default(0)
+  leaseToken String? @db.VarChar(64)
+  leaseUntil DateTime?
+  availableAt DateTime @default(now())
+  attachmentId String?
+  extractionJobId String?
+  errorCode String? @db.VarChar(64)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  tenant Tenant? @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([status, availableAt, leaseUntil])
+  @@index([phoneNumberId, waId, status, sequence])
+  @@index([tenantId, userId, createdAt])
+  @@index([expiresAt])
+}
+
+model AssistantWaOutbox {
+  id String @id @default(uuid())
+  sequence BigInt @unique @default(autoincrement())
+  inboxId String @unique
+  bindingId String
+  bindingVersion Int
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  phoneNumberId String @db.VarChar(64)
+  waId String @db.VarChar(32)
+  text String @db.Text
+  status String @default("PENDING") @db.VarChar(24)
+  providerMessageId String? @unique @db.VarChar(191)
+  attempts Int @default(0)
+  leaseToken String? @db.VarChar(64)
+  leaseUntil DateTime?
+  errorCode String? @db.VarChar(64)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@index([status, createdAt])
+  @@index([tenantId, userId, createdAt])
+  @@index([expiresAt])
+  @@index([phoneNumberId, waId, status, sequence])
+  @@index([createdAt, status])
+}
 
 model Invitation {
   id        String   @id @default(cuid())
@@ -348,6 +832,7 @@ model Supplier {
   @@index([tenantId, deletedAt, name])
   @@index([tenantId, status, name])
   @@index([tenantId, ruc])
+  @@index([tenantId, name])
 }
 
 /// Personas de contacto del proveedor. Cada registro conserva tenantId para que
@@ -742,6 +1227,7 @@ model PurchaseOrder {
 
   @@unique([tenantId, orderNumber])
   @@index([tenantId])
+  @@index([tenantId, status])
   @@index([supplierId])
   @@index([status])
 }
@@ -1293,6 +1779,8 @@ model SaleItem {
   // T2: foto del trato fiscal AL MOMENTO de vender (igual que costAtSale).
   // Si el dueño reclasifica el producto después, las ventas viejas no cambian.
   ivaExento                  Boolean  @default(false)
+  /// Precio y promoción históricos; las devoluciones no consultan vigencias actuales.
+  promotionSnapshot          Json?
 
   sale             Sale                      @relation(fields: [saleId], references: [id])
   measurement      SaleMeasurement?
@@ -1814,6 +2302,8 @@ model Product {
   category    String?
 
   // Precios
+  // Revisión monotónica de precios/presentaciones; stock y costo no la cambian.
+  promotionPriceVersion Int @default(1)
   price           Float // Precio de venta (detalle)
   cost            Float // Costo de compra
   // Venta por mayor (distribuidora/miscelánea): precio de mayoreo y cantidad
@@ -1883,6 +2373,7 @@ model Product {
   supplierReturnItems  SupplierReturnItem[]
   returnInspections    ReturnInspection[]
   productReturnItems   ProductReturnItem[]
+  promotionItems       PromotionItem[]
 
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
@@ -1891,6 +2382,7 @@ model Product {
   @@index([tenantId, isPublished, category, name])
   @@index([category])
   @@fulltext([name, category])
+  @@index([tenantId, name])
 }
 
 model KardexMovement {
@@ -2002,6 +2494,7 @@ model Warehouse {
   @@unique([tenantId, name])
   @@unique([tenantId, sellerId])
   @@index([tenantId])
+  @@index([tenantId, isActive, name])
 }
 
 model ProductStock {
@@ -2081,6 +2574,7 @@ model ProductBatch {
   @@index([tenantId])
   @@index([productId])
   @@index([expiryDate])
+  @@index([tenantId, expiryDate])
 }
 
 /// Desglose autoritativo de un lote por bodega cuando el tenant activa el ledger.

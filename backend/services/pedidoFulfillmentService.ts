@@ -32,6 +32,7 @@ type PrismaTx = Prisma.TransactionClient;
 export type PedidoFulfillmentCode =
     | 'PEDIDO_NOT_FOUND'
     | 'PEDIDO_ALREADY_PREPARED'
+    | 'PEDIDO_INVALID_TRANSITION'
     | 'PEDIDO_ALREADY_PROCESSED'
     | 'PEDIDO_INVALID_STATE_TRANSITION'
     | 'PEDIDO_PRODUCT_NOT_FOUND'
@@ -53,6 +54,12 @@ export class PedidoFulfillmentError extends Error {
         this.name = 'PedidoFulfillmentError';
     }
 }
+
+export const PEDIDO_PREPARATION_SOURCE_STATES = [
+    'pendiente',
+    'asignado',
+    'en_tienda',
+] as const;
 
 const PRODUCT_SELECT = {
     id: true,

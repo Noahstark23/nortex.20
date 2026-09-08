@@ -21,10 +21,28 @@ let allowNegativeStock: boolean;
 let saleNetworkFails: boolean;
 let posts: Array<{ path: string; body: Record<string, unknown> }>;
 let analytics: ReturnType<typeof vi.fn>;
+let testSignal: AbortSignal;
+
+// Vitest cancela el test al vencer el plazo, pero user-event no cancela sus teclas.
+// Cada pausa queda ligada al test de origen para que no escriba sobre el siguiente.
+function setupUser(signal = testSignal) {
+    return userEvent.setup({
+        advanceTimers: delay => new Promise<void>((resolve, reject) => {
+            signal.throwIfAborted();
+            const onAbort = () => { clearTimeout(timer); reject(signal.reason); };
+            const timer = setTimeout(() => {
+                signal.removeEventListener('abort', onAbort);
+                resolve();
+            }, delay);
+            signal.addEventListener('abort', onAbort, { once: true });
+        }),
+    });
+}
 
 const ok = (body: unknown) => ({ ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) });
 
-beforeEach(async () => {
+beforeEach(async ({ signal }) => {
+    testSignal = signal;
     await db.offline_sales.clear();
     catalog = [];
     customers = [];
@@ -42,6 +60,7 @@ beforeEach(async () => {
     vi.stubGlobal('fetch', vi.fn(async (input: unknown, init?: RequestInit) => {
         const requestUrl = new URL(String(input), 'http://test');
         const path = requestUrl.pathname;
+        if (path === '/api/promotions/checkout/quote') return ok({ enabled: false, quote: null });
         if (init?.method === 'POST') {
             const body: Record<string, unknown> = typeof init.body === 'string' ? JSON.parse(init.body) : {};
             posts.push({ path, body });
@@ -118,10 +137,25 @@ function fillProduct(dialog: HTMLElement, stock?: string) {
 }
 
 describe('primera venta con existencia real', () => {
+    it('cancela las teclas pendientes del escenario anterior sin escribir en el siguiente campo', async () => {
+        const controller = new AbortController();
+        const user = setupUser(controller.signal);
+        render(<>
+            <input aria-label="Campo de origen" onChange={() => {
+                controller.abort(new Error('Escenario cancelado'));
+                screen.getByLabelText('Campo siguiente').focus();
+            }} />
+            <input aria-label="Campo siguiente" />
+        </>);
+        await expect(user.type(screen.getByLabelText('Campo de origen'), 'SKU-123{Enter}')).rejects.toThrow('Escenario cancelado');
+        expect(screen.getByLabelText('Campo de origen')).toHaveValue('S');
+        expect(screen.getByLabelText('Campo siguiente')).toHaveValue('');
+    });
+
     it('tras vender pide solo los ids vendidos y conserva los otros productos para la próxima venta', async () => {
         const unsold = { ...product, id: 'p2', sku: 'SUERO-1', name: 'Suero oral' };
         catalog = [product, unsold];
-        const user = userEvent.setup();
+        const user = setupUser();
         mount('/app/pos');
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
@@ -137,24 +171,14 @@ describe('primera venta con existencia real', () => {
         expect(screen.getByRole('textbox', { name: 'Cantidad de Suero oral en unidad' })).toHaveValue('1');
     });
 
-    // Es un recorrido de hasta 20 altas, edición y eliminación, no un benchmark.
-    // En el runner compartido de CI supera 5 s; el margen sólo aplica a este caso.
-    it.each([5, 20])('conserva las %i líneas y permite ajustar la última o quitar la primera', async count => {
+    // 20 SKUs mantienen todas las pulsaciones reales; este recorrido completo no es un benchmark.
+    // El plazo local admite la contención del conjunto de suites sin subir el timeout global.
+    for (const count of [5, 20]) it(`conserva las ${count} líneas y permite ajustar la última o quitar la primera`, async () => {
         catalog = Array.from({ length: count }, (_, i) => ({ ...product, id: `p${i}`, sku: `SKU-${i}`, name: `Producto ${i}` }));
-        const user = userEvent.setup();
+        const user = setupUser();
         mount('/app/pos');
         const search = await readySearch();
-        await user.click(search);
-        for (let i = 0; i < count; i++) {
-            // Este caso comprueba retención/edición de 20 líneas. Ingresar cada
-            // SKU completo evita repetir cientos de renders por mecanografía;
-            // los demás recorridos conservan user.type con SKU + Enter.
-            expect(search).toHaveFocus();
-            await user.paste(`SKU-${i}`);
-            expect(search).toHaveValue(`SKU-${i}`);
-            await user.keyboard('{Enter}');
-            expect(search).toHaveValue('');
-        }
+        for (let i = 0; i < count; i++) await user.type(search, `SKU-${i}{Enter}`);
         expect(screen.getAllByRole('textbox', { name: /^Cantidad de Producto/ })).toHaveLength(count);
         await user.click(screen.getByRole('button', { name: `Agregar 1 unidad de Producto ${count - 1}` }));
         expect(screen.getByRole('textbox', { name: `Cantidad de Producto ${count - 1} en unidad` })).toHaveValue('2');
@@ -162,12 +186,12 @@ describe('primera venta con existencia real', () => {
         expect(screen.getAllByRole('textbox', { name: /^Cantidad de Producto/ })).toHaveLength(count - 1);
         expect(screen.queryByRole('textbox', { name: 'Cantidad de Producto 0 en unidad' })).not.toBeInTheDocument();
         expect(posts).toHaveLength(0);
-    }, 15_000);
+    }, count === 20 ? 15_000 : 5_000);
 
     it('comparte el cambio de menú con POS sin desmontar carrito ni turno', async () => {
         catalog = [product];
         customers = [{ id: 'customer-a', name: 'Cliente de prueba', creditLimit: 1000, currentDebt: 0, isBlocked: false }];
-        const user = userEvent.setup();
+        const user = setupUser();
         render(<MemoryRouter initialEntries={['/app/pos?first_sale=1']}>
             <VentaEnCursoProvider><Layout><POS /></Layout></VentaEnCursoProvider>
         </MemoryRouter>);
@@ -194,7 +218,7 @@ describe('primera venta con existencia real', () => {
     it('conserva el cobro abierto y el efectivo al cambiar modo desde otra pestaña', async () => {
         catalog = [product];
         useMobileViewport();
-        const user = userEvent.setup();
+        const user = setupUser();
         mount('/app/pos');
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
@@ -219,7 +243,7 @@ describe('primera venta con existencia real', () => {
     it('mantiene visible el cobro USD al elegir modo simple, sin cambiar la moneda en silencio', async () => {
         catalog = [product];
         useMobileViewport();
-        const user = userEvent.setup();
+        const user = setupUser();
         mount('/app/pos');
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
@@ -244,7 +268,7 @@ describe('primera venta con existencia real', () => {
     it('cobra desde la barra móvil sin abrir primero Ver venta y registra una sola venta tras confirmar el vuelto', async () => {
         catalog = [product];
         useMobileViewport();
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         expect(screen.queryByRole('dialog', { name: /Venta actual/ })).not.toBeInTheDocument();
@@ -273,7 +297,7 @@ describe('primera venta con existencia real', () => {
     it('permite volver del cobro directo móvil sin registrar ni perder el producto del ticket', async () => {
         catalog = [product];
         useMobileViewport();
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
@@ -298,7 +322,7 @@ describe('primera venta con existencia real', () => {
             addEventListener: vi.fn(), removeEventListener: vi.fn(),
             addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: () => true,
         })));
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /Revisar venta, 1 productos/ }));
@@ -379,7 +403,7 @@ describe('primera venta con existencia real', () => {
         { action: 'Ver mi negocio', route: '/app/inicio' },
     ])('prioriza otra venta y conserva la acción $action después de la primera venta', async ({ action, route }) => {
         catalog = [product];
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
@@ -408,7 +432,7 @@ describe('primera venta con existencia real', () => {
 
     it.each(['offline', 'network-error'] as const)('guarda una venta %s como pendiente sin anunciar ni medir confirmación', async transport => {
         catalog = [product];
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
@@ -442,7 +466,7 @@ describe('primera venta con existencia real', () => {
 
     it('mantiene el carrito y el cobro intactos al usar F9 y F4 dentro de Avisos', async () => {
         catalog = [product];
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         const quantity = screen.getByRole('textbox', { name: 'Cantidad de Arroz en unidad' });
@@ -466,7 +490,7 @@ describe('primera venta con existencia real', () => {
 
     it('no agrega un SKU del lector mientras el foco está en Cerrar avisos y vuelve a admitirlo al salir', async () => {
         catalog = [product];
-        const user = userEvent.setup();
+        const user = setupUser();
         mount();
         await user.type(await readySearch(), 'ARR-1{Enter}');
         const quantity = screen.getByRole('textbox', { name: 'Cantidad de Arroz en unidad' });

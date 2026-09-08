@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { resolveLegacySaleMode } from './legacySaleMode';
 import { validateNonNegativeQuantity } from './quantity';
 
 export interface QuickProductDraft {
@@ -21,26 +22,17 @@ export interface PosQuantityProduct {
  * pieza con `unit = "unidad"` y sin reglas físicas. Si el POS los interpreta
  * como medidos, el `+` vuelve a sumar 0.0001 y bloquea la venta.
  */
-function prefersLegacyCounted(product: PosQuantityProduct): boolean {
-    return typeof product.unit === 'string'
-        && product.unit.trim().toLowerCase() === 'unidad'
-        && product.saleMode == null
-        && product.quantityStep == null;
-}
 
 /** Mantiene fracciones legacy medidas, pero un producto contado usa enteros. */
 export function effectivePosSaleMode(product: PosQuantityProduct): 'COUNTED' | 'MEASURED' {
-    if (product.saleMode === 'COUNTED') return 'COUNTED';
-    if (prefersLegacyCounted(product)) return 'COUNTED';
-    return 'MEASURED';
+    return resolveLegacySaleMode(product);
 }
 
 export function effectivePosQuantityStep(product: PosQuantityProduct): number {
     if (Number.isFinite(product.quantityStep) && Number(product.quantityStep) > 0) {
         return Number(product.quantityStep);
     }
-    if (prefersLegacyCounted(product)) return 1;
-    return product.saleMode === 'COUNTED' ? 1 : 0.0001;
+    return effectivePosSaleMode(product) === 'COUNTED' ? 1 : 0.0001;
 }
 
 /**

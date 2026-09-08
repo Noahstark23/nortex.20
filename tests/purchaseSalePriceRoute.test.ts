@@ -6,28 +6,31 @@ const server = fs.readFileSync(path.resolve(process.cwd(), 'backend/server.ts'),
 const routeStart = server.indexOf("app.post('/api/purchases'");
 const routeEnd = server.indexOf('// POST /api/purchases/:id/pay', routeStart);
 if (routeStart < 0 || routeEnd < 0) throw new Error('No se encontró POST /api/purchases');
-const route = server.slice(routeStart, routeEnd);
+const route = fs.readFileSync(path.resolve(process.cwd(), 'backend/services/purchaseRegistrationService.ts'), 'utf8');
+const preparation = fs.readFileSync(path.resolve(process.cwd(), 'backend/services/purchaseRegistrationPreparation.ts'), 'utf8');
+const handler = fs.readFileSync(path.resolve(process.cwd(), 'backend/routes/purchases.ts'), 'utf8');
 
 describe('POST /api/purchases — autoridad y atomicidad de salePrice', () => {
     it('rechaza el cambio sin rol privilegiado antes de abrir la transacción', () => {
-        const guard = route.indexOf('hasPurchaseSalePriceIntent(items)');
-        const forbidden = route.indexOf("code: 'PURCHASE_SALE_PRICE_FORBIDDEN'", guard);
-        const transaction = route.indexOf('prisma.$transaction');
+        const guard = route.indexOf('hasPurchaseSalePriceIntent(input.items)');
+        const forbidden = route.indexOf("'PURCHASE_SALE_PRICE_FORBIDDEN'", guard);
+        const transaction = route.indexOf('db.$transaction');
 
         expect(guard).toBeGreaterThan(-1);
-        expect(route.slice(guard, forbidden)).toContain('!canSetPurchaseSalePrice(authReq.role)');
+        expect(route.slice(guard, forbidden)).toContain('!canSetPurchaseSalePrice(options.principal.role)');
         expect(forbidden).toBeGreaterThan(guard);
         expect(forbidden).toBeLessThan(transaction);
     });
 
     it('resuelve duplicados dentro de la tx y valida el catálogo por tenant', () => {
-        const transaction = route.indexOf('prisma.$transaction');
+        const transaction = route.indexOf('db.$transaction');
         const resolve = route.indexOf('resolvePurchaseSalePriceIntents(items)');
-        const products = route.indexOf('const ownedProducts');
-        const tenantScope = route.indexOf('tenantId: authReq.tenantId!', products);
+        const products = preparation.indexOf('const ownedProducts');
+        const tenantScope = preparation.indexOf('tenantId: principal.tenantId', products);
 
         expect(resolve).toBeGreaterThan(transaction);
-        expect(products).toBeGreaterThan(resolve);
+        expect(route.indexOf('await preparePurchaseContext(tx, principal, input)')).toBeGreaterThan(resolve);
+        expect(products).toBeGreaterThan(-1);
         expect(tenantScope).toBeGreaterThan(products);
     });
 
@@ -44,7 +47,7 @@ describe('POST /api/purchases — autoridad y atomicidad de salePrice', () => {
         expect(lockedSnapshot).toBeGreaterThan(stockLock);
         expect(change).toBeGreaterThan(lockedSnapshot);
         expect(update).toBeGreaterThan(change);
-        expect(route.slice(update, updateEnd)).toContain('tenantId: authReq.tenantId!');
+        expect(route.slice(update, updateEnd)).toContain('tenantId: principal.tenantId');
         expect(route.slice(update, updateEnd)).toContain('...(priceChange');
     });
 
@@ -57,10 +60,10 @@ describe('POST /api/purchases — autoridad y atomicidad de salePrice', () => {
     });
 
     it('audita before/after y resumen PURCHASE_CREATED en la misma callback ACID', () => {
-        const transaction = route.indexOf('prisma.$transaction');
+        const transaction = route.indexOf('db.$transaction');
         const priceAudit = route.indexOf('createPurchaseSalePriceAudits({');
         const purchaseAudit = route.indexOf("action: 'PURCHASE_CREATED'", priceAudit);
-        const transactionClose = route.indexOf('res.json({', purchaseAudit);
+        const transactionClose = route.indexOf('const completedPurchase =', purchaseAudit);
 
         expect(priceAudit).toBeGreaterThan(transaction);
         expect(route.slice(priceAudit, purchaseAudit)).toContain('purchaseId: purchase.id');
@@ -70,7 +73,7 @@ describe('POST /api/purchases — autoridad y atomicidad de salePrice', () => {
     });
 
     it('mapea conflictos y fallos de precio a su HTTP tipado', () => {
-        expect(route).toContain('error instanceof PurchaseSalePriceError');
-        expect(route).toContain('res.status(error.httpStatus).json({ error: error.message, code: error.code })');
+        expect(handler).toContain('error instanceof PurchaseSalePriceError');
+        expect(handler).toContain('res.status(error.httpStatus).json({ error: error.message, code: error.code })');
     });
 });

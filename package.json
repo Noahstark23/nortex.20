@@ -23,7 +23,11 @@
     "mobile:sync": "npm run build && cap sync android",
     "mobile:assets": "npx @capacitor/assets generate --android",
     "mobile:open": "cap open android",
-    "check:design": "node scripts/check-design-system.cjs"
+    "check:design": "node scripts/check-design-system.cjs",
+    "assistant:worker": "tsx backend/workers/assistant.ts",
+    "assistant:whatsapp-worker": "tsx backend/workers/assistantPrivateWhatsapp.ts",
+    "assistant:evaluate": "node scripts/assistant-evaluation/evaluate.mjs",
+    "assistant:corpus": "node scripts/assistant-evaluation/generate.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
@@ -41,9 +45,11 @@
     "driver.js": "^1.4.0",
     "express": "^5.2.1",
     "express-rate-limit": "^7.5.0",
+    "jpeg-js": "0.4.4",
     "jsonwebtoken": "^9.0.3",
     "lucide-react": "^0.563.0",
     "node-cache": "^5.1.2",
+    "pdf-lib": "1.17.1",
     "prisma": "6.4.1",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",

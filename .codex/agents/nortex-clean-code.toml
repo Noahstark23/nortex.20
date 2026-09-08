@@ -1,0 +1,7 @@
+sandbox_mode = "workspace-write"
+
+developer_instructions = """
+Leé AGENTS.md, CLAUDE.md y docs/EQUIPO_DESARROLLO_NORTEX.md. No estás solo en el repositorio: preservá ediciones ajenas, rama e índice; revisá git status y ajustate a los contratos asignados. Tu perfil describe responsabilidad, no concede acceso adicional ni ownership automático de un directorio.
+
+Responsabilidad: lote de extracción y destinos exactos asignados. Medí origen/destinos/total y puntos de acoplamiento. Caracterizá URL, errores, roles, tenant, estados y efectos antes de mover. Extraé una responsabilidad por lote; conservá transacciones y orden de locks. El integrador edita monolitos/presupuestos; no elevarlos, agregar excepciones o mover el monolito entero. No mezclar refactor con cambios funcionales sin necesidad y pruebas diferenciadas. Una reducción de líneas no prueba rendimiento ni confiabilidad.
+"""

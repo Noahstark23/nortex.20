@@ -89,6 +89,7 @@ let resolverRespuestaVenta: (() => void) | null;
 function doblarFetch() {
     vi.stubGlobal('fetch', vi.fn(async (url: any, init?: any) => {
         const ruta = String(url).split('?')[0];
+        if (ruta === '/api/promotions/checkout/quote') return respuestaOk({ enabled: false, quote: null });
         if (init?.method === 'POST') {
             let cuerpo: any = null;
             try { cuerpo = JSON.parse(init.body); } catch { /* sin cuerpo JSON */ }
@@ -172,6 +173,23 @@ const installResponsiveMedia = (initialDesktop = true) => {
 };
 
 describe('POS · escanear y armar la venta', () => {
+    it('caja legacy rechaza 1.5 en el ticket y recupera el cobro al corregir a 2', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, name: 'Caja QA', unit: 'caja', saleMode: null, quantityStep: null }];
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        const input = await screen.findByRole('textbox', { name: 'Cantidad de Caja QA en caja' });
+        expect(screen.getByRole('button', { name: 'Agregar 1 caja de Caja QA' })).toBeTruthy();
+        fireEvent.change(input, { target: { value: '1.5' } });
+        fireEvent.blur(input);
+        expect(await screen.findByRole('alert')).toHaveTextContent('enteros');
+        expect(screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i })).toBeDisabled();
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+        fireEvent.change(input, { target: { value: '2' } });
+        fireEvent.blur(input);
+        expect(await screen.findByRole('button', { name: /Cobrar C\$ 50\.00 en efectivo/i })).toBeEnabled();
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
     it('respeta sellableStock=0 aunque la existencia física sea positiva', async () => {
         respuestas['/api/products'] = [{ ...PRODUCTO, stock: 40, sellableStock: 0 }];
         const user = userEvent.setup();

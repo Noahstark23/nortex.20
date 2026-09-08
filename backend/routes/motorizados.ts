@@ -17,6 +17,7 @@ Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 // Solo dueños/administradores gestionan la flota propia y resetean el PIN de
 // login del repartidor (evita que un cajero se auto-provisione credenciales de Driver App).
 const ROLES_FLOTA = ['OWNER', 'ADMIN'];
+const normalizePhone = (raw: string): string => raw.replace(/\D/gu, '');
 
 const PhoneSchema = z
     .string('El teléfono es obligatorio.')

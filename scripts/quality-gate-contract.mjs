@@ -12,6 +12,24 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/inventoryAdjust.integration.test.ts',
   'tests/batchWarehouseManualMovements.test.ts',
   'tests/purchaseFlow.integration.test.ts',
+  'tests/purchaseRegistration.integration.test.ts',
+  'tests/assistantFlow.integration.test.ts',
+  'tests/assistantTextPurchase.integration.test.ts',
+  'tests/assistantWorkerRecovery.integration.test.ts',
+  'tests/assistantAnalytics.integration.test.ts',
+  'tests/assistantInventory.integration.test.ts',
+  'tests/assistantCatalog.integration.test.ts',
+  'tests/assistantRuns.integration.test.ts',
+  'tests/assistantStatus.integration.test.ts',
+  'tests/assistantActions.integration.test.ts',
+  'tests/assistantActionsHttp.integration.test.ts',
+  'tests/assistantOperationsRetention.integration.test.ts',
+  'tests/purchaseOrderDraft.integration.test.ts',
+  'tests/promotions.integration.test.ts',
+  'tests/promotionsFlow.integration.test.ts',
+  'tests/promotionsShiftClose.integration.test.ts',
+  'tests/assistantPrivateWhatsapp.integration.test.ts',
+  'tests/productBulkEdit.integration.test.ts',
   'tests/purchaseSalePrice.integration.test.ts',
   'tests/procurementPhaseOne.integration.test.ts',
   'tests/procurementPhaseTwo.integration.test.ts',
@@ -35,8 +53,15 @@ export function validateQualityDatabase(raw, acknowledgement) {
 export function assertExecutedSuite(report, filename) {
   const matching = report?.testResults?.filter(result => result.name?.replaceAll('\\', '/').endsWith('/' + filename)) ?? [];
   if (report?.success !== true || matching.length !== 1) throw new Error(`No se ejecutó la suite requerida: ${filename}`);
+  const counters = ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'numTodoTests', 'numTotalTestSuites', 'numFailedTestSuites', 'numPendingTestSuites'];
+  if (counters.some(key => !Number.isInteger(report[key]) || report[key] < 0)
+      || report.numTotalTests === 0 || report.numPassedTests !== report.numTotalTests
+      || report.numFailedTests || report.numPendingTests || report.numTodoTests
+      || report.numFailedTestSuites || report.numPendingTestSuites) {
+    throw new Error(`Contadores incompletos, fallidos u omitidos: ${filename}`);
+  }
   const suite = matching[0];
-  if (suite.status !== 'passed' || !suite.assertionResults?.length
+  if (suite.status !== 'passed' || !suite.assertionResults?.length || suite.assertionResults.length !== report.numTotalTests
       || suite.assertionResults.some(test => test.status !== 'passed')) {
     throw new Error(`Suite incompleta, fallida u omitida: ${filename}`);
   }

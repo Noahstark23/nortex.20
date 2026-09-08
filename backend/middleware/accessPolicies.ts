@@ -28,8 +28,8 @@ export const CUSTOMER_READ_ROLES = [
     'ACCOUNTANT',
 ];
 
-/** Hub, cartera y cobranza: excluye empleados sin responsabilidad financiera. */
-export const CUSTOMER_HUB_READ_ROLES = [
+/** Cartera enriquecida, historial y estados de cuenta: EMPLOYEE solo consulta la ficha básica. */
+export const CUSTOMER_PORTFOLIO_READ_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
@@ -309,3 +309,6 @@ export const QUOTATION_WRITE_ROLES = [
 
 /** Reportes y exportaciones fiscales que el contador prepara para DGI. */
 export const FISCAL_DGI_ROLES = ACCOUNTING_READ_ROLES;
+
+/** Alias de compatibilidad: el hub conserva los permisos financieros de cartera. */
+export const CUSTOMER_HUB_READ_ROLES = CUSTOMER_PORTFOLIO_READ_ROLES;

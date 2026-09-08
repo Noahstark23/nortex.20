@@ -674,6 +674,13 @@ export async function closeShiftWithReport(
     const declaredUsd = new Decimal(input.declaredCashUsd ?? 0);
 
     return client.$transaction(async (tx) => {
+        const [actor] = await tx.$queryRaw<Array<{ id: string; role: string; status: string }>>(Prisma.sql`
+            SELECT id, role, status FROM \`User\`
+            WHERE id = ${command.userId} AND tenantId = ${command.tenantId} FOR SHARE`);
+        if (!actor || actor.status !== 'ACTIVE' || !['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER'].includes(actor.role)
+            || (command.role && actor.role !== command.role)) {
+            throw new ShiftCloseError('SHIFT_CLOSE_FORBIDDEN', 403, 'Tu sesión o permiso cambió. Volvé a ingresar.');
+        }
         const locked = await lockShift(tx, command.tenantId, command.shiftId);
         if (locked.userId !== command.userId && !CLOSE_ADMIN_ROLES.has(command.role || '')) {
             throw new ShiftCloseError('SHIFT_CLOSE_FORBIDDEN', 403, 'No autorizado a cerrar este turno.');
@@ -1007,3 +1014,5 @@ export async function closeShiftWithReport(
         throw error;
     });
 }
+
+export { closeLegacyShift } from './legacyShiftCloseService';

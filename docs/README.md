@@ -1,10 +1,14 @@
+> **Entrada vigente:** [estado actual](ESTADO_ACTUAL_NORTEX.md), [plan de estabilidad y RAG](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md), [equipo](EQUIPO_DESARROLLO_NORTEX.md) y [mantenimiento documental](MANTENIMIENTO_DOCUMENTAL_NORTEX.md). Los informes fechados conservan evidencia histórica; su presencia en este índice no acredita su vigencia operativa.
+
 # Documentación de Nortex
 
-Actualización: 2026-09-04. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
+Actualización del índice: 2026-09-08. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
 
 ## Dirección y evidencia actual
 
-**Preparación actual:** [Candidato POS, caja y calidad](releases/2026-09-04-pos-release-candidate.md), [compuerta de producción](releases/2026-09-04-production-gate.md) y [siguiente entrega de Stock, cámara y RAG](PLAN_STOCK_RAG_CAMARA_2026-09-04.md). Candidato integrado local; CI remoto, staging y producción son etapas pendientes.
+**Plan actual:** [RAG y estabilidad operativa](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md), con prioridad C00 para consolidar cuatro clientes. La integración del 2026-09-08 debe registrar su candidato y pruebas nuevas; los informes anteriores conservan su fecha y alcance.
+
+**Historial de preparación del 2026-09-04:** [Candidato POS, caja y calidad](releases/2026-09-04-pos-release-candidate.md), [compuerta de producción](releases/2026-09-04-production-gate.md) y [siguiente entrega de Stock, cámara y RAG](PLAN_STOCK_RAG_CAMARA_2026-09-04.md). Candidato integrado local; CI remoto, staging y producción son etapas pendientes.
 
 **Entrega local anterior a la integración:** [Reparación de prioridades y verificación por módulo](VERIFICACION_MODULOS_2026-09-04.md). Estado E01–E08, dinero/stock/permisos, QA MySQL, navegador y nuevos pendientes M01–M07. Conserva el [rediseño aceptado](REDISENO_POS_2026-09-04.md). Piloto y publicación siguen separados.
 

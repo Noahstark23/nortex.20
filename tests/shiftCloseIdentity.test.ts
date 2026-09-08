@@ -12,7 +12,7 @@ const decimal = (value: string) => new Prisma.Decimal(value);
 
 // Adaptador determinista para el servicio real. Simula rollback, pero no
 // pretende demostrar locks ni concurrencia de MySQL: esa es otra compuerta.
-function fixture() {
+function fixture(actorPatch: Record<string, unknown> = {}) {
     let shift: any = {
         id: 'shift-a', tenantId: 'tenant-a', userId: 'user-a', employeeId: null,
         initialCash: decimal('100'), initialCashUsd: decimal('20.1234'), status: 'OPEN',
@@ -24,6 +24,7 @@ function fixture() {
     let audits: any[] = [];
     const tx: any = {
         $queryRaw: vi.fn(async (query: Prisma.Sql) => {
+            if (query.sql.includes('FROM `User`')) return [{ id: query.values[0], role: 'CASHIER', status: 'ACTIVE', ...actorPatch }];
             if (query.sql.includes('FROM `Shift`')) {
                 return query.values.includes(shift.id) && query.values.includes(shift.tenantId) ? [{ ...shift }] : [];
             }
@@ -65,6 +66,15 @@ function fixture() {
 }
 
 describe('identidad del cierre con reporte', () => {
+    it.each([{ status: 'DISABLED' }, { role: 'VIEWER' }, { role: 'MANAGER' }])('rechaza permisos revocados antes de bloquear o cambiar la caja: %j', async actor => {
+        const f = fixture(actor);
+        await expect(closeShiftWithReport(command, f.client, fixedNow)).rejects.toMatchObject({ httpStatus: 403, code: 'SHIFT_CLOSE_FORBIDDEN' });
+        expect(f.tx.$queryRaw).toHaveBeenCalledTimes(1);
+        expect(f.tx.shift.updateMany).not.toHaveBeenCalled();
+        expect(f.tx.shiftCloseReport.create).not.toHaveBeenCalled();
+        expect(f.tx.auditLog.create).not.toHaveBeenCalled();
+    });
+
     it('conserva USD4 en estado, reporte y auditoría; un retry canónico no recalcula ni escribe', async () => {
         const f = fixture();
         const first = await closeShiftWithReport(command, f.client, fixedNow);

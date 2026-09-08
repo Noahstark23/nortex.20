@@ -170,7 +170,7 @@ export async function applyLinkedPurchaseSalePriceIntents(params: {
     // siendo exactamente los que acabamos de bloquear.
     const updated = await tx.$executeRaw(Prisma.sql`
         UPDATE \`Product\`
-        SET price = CASE id
+        SET promotionPriceVersion = promotionPriceVersion + 1, price = CASE id
             ${Prisma.join(changes.map((change) => Prisma.sql`
                 WHEN ${change.productId} THEN ${new Decimal(change.priceAfter).toNumber()}
             `), ' ')}

@@ -1,0 +1,20 @@
+{
+  "$schema": "../node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "packageManager": "npm",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "testRunner": "vitest",
+  "vitest": {"configFile": "vitest.stryker.config.ts"},
+  "testFiles": ["tests/assistantMoneyMutation.test.ts"],
+  "mutate": [
+    "backend/services/assistant/budget.ts:16-19",
+    "backend/services/assistant/proposalValidation.ts:55-59",
+    "backend/services/purchaseRegistrationAuthority.ts:38-50"
+  ],
+  "reporters": ["html", "json", "clear-text", "progress"],
+  "htmlReporter": {"fileName": "reports/assistant-mutation/index.html"},
+  "jsonReporter": {"fileName": "reports/assistant-mutation/mutation.json"},
+  "coverageAnalysis": "perTest",
+  "timeoutMS": 15000,
+  "concurrency": 2,
+  "thresholds": {"high": 99.85, "low": 99.85, "break": 99.85}
+}

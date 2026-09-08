@@ -1,73 +1,76 @@
 ---
 name: nortex-migration
-description: Cambios de schema Prisma / base de datos en Nortex (agregar modelos/campos, índices, migraciones). Usar SIEMPRE que se toque backend/prisma/schema.prisma — la BD es MySQL 8 y la imagen promovida ejecuta un preflight DDL controlado, lo que impone patrones específicos.
+description: Cambios de schema Prisma / base de datos en Nortex. Usar siempre al tocar backend/prisma/schema.prisma; MySQL 8, preflight DDL controlado, cambios aditivos y evidencia de upgrade/restauración.
 ---
 
-# Migraciones en Nortex (MySQL 8 + `db push`)
+# Migraciones en Nortex
 
-## Realidad del deploy (dicta todo lo demás)
-La imagen arranca mediante un entrypoint controlado que ejecuta
-`npx --no-install prisma db push` (sin `--accept-data-loss`) → **aplica el schema
-como DDL y NUNCA ejecuta DML**. El entrypoint se ejecuta en cada arranque; que una
-imagen llegue a producción mediante el workflow autorizado depende además de las
-protecciones externas y de Auto Deploy apagado. Eso no es permiso para ejecutar
-`db push` manualmente contra una base real. Las validaciones manuales solo usan
-MySQL local o CI descartable. Consecuencias:
-- Los backfills de datos **van en la aplicación** (patrón perezoso), no en SQL.
-- Sin el flag, un rename/tipo incompatible **hace fallar el arranque** (la instancia
-  vieja sigue viva) en vez de borrar datos → los cambios deben ser **ADITIVOS**
-  igual (agregar columna/tabla nullable o con default). Rename = agregar nueva +
-  migrar en app + deprecar.
-- **Aditivo no significa libre de warnings:** Prisma también exige
-  `--accept-data-loss` al crear algunos índices `UNIQUE` sobre tablas pobladas.
-  No habilitar el flag. Agregar un paso state-based en
-   `scripts/deploy-schema-preflight.ts` que inspeccione `information_schema`,
-  valide duplicados/estado exacto, aplique únicamente el DDL permitido y revalide;
-  luego el `db push` normal debe quedar sin warnings.
-- Igual se escribe el SQL en `backend/prisma/migrations/<YYYYMMDD>_<nombre>/migration.sql`
-  (documentación + `migrate deploy` futuro). **Sintaxis MySQL**: backticks,
-  `VARCHAR(191)`, `DATETIME(3)`, `DOUBLE`, `BOOLEAN`, `DECIMAL(18,4)`.
+Leer `CLAUDE.md`, `AGENTS.md`, `nortex-feature`, `nortex-deploy` y
+`nortex-backup-recovery`. Preservar la rama y los cambios ajenos; trabajar en el
+candidato aislado autorizado. MySQL 8 y Prisma 6.4.1 son obligatorios.
 
-## Flujo
-1. Editar `schema.prisma` (comentando el porqué del campo).
-2. Relaciones: agregar el back-relation en TODOS los modelos tocados
-   (`Tenant`/`Product` acumulan listas — añadir la línea adyacente; esto genera
-   conflictos triviales keep-both entre PRs hermanos: avisarlo en el PR).
-3. Validar y generar (sin BD real, con URL dummy):
-   ```bash
-   DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma validate --schema=backend/prisma/schema.prisma
-   DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+## Qué ejecuta el arranque
+
+`scripts/docker-entrypoint.sh` espera MySQL, corre `db:preflight` y después
+`db push --skip-generate`, sin `--accept-data-loss`. Los preflights inspeccionan
+estado/DDL permitido; `db push` sincroniza schema, pero no ejecuta los SQL de
+`backend/prisma/migrations/` ni transforma datos como un backfill de negocio.
+Se ejecuta en cada arranque. Las recetas de esta skill no autorizan comandos
+manuales contra una base real.
+
+Un cambio incompatible puede detener el arranque. No garantizar que el contenedor
+anterior continuará disponible: depende del reemplazo real de Coolify. Mantener
+rollback de aplicación compatible y recuperación ensayada.
+
+## Diseño del cambio
+
+- Expansión aditiva: agregar tabla/columna compatible, escribir/leer con transición
+  explícita y reconciliar antes de deprecar. No drop, rename ni reducción de precisión.
+  Una ampliación de precisión existente también requiere revisar conversión,
+  bloqueo DDL, compatibilidad y datos; no se aprueba solo porque dice ALTER.
+- Un `UNIQUE` nuevo puede producir warning de pérdida de datos aunque sea expansión.
+  No habilitar el flag global. Extender `scripts/deploy-schema-preflight.ts` con
+  inspección de `information_schema`, verificación de duplicados/definición exacta,
+  DDL acotado, recuperación desde estados parciales y revalidación idempotente.
+  Ante datos incompatibles, detenerse; no corregir ni borrar filas automáticamente.
+- Dinero nuevo usa Decimal/`decimal.js` y precisión del contrato, habitualmente
+  `Decimal(18,4)`. Los Float monetarios legacy de Product no autorizan nuevos Float:
+  su transición requiere expansión, backfill y comparación por agregado.
+- Cantidades respetan BASE/PACK, paso y fracciones legítimas. No aplicar una regla
+  global de enteros. Conservar tipos legacy cuando el contrato lo exija y diseñar
+  precisión explícita para campos nuevos; lotes y farmacia requieren conciliación.
+- Cada dato de negocio tiene autoridad de tenant derivada del backend autenticado;
+  índices compuestos acompañan filtros/orden reales. Unicidad comercial es por
+  tenant. Revisar relaciones inversas y políticas de borrado: no añadir cascadas
+  que destruyan historia financiera o de inventario.
+- Si se desglosa un agregado existente, definir primero la fuente autoritativa y
+  su invariante. Un backfill perezoso debe bloquear/releer dentro de la transacción
+  y tratar carreras sin duplicar saldos. Capturar P2002 no demuestra por sí solo
+  que `SUM(desglose)=agregado`; probar convergencia, datos inconsistentes y rollback.
+
+## Implementación y evidencia
+
+1. Caracterizar conducta, permisos e invariantes antes del cambio; fijar un único
+   integrador para schema, preflight y archivos compartidos.
+2. Modificar `schema.prisma` y escribir el SQL espejo aditivo en
+   `backend/prisma/migrations/<fecha>_<nombre>/migration.sql`, con sintaxis MySQL,
+   nombres de índices/FKs coherentes y back-relations completas. Ese SQL documenta
+   la transición; el arranque actual no lo ejecutará por ser una migración versionada.
+3. Con Node 22.23.2 vía mise, validar/generar con URL dummy y Prisma local:
+   ```sh
+   DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma validate --schema=backend/prisma/schema.prisma
+   DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma generate --schema=backend/prisma/schema.prisma
    ```
-   ⚠️ Si `validate` dice "datasource url no soportado" → estás corriendo prisma 7
-   del registry: `npm ci` primero (el repo pinnea 6.4.1).
-4. Escribir el `migration.sql` espejo (aditivo, con FKs e índices con los nombres
-   que Prisma genera: `Tabla_campo_idx`, `Tabla_campoA_campoB_key`).
-5. Si el delta agrega un `UNIQUE` a una tabla existente/poblada, reproducir el
-   upgrade en MySQL 8 con datos y agregar el preflight idempotente antes descrito.
-   Debe fallar cerrado ante duplicados o una definición homónima incompatible.
-6. `npx --no-install tsc --noEmit` (el client generado tipa el código nuevo).
+4. Probar upgrade desde schema poblado anterior, reejecución, estado parcial,
+   duplicados, referencias e incompatibilidades con MySQL 8 descartable. Verificar
+   que un rechazo no altere datos y que el `db push` posterior no pida data loss.
+5. Ejecutar TypeScript y las compuertas aplicables. Dinero/inventario exige
+   `test:integration:required` sin omitidos, auditoría atómica, concurrencia e
+   idempotencia. Mutación pertinente conserva pisos y umbral.
+6. Antes de promover schema a un entorno real, comprobar respaldo off-site y
+   restore drill vigente de su base conforme a la skill de recuperación, CI y
+   staging del mismo candidato. Un smoke sintético no acredita respaldo productivo.
 
-## Patrones del repo
-- **Dinero nuevo** → `Decimal @db.Decimal(18, 4)`. Excepción documentada: campos
-  hermanos de `Product.price/cost` (Float legacy) se mantienen Float y migran
-  juntos en el sweep pendiente.
-- **Cantidades** → `Float` (unidades fraccionables: kg/litro/metro). Jamás `Int`
-  para cantidades de venta.
-- **Scoping** → todo modelo de negocio lleva `tenantId` + `@@index([tenantId])` +
-  relación a `Tenant` (con `onDelete: Cascade` solo si el dato muere con el tenant).
-- **Unicidad por tenant** → `@@unique([tenantId, campo])` (nunca unique global de
-  un campo de negocio).
-- **Backfill perezoso** (cuando una tabla nueva desglosa un agregado existente):
-  la primera escritura siembra la fila con `agregado − Σ otras filas` (SUM con
-  `FOR UPDATE`); carrera de creación → catch `P2002` y reintentar como incremento.
-  Invariante a testear: Σ desglose == agregado.
-- **FULLTEXT** → `@@fulltext([campos])` en el schema (GA en prisma 6.4, sin
-  previewFeatures) + `MATCH ... AGAINST` vía `Prisma.sql`.
-
-## Definition of Done
-- [ ] Cambio aditivo (ninguna columna/tabla existente alterada o renombrada)
-- [ ] `prisma validate` + `generate` OK con 6.4.1 · `tsc` 0 nuevos
-- [ ] `migration.sql` espejo presente y en sintaxis MySQL
-- [ ] Upgrade probado con datos existentes; ningún warning requiere un flag global
-- [ ] Back-relations completas · índices de scoping
-- [ ] Si hay backfill: es perezoso, race-safe (P2002) y con invariante verificado
+Cierre: diff aditivo revisado, SQL espejo, cliente generado, índices/relaciones,
+upgrade y fallos ejecutados, invariantes conciliadas, compatibilidad/rollback y
+respaldo acreditados. Registrar implementación, pruebas y despliegue por separado.

@@ -87,9 +87,11 @@ const PISO_MUTANTES = {
     // creció con la resolución segura de Enter: 62/62 mutantes detectados. El
     // recorte nunca es silencioso y una búsqueda ambigua jamás adivina producto.
     'utils/posSearch.ts': 62,
-    // Alta rápida, compatibilidad de cantidades y clasificación de errores del
-    // POS: 221/221. Protege precio/costo/stock, pasos y reintentos idempotentes.
-    'utils/posActivation.ts': 221,
+    // La regla legacy salió de posActivation: se eliminaron 29 mutantes de su
+    // implementación duplicada. Medición conjunta: 192 + 33 = 225 killed,
+    // frente a 221 previos. No se redujo el umbral ni se excluyeron mutantes.
+    'utils/posActivation.ts': 192,
+    'utils/legacySaleMode.ts': 33,
     // Efectivo recibido, faltante, vuelto y denominaciones NIO: 99/99.
     'utils/posCash.ts': 99,
     // Foto de recibido/vuelto para ticket inmediato: 23/23.
@@ -251,6 +253,20 @@ const PISO_MUTANTES = {
     'backend/lib/paymentAccounts.ts': 11,
     // Reglas cruzadas RETURN/VOID: 50/50 sobre el superRefine autoritativo.
     'backend/validation/saleCorrectionSchemas.ts': 50,
+    // NortexGPT: costo estricto de entrada/salida y rechazo de consumo inválido.
+    'backend/services/assistant/budget.ts': 15,
+    // Concordancia exacta entre subtotal/IVA/total impreso y cálculo de Compras.
+    'backend/services/assistant/proposalValidation.ts': 14,
+    // Hash canónico: escalares, orden de líneas, claves, fechas y Decimal.
+    // El filtro redundante undefined se eliminó antes de fijar este piso;
+    // JSON.stringify ya omite esas propiedades. Corrida dirigida: 26/26.
+    'backend/services/purchaseRegistrationAuthority.ts': 26,
+    // Valor de merma Decimal: corrida dirigida 13/13, sin exclusiones.
+    'backend/services/batchWriteoffValue.ts': 13,
+    // Medidos en el candidato operativo: cálculo promocional y edición decimal.
+    'backend/services/promotions/pricing.ts': 1,
+    'backend/services/promotions/totals.ts': 5,
+    'backend/services/productBulkEditPrice.ts': 5,
 };
 
 // Los totales por archivo no detectan una función perdida si otra crece.

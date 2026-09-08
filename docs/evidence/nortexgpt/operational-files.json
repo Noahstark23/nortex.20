@@ -1,0 +1,1258 @@
+{
+  "schemaVersion": 1,
+  "createdAt": "2026-09-08T02:30:06.965920+00:00",
+  "candidate": "/tmp/nortexgpt-operativo-20260905",
+  "destination": "/Users/stark/Documents/GitHub/nortex.20",
+  "basis": "Snapshot of existing dirty checkout; no branch/worktree changes.",
+  "baselineFiles": 1113,
+  "baselineManifestSha256": "8253871292b8ccad69d9b18a9c242bcff2c2dda8bf3e6d6c4d70a4ee54129d43",
+  "manifestExcludesItself": true,
+  "files": [
+    {
+      "path": ".claude/skills/nortex-rag/SKILL.md",
+      "beforeSha256": "2762391c1ac8086fa5cc59b38bf69d00a7905236ca50e801d88316013035481d",
+      "sha256": "585b6b0c6628753b3a0d1a462b07d39c80411972f53e6073ae02f0bb742fbb30",
+      "beforeLines": 250,
+      "lines": 264
+    },
+    {
+      "path": "CLAUDE.md",
+      "beforeSha256": "02f2b89114dc8f8900764647181f88cedb91c34eeb39c5cd31911af0946c82aa",
+      "sha256": "9468244ff7a38d949e1aea6675ecadeca2e28ee6679247b77fa18b2a8be39f13",
+      "beforeLines": 256,
+      "lines": 256
+    },
+    {
+      "path": "README.md",
+      "beforeSha256": "029cc8ee2a18f4efe1645bfa55ff57472c02bb133b2e8acb748ffaf485a26564",
+      "sha256": "c66c88638d7e1af21a85cf72f0b80f92529400f2c37c71dc315202ec87938a09",
+      "beforeLines": 61,
+      "lines": 61
+    },
+    {
+      "path": "backend/prisma/migrations/20260905_nortex_assistant_z_operations/migration.sql",
+      "beforeSha256": null,
+      "sha256": "539cec458938298046f48cf0378e88f1179a014bd3a70b131dc4570999af4ca2",
+      "beforeLines": 0,
+      "lines": 383
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "beforeSha256": "f5adc2b306ca883370d379605cb58857963f2160c986ce23f04e1f8e002413ec",
+      "sha256": "cedbda5ebed2557d49dbabaf040ffec3e9969281a6f2c65f80bf1e61d4cb5dd1",
+      "beforeLines": 3314,
+      "lines": 3631
+    },
+    {
+      "path": "backend/routes/assistantActions.ts",
+      "beforeSha256": null,
+      "sha256": "669e8967ae8ae43320c811c74316d5f5ef2f81f58f3e2a11b3949b8453e21180",
+      "beforeLines": 0,
+      "lines": 49
+    },
+    {
+      "path": "backend/routes/assistantCatalog.ts",
+      "beforeSha256": null,
+      "sha256": "7781fdf4acea2a6723f64b4da1be87003cd4cf2919a5da0c9316a25baddf90b1",
+      "beforeLines": 0,
+      "lines": 22
+    },
+    {
+      "path": "backend/routes/assistantOperations.ts",
+      "beforeSha256": null,
+      "sha256": "1ab9ef4d8ef8c15045ebc49ef4abc20446e470c9f0d6ffafeff3c153dc3bc980",
+      "beforeLines": 0,
+      "lines": 30
+    },
+    {
+      "path": "backend/routes/assistantPrivateWhatsapp.ts",
+      "beforeSha256": null,
+      "sha256": "7d7e1328c0dc84157002418879ac1ec9c6d387e16afb38429ed7fbe06d3410f8",
+      "beforeLines": 0,
+      "lines": 41
+    },
+    {
+      "path": "backend/routes/assistantStatus.ts",
+      "beforeSha256": null,
+      "sha256": "5315886cd5692864a75795855d6fe3bce85973df891e7b3868df335a95d71e3b",
+      "beforeLines": 0,
+      "lines": 21
+    },
+    {
+      "path": "backend/routes/promotions.ts",
+      "beforeSha256": null,
+      "sha256": "a650451e357647091772e26fbc8632cc26e75f2e06fc8dfa3295af373947d44e",
+      "beforeLines": 0,
+      "lines": 47
+    },
+    {
+      "path": "backend/routes/purchaseOrders.ts",
+      "beforeSha256": "a062904d2e6ee36c92da67a51141c1bd243059cdae3e7739ccafd8e7df8e3b93",
+      "sha256": "6b03907f8b9c582efe20d4f90681420ada4a79aac5ed941236950d6251dd48ad",
+      "beforeLines": 762,
+      "lines": 670
+    },
+    {
+      "path": "backend/security/bodegueroPolicy.ts",
+      "beforeSha256": "f8fb9c6765e2a7bc14c9f167ad8efaa4eec27409603126a4cf9cfbb955f2a9a0",
+      "sha256": "679162057ee05d1f5f0396eaeeffb7e6eccba5385df7f9c83e2ae51ad02e25d7",
+      "beforeLines": 102,
+      "lines": 118
+    },
+    {
+      "path": "backend/server.ts",
+      "beforeSha256": "59e6abbf2e7d244a574d71057b55510eb1fd2004783cbd78df5b4e91bde2359d",
+      "sha256": "1fc2aaf82c532776244f396c2579700548c33bdeb6cfa1c02660cff9bcbd474b",
+      "beforeLines": 14638,
+      "lines": 14266
+    },
+    {
+      "path": "backend/services/assistant/access.ts",
+      "beforeSha256": "511258b250e7b62cedb7a2a3c01374fb12b523481aa96ebe7a69b128477dd77c",
+      "sha256": "c90a8ca59d9324c607e76c68caf81ee57affda026c36c0e62fda27b822f500e9",
+      "beforeLines": 79,
+      "lines": 89
+    },
+    {
+      "path": "backend/services/assistant/actions/adapters.ts",
+      "beforeSha256": null,
+      "sha256": "fd836dab5ceda1dc34eb022f26594ff2cb5a17c4b5adf371188660950f4a7fde",
+      "beforeLines": 0,
+      "lines": 104
+    },
+    {
+      "path": "backend/services/assistant/actions/promotion.ts",
+      "beforeSha256": null,
+      "sha256": "bcc1a57f0afa135dfc9cba9a11a9d6a337bef3b06130dedcfcd7226f991abb4f",
+      "beforeLines": 0,
+      "lines": 24
+    },
+    {
+      "path": "backend/services/assistant/actions/service.ts",
+      "beforeSha256": null,
+      "sha256": "ed35c040e45611efdaca80ef3953d7bdda58aac36852b69312d8518b66597218",
+      "beforeLines": 0,
+      "lines": 234
+    },
+    {
+      "path": "backend/services/assistant/actions/types.ts",
+      "beforeSha256": null,
+      "sha256": "d70e8577ab59212c7f2d403c7f9a013583f5e38c6f97bd250b0bc882a113c489",
+      "beforeLines": 0,
+      "lines": 18
+    },
+    {
+      "path": "backend/services/assistant/config.ts",
+      "beforeSha256": "e8747ee5ec3b6ed410728f1aaec1e1f6aa56b3018fec32ecc1750d89eb352ebf",
+      "sha256": "501c4181ff5dcdd626c79fb47a5e6161abba61d8feccd42d2429f946b49af8ac",
+      "beforeLines": 11,
+      "lines": 15
+    },
+    {
+      "path": "backend/services/assistant/conversations.ts",
+      "beforeSha256": "050eb830a9959c3c884b1c90c87d6c768ffdcbe564950424b4a27449abab93fd",
+      "sha256": "b346e93b6c266c52e61fc4d9b203565e242b74fe29e911cc1bc93c98a1561c87",
+      "beforeLines": 247,
+      "lines": 263
+    },
+    {
+      "path": "backend/services/assistant/knowledge.ts",
+      "beforeSha256": "3d49348020165e66bcaab4fc99a6366f401c6bf890d687edc1570a5bc29003fd",
+      "sha256": "bb3be11b573aa6811669d810724d4ca2600157e34aed54400a0ee621304d338b",
+      "beforeLines": 56,
+      "lines": 74
+    },
+    {
+      "path": "backend/services/assistant/operations/analytics.ts",
+      "beforeSha256": null,
+      "sha256": "e64e1303bff84844e4c7a5342e9fc740d4d0e7025a43cf6d5091ac1ffa24908b",
+      "beforeLines": 0,
+      "lines": 130
+    },
+    {
+      "path": "backend/services/assistant/operations/analyticsPeriod.ts",
+      "beforeSha256": null,
+      "sha256": "80c98eddf54a8e492d5deca4e386c72f759231f404254be172fe4867207fedb9",
+      "beforeLines": 0,
+      "lines": 55
+    },
+    {
+      "path": "backend/services/assistant/operations/analyticsTypes.ts",
+      "beforeSha256": null,
+      "sha256": "85b60d533fc2710e972dad541a17e488857cae7b8a3dc278a8f3560129d18f15",
+      "beforeLines": 0,
+      "lines": 40
+    },
+    {
+      "path": "backend/services/assistant/operations/briefing.ts",
+      "beforeSha256": null,
+      "sha256": "3f66bf186164b333f58d261501e7a7e1c6b25292a0583a1a754151e3f813eed1",
+      "beforeLines": 0,
+      "lines": 87
+    },
+    {
+      "path": "backend/services/assistant/operations/catalogOptions.ts",
+      "beforeSha256": null,
+      "sha256": "9f943bece46665eb71859f44f13328d1eacf47f8663bbec057ec6d862c6dc688",
+      "beforeLines": 0,
+      "lines": 58
+    },
+    {
+      "path": "backend/services/assistant/operations/catalogSearch.ts",
+      "beforeSha256": null,
+      "sha256": "841b7836c69f4e80afc42633f4c283ccf36400ad051ebfbaef8b5ae6c73fe990",
+      "beforeLines": 0,
+      "lines": 109
+    },
+    {
+      "path": "backend/services/assistant/operations/catalogSources.ts",
+      "beforeSha256": null,
+      "sha256": "3859c92e01645a6a652e246e2dcd58e1a25576513b54684e51ae774d964dec4b",
+      "beforeLines": 0,
+      "lines": 67
+    },
+    {
+      "path": "backend/services/assistant/operations/contracts.ts",
+      "beforeSha256": null,
+      "sha256": "7d55fedceb21df6dc4cb1b0fe969a718ceb47ae23820c3dba5a36aa4e625d54a",
+      "beforeLines": 0,
+      "lines": 21
+    },
+    {
+      "path": "backend/services/assistant/operations/fallback.ts",
+      "beforeSha256": null,
+      "sha256": "a3dc07f5c0012dc2d2abf01c34981972cd829e834d751cd17831825129451ebe",
+      "beforeLines": 0,
+      "lines": 45
+    },
+    {
+      "path": "backend/services/assistant/operations/healthStatus.ts",
+      "beforeSha256": null,
+      "sha256": "9006e0f0753eb4f293b28a7d73f981ac6c672758b51e8ffe8421fa37bd5105ab",
+      "beforeLines": 0,
+      "lines": 115
+    },
+    {
+      "path": "backend/services/assistant/operations/inventory.ts",
+      "beforeSha256": null,
+      "sha256": "5f966c83ad400f1dd6db0d929d28c3c1e0399352316b06909d1c786758e3ac78",
+      "beforeLines": 0,
+      "lines": 149
+    },
+    {
+      "path": "backend/services/assistant/operations/inventoryQueries.ts",
+      "beforeSha256": null,
+      "sha256": "c7579d906381a4108ba0756b9aafafc5368db3ac47eaac3204dc95b52a6269c4",
+      "beforeLines": 0,
+      "lines": 83
+    },
+    {
+      "path": "backend/services/assistant/operations/orchestrator.ts",
+      "beforeSha256": null,
+      "sha256": "54653c7a74def415887225bfc58db4aea600443ac1b792c1c088dd703c773957",
+      "beforeLines": 0,
+      "lines": 138
+    },
+    {
+      "path": "backend/services/assistant/operations/retention.ts",
+      "beforeSha256": null,
+      "sha256": "a7fb937fde269a540021009fdfffbde9d5639535909e601cfdd4595aa74ac8c9",
+      "beforeLines": 0,
+      "lines": 14
+    },
+    {
+      "path": "backend/services/assistant/operations/routing.ts",
+      "beforeSha256": null,
+      "sha256": "eac17846c0bf80a0bd9e86674ecc413a5e9c81045225a90ce4f5910c178d0a0f",
+      "beforeLines": 0,
+      "lines": 15
+    },
+    {
+      "path": "backend/services/assistant/operations/runService.ts",
+      "beforeSha256": null,
+      "sha256": "0b556490489bc0b621aa202079db2465442bd026a9f89c500816b946f15e8757",
+      "beforeLines": 0,
+      "lines": 148
+    },
+    {
+      "path": "backend/services/assistant/operations/runValidation.ts",
+      "beforeSha256": null,
+      "sha256": "449d8ff162b628a2729af9c574b91f44c8ec27227084fc4c54215079e3a6c522",
+      "beforeLines": 0,
+      "lines": 15
+    },
+    {
+      "path": "backend/services/assistant/operations/tools.ts",
+      "beforeSha256": null,
+      "sha256": "573a2f17f60c779170c42df2b1a38acbe329bbe017ea0c10fb4e61513a6b92f1",
+      "beforeLines": 0,
+      "lines": 50
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/config.ts",
+      "beforeSha256": null,
+      "sha256": "5c200b0abb372ed74be4d6adc38b9850cb9ca6b09efad58d55eec9f3f64c8913",
+      "beforeLines": 0,
+      "lines": 26
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/identity.ts",
+      "beforeSha256": null,
+      "sha256": "7d5bd097e198cb5d4eddbe1ab02b525259383c83e0ad6e63f362d9412dff8910",
+      "beforeLines": 0,
+      "lines": 73
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/inbox.ts",
+      "beforeSha256": null,
+      "sha256": "71b3d78140319ec69239ab334b3343188825dc0b68a6043d872a6a0339a30aab",
+      "beforeLines": 0,
+      "lines": 87
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/operations.ts",
+      "beforeSha256": null,
+      "sha256": "72803d7d7e041f57a313f7a5fad33b8c0d81706310101e5dfa731aac56ba5c1d",
+      "beforeLines": 0,
+      "lines": 37
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/outbox.ts",
+      "beforeSha256": null,
+      "sha256": "e43cb63f7e9ec0b33d0616f8ef82f1ea522f404b36872e8ec88d10f8a226a378",
+      "beforeLines": 0,
+      "lines": 51
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/processor.ts",
+      "beforeSha256": null,
+      "sha256": "3c952a7b88a19c288b23fa743ff173b7e679bb1ff242898d91321971721e0e4f",
+      "beforeLines": 0,
+      "lines": 107
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/retention.ts",
+      "beforeSha256": null,
+      "sha256": "a5e4d01b90392c231a405e50f9da2658143fdf8f78199e2566e3d1d643b41168",
+      "beforeLines": 0,
+      "lines": 15
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/transport.ts",
+      "beforeSha256": null,
+      "sha256": "f7fb3d9add8012536de2bbd55f2ff8a99d478c46c0ee7502d30fed0013185b13",
+      "beforeLines": 0,
+      "lines": 55
+    },
+    {
+      "path": "backend/services/assistant/privateWhatsapp/types.ts",
+      "beforeSha256": null,
+      "sha256": "275a87e543b1aac6d50ba2eea22746f77d2f7cfe849d40311f67876ad6a4d2bf",
+      "beforeLines": 0,
+      "lines": 14
+    },
+    {
+      "path": "backend/services/assistant/worker.ts",
+      "beforeSha256": "962014aff9ac2f81be3227ae7643d52927d5ae0e3d929dbd288bfdbf2b04a93d",
+      "sha256": "d147f291be21809f1d8133a640489b4327c8d0055282cc453d515c507a0c7749",
+      "beforeLines": 117,
+      "lines": 119
+    },
+    {
+      "path": "backend/services/batchWriteoffIdempotency.ts",
+      "beforeSha256": null,
+      "sha256": "77dd33b9ff899ce1e7cbe4671338e60e0ccf5894b9aa438fc97c95c4158e28e1",
+      "beforeLines": 0,
+      "lines": 95
+    },
+    {
+      "path": "backend/services/batchWriteoffPreparation.ts",
+      "beforeSha256": null,
+      "sha256": "8755f084ec15f8b9afeec35c83d40f11eda8c721e0e3aad0a74114c7c8a4ea53",
+      "beforeLines": 0,
+      "lines": 62
+    },
+    {
+      "path": "backend/services/batchWriteoffService.ts",
+      "beforeSha256": null,
+      "sha256": "703b296a19d0d69d832e3d9ec55582480af71361b0110f30eefa3b6e07a025ec",
+      "beforeLines": 0,
+      "lines": 250
+    },
+    {
+      "path": "backend/services/batchWriteoffValue.ts",
+      "beforeSha256": null,
+      "sha256": "51f595d000c5f9eae581f8098e904fc7d3a5ad0b367c6f0a2f619c5716d147f4",
+      "beforeLines": 0,
+      "lines": 10
+    },
+    {
+      "path": "backend/services/productBulkEditPrice.ts",
+      "beforeSha256": null,
+      "sha256": "3d00bba6d6af72b2167a6087c7448d24798b0c7b777848d6f2934c8247c07daf",
+      "beforeLines": 0,
+      "lines": 9
+    },
+    {
+      "path": "backend/services/productBulkEditService.ts",
+      "beforeSha256": null,
+      "sha256": "ddbbb4e956acb05c19daf391fd4b60488601da2c185f68bb5c60158c2b0450df",
+      "beforeLines": 0,
+      "lines": 56
+    },
+    {
+      "path": "backend/services/promotions/authority.ts",
+      "beforeSha256": null,
+      "sha256": "1d27f7d76179a48fc2d6a8e8cd02a7bace6146f4bb5384b0bd2502aa55a73211",
+      "beforeLines": 0,
+      "lines": 70
+    },
+    {
+      "path": "backend/services/promotions/checkout.ts",
+      "beforeSha256": null,
+      "sha256": "bfa1026907e524496040165864a823b271d6a28f59d19eaef18dfbdbcc00cee8",
+      "beforeLines": 0,
+      "lines": 91
+    },
+    {
+      "path": "backend/services/promotions/management.ts",
+      "beforeSha256": null,
+      "sha256": "a89a43555ad32da7dfbc22f819eb32aeba65c369952af29310296df45d4feb70",
+      "beforeLines": 0,
+      "lines": 116
+    },
+    {
+      "path": "backend/services/promotions/pricing.ts",
+      "beforeSha256": null,
+      "sha256": "9f84a28fc7018143fdff27e26bdf56df589fd6c2e8b2c47c5c92d9334ff3eb2b",
+      "beforeLines": 0,
+      "lines": 36
+    },
+    {
+      "path": "backend/services/promotions/productVersion.ts",
+      "beforeSha256": null,
+      "sha256": "838bae03d7362eeade42ee91710a05a91d93cb201b5dffda31617631ccecf315",
+      "beforeLines": 0,
+      "lines": 26
+    },
+    {
+      "path": "backend/services/promotions/receipt.ts",
+      "beforeSha256": null,
+      "sha256": "9c9a358a6d13b30db908112782c824dc23fc07aae1b8ac2a0f91020aa254f633",
+      "beforeLines": 0,
+      "lines": 39
+    },
+    {
+      "path": "backend/services/promotions/totals.ts",
+      "beforeSha256": null,
+      "sha256": "189ef4049917a4673b062e90fab694da1529ea5ca3f7b6bd4c860c15f29b4670",
+      "beforeLines": 0,
+      "lines": 16
+    },
+    {
+      "path": "backend/services/purchaseOrderDraftAuthority.ts",
+      "beforeSha256": null,
+      "sha256": "4d3f0410a0a1bb2bcb36a25302ad770699277decdc26dec36ed73422df2d2460",
+      "beforeLines": 0,
+      "lines": 68
+    },
+    {
+      "path": "backend/services/purchaseOrderDraftService.ts",
+      "beforeSha256": null,
+      "sha256": "16dfbb1a0e2b0cb55099b33dbe8da261d77ca2affbafd04738d6e6a6758399fc",
+      "beforeLines": 0,
+      "lines": 145
+    },
+    {
+      "path": "backend/services/saleItemMeasurementService.ts",
+      "beforeSha256": "c9771f0e2542704dd417895edab134780f953cb0ea2cecffe48799aee8f7b59c",
+      "sha256": "2a35104cf0658dc38529e1a107d309f86b3a8f64109fe6d34e4e5bbe34d34915",
+      "beforeLines": 882,
+      "lines": 891
+    },
+    {
+      "path": "backend/services/salesService.ts",
+      "beforeSha256": "2ea528317fbd93e5f7b1ee9c36cde8828fb99647ac16ca5e601eb9cb454092c2",
+      "sha256": "c329a473f7a4869a7233e6709ff00403070f774a41e188d1fdf6c1e922c816e2",
+      "beforeLines": 1267,
+      "lines": 1277
+    },
+    {
+      "path": "backend/services/shiftCloseService.ts",
+      "beforeSha256": "772133a941115e890f7d182d4717ce61021c2372cf663fa20817bedcec5ff8ed",
+      "sha256": "92b481dc12c28806d8d2bd98998f24e1b5f92ae6f25867217ebe28bcae740fab",
+      "beforeLines": 457,
+      "lines": 465
+    },
+    {
+      "path": "backend/services/supplierReturnService.ts",
+      "beforeSha256": "8f6ebfa19fa72d12f0cf7e4ae96e49098c36387bd945647f3fc19c6892c3d303",
+      "sha256": "ee4a18934f034e58827141079d2de04d9d62360043ba042eb5ed3d8e696a1772",
+      "beforeLines": 2401,
+      "lines": 2436
+    },
+    {
+      "path": "backend/validation/schemas.ts",
+      "beforeSha256": "f4ccd9ed49168e0361c3658c2320c7e78fc7c3c0f6b632c44cecc1cd80388ba4",
+      "sha256": "682956bd42d17dcf1c4ccaac4fc6acf521ca30cce40264240ef86aacd7573af6",
+      "beforeLines": 1099,
+      "lines": 1104
+    },
+    {
+      "path": "backend/workers/assistant.ts",
+      "beforeSha256": "5562e39c8b483336c393251528335f177b89969a29cfb84952046f33e3dfbe80",
+      "sha256": "cf1b98bcc099c02d8fa2b70c20f002c9bd94f707ea3cc9ca54426d8347536d67",
+      "beforeLines": 22,
+      "lines": 26
+    },
+    {
+      "path": "backend/workers/assistantPrivateWhatsapp.ts",
+      "beforeSha256": null,
+      "sha256": "beff9f8cf76c208094289d98dad5788638cc5c4dcb4ca094133a31e83af999bc",
+      "beforeLines": 0,
+      "lines": 20
+    },
+    {
+      "path": "components/POS.tsx",
+      "beforeSha256": "802ff1ee6344c09fe9e6060bc222e9bd7d8c7a7388046604f72a4ac6d2efef3a",
+      "sha256": "485e1637c424a9c149e5b62ae6b8078b02e1849d85e110ee2165be3f78b90cff",
+      "beforeLines": 6949,
+      "lines": 6892
+    },
+    {
+      "path": "components/assistant/AssistantActionReview.tsx",
+      "beforeSha256": null,
+      "sha256": "735db6a15665057f02a73ba9ba545b82db1d33705bf5518c002e642a813d0b6e",
+      "beforeLines": 0,
+      "lines": 41
+    },
+    {
+      "path": "components/assistant/AssistantActionSources.tsx",
+      "beforeSha256": null,
+      "sha256": "e19ed85f9dfe6976a63cd9ef2c5ab80b29e7e6a532a72c902c1f9afdcf92228d",
+      "beforeLines": 0,
+      "lines": 23
+    },
+    {
+      "path": "components/assistant/AssistantCatalogSelect.tsx",
+      "beforeSha256": "ad4e0f82df0c1a8d541f70e8dab591155d8b45392dece9d3bb5a7af72bf6c7c8",
+      "sha256": "672c5d288064720fd6649527fc7040bbe4b0f39b0741b3184183426a282bff25",
+      "beforeLines": 48,
+      "lines": 50
+    },
+    {
+      "path": "components/assistant/AssistantDailyBrief.tsx",
+      "beforeSha256": null,
+      "sha256": "66f03eb89ae7e963fee15bb0586965e155c4e7f1d8b023bd9acecd7555723f65",
+      "beforeLines": 0,
+      "lines": 8
+    },
+    {
+      "path": "components/assistant/AssistantOperationalEvidence.tsx",
+      "beforeSha256": null,
+      "sha256": "b0c1763b23aa7be31cbbf70f7234af91b7b2d5d9ac0a032c83c1cc0faa4551f4",
+      "beforeLines": 0,
+      "lines": 61
+    },
+    {
+      "path": "components/assistant/AssistantPrivateWhatsapp.tsx",
+      "beforeSha256": null,
+      "sha256": "5daf84f7785e910f9f6cea6b47637d9ac956102f850abc7a9673b708c02ad83a",
+      "beforeLines": 0,
+      "lines": 27
+    },
+    {
+      "path": "components/assistant/AssistantPromotionDraft.tsx",
+      "beforeSha256": null,
+      "sha256": "c011661ff56e49620ea64ec8ee969b56668ae110711b2d3674c40024264cff38",
+      "beforeLines": 0,
+      "lines": 17
+    },
+    {
+      "path": "components/assistant/AssistantRunView.tsx",
+      "beforeSha256": null,
+      "sha256": "39c7be1e1196b38c87fe7eb16e7d769bc8a4bf883bc7ae5d82d4340f2c6874a8",
+      "beforeLines": 0,
+      "lines": 19
+    },
+    {
+      "path": "components/assistant/NortexAssistantLauncher.tsx",
+      "beforeSha256": "882f9205b55d65a7b2dffde1dbc8e41d752487454573a5e66f7e60125ed36bd8",
+      "sha256": "1505e64ca42d4783d48166f651e6b2e66ac9c4a21f68ccc0aceb033d642e9f09",
+      "beforeLines": 17,
+      "lines": 29
+    },
+    {
+      "path": "components/assistant/NortexAssistantPanel.tsx",
+      "beforeSha256": "78bf7b5a5a3ba69a5d340da2a6ccd2c26609c5f50555dff6408e627f8480b39f",
+      "sha256": "cace98b65e499494cab7be1028dd4269c97ce1b3931df796507da71330d7cd6f",
+      "beforeLines": 112,
+      "lines": 129
+    },
+    {
+      "path": "components/pos/PromotionCartPersistence.ts",
+      "beforeSha256": null,
+      "sha256": "ba1e1c01439d4d557b0fdd6e9bd4a036f3975953a91facf359b48f4446d6c926",
+      "beforeLines": 0,
+      "lines": 9
+    },
+    {
+      "path": "components/pos/PromotionCheckoutSheet.tsx",
+      "beforeSha256": null,
+      "sha256": "40627c70d9c11b74b0115fd5a72d6a27776cb1fddeecd314549f4d830cd38c28",
+      "beforeLines": 0,
+      "lines": 19
+    },
+    {
+      "path": "components/pos/PromotionRecoveredSale.ts",
+      "beforeSha256": null,
+      "sha256": "214dd8e2013b4bac3c4c3c268fd92141b2009f255d1121607f3dd15c576192f4",
+      "beforeLines": 0,
+      "lines": 10
+    },
+    {
+      "path": "components/pos/PromotionRecoveryReference.ts",
+      "beforeSha256": null,
+      "sha256": "97f798add9387e667cc6d87b85a6d4cc979b9f6433480c6d26416f4eee4d95e9",
+      "beforeLines": 0,
+      "lines": 9
+    },
+    {
+      "path": "components/pos/PromotionSaleIntent.ts",
+      "beforeSha256": null,
+      "sha256": "400d36294271ffefbe2d875a957890f6e845a2efa4b1ef4303806865be8b7b0b",
+      "beforeLines": 0,
+      "lines": 17
+    },
+    {
+      "path": "components/pos/PromotionTotals.ts",
+      "beforeSha256": null,
+      "sha256": "6e4a4eedfe940506b248323dd7fd6b85716cb95e9db64e695305c6a5681798b8",
+      "beforeLines": 0,
+      "lines": 39
+    },
+    {
+      "path": "docs/NORTEXGPT_CONVERSACION_2026-09-05.md",
+      "beforeSha256": "6f9bcc38dd0671b75d053df22eb72191dd6ebf64ac2e789d5ae1d587bc18fc3c",
+      "sha256": "70d59fbb54679dd008efb7faea5fcc108f34a124b1ff15b33de94211448cc3a8",
+      "beforeLines": 56,
+      "lines": 58
+    },
+    {
+      "path": "docs/NORTEXGPT_EVALUACION_OPERATIVA_2026-09-05.md",
+      "beforeSha256": null,
+      "sha256": "30c944b82553670214fe4571ad84d4abf13c2200d853e9a5d3bdd4708d986b87",
+      "beforeLines": 0,
+      "lines": 83
+    },
+    {
+      "path": "docs/NORTEXGPT_IMPLEMENTACION_2026-09-05.md",
+      "beforeSha256": "2cf000b515168bbebc61dd6d053cc2e605f893340e1d29ebbde24768dbe32c71",
+      "sha256": "b41aa23aab39ea99f2e0df880b85355044b62a9d1195c9d90af4eef9bbb2dc0d",
+      "beforeLines": 114,
+      "lines": 116
+    },
+    {
+      "path": "docs/NORTEXGPT_OPERATIVO_2026-09-05.md",
+      "beforeSha256": null,
+      "sha256": "cc42e533734db3bf58578ac1e3ac8edbc95efe6e574be5d8147be0fb54d8e82a",
+      "beforeLines": 0,
+      "lines": 189
+    },
+    {
+      "path": "docs/WHATSAPP_INFRA.md",
+      "beforeSha256": "2bcf0eab1af11ea4ee4e1007f0734d7b015f98bef12c50f07676de0f22743fd9",
+      "sha256": "cca74e4b756347cf9eb721265396f7ff94a7211767da2ac0812294f8e6278f87",
+      "beforeLines": 57,
+      "lines": 71
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-cancel-before-prepare.json",
+      "beforeSha256": null,
+      "sha256": "257fac069ece55403d45989a0e1b9337567d1692d37150f016d6073ddfa78329",
+      "beforeLines": 0,
+      "lines": 26
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-cancel-checkpoint.json",
+      "beforeSha256": null,
+      "sha256": "5b3be4e1d0894ba690b75d1442728c2fe3d0f43541ff8e4b8e2941189a5337d7",
+      "beforeLines": 0,
+      "lines": 82
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-cancel-draft.json",
+      "beforeSha256": null,
+      "sha256": "311dd4f59c9e61f0f5d6fbc8e15441bd4c1105f0f04d564bdfd7016f833fb7cf",
+      "beforeLines": 0,
+      "lines": 63
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-corpus.json",
+      "beforeSha256": null,
+      "sha256": "a498efdc3e5b377259b42791a07892ed0048f962313daeca5eafbaf5ae19b333",
+      "beforeLines": 0,
+      "lines": 870
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-independent-review.md",
+      "beforeSha256": null,
+      "sha256": "7f1c41f6c37ffc360bcaab1d36c74340c37830f1c85fd3a9b81f8b322c2ad8a2",
+      "beforeLines": 0,
+      "lines": 73
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-independent-sources.json",
+      "beforeSha256": null,
+      "sha256": "3871a5d461fd6315315b9c3285cf484fa2a9c7b077af6a78ba061467f83a41de",
+      "beforeLines": 0,
+      "lines": 12
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-inventory-after.json",
+      "beforeSha256": null,
+      "sha256": "2d8b85fa83d79a54b6ac86a66c97c2acd14229ea0e3b321cd0e5ee6662a3da0a",
+      "beforeLines": 0,
+      "lines": 1
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-inventory-before.json",
+      "beforeSha256": null,
+      "sha256": "6f3aadad73530fe3b1353fdf7937c387963882b3da660e510860e87a80f3923a",
+      "beforeLines": 0,
+      "lines": 1
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-metrics-review.md",
+      "beforeSha256": null,
+      "sha256": "e070ab87979d4be117d91e94965cbb0d9ee24b6fa4868ec01a4d1e6455635ef1",
+      "beforeLines": 0,
+      "lines": 101
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-model.json",
+      "beforeSha256": null,
+      "sha256": "eeb85387b62967645c1a0fa3796aa8ae224cf96fc007fd65c3f5aaab1bd89e51",
+      "beforeLines": 0,
+      "lines": 11
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-panel.md",
+      "beforeSha256": null,
+      "sha256": "c3c9ca91d3bf35872f8496dc5c357b961da42e57fecaa36972bdfb980e428839",
+      "beforeLines": 0,
+      "lines": 49
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-revocation-recheck.json",
+      "beforeSha256": null,
+      "sha256": "44a5996245b045b45a8a44450959bddcf2f08fb1a0e9487cf3b0425fa1f99e95",
+      "beforeLines": 0,
+      "lines": 13
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-schema-restore.json",
+      "beforeSha256": null,
+      "sha256": "3cef9c7581c33c52f001a58174968d3649184d868c7fed2c7c7d165bc7bd6c8c",
+      "beforeLines": 0,
+      "lines": 12
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-timeout-draft.json",
+      "beforeSha256": null,
+      "sha256": "c52bbf3de7d0b5f204f34e1c0d1376ff25aec1da744bc67bef718c4082870f9b",
+      "beforeLines": 0,
+      "lines": 82
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-ui-vitest.log",
+      "beforeSha256": null,
+      "sha256": "eb2cc9c60ca63eb1a616d7698c36db9e360b4a9c9837fd7d8c8485deb97be74e",
+      "beforeLines": 0,
+      "lines": 12
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-verification.json",
+      "beforeSha256": null,
+      "sha256": "dad682ba6b91f1d15a5723c14de03bdd39a34d702a9ae6e5eeb3fc34fdf50607",
+      "beforeLines": 0,
+      "lines": 555
+    },
+    {
+      "path": "docs/runbooks/assistant-private-whatsapp.md",
+      "beforeSha256": null,
+      "sha256": "d59a6d9d771f82d0d6d84f69c53fb05dc8be0b1231c90a2077d8264b4ac27a2e",
+      "beforeLines": 0,
+      "lines": 52
+    },
+    {
+      "path": "hooks/useAssistantOperations.ts",
+      "beforeSha256": null,
+      "sha256": "7efec94a0afebe862539e3575d175325c0f8dbab49c590e845a586482505aabd",
+      "beforeLines": 0,
+      "lines": 89
+    },
+    {
+      "path": "hooks/useNortexAssistant.ts",
+      "beforeSha256": "e2be38ec95f2a4b49358e32bfb02035b65edb31193ce629f86d7dea9f0b2c011",
+      "sha256": "f62e2ef841bd776db9d8a004f3021e94b8242485baaf9f63e39c0d3b4f5ce02c",
+      "beforeLines": 191,
+      "lines": 194
+    },
+    {
+      "path": "hooks/usePromotionCheckout.ts",
+      "beforeSha256": null,
+      "sha256": "17c9bb3d957c1e6cf0ba37505b1751cf05d730abe320a97ab61de6c13267229a",
+      "beforeLines": 0,
+      "lines": 81
+    },
+    {
+      "path": "package.json",
+      "beforeSha256": "68b9154bcb9082daa32243e340d8e365a7cc32101adeb0cb0a42f230ffce173e",
+      "sha256": "8853beb4379cd0cfc1d66b6dfc0c03a028f0b6e788c66c638d5c56bc3e9e7916",
+      "beforeLines": 96,
+      "lines": 97
+    },
+    {
+      "path": "scripts/assistant-evaluation/operations-corpus.mjs",
+      "beforeSha256": null,
+      "sha256": "a9cfa97c53dcbc49e30a3563caafd4feb716d8b9156d49226aa16019c493a5d8",
+      "beforeLines": 0,
+      "lines": 94
+    },
+    {
+      "path": "scripts/assistant-evaluation/operations-evaluate.mjs",
+      "beforeSha256": null,
+      "sha256": "74d3b36ae0fc6ca2f1bfd552cf0cc94fdfbdf7bb4d6ee658689b8c78cef42af6",
+      "beforeLines": 0,
+      "lines": 24
+    },
+    {
+      "path": "scripts/assistant-evaluation/operations-generate.mjs",
+      "beforeSha256": null,
+      "sha256": "28441b87744918dfdd26709d21601ebb52882ec64255ad88cab0e429074ca8ca",
+      "beforeLines": 0,
+      "lines": 12
+    },
+    {
+      "path": "scripts/assistant-evaluation/operations-model.mjs",
+      "beforeSha256": null,
+      "sha256": "e7deb9a1019ae4f09f2e95f20bff7435ddedce7c5a37fb61b07016502bb64272",
+      "beforeLines": 0,
+      "lines": 87
+    },
+    {
+      "path": "scripts/assistant-evaluation/operations-product.mjs",
+      "beforeSha256": null,
+      "sha256": "b462475b1f6944a5a46143a607ede66a0d4c659a251758b00cc2c70f96fc6d70",
+      "beforeLines": 0,
+      "lines": 165
+    },
+    {
+      "path": "scripts/assistant-operations-demo.ts",
+      "beforeSha256": null,
+      "sha256": "66371bab1ff668267a990e9c4b921b018f9af4a02fe0aa5f9be4791368ceb74b",
+      "beforeLines": 0,
+      "lines": 111
+    },
+    {
+      "path": "scripts/assistant-operations-schema-smoke.mjs",
+      "beforeSha256": null,
+      "sha256": "708ab2ce901cafaaba9183f7774dd6509e438f06710f08228eaf75acbad0cfe3",
+      "beforeLines": 0,
+      "lines": 100
+    },
+    {
+      "path": "scripts/check-mutation-scope.cjs",
+      "beforeSha256": "7988aaa7ee0b79b69f0dd7438dcabb262d5be5347a1f43cbf482e0a35838c053",
+      "sha256": "fce1c4cd0678e8bdcbe7630390130db3f732e23c0abd704cf3a191bc7155649a",
+      "beforeLines": 258,
+      "lines": 264
+    },
+    {
+      "path": "scripts/quality-gate-contract.mjs",
+      "beforeSha256": "611327e041760b144ec84cd7c6f59bb1283daedba904daab18a00f8cc2f97a69",
+      "sha256": "513bbc77c4679ac3f8b8be8f5c9c03e8395da26ae77f3c2f3e27bbbc8ecdfedd",
+      "beforeLines": 46,
+      "lines": 60
+    },
+    {
+      "path": "scripts/run-quality-integration.mjs",
+      "beforeSha256": "8880c1762e5864145c7e0ee46f723069f5149a8ea47b6297e5f430df8013b49f",
+      "sha256": "ac0a190be7ba923d50106ef4329c4b573b4f7e03f8d17825776a9c03ce541725",
+      "beforeLines": 87,
+      "lines": 89
+    },
+    {
+      "path": "shared/assistant.ts",
+      "beforeSha256": "476470f4a899150d7685b50b096fb53d00d1abfb6e0fd11cb19416202d857329",
+      "sha256": "807fd8a5db8fbd94c34233b9c15b49a9c05ad19c7332045b1ab31e636ad9badf",
+      "beforeLines": 52,
+      "lines": 55
+    },
+    {
+      "path": "shared/assistantOperations.ts",
+      "beforeSha256": null,
+      "sha256": "d5ee8c6a180bf326cce5a310abedc06a2af9ca4a22696dadb370802e9f34c3ab",
+      "beforeLines": 0,
+      "lines": 41
+    },
+    {
+      "path": "shared/promotions.ts",
+      "beforeSha256": null,
+      "sha256": "d3a9a8cf2667ab95f5e4f76ba6827e92dc1968eddd4d00a91a8bd06b81bbe8e8",
+      "beforeLines": 0,
+      "lines": 25
+    },
+    {
+      "path": "stryker.config.json",
+      "beforeSha256": "076be87992fe3b8b2a1f48d25452d6e2950276928e72e6d48dd86457e55b90e9",
+      "sha256": "bae070caf53b4253ddebfac56465015ac4571bf202102cf2976ce9288f0d32a6",
+      "beforeLines": 115,
+      "lines": 120
+    },
+    {
+      "path": "tests/assistantActions.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "ce66a9ef85da169fb221f0d53ce13d8e23698a5a2eddef8d7c34d56b266eff5b",
+      "beforeLines": 0,
+      "lines": 181
+    },
+    {
+      "path": "tests/assistantActions.test.ts",
+      "beforeSha256": null,
+      "sha256": "1080fe4ea4adbe8799c66fddaede0f1604fd9c991ecf8eff9c74ba87eb543ffc",
+      "beforeLines": 0,
+      "lines": 171
+    },
+    {
+      "path": "tests/assistantActionsHttp.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "00d5b9a0219b6ae10304434fed6b520f17f06512c17862ba16f953de8e71720c",
+      "beforeLines": 0,
+      "lines": 171
+    },
+    {
+      "path": "tests/assistantAnalytics.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "cb67189b54772227381992d3180898e492ebb05d7c6e3f311b00676583aa7389",
+      "beforeLines": 0,
+      "lines": 115
+    },
+    {
+      "path": "tests/assistantAnalytics.test.ts",
+      "beforeSha256": null,
+      "sha256": "9a7809e0d6a380e035535d07f2939af325fe164ac7fded2fbb48faae7c26d0c7",
+      "beforeLines": 0,
+      "lines": 126
+    },
+    {
+      "path": "tests/assistantCatalog.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "e3ab005afe1113bd51293bee747ed50b0005958986777183094d602b2339c22c",
+      "beforeLines": 0,
+      "lines": 112
+    },
+    {
+      "path": "tests/assistantCatalog.test.ts",
+      "beforeSha256": null,
+      "sha256": "8c59deea8600d5665bf4131dc6f3cd48a18458ad0f7b0962e01ae08516279c1e",
+      "beforeLines": 0,
+      "lines": 76
+    },
+    {
+      "path": "tests/assistantConversationOperations.test.ts",
+      "beforeSha256": null,
+      "sha256": "a7f401e444f0d422c7136d5386feaf6d5320afce6c7e60d1eecbbadc925a969a",
+      "beforeLines": 0,
+      "lines": 24
+    },
+    {
+      "path": "tests/assistantInventory.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "6d71b662a154e146b0d03a230e83f5c28ea6463f6712acf0a5762a0a480d654b",
+      "beforeLines": 0,
+      "lines": 174
+    },
+    {
+      "path": "tests/assistantInventory.test.ts",
+      "beforeSha256": null,
+      "sha256": "9d77b73d00d59a74423b85cbb0257190ea3e3b44cf4d408bf846a6aca30fc194",
+      "beforeLines": 0,
+      "lines": 194
+    },
+    {
+      "path": "tests/assistantOperationalCorpus.test.ts",
+      "beforeSha256": null,
+      "sha256": "33bb04edce16db6e0f5e607775483feaf7891214bf11b9bfe21a7bb6a57f9f72",
+      "beforeLines": 0,
+      "lines": 50
+    },
+    {
+      "path": "tests/assistantOperationalUI.test.tsx",
+      "beforeSha256": null,
+      "sha256": "8749946c5f82c1745bc98bb5c7eea95401fa14b62884f24ef692eb0a92ae8731",
+      "beforeLines": 0,
+      "lines": 120
+    },
+    {
+      "path": "tests/assistantOperationsBriefing.test.ts",
+      "beforeSha256": null,
+      "sha256": "fdf01e51a4a9fa644283cbd9dd7be0758ac6da09fadb27bf453b514e5f993ca8",
+      "beforeLines": 0,
+      "lines": 81
+    },
+    {
+      "path": "tests/assistantOperationsOrchestrator.test.ts",
+      "beforeSha256": null,
+      "sha256": "257a4765d4effde24617f2041cb10e422c0332a62d81d1c9a718350cf86d41b3",
+      "beforeLines": 0,
+      "lines": 101
+    },
+    {
+      "path": "tests/assistantOperationsRetention.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "459bf010714aea46da1f88d3f6a886e2fbb87edaf7f128b9b8b5fb41bfbd4f32",
+      "beforeLines": 0,
+      "lines": 100
+    },
+    {
+      "path": "tests/assistantOperationsTools.test.ts",
+      "beforeSha256": null,
+      "sha256": "3ea389f2ad09c54d3b0e1c01c2a7868d5a7d5441d3d902c49b53a7889d81c5bf",
+      "beforeLines": 0,
+      "lines": 50
+    },
+    {
+      "path": "tests/assistantPrivateWhatsapp.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "b093022a7edcc4119dc9d66908870cdd6a43672f71452d9e3545b8d43a4dcc79",
+      "beforeLines": 0,
+      "lines": 252
+    },
+    {
+      "path": "tests/assistantPrivateWhatsapp.test.ts",
+      "beforeSha256": null,
+      "sha256": "55dcaec8193aa83da6b6917837cc47fab9b024e3a78702130538fc4d27b85588",
+      "beforeLines": 0,
+      "lines": 114
+    },
+    {
+      "path": "tests/assistantRuns.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "c8ccd2cf58c81983b9b98b535873c2cc6737701b6a65e8d52c17ed6df1696fc1",
+      "beforeLines": 0,
+      "lines": 244
+    },
+    {
+      "path": "tests/assistantRuns.test.ts",
+      "beforeSha256": null,
+      "sha256": "cc9944154a6045dd95ac46f71243db690c4028f2f3e31890a1eeb0e1971a71bd",
+      "beforeLines": 0,
+      "lines": 91
+    },
+    {
+      "path": "tests/assistantStatus.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "fb00d4c54ae1735471f5545df89f0eb2451766e251d43d541ed08a9938b2caba",
+      "beforeLines": 0,
+      "lines": 83
+    },
+    {
+      "path": "tests/assistantStatus.test.ts",
+      "beforeSha256": null,
+      "sha256": "da0db7f9731284989b09ba6d1cbba1df53776b8e3623f815000bceff78b0d5e3",
+      "beforeLines": 0,
+      "lines": 67
+    },
+    {
+      "path": "tests/batchWarehouseManualMovements.test.ts",
+      "beforeSha256": "3bad842b69dacb59f26e598d164d1db9e1da7ab97ab32cf360946134b4407977",
+      "sha256": "2863e83675074ae567d7492d13b9d4ea5481a489f3bf7c16c8384e2de6774ccc",
+      "beforeLines": 460,
+      "lines": 466
+    },
+    {
+      "path": "tests/batchWriteoffPreparation.test.ts",
+      "beforeSha256": null,
+      "sha256": "f42d69aee6486deb25053cdd0d06f6851981e25def88c9861e69caab681c4b12",
+      "beforeLines": 0,
+      "lines": 58
+    },
+    {
+      "path": "tests/batchWriteoffService.test.ts",
+      "beforeSha256": null,
+      "sha256": "5079359dd6e7b61adce449e5400e9930919ff67f0f583f11550af9f4bfeaaa4b",
+      "beforeLines": 0,
+      "lines": 88
+    },
+    {
+      "path": "tests/batchWriteoffValue.test.ts",
+      "beforeSha256": null,
+      "sha256": "64e8f54159e97c2ca02b43b790f5ee11d0a118832fbf6bb9b765df541cdeca64",
+      "beforeLines": 0,
+      "lines": 25
+    },
+    {
+      "path": "tests/cajaNicaPos.test.ts",
+      "beforeSha256": "58ef98a517e745c3d9595fd3d0366c64cd166d3a1e014edb9ba664b7675730e0",
+      "sha256": "8ab4d2cadb39e5fd67d4f973f9f360a7e054a7ae02345db9f8187fff3e015f7f",
+      "beforeLines": 161,
+      "lines": 161
+    },
+    {
+      "path": "tests/closeShiftIdempotency.test.ts",
+      "beforeSha256": "5942ada213935723c53027f973afa68f25cad8001510c5e9c696188dae184c3e",
+      "sha256": "c9b9eeba7c292667568917547cfe033cc254ee0a57bc98a40652f8151e47a96f",
+      "beforeLines": 438,
+      "lines": 442
+    },
+    {
+      "path": "tests/fixtures/assistant/operations/deterministic.json",
+      "beforeSha256": null,
+      "sha256": "e3da2052a9bd98a153dedfc8869c1ab2c2ff1bc5e5fd4afbb2b2241141349869",
+      "beforeLines": 0,
+      "lines": 2351
+    },
+    {
+      "path": "tests/fixtures/assistant/operations/model-reserved.json",
+      "beforeSha256": null,
+      "sha256": "bf42ce9d62c49ce830060cb2d16698f5ee381ccefeb0236b7eaebbf7f02540af",
+      "beforeLines": 0,
+      "lines": 1027
+    },
+    {
+      "path": "tests/fixtures/assistant/operations/pilot-tasks.json",
+      "beforeSha256": null,
+      "sha256": "84f9c8aff47f93f97eb0e9fa4c84c8f77da86b74da219baa9fe8b29bc279345f",
+      "beforeLines": 0,
+      "lines": 967
+    },
+    {
+      "path": "tests/posActivationFlow.test.tsx",
+      "beforeSha256": "474e898aca68972f831b294dcf1eb19738dbb1e45b21cd6d8e8baaac0b6b45c7",
+      "sha256": "e595095764cfeab7d8731ea787d96deb33cc6e45bbadbe6043e540a0e8b9f436",
+      "beforeLines": 508,
+      "lines": 509
+    },
+    {
+      "path": "tests/posVentaCritica.test.tsx",
+      "beforeSha256": "aa8fd9b55eaa72d4c44deb8670f38bb9594a94366045d9013f311cb201fd52bf",
+      "sha256": "73ee15c6c1f22f143c4a5527bd41f5b356fca899850fcd1e2a9ee6a3b51db1d4",
+      "beforeLines": 453,
+      "lines": 454
+    },
+    {
+      "path": "tests/presupuestoBackend.test.ts",
+      "beforeSha256": null,
+      "sha256": "36b5f5a055da633dc4cc3ff7b1585a0c5ad0f39c485e4d7fa5a13da79ef6c13d",
+      "beforeLines": 0,
+      "lines": 15
+    },
+    {
+      "path": "tests/presupuestoPos.test.ts",
+      "beforeSha256": "3ce3631e4e2967df6ee808de3c5da57fb0a5002fceb8adf4f4792816b7044445",
+      "sha256": "30ca7767d9e2cc48fc8bffc8af6b800e3879b29d5e76c4bad20c3488f7b031ed",
+      "beforeLines": 177,
+      "lines": 177
+    },
+    {
+      "path": "tests/productBulkEdit.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "bf64918573ba19d294a18f325a6348237cca844097ad351ab7a586f209975159",
+      "beforeLines": 0,
+      "lines": 155
+    },
+    {
+      "path": "tests/productBulkEditPrice.test.ts",
+      "beforeSha256": null,
+      "sha256": "e4a427de84639d790a973177cd57970da38c976d5545e31a618e6773193e365f",
+      "beforeLines": 0,
+      "lines": 28
+    },
+    {
+      "path": "tests/productBulkEditService.test.ts",
+      "beforeSha256": null,
+      "sha256": "c6de82680e1079bd8c66c848f0ec6f0dbbd6ac5007865e5a5928cf81e433aa48",
+      "beforeLines": 0,
+      "lines": 92
+    },
+    {
+      "path": "tests/promotionCheckout.test.tsx",
+      "beforeSha256": null,
+      "sha256": "dc485e320c5aa2f1124b893ba8347190bba11b7a2e9e3674037026b3001385fe",
+      "beforeLines": 0,
+      "lines": 84
+    },
+    {
+      "path": "tests/promotionTransportBoundary.test.ts",
+      "beforeSha256": null,
+      "sha256": "37e87191a5c759105d73ae6594d17c6881a3c4d4a5e96d6fb53aa1bc4db39921",
+      "beforeLines": 0,
+      "lines": 23
+    },
+    {
+      "path": "tests/promotions.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "946c126cd8299d154a70a72dd64cbe4a6be7408f53ef4ee6c848142db5dfe26b",
+      "beforeLines": 0,
+      "lines": 179
+    },
+    {
+      "path": "tests/promotionsFlow.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "cb0dc6992f7086462a885b8fb7af57a4977acbe5f8532b18ec485fa04a791756",
+      "beforeLines": 0,
+      "lines": 132
+    },
+    {
+      "path": "tests/promotionsPricing.test.ts",
+      "beforeSha256": null,
+      "sha256": "f0eaaefc7803bec16e1bd23f512ac783db7b5cd9303a8cd49657ad00532bd31a",
+      "beforeLines": 0,
+      "lines": 114
+    },
+    {
+      "path": "tests/promotionsShiftClose.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "99a8333360a58f0140bb1b0a18f2ab355de48587a29be8f1217e0135bc3e79f2",
+      "beforeLines": 0,
+      "lines": 75
+    },
+    {
+      "path": "tests/purchaseOrderCancellationIntegrity.test.ts",
+      "beforeSha256": "bd41a6ec50bd41e6d66f6cc2653c245e996b98a7d3f2d57420050c3afb7aca50",
+      "sha256": "bb994a90e94d59c30cb7c30ece6cd602fc94f2e3f41e71d9b3953cde94bf1c4d",
+      "beforeLines": 325,
+      "lines": 331
+    },
+    {
+      "path": "tests/purchaseOrderDraft.integration.test.ts",
+      "beforeSha256": null,
+      "sha256": "16c401d24446c44ac5a9266b231c481e1628371b7879f4941b1ae41c231f2e52",
+      "beforeLines": 0,
+      "lines": 121
+    },
+    {
+      "path": "tests/purchaseOrderDraft.test.ts",
+      "beforeSha256": null,
+      "sha256": "8d26d2dabeea0fce19f0966575fd7b57c40ab2a37fb957b64174ee30ab9c90f5",
+      "beforeLines": 0,
+      "lines": 221
+    },
+    {
+      "path": "tests/quotationPosBridge.test.ts",
+      "beforeSha256": "33f6a1c2e18c00c0cf975f766f66785640c0468e62ba0bd52685ceb080462ff5",
+      "sha256": "de590859bd21d0328abf5aee0562b9e4ed2689ec5c20159e0199884aa4dd3b9a",
+      "beforeLines": 141,
+      "lines": 155
+    }
+  ],
+  "totals": {
+    "changedFilesExcludingManifest": 177,
+    "beforeLines": 36882,
+    "afterLines": 52683
+  },
+  "productChanges": 92,
+  "integrationVerifiedAt": "2026-09-08T02:33:47.159139+00:00"
+}

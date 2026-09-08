@@ -1,10 +1,30 @@
 ---
 name: frontend-design
-description: Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults.
+description: "Guidance for distinctive, intentional visual design when building new UI or reshaping an existing one. Helps with aesthetic direction, typography, and making choices that don't read as templated defaults."
 license: Complete terms in LICENSE.txt
 ---
 
 # Frontend Design
+
+## Nortex scope and precedence
+
+Read `AGENTS.md` and `CLAUDE.md` before editing. For existing Nortex screens,
+preserve the accepted design system, semantic tokens, typography and workflow.
+The creative exploration below applies when the requested scope includes a new
+direction; it does not require adding palettes, fonts or effects to a routine fix.
+
+Use `docs/REDISENO_POS_2026-09-04.md` and `docs/POS_Y_AVISOS_2026-09-04.md` as
+historical contracts, then verify the current implementation. Check both POS modes,
+Layout ancestry, keyboard focus, scanner/shortcut blocking, cart persistence,
+mobile targets, day/night contrast and offline state where affected. Capture
+before/after for the same scenario; passing tests does not establish improved
+retention or a better merchant workflow.
+
+Keep new flows in focused components/hooks; shared files have one integrator.
+Do not overwrite others' changes or change line/state budgets to pass a check.
+Record task notes in the agreed project artifact; do not update personal memory
+unless the user explicitly requested it. Publication requires its own authorization.
+
 
 Approach this as the design lead at a small studio known for giving every client a visual identity that could not be mistaken for anyone else's. This client has already rejected proposals that felt templated, and is paying for a distinctive point of view: make deliberate, opinionated choices about palette, typography, and layout that are specific to this brief, and take one real aesthetic risk you can justify.
 

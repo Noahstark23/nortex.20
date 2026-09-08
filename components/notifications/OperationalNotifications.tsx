@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom';
 import FluidSheet from '../ui/FluidSheet';
 import { useOperationalAlerts } from '../../hooks/useOperationalAlerts';
 import { useVentaEnCurso } from '../VentaEnCursoContext';
+import { NortexAssistantNotice } from './NortexAssistantNotice';
+import { ASSISTANT_OPEN_EVENT } from '../assistant/assistantOpenEvent';
 import { OfflineSaleRecovery } from './OfflineSaleRecovery';
 import type { OfflineRecoveryController } from './offlineRecovery';
 
@@ -121,6 +123,7 @@ export function OperationalNotifications({ local }: { local?: LocalSaleAlerts })
                     </article>; })}
                     {!uncertain && actionable.length === 0 && <p className="nx-shell-muted flex items-start gap-2 text-sm"><Check size={18} className="nx-tone-positive shrink-0" /> Sin pendientes detectados en las categorías disponibles para tu rol.</p>}
                 </section>
+                <NortexAssistantNotice active={open} onOpen={() => { setOpen(false); window.dispatchEvent(new Event(ASSISTANT_OPEN_EVENT)); }} />
                 <div className="nx-shell-border border-t pt-3">
                     {data && <p className="nx-shell-muted text-xs">Consultado a las {new Date(data.checkedAt).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}. Se comprueba cada minuto mientras la app está visible.</p>}
                     <button type="button" onClick={refresh} disabled={status === 'loading'} className={`${actionClass} disabled:opacity-50`}>Actualizar avisos<RefreshCw size={17} /></button>

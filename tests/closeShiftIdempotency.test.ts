@@ -134,6 +134,10 @@ class FakeShiftCloseDb implements ShiftCloseDatabase {
 
     private readonly transaction: ShiftCloseTransaction = {
         $queryRaw: async <T>(_query: TemplateStringsArray, ...values: unknown[]): Promise<T> => {
+            if (_query.join(' ').includes('FROM `User`')) {
+                return (values[0] === 'user-a' && values[1] === 'tenant-a'
+                    ? [{ id: 'user-a', role: 'CASHIER', status: 'ACTIVE' }] : []) as T;
+            }
             const [shiftId, tenantId] = values;
             return this.shifts
                 .filter((shift) => shift.id === shiftId && shift.tenantId === tenantId)

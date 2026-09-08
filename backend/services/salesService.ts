@@ -32,11 +32,12 @@ import {
     offlineReplayPayloadHash,
     type OfflineReplaySaleInput,
 } from '../lib/offlineSaleReplay.js';
-import { desglosarVentaConExoneracion } from './nicaTax.js';
+import { calculateSaleTotals } from './promotions/totals.js';
+import { assertCheckoutMatches, completeCheckout, lockCheckoutForSale, promotionReplayHash } from './promotions/checkout.js';
+import { authorizePromotion, PromotionError } from './promotions/authority.js';
 import {
     hasFiscalRegimeVersionConflict,
     normalizeFiscalRegime,
-    resolveSaleFiscalAmounts,
 } from '../../utils/fiscalRegime.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -65,7 +66,8 @@ export type SaleErrorCode =
     | 'OFFLINE_PAYLOAD_MISMATCH'
     | 'STORE_CREDIT_CUSTOMER_REQUIRED'
     | 'STORE_CREDIT_EXCEEDED'
-    | 'STORE_CREDIT_SOURCE_INVALID';
+    | 'STORE_CREDIT_SOURCE_INVALID'
+    | `PROMOTION_${string}`;
 
 export class SaleError extends Error {
     constructor(
@@ -166,6 +168,7 @@ export const SaleItemInputSchema = z.object({
 
 export const CreateSaleSchema = z.object({
     items: z.array(SaleItemInputSchema).min(1, 'Se requiere al menos 1 producto').max(500),
+    promotionQuote: z.object({ id: z.string().min(1).max(191), version: z.number().int().positive() }).optional(),
     paymentMethod: z.enum(['CASH', 'CARD', 'QR', 'CREDIT', 'TRANSFER']),
     customerId: z.string().min(1).max(191).nullable().optional(),
     customerName: z.string().max(255).optional(),
@@ -266,7 +269,7 @@ const safeSaleCreatedAt = (input: string | Date | undefined): Date => {
     return parsed;
 };
 
-const storedOfflineId = (tenantId: string, offlineId: string): string => {
+export const storedOfflineId = (tenantId: string, offlineId: string): string => {
     // Sale.offlineId conserva un unique global legado. Hashear tenant+evento lo
     // vuelve efectivamente tenant-scoped sin exceder el VARCHAR ni cambiar una
     // restriccion existente de forma destructiva.
@@ -411,11 +414,6 @@ const findSaleByMeasurementEvents = async (
     };
 };
 
-const lineNet = (item: NormalizedSaleItem): Decimal => {
-    const factor = new Decimal(1).minus(item.discountPct.dividedBy(100));
-    return item.unitPrice.mul(item.quantity).mul(factor);
-};
-
 const ensureAccountingCatalog = async (tenantId: string): Promise<void> => {
     const requiredCodes = ['1.1.1', '1.1.3', '1.1.4', '2.1.2', '2.1.14', '4.1.1', '5.1.1'];
     const rows = await prisma.account.findMany({
@@ -537,7 +535,7 @@ type OfflineShiftIdentity = {
  * Product -> Shift. El cierre solo toma Shift; una venta que pierda esa carrera
  * falla al validar OPEN y revierte sus locks de producto sin quedar fuera del Z.
  */
-const lockSaleProductsInOrder = async (
+export const lockSaleProductsInOrder = async (
     tx: PrismaTx,
     tenantId: string,
     productIds: readonly string[],
@@ -694,7 +692,7 @@ const assertOfflineEmployeeClaim = (
     );
 };
 
-export async function executeSaleWithResult(
+async function executeSaleWithResultInternal(
     tenantId: string,
     userId: string,
     shiftId: string | null,
@@ -712,6 +710,7 @@ export async function executeSaleWithResult(
     const submittedInput = parsed.data;
     const offlineSync = options.offlineSync === true;
     const source = offlineSync ? 'OFFLINE_SYNC' : submittedInput.source;
+    if (submittedInput.promotionQuote && (offlineSync || source !== 'POS')) throw new PromotionError('PROMOTION_OFFLINE_FORBIDDEN', 409, 'Una venta promocionada requiere confirmación online en POS.');
     if (!tenantId || !userId) {
         throw new SaleError('INVALID_INPUT', 401, 'Identidad de venta incompleta');
     }
@@ -736,14 +735,14 @@ export async function executeSaleWithResult(
         ? { ...submittedInput, employeeId: offlineShift.employeeId }
         : submittedInput;
 
-    const offlinePayloadHash = input.offlineId
+    const offlinePayloadHash = promotionReplayHash(input.offlineId
         ? offlineReplayPayloadHash({
             tenantId,
             userId,
             shiftId,
             input: input as unknown as OfflineReplaySaleInput,
         })
-        : null;
+        : null, input as any);
     const versionlessOnlineHash = input.offlineId
         && offlineSync
         && input.fiscalRegimeVersion !== undefined
@@ -764,6 +763,7 @@ export async function executeSaleWithResult(
         });
     };
 
+    if (input.promotionQuote) await authorizePromotion(prisma, { tenantId, userId });
     if (input.offlineId) {
         const existing = await findSaleByOfflineId(tenantId, input.offlineId);
         if (existing) {
@@ -795,12 +795,23 @@ export async function executeSaleWithResult(
     await asegurarBodegaPorDefecto(prisma, tenantId);
     await ensureAccountingCatalog(tenantId);
 
-    const saleCreatedAt = safeSaleCreatedAt(options.createdAt);
+    let saleCreatedAt = safeSaleCreatedAt(options.createdAt);
     const globalDiscount = new Decimal(input.globalDiscount);
-    const globalFactor = new Decimal(1).minus(globalDiscount.dividedBy(100));
 
+    let transactionalReplay = false;
     try {
         const sale = await prisma.$transaction(async (tx: PrismaTx) => {
+            if (source !== 'POS' || offlineSync || (!input.promotionQuote && process.env.NORTEX_PROMOTIONS_ENABLED !== 'true')) {
+                await tx.$queryRaw(Prisma.sql`SELECT id FROM \`User\` WHERE id = ${userId} AND tenantId = ${tenantId} FOR SHARE`);
+            }
+            const promotionState = source === 'POS' && !offlineSync
+                ? await lockCheckoutForSale(tx, { tenantId, userId }, input as any, shiftId)
+                : { enabled: false, checkout: null, fiscal: null };
+            if (promotionState.checkout?.saleId) {
+                const completed = await tx.sale.findFirst({ where: { id: promotionState.checkout.saleId, tenantId, soldById: userId } });
+                if (!completed) throw new PromotionError('PROMOTION_RECEIPT_UNAVAILABLE', 409, 'El cobro requiere revisar su comprobante.');
+                assertReplayMatches(completed); transactionalReplay = true; return completed;
+            }
             await lockSaleProductsInOrder(
                 tx,
                 tenantId,
@@ -831,7 +842,9 @@ export async function executeSaleWithResult(
 
             // Una sola lectura autoritativa dentro de la transacción: el régimen
             // nunca viene del cliente y se congela junto con la venta.
-            const tenantConfig = await tx.tenant.findUnique({
+            const tenantConfig = promotionState.enabled
+                ? (await tx.$queryRaw<Array<{ allowNegativeStock: boolean; fiscalRegime: string; fiscalRegimeVersion: number }>>`SELECT allowNegativeStock, fiscalRegime, fiscalRegimeVersion FROM \`Tenant\` WHERE id = ${tenantId} FOR SHARE`)[0]
+                : await tx.tenant.findUnique({
                 where: { id: tenantId },
                 select: {
                     allowNegativeStock: true,
@@ -852,9 +865,10 @@ export async function executeSaleWithResult(
 
             let customer = null as Awaited<ReturnType<typeof tx.customer.findFirst>>;
             if (input.customerId) {
-                customer = await tx.customer.findFirst({
-                    where: { id: input.customerId, tenantId },
-                });
+                customer = promotionState.enabled
+                    ? (await tx.$queryRaw<any[]>`SELECT * FROM \`Customer\` WHERE id = ${input.customerId} AND tenantId = ${tenantId} FOR UPDATE`)[0] ?? null
+                    : await tx.customer.findFirst({ where: { id: input.customerId, tenantId } });
+                if (customer && promotionState.enabled) customer.isWholesale = Boolean(customer.isWholesale);
                 if (!customer) {
                     throw new SaleError('CUSTOMER_NOT_FOUND', 404, 'Cliente no encontrado');
                 }
@@ -887,6 +901,7 @@ export async function executeSaleWithResult(
                     wholesaleCustomer: customer?.isWholesale === true,
                     allowRevokedScaleVersionForReplay: offlineSync,
                     quotedAt: saleCreatedAt,
+                    ...(promotionState.enabled ? { promotionContext: { ...promotionState.fiscal!, at: new Date(), globalDiscount: input.globalDiscount } } : {}),
                 });
             } catch (error) {
                 if (error instanceof SaleItemNormalizationError) throw mapNormalizationError(error);
@@ -933,25 +948,13 @@ export async function executeSaleWithResult(
                 }
             }
 
-            const itemsSubtotal = normalizedItems.reduce(
-                (sum, item) => sum.plus(lineNet(item)),
-                new Decimal(0),
-            );
-            const finalTotal = itemsSubtotal.mul(globalFactor).toDecimalPlaces(2);
-            if (finalTotal.isNegative()) {
-                throw new SaleError('INVALID_INPUT', 400, 'El total no puede ser negativo');
-            }
-            const exemptSubtotal = normalizedItems.reduce(
-                (sum, item) => item.ivaExento ? sum.plus(lineNet(item)) : sum,
-                new Decimal(0),
-            );
-            const exemptTotal = exemptSubtotal.mul(globalFactor).toDecimalPlaces(2);
-            const generalBreakdown = desglosarVentaConExoneracion(finalTotal, exemptTotal);
-            const fiscalAmounts = resolveSaleFiscalAmounts(
-                finalTotal,
-                generalBreakdown.iva,
-                fiscalRegime,
-            );
+            const totals = calculateSaleTotals(normalizedItems, globalDiscount, fiscalRegime);
+            const { finalTotal, exemptTotal, fiscalAmounts } = totals;
+            if (finalTotal.isNegative()) throw new SaleError('INVALID_INPUT', 400, 'El total no puede ser negativo');
+            assertCheckoutMatches(promotionState.checkout, normalizedItems, {
+                fiscalRegime: tenantConfig.fiscalRegime, fiscalRegimeVersion: tenantConfig.fiscalRegimeVersion,
+            }, totals);
+            if (promotionState.enabled) saleCreatedAt = new Date();
 
             const storeCreditApplied = new Decimal(input.storeCreditAmount).toDecimalPlaces(2);
             if (storeCreditApplied.greaterThan(finalTotal)) {
@@ -1084,6 +1087,7 @@ export async function executeSaleWithResult(
                         unitPriceExactAtSale: item.unitPrice.toFixed(4),
                         costAtSale: persistedCost.toFixed(2),
                         discount: item.discountPct.toNumber(),
+                        ...(item.promotionSnapshot ? { promotionSnapshot: JSON.parse(JSON.stringify(item.promotionSnapshot)) } : {}),
                         ivaExento: item.ivaExento,
                         productNameAtSale: item.productNameAtSale,
                         unitAtSale: item.unitAtSale,
@@ -1289,10 +1293,11 @@ export async function executeSaleWithResult(
                     }),
                 },
             });
+            await completeCheckout(tx, promotionState.checkout, created.id);
             return created;
         });
 
-        return { sale, idempotentReplay: false };
+        return { sale, idempotentReplay: transactionalReplay };
     } catch (error) {
         if (error instanceof PeriodLockedError) {
             throw new SaleError(
@@ -1315,6 +1320,14 @@ export async function executeSaleWithResult(
                 return { sale: replay.sale, idempotentReplay: true };
             }
         }
+        throw error;
+    }
+}
+
+export async function executeSaleWithResult(tenantId: string, userId: string, shiftId: string | null, rawInput: unknown, options: ExecuteSaleOptions = {}): Promise<ExecuteSaleResult> {
+    try { return await executeSaleWithResultInternal(tenantId, userId, shiftId, rawInput, options); }
+    catch (error) {
+        if (error instanceof PromotionError) throw new SaleError(error.code as SaleErrorCode, error.httpStatus, error.message);
         throw error;
     }
 }

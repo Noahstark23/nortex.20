@@ -2,6 +2,12 @@
   "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   "_comment": "NORTEX — Pruebas de MUTACIÓN sobre lógica pura de dinero, cantidades e inventario. Verifica que los tests realmente MATEN bugs, no solo que pasen: Stryker introduce fallas (cambia +/-, invierte comparaciones, borra cuerpos) y exige que algún test falle. Un mutante 'sobreviviente' = un bug que hoy pasaría el CI sin que nadie se entere. El alcance incluye archivos puros completos; los archivos grandes con infraestructura entran por RANGOS testeados. OJO: los rangos se desfasan con cualquier refactor y Stryker NO avisa (un rango inválido da score NaN y sale con éxito). Por eso `npm run test:mutation` corre además scripts/check-mutation-scope.cjs, que falla si un archivo pierde mutantes.",
   "packageManager": "npm",
+  "ignorePatterns": [
+    ".env*",
+    "**/.env*",
+    "reports/**",
+    "dist/**"
+  ],
   "plugins": [
     "@stryker-mutator/vitest-runner"
   ],
@@ -40,6 +46,7 @@
     "utils/cartPersistence.ts",
     "utils/posSearch.ts",
     "utils/posActivation.ts",
+    "utils/legacySaleMode.ts",
     "utils/posCash.ts",
     "utils/postSalePrintCash.ts",
     "backend/services/saleCancellation.ts",
@@ -73,9 +80,9 @@
     "backend/lib/htmlSecurity.ts",
     "backend/services/loanMath.ts",
     "backend/services/pedidoTrackingService.ts",
-    "backend/services/returnService.ts:143-154",
-    "backend/services/returnService.ts:188-449",
-    "backend/services/returnService.ts:461-500",
+    "backend/services/returnService.ts:144-155",
+    "backend/services/returnService.ts:189-450",
+    "backend/services/returnService.ts:462-503",
     "backend/services/nicaLabor.ts:44-48",
     "backend/services/nicaLabor.ts:52-58",
     "backend/services/nicaLabor.ts:65-80",
@@ -83,11 +90,11 @@
     "backend/services/nicaLabor.ts:368-451",
     "backend/services/sellerReport.ts",
     "backend/services/nicaTax.ts:25-77",
-    "backend/services/stripe.ts:35-62",
+    "backend/services/stripe.ts:35-67",
     "backend/services/stockService.ts:58-71",
     "backend/services/journalPosting.ts:212-355",
     "backend/services/legacyShiftCloseService.ts:96-106",
-    "backend/validation/schemas.ts:833-845",
+    "backend/validation/schemas.ts:838-850",
     "backend/validation/saleCorrectionSchemas.ts:21-35",
     "utils/posProductMapper.ts",
     "backend/services/accounting.ts:152-159",
@@ -98,7 +105,14 @@
     "backend/services/accounting.ts:750-786",
     "backend/services/accounting.ts:951-1007",
     "backend/lib/paymentAccounts.ts",
-    "backend/lib/shiftCloseReport.ts:89-89"
+    "backend/lib/shiftCloseReport.ts:89-89",
+    "backend/services/assistant/budget.ts:16-19",
+    "backend/services/assistant/proposalValidation.ts:55-59",
+    "backend/services/purchaseRegistrationAuthority.ts:38-50",
+    "backend/services/batchWriteoffValue.ts",
+    "backend/services/promotions/pricing.ts:8-9",
+    "backend/services/promotions/totals.ts",
+    "backend/services/productBulkEditPrice.ts"
   ],
   "thresholds_comment": "Línea base al introducir Stryker: 95.59% (backend de dinero al 100%). Subió a 97.50% al entrar utils/stockAlert.ts (110 mutantes, 99.09%) y a 98.11% al entrar utils/cartPersistence.ts (142 mutantes, 100.00%): el umbral se re-pega a la nueva línea base cada vez, que es la regla — solo sube. El score es DETERMINISTA (se midió que el único mutante 'timeout' lo es por hit-limit de iteraciones, no por reloj de pared), así que no hace falta margen para ruido: `break` se pega a la línea base. REGLA: este número solo SUBE. Bajarlo para que pase un PR es exactamente el 'specification gaming' que esta red viene a prevenir — si un cambio hunde el score, se arregla el test, no el umbral. Los ~9 mutantes sobrevivientes restantes son equivalentes (guardas redundantes del tipo `x != null && x > 0`, donde `null > 0` ya es false). Subió a 98.49% al entrar backend/services/nicaLabor.ts (107 mutantes, 98.17%): al escribir su red se encontraron guardas redundantes `aplicaIndemnizacion && anios > 0` en calculateSettlement y en su espejo calcLiquidacion —con `anios` ya acotado a ≥0 y el bloque acumulando 0 días por sí solo, la mitad de la condición no discriminaba nada—, que se reemplazaron por `indemnizacionDias > 0` (sí discrimina: el piso de 1 mes no debe aplicarse a quien entra y sale el mismo día). Subió a 98.51% al entrar backend/services/stripe.ts:35-62 (13 mutantes, 100.00%): las dos reglas puras del cobro manual —si un pago en dolares queda corto contra el precio del plan, y desde cuando se cuentan los 30 dias—. Antes aprobar otorgaba el mes con cualquier monto y sumaba 30 dias a `now`, castigando a quien renovaba anticipado. Al escribir su red apareció un mutante equivalente en el ternario `vencimientoActual > ahora` (con fechas idénticas ambas ramas devuelven lo mismo): se reescribió con Math.max sobre los timestamps, que no tiene ese caso límite. TRAMPA AL RE-PEGAR EL UMBRAL (costó un CI rojo): el reporte imprime el score REDONDEADO a 2 decimales, pero Stryker compara contra el valor exacto. Acá el reporte decía 98.52 y el real era 731/742 = 98.5175, así que poner 98.52 hizo fallar el build con el mensaje absurdo de que 98.52 esta por debajo de 98.52. Al subir el umbral: calcular (killed+timeout)/total y TRUNCAR hacia abajo, nunca copiar el número impreso. Los 3 sobrevivientes restantes de nicaLabor/calc-laborales son equivalentes: el default `?? []` del array de deducciones judiciales (un elemento basura da monto 0 igual), `hire >= lastDec1` (solo difiere cuando son la MISMA fecha, y ahí ambas ramas devuelven el mismo valor) y el `Decimal.set` de nivel módulo. Subió a 98.62 al entrar backend/services/sellerReport.ts (59 mutantes, 100.00%): el fold puro del reporte por vendedor. Su red mató de paso tres clases de mutante que valen como lección: (1) asserts contra la constante IMPORTADA no matan la mutación de esa constante — se compara la mutación contra sí misma; aseverar LITERALES; (2) un test de orden cuyo input ya viene en el orden esperado no mata la eliminación del sort — el input debe llegar desordenado y con montos 9 vs 100 para cazar también la comparación lexicográfica; (3) el Decimal.set de nivel módulo era redundante (defaults de decimal.js) y se borró en vez de documentarlo como equivalente. La ampliación de productos medidos subió cartPersistence a 189/189 y el total a 840/851 = 98.7074%; el nuevo piso se truncó a 98.70. Luego el contrato de empaque pasó a requerir `presentation: 'PACK'` explícita y se simplificaron guardas equivalentes de pricing; con eso el alcance maduro quedó en 829/836 = 99.1626%, truncado a 99.16. La expansión completa de cantidades, etiquetas, empaques y reportes midió 1658/1666 = 99.5198079%. Al sumar transferencias exactas de bodega (18/18), el gate final quedó en 1676/1684 = 99.5249406%; el piso se truncó a 99.52 sin ignorar mutantes estáticos ni código nuevo.",
   "latest_threshold_comment": "La telemetría privada de rechazos de balanza agregó 31/31 mutantes: el gate definitivo mide 1707/1715 = 99.5335277%. El piso se trunca a 99.53; los 20 mutantes Ignored preexistentes siguen limitados a las filas estáticas documentadas de IR_TABLE y no se añadió ningún ignore.",
@@ -124,5 +138,8 @@
     "low": 100,
     "break": 100
   },
-  "quality_scope_comment": "2026-09-04: rangos completos comprobados por AST y pisos individuales de 11 funciones. Dirigida: accounting 232/232, paymentAccounts 11/11, canonicalizeCloseShiftPayload (833-845) 8/8, moneyUsd (89) 1/1; todos killed. El piso contable sube de 212 a 232 y el umbral global permanece 100. Esta medición parcial no acredita la corrida global del candidato."
+  "quality_scope_comment": "2026-09-04: rangos completos comprobados por AST y pisos individuales de 11 funciones. Dirigida: accounting 232/232, paymentAccounts 11/11, canonicalizeCloseShiftPayload (833-845) 8/8, moneyUsd (89) 1/1; todos killed. El piso contable sube de 212 a 232 y el umbral global permanece 100. Esta medición parcial no acredita la corrida global del candidato.",
+  "assistant_scope_comment": "2026-09-05: NortexGPT agrega cuerpos puros completos tokenCostUsd (15/15), totalIssues (14/14) y canonicalValue/purchasePayloadHash (26/26): 55/55 detectados en corrida dirigida, cero sobrevivientes, NoCoverage o ignores. Se eliminó un filtro redundante de undefined: JSON.stringify ya omite esas propiedades; la equivalencia queda probada con hashes fijos. Fechas inválidas sí se rechazan y su mutante se detecta. Umbral global 99.85 preservado; esta evidencia dirigida no sustituye la corrida global.",
+  "operational_assistant_scope_comment": "2026-09-05: merma y edición masiva conservan fórmulas en helpers puros; promociones agregan porcentaje exacto y totales compartidos por revisión/cobro. No cambia el umbral ni se añaden ignores. Ver evidencia operativa de ejecución global.",
+  "integration_scope_comment": "2026-09-08: unión del alcance remoto con NortexGPT. Se conserva el umbral 100 y todos los módulos; requiere una nueva corrida canónica sobre el candidato integrado. AST actual: returnService 144-155/189-450/462-503, stripe 35-67 y canonicalizeCloseShiftPayload 838-850 protegen los cuerpos completos; revisar tras la resolución final de backend."
 }

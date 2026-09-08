@@ -237,6 +237,12 @@ export async function closeLegacyShift(
 
     try {
         return await db.$transaction(async (tx) => {
+            // Caja/promociones ordenan User → Shift. El FK de AuditLog necesita
+            // User compartido: adquirirlo después de Shift invertía la venta.
+            // SHARE conserva compatibilidad con las ventas POS/offline normales.
+            const [actor] = await tx.$queryRaw<Array<{ id: string; role: string; status: string }>>`
+                SELECT id, role, status FROM \`User\`
+                WHERE id = ${context.userId} AND tenantId = ${context.tenantId} FOR SHARE`;
             const lockedShiftRows: Array<{ id: string }> = await tx.$queryRaw`
                 SELECT \`id\`
                   FROM \`Shift\`
@@ -258,7 +264,9 @@ export async function closeLegacyShift(
                 include: SHIFT_CLOSE_INCLUDE,
             });
             if (!shift) throw new Error('El turno bloqueado no pudo releerse');
-            if (!actorCanClose(shift, context)) {
+            if (!actor || actor.status !== 'ACTIVE' || !['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER', 'CASHIER'].includes(actor.role)
+                || (context.role && actor.role !== context.role)
+                || !actorCanClose(shift, { ...context, role: actor.role })) {
                 throw new ShiftCloseError(
                     'CLOSE_SHIFT_FORBIDDEN',
                     403,

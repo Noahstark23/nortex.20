@@ -167,6 +167,8 @@ export const SaleItemSchema = z.object({
     costPrice:   moneyAmount.optional(),
     batchId:     z.string().optional(),
     discount:    moneyAmount.optional(),
+    // El snapshot lo construye salesService; ninguna frontera acepta uno del cliente.
+    promotionSnapshot: z.never().optional(),
 });
 
 export const CreateSaleSchema = z.object({
@@ -179,6 +181,9 @@ export const CreateSaleSchema = z.object({
     discount:       moneyAmount.optional(),
     notes:          z.string().max(500).optional(),
     invoiceNumber:  z.union([z.string(), z.number()]).optional(),
+    // Esta frontera legacy no registra promociones. El POS usa la revisión
+    // autoritativa de salesService; no descartar silenciosamente su referencia.
+    promotionQuote: z.never().optional(),
 });
 
 // POST /api/returns

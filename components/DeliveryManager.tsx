@@ -317,8 +317,6 @@ const DeliveryManager: React.FC = () => {
         setAssigningId(pedidoId);
         setDeliveryError('');
         setDeliveryMessage('Asignando motorizado…');
-        let assignmentConfirmed = false;
-        let reservationConfirmed = false;
         try {
             const res = await fetch(`/api/v1/pedidos/${pedidoId}/motorizado`, {
                 method: 'PATCH',
@@ -332,11 +330,9 @@ const DeliveryManager: React.FC = () => {
             if (!Object.prototype.hasOwnProperty.call(body.pedido, 'motorizadoId')) {
                 throw new Error('El servidor respondió sin confirmar la asignación.');
             }
+            setDeliveryError('');
 
             const canonicalRiderId = body.pedido.motorizadoId ?? null;
-            assignmentConfirmed = true;
-            reservationConfirmed = body.pedido.estado === 'preparando';
-            setDeliveryError('');
             const canonicalRider = body.pedido.motorizado ?? (canonicalRiderId
                 ? motorizados.find((candidate) => candidate.id === canonicalRiderId)
                 : undefined);
@@ -358,85 +354,11 @@ const DeliveryManager: React.FC = () => {
                     }
                     : pedido
             )));
-            if (canonicalRiderId && body.pedido.estado === 'pendiente') {
-                setDeliveryMessage('Motorizado asignado; reservando inventario…');
-                const reservationResponse = await fetch(`/api/v1/pedidos/${pedidoId}/estado`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                    body: JSON.stringify({
-                        estado: 'preparando',
-                        nota: 'Motorizado asignado — inventario reservado antes del despacho.',
-                    }),
-                });
-                const reservationBody = await readResponseBody(reservationResponse);
-                if (!reservationResponse.ok) {
-                    throw new Error(reservationBody.error || 'El servidor rechazó la reserva de inventario.');
-                }
-                if (!reservationBody.pedido || reservationBody.pedido.estado !== 'preparando') {
-                    throw new Error('El servidor respondió sin confirmar la reserva de inventario.');
-                }
-                reservationConfirmed = true;
-
-                updatePedidos((orders) => orders.map((pedido) => (
-                    pedido.id === pedidoId
-                        ? {
-                            ...pedido,
-                            ...reservationBody.pedido,
-                            motorizadoId: canonicalRiderId,
-                            motorizado: reservationBody.pedido?.motorizado
-                                ?? canonicalRider
-                                ?? pedido.motorizado,
-                            items: reservationBody.pedido?.items ?? pedido.items,
-                        }
-                        : pedido
-                )));
-                body.pedido = reservationBody.pedido;
-            }
-
-            if (canonicalRiderId && body.pedido.estado === 'preparando') {
-                setDeliveryMessage('Inventario reservado; confirmando despacho…');
-                const dispatchResponse = await fetch(`/api/v1/pedidos/${pedidoId}/estado`, {
-                    method: 'PATCH',
-                    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                    body: JSON.stringify({
-                        estado: 'en_camino',
-                        nota: 'Motorizado asignado — pedido despachado.',
-                    }),
-                });
-                const dispatchBody = await readResponseBody(dispatchResponse);
-                if (!dispatchResponse.ok) {
-                    throw new Error(dispatchBody.error || 'El servidor rechazó el despacho.');
-                }
-                if (!dispatchBody.pedido || dispatchBody.pedido.estado !== 'en_camino') {
-                    throw new Error('El servidor respondió sin confirmar el despacho.');
-                }
-
-                updatePedidos((orders) => orders.map((pedido) => (
-                    pedido.id === pedidoId
-                        ? {
-                            ...pedido,
-                            ...dispatchBody.pedido,
-                            motorizadoId: canonicalRiderId,
-                            motorizado: dispatchBody.pedido?.motorizado
-                                ?? canonicalRider
-                                ?? pedido.motorizado,
-                            items: dispatchBody.pedido?.items ?? pedido.items,
-                        }
-                        : pedido
-                )));
-                setDeliveryMessage('Motorizado asignado y pedido despachado correctamente.');
-            } else {
-                setDeliveryMessage(canonicalRiderId
-                    ? 'Motorizado asignado correctamente.'
-                    : 'El servidor dejó el pedido sin motorizado.');
-            }
+            setDeliveryMessage(canonicalRiderId
+                ? 'Motorizado asignado. El despacho sigue siendo un paso separado.'
+                : 'El servidor dejó el pedido sin motorizado.');
         } catch (error) {
-            const detail = error instanceof Error ? error.message : 'No se pudo asignar el motorizado.';
-            setDeliveryError(!assignmentConfirmed
-                ? detail
-                : reservationConfirmed
-                    ? `El motorizado quedó asignado y el inventario reservado, pero no pudimos confirmar el despacho: ${detail}`
-                    : `El motorizado quedó asignado, pero no pudimos reservar inventario ni despachar: ${detail}`);
+            setDeliveryError(error instanceof Error ? error.message : 'No se pudo asignar el motorizado.');
             setDeliveryMessage('');
         } finally {
             pendingTransitionsRef.current.delete(pedidoId);

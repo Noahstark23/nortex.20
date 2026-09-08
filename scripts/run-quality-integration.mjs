@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 import { createWriteStream, existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { REQUIRED_INTEGRATION_SUITES, assertExecutedSuite, validateQualityDatabase } from './quality-gate-contract.mjs';
+import { applyProviderCredential } from './qa/provider-credential.mjs';
 
 // No heredar proveedores, credenciales de producción ni configuración de despliegue.
 const env = {
@@ -13,8 +15,18 @@ const env = {
   NORTEX_DATA_KEYS: 'qa:' + randomBytes(32).toString('base64'),
   NORTEX_LEDGER_KEYS: 'qa:' + randomBytes(32).toString('base64'),
   NORTEX_INDEX_KEY: randomBytes(32).toString('base64'), NORTEX_MYSQL_INTEGRATION: '1',
+  // Sólo tenants efímeros sembrados por estas suites pueden habilitar el piloto.
+  NORTEX_ASSISTANT_ENABLED: 'true', NORTEX_ASSISTANT_EXTRACTION_ENABLED: 'true', NORTEX_ASSISTANT_EXECUTION_ENABLED: 'true',
+  NORTEX_ASSISTANT_OPERATIONS_ENABLED: 'true', NORTEX_ASSISTANT_ACTIONS_ENABLED: 'true', NORTEX_PROMOTIONS_ENABLED: 'true',
+  NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED: 'true', NORTEX_PRIVATE_WA_SENDING_ENABLED: 'false',
+  NORTEX_ASSISTANT_STORAGE_DIR: path.join(tmpdir(), 'nortex-quality-assistant-' + randomBytes(8).toString('hex')),
   SOURCE_COMMIT: 'quality-gate-' + randomBytes(8).toString('hex'),
 };
+// Exclusión deliberada, no incidental: la compuerta obligatoria nunca recibe la
+// clave del proveedor. Con ella, cada corrida gastaría presupuesto real y las
+// suites dejarían de ser deterministas. La propagación vive sólo en el lanzador
+// de evaluación (scripts/qa/nortexgpt-eval-server.mjs --allow-provider).
+applyProviderCredential(env, { allow: false });
 const output = path.resolve('reports/quality-integration');
 await mkdir(output, { recursive: true });
 let server;
@@ -58,7 +70,7 @@ try {
       try {
         const response = await fetch(runtime.NORTEX_QA_BASE_URL + '/api/health', { signal: AbortSignal.timeout(1000) });
         const health = await response.json();
-        if (response.ok && health.ok === true && health.db === 'up' && health.commit === env.SOURCE_COMMIT) { healthy = true; break; }
+        if (response.ok && health.ok === true && health.db === 'up' && health.commit === env.SOURCE_COMMIT && /(?:^|,)\s*no-store(?:\s|,|$)/i.test(response.headers.get('cache-control') ?? '')) { healthy = true; break; }
       } catch { /* Espera acotada por inicialización local. */ }
       await delay(500);
     }
@@ -78,5 +90,6 @@ try {
   complete = true;
 } finally {
   await stop();
+  await rm(env.NORTEX_ASSISTANT_STORAGE_DIR, { recursive: true, force: true });
   await writeFile(path.join(output, 'summary.json'), JSON.stringify({ passed: complete, suites: results, total: results.reduce((sum, row) => sum + row.passed, 0) }, null, 2));
 }

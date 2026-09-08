@@ -1,3 +1,5 @@
+import { registerRetentionCertificate } from './routes/retentionCertificate';
+import { registerFiscalExports } from './routes/fiscalExports';
 // NORTEX INC. - CORE BANCARIO (OPTIMIZADO PRODUCCIÓN)
 import express from 'express';
 import cors from 'cors';
@@ -18,6 +20,7 @@ import {
     CUSTOMER_PAYMENT_ROLES,
     CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_READ_ROLES,
+    CUSTOMER_PORTFOLIO_READ_ROLES,
     HR_READ_ROLES,
     CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
@@ -39,25 +42,26 @@ import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPoli
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
 import { isSameManaguaBusinessDay } from './lib/saleCorrections';
+import { batchExpiryWindow } from './lib/batchExpiry.js';
 import { parseProductRefreshIds } from './lib/productRefreshQuery';
 import offlineSaleEvidenceRoutes from './routes/offlineSaleEvidence';
 import {
     pagarFacturaProveedorEnCaja,
-    registrarSalidaDeCajaPorCompra,
-    SupplierPaymentError as CashSupplierPaymentError,
+    SupplierPaymentError as SupplierPaymentCajaError,
     MENSAJE_SIN_CAJA_ABIERTA,
     CATEGORIA_PAGO_PROVEEDOR,
 } from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
 import { closeShiftWithReport, ShiftCloseError } from './services/shiftCloseService';
 import { voidManualCashMovement, ManualCashMovementVoidError } from './services/manualCashMovementVoidService';
-import { recordSale, recordPayment, recordPurchase, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
 import { executeSale, SaleError } from './services/salesService';
+import { executeBatchWriteoff, BatchWriteoffError } from './services/batchWriteoffService';
+import { loadBatchWriteoffReplay } from './services/batchWriteoffIdempotency';
 import { executeSupplierPaymentTransaction } from './services/supplierPaymentService';
-import { executeProcurementMatch } from './services/procurementMatchService';
 import {
     applyLinkedPurchaseSalePriceIntents,
     buildPurchaseSalePriceChange,
@@ -101,7 +105,7 @@ import {
     type ReturnProductAuthority,
     type ReturnSaleItemSnapshot,
 } from './services/returnService';
-import { applyStockDelta, asegurarBodegaPorDefecto, materializeWarehouseRow, resolveOperationalWarehouse, StockError, weightedAverageCost } from './services/stockService';
+import { applyStockDelta, asegurarBodegaPorDefecto, materializeWarehouseRow, resolveOperationalWarehouse, StockError } from './services/stockService';
 import { appendSignedCashMovement, verifyTenantLedger, appendDriverWalletMovement, verifyDriverLedger } from './services/ledger';
 import { signAuthToken, verifyAuthToken } from './services/secrets';
 import { initObservability, errorTelemetry } from './services/observability';
@@ -121,6 +125,7 @@ import motorizadosRouter from './routes/motorizados';
 import driverRouter from './routes/driver';
 import loanRoutes from './routes/loans';
 import purchaseOrdersRouter from './routes/purchaseOrders';
+import { createPurchaseHandler } from './routes/purchases';
 import suppliersRouter from './routes/suppliers';
 import procurementMatchesRouter from './routes/procurementMatches';
 import serialsRouter from './routes/serials';
@@ -159,8 +164,7 @@ import {
     serializeQuotationItemsForClient,
     type QuotationProductAuthority,
 } from './lib/quotationItems';
-import { calculatePurchaseOrderInvoiceAvailability } from './lib/purchaseOrderAvailability';
-import { calculatePurchaseMoney } from './lib/purchaseMoney';
+import { buildSalesQuantityBreakdown } from './lib/salesQuantityReport';
 import {
     assertAggregateBatchMutationAllowed,
     assertBatchTrackingTransitionAllowed,
@@ -246,7 +250,6 @@ import {
     resolveCustomerHubNextAction,
     resolveCustomerHubSegment,
 } from '../utils/customerHub.js';
-import { resolvePurchaseLine } from '../utils/purchasePackaging.js';
 import {
     FISCAL_REGIME_CUOTA_FIJA,
     normalizeFiscalRegime,
@@ -258,6 +261,17 @@ import {
 } from '../utils/tenantCapabilities.js';
 import onboardingRouter from './routes/onboarding.js';
 import operationalAlertsRouter from './routes/operationalAlerts.js';
+import assistantRouter from './routes/assistant.js';
+import { buildAssistantDocumentsRouter } from './routes/assistantDocuments.js';
+import { createAssistantProposalsRouter } from './routes/assistantProposals.js';
+import promotionsRouter from './routes/promotions.js';
+import { executeProductBulkEdit, ProductBulkEditError } from './services/productBulkEditService.js';
+import { withPromotionPriceVersion } from './services/promotions/productVersion.js';
+import { createAssistantCatalogRouter } from './routes/assistantCatalog.js';
+import { createAssistantActionsRouter } from './routes/assistantActions.js';
+import { createAssistantOperationsRouter } from './routes/assistantOperations.js';
+import { createAssistantStatusRouter } from './routes/assistantStatus.js';
+import { buildAssistantPrivateWhatsappRouter, buildAssistantPrivateWhatsappWebhookRouter } from './routes/assistantPrivateWhatsapp.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -371,6 +385,7 @@ if (isWhatsAppEnabled()) {
 }
 
 // JSON Parser con límite de body (anti-abuse)
+app.use('/api/assistant-private-whatsapp', buildAssistantPrivateWhatsappWebhookRouter());
 app.use(express.json({ limit: '2mb' }) as any);
 
 // ── Healthcheck (Docker HEALTHCHECK, Coolify y monitoreo externo) ────────────
@@ -1445,6 +1460,15 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
 
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/operational-alerts', operationalAlertsRouter);
+app.use('/api/promotions', promotionsRouter);
+app.use('/api/assistant', assistantRouter);
+app.use('/api/assistant', buildAssistantDocumentsRouter());
+app.use('/api/assistant', createAssistantOperationsRouter());
+app.use('/api/assistant', createAssistantStatusRouter());
+app.use('/api/assistant', createAssistantActionsRouter());
+app.use('/api/assistant/private-whatsapp', buildAssistantPrivateWhatsappRouter());
+app.use('/api/assistant', createAssistantCatalogRouter());
+app.use('/api/assistant', createAssistantProposalsRouter());
 
 // ── Pulso del día del POS (gamificación honesta) ─────────────────────────────
 // Los números REALES del negocio como motor del loop de venta: cuánto llevás
@@ -2297,7 +2321,7 @@ app.get('/api/customers', authenticate, checkRole(CUSTOMER_READ_ROLES), async (r
     }
 });
 
-app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const segment = typeof req.query.segment === 'string' ? req.query.segment : 'all';
@@ -2362,7 +2386,7 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), 
     }
 });
 
-app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/:id/hub', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
@@ -6051,10 +6075,6 @@ const productQuantityErrorResponse = (res: any, error: unknown, productName?: st
  * para fracciones guardamos ceil en la sombra vieja (nunca cero ni menor que
  * lo recibido). Ningún cálculo tocado vuelve a leer este surrogate.
  */
-const legacyPurchaseQuantity = (quantity: Decimal): number => {
-    if (quantity.isInteger() && quantity.lessThanOrEqualTo(2_147_483_647)) return quantity.toNumber();
-    return Decimal.min(quantity.ceil(), 2_147_483_647).toNumber();
-};
 
 /**
  * Fusiona disponibilidad farmacéutica sin reemplazar `Product.stock`, que
@@ -6587,7 +6607,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
 
                             await tx.product.update({
                                 where: { id: existing.id },
-                                data: {
+                                data: await withPromotionPriceVersion(tx, authReq.tenantId!, existing.id, {
                                     name: normalized.name,
                                     description: normalized.description || null,
                                     price: normalizedPrice,
@@ -6603,7 +6623,7 @@ app.post('/api/products/bulk', authenticate, checkRole(['OWNER', 'ADMIN']), vali
                                     packPrice: normalizedPackPrice,
                                     requiresBatchTracking: nextRequiresBatchTracking,
                                     ivaExento: Boolean(normalized.ivaExento),
-                                }
+                                })
                             });
 
                             let stockAfter = stockBeforeLocked.toNumber();
@@ -6995,7 +7015,7 @@ app.put('/api/products/:id', authenticate, checkRole(['OWNER', 'ADMIN']), valida
 
             const result = await tx.product.update({
                 where: { id },
-                data: updates
+                data: await withPromotionPriceVersion(tx, authReq.tenantId!, id, updates)
             });
 
             // Auditoría de cambio de precio/costo (antes no quedaba rastro de quién lo cambió).
@@ -7084,82 +7104,15 @@ app.patch('/api/products/publish-bulk', authenticate, checkRole(['OWNER', 'ADMIN
 //   priceMode 'set' → fija el precio; 'pct' → ajusta ± un porcentaje (redondeado a 2 dec.).
 app.patch('/api/products/bulk-edit', authenticate, checkRole(['OWNER', 'ADMIN']), validate(BulkEditProductsSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { ids, category, priceMode, priceValue } = req.body;
-
     try {
-        let count = 0;
-        // before/after por producto → asiento reconstruible ante disputa/reversión.
-        const priceChanges: { id: string; priceBefore: string; priceAfter: string }[] = [];
-
-        if (priceMode === 'pct') {
-            // Ajuste porcentual: requiere leer cada precio → recalcular → redondear.
-            // Dinero: se calcula con decimal.js (half-up a 2 decimales), no con
-            // aritmética Float nativa que arrastra errores de ±1 centavo.
-            const factor = new Decimal(1).plus(new Decimal(priceValue).div(100));
-            count = await prisma.$transaction(async (tx: any) => {
-                const prods = await tx.product.findMany({
-                    where: { id: { in: ids }, tenantId: authReq.tenantId! },
-                    select: { id: true, price: true },
-                });
-                for (const p of prods) {
-                    const priceBefore = new Decimal(p.price.toString());
-                    let newPrice = priceBefore.mul(factor).toDecimalPlaces(2);
-                    if (newPrice.isNegative()) newPrice = new Decimal(0);
-                    const data: any = { price: newPrice.toNumber() };
-                    if (category !== undefined) data.category = category;
-                    await tx.product.update({ where: { id: p.id }, data });
-                    priceChanges.push({ id: p.id, priceBefore: priceBefore.toFixed(2), priceAfter: newPrice.toFixed(2) });
-                }
-                return prods.length;
-            });
-        } else {
-            // 'set' y/o categoría. El precio 'set' se normaliza con decimal.js.
-            const newPriceSet = priceMode === 'set' ? new Decimal(priceValue).toDecimalPlaces(2) : null;
-            count = await prisma.$transaction(async (tx: any) => {
-                // En modo 'set' leemos los precios previos antes del updateMany para
-                // registrar before/after por producto en la auditoría.
-                if (newPriceSet) {
-                    const prods = await tx.product.findMany({
-                        where: { id: { in: ids }, tenantId: authReq.tenantId! },
-                        select: { id: true, price: true },
-                    });
-                    for (const p of prods) {
-                        priceChanges.push({ id: p.id, priceBefore: new Decimal(p.price.toString()).toFixed(2), priceAfter: newPriceSet.toFixed(2) });
-                    }
-                }
-                const data: any = {};
-                if (category !== undefined) data.category = category;
-                if (newPriceSet) data.price = newPriceSet.toNumber();
-                const result = await tx.product.updateMany({
-                    where: { id: { in: ids }, tenantId: authReq.tenantId! },
-                    data,
-                });
-                return result.count;
-            });
-        }
-
-        // Rastro de auditoría: una mutación masiva de precios/categoría debe quedar registrada.
-        await prisma.auditLog.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                userId: authReq.userId!,
-                action: 'PRODUCT_BULK_EDIT',
-                details: JSON.stringify({
-                    count,
-                    requestedIds: ids.length,
-                    category: category ?? null,
-                    priceMode: priceMode ?? null,
-                    priceValue: priceValue ?? null,
-                    priceChanges,
-                    timestamp: new Date().toISOString(),
-                }),
-            },
+        const { count } = await executeProductBulkEdit({
+            principal: { tenantId: authReq.tenantId!, userId: authReq.userId!, role: authReq.role! }, input: req.body,
         });
-
         res.json({ message: `${count} producto(s) actualizado(s).`, count });
-    } catch (error: any) {
-        console.error('Error en edición masiva:', error);
-        res.status(500).json({ error: error.message || 'Error en edición masiva' });
+    } catch (error) {
+        if (error instanceof ProductBulkEditError) return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        console.error('Error en edición masiva:', error instanceof Error ? error.name : 'Error');
+        res.status(500).json({ error: 'Error en edición masiva' });
     }
 });
 
@@ -7537,95 +7490,7 @@ app.get('/api/inventory/batches/:productId', authenticate, async (req: any, res:
 //   control de lotes del producto si aún no lo tenía (FEFO/alertas de vencimiento).
 type ManualBatchCommandResponse = Record<string, unknown>;
 
-const manualBatchResultDetails = (raw: string | null, expected: {
-    commandId: string;
-    commandType: ManualBatchCommandType;
-    payloadHash: string;
-}): ManualBatchCommandResponse => {
-    let parsed: unknown;
-    try {
-        parsed = raw === null ? null : JSON.parse(raw);
-    } catch {
-        parsed = null;
-    }
-    if (
-        typeof parsed !== 'object'
-        || parsed === null
-        || Array.isArray(parsed)
-        || (parsed as any).version !== 1
-        || (parsed as any).commandId !== expected.commandId
-        || (parsed as any).commandType !== expected.commandType
-        || (parsed as any).payloadHash !== expected.payloadHash
-        || typeof (parsed as any).response !== 'object'
-        || (parsed as any).response === null
-        || Array.isArray((parsed as any).response)
-    ) {
-        throw new ManualBatchMovementError(
-            'MANUAL_BATCH_COMMAND_CORRUPT',
-            500,
-            'El resultado idempotente del movimiento manual está incompleto o corrupto.',
-        );
-    }
-    return (parsed as any).response as ManualBatchCommandResponse;
-};
-
-/**
- * Relee fuera de la transacción perdedora. Un claim sin resultado nunca se
- * reejecuta: eso indicaría corrupción manual, porque ambos se confirman juntos.
- */
-const loadManualBatchReplay = async (input: {
-    tenantId: string;
-    commandId: string;
-    commandType: ManualBatchCommandType;
-    payloadHash: string;
-}): Promise<ManualBatchCommandResponse | null> => {
-    const command = await prisma.auditLog.findFirst({
-        where: { id: input.commandId, tenantId: input.tenantId },
-        select: { action: true, details: true },
-    });
-    if (!command) return null;
-    if (command.action !== 'MANUAL_BATCH_COMMAND') {
-        throw new ManualBatchMovementError(
-            'MANUAL_BATCH_COMMAND_CORRUPT',
-            500,
-            'El identificador idempotente colisionó con una auditoría incompatible.',
-        );
-    }
-    const claim = parseManualBatchCommandClaim(command.details);
-    assertManualBatchReplay(claim, input);
-    if (
-        claim.resultAuditId !== buildManualBatchRelatedId(input.commandId, 'RESULT')
-        || claim.movementId !== buildManualBatchRelatedId(input.commandId, 'MOVEMENT')
-    ) {
-        throw new ManualBatchMovementError(
-            'MANUAL_BATCH_COMMAND_CORRUPT',
-            500,
-            'Los identificadores derivados del comando manual no coinciden.',
-        );
-    }
-    const result = await prisma.auditLog.findFirst({
-        where: { id: claim.resultAuditId, tenantId: input.tenantId },
-        select: { action: true, details: true },
-    });
-    if (!result) {
-        throw new ManualBatchMovementError(
-            'MANUAL_BATCH_COMMAND_INCOMPLETE',
-            500,
-            'El movimiento ya fue reclamado, pero su resultado inmutable no existe.',
-        );
-    }
-    const expectedResultAction = input.commandType === 'MANUAL_BATCH_CREATE'
-        ? 'PRODUCT_BATCH_ADDED'
-        : 'BATCH_WRITEOFF';
-    if (result.action !== expectedResultAction) {
-        throw new ManualBatchMovementError(
-            'MANUAL_BATCH_COMMAND_CORRUPT',
-            500,
-            'La auditoría de resultado del movimiento manual es incompatible.',
-        );
-    }
-    return manualBatchResultDetails(result.details, input);
-};
+const loadManualBatchReplay = (input: Parameters<typeof loadBatchWriteoffReplay>[1]) => loadBatchWriteoffReplay(prisma, input);
 
 const isUniqueConstraintFailure = (error: unknown): boolean =>
     typeof error === 'object' && error !== null && 'code' in error && (error as any).code === 'P2002';
@@ -7837,7 +7702,7 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
             if (!product.requiresBatchTracking) {
                 await tx.product.update({
                     where: { id: productId },
-                    data: { requiresBatchTracking: true },
+                    data: await withPromotionPriceVersion(tx, authReq.tenantId!, productId, { requiresBatchTracking: true }),
                 });
             }
 
@@ -7915,253 +7780,19 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
 // Resta el stock restante del lote del producto, deja Kardex y asiento de merma
 // (Debe 5.1.2 Pérdida por Merma / Haber 1.1.4 Inventario, valuado al costo).
 app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['OWNER', 'ADMIN']), validate(WriteoffBatchSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { batchId } = req.params;
-    const { clientEventId, warehouseId: requestedWarehouseId, quantity, reason } = req.body;
-    const commandType = 'MANUAL_BATCH_WRITEOFF' as const;
-    const quantityExact = new Decimal(quantity).toFixed(4);
-    const commandId = buildManualBatchCommandId({
-        tenantId: authReq.tenantId!, clientEventId, commandType,
-    });
-    const payloadHash = buildManualBatchPayloadHash(commandType, [
-        authReq.tenantId!, authReq.userId!, batchId, requestedWarehouseId, quantityExact, reason,
-    ]);
-    const resultAuditId = buildManualBatchRelatedId(commandId, 'RESULT');
-    const movementId = buildManualBatchRelatedId(commandId, 'MOVEMENT');
-
     try {
-        const replay = await loadManualBatchReplay({
-            tenantId: authReq.tenantId!, commandId, commandType, payloadHash,
+        const outcome = await executeBatchWriteoff({
+            principal: { tenantId: req.tenantId, userId: req.userId, role: req.role },
+            batchId: req.params.batchId, input: req.body,
         });
-        if (replay) return res.json(replay);
-
-        await seedChartOfAccounts(authReq.tenantId!); // garantiza 5.1.2 / 1.1.4
-
-        const response = await prisma.$transaction(async (tx: any) => {
-            const mode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
-            const actor = await tx.user.findFirst({
-                where: { id: authReq.userId!, tenantId: authReq.tenantId!, status: 'ACTIVE' },
-                select: { id: true },
-            });
-            if (!actor) {
-                throw new BatchWarehouseLedgerError(
-                    'BATCH_WAREHOUSE_USER_NOT_FOUND', 404,
-                    'El usuario no está activo en este negocio para registrar la merma.',
-                );
-            }
-            const operationWarehouse = await resolveOperationalWarehouse(
-                tx, authReq.tenantId!, requestedWarehouseId,
-            );
-            const batchHint = await tx.productBatch.findFirst({
-                where: { id: batchId, tenantId: authReq.tenantId! },
-                select: { productId: true },
-            });
-            if (!batchHint) throw new BatchWarehouseLedgerError(
-                'BATCH_WAREHOUSE_BATCH_NOT_FOUND', 404, 'Lote no encontrado.',
-            );
-            const productRows: Array<{
-                id: string;
-                name: string;
-                cost: any;
-                saleMode: string | null;
-                quantityStep: any;
-            }> = await tx.$queryRaw`
-                SELECT id, name, cost, saleMode, quantityStep
-                FROM \`Product\`
-                WHERE id = ${batchHint.productId} AND tenantId = ${authReq.tenantId!}
-                FOR UPDATE`;
-            const product = productRows[0];
-            if (!product) throw new StockError('PRODUCT_NOT_FOUND', 'Producto no encontrado en tu inventario.');
-            const batchRows: Array<{
-                id: string;
-                productId: string;
-                batchNumber: string;
-                expiryDate: Date;
-                stock: any;
-            }> = await tx.$queryRaw`
-                SELECT id, productId, batchNumber, expiryDate, stock
-                FROM \`ProductBatch\`
-                WHERE id = ${batchId} AND tenantId = ${authReq.tenantId!}
-                FOR UPDATE`;
-            const batch = batchRows[0];
-            if (!batch || batch.productId !== product.id) throw new BatchWarehouseLedgerError(
-                'BATCH_WAREHOUSE_BATCH_NOT_FOUND', 404, 'Lote no encontrado.',
-            );
-            const writeoffQuantity = contextualProductQuantityDecimal(quantity, product);
-            const writeoffQuantityExact = writeoffQuantity.toFixed(4);
-            const batchStockBefore = new Decimal(batch.stock.toString());
-            if (batchStockBefore.lessThan(writeoffQuantity)) {
-                throw new StockError(
-                    'INSUFFICIENT_STOCK',
-                    `El lote solo tiene ${batchStockBefore.toString()} disponibles en total.`,
-                );
-            }
-            await assertPeriodOpen(tx, authReq.tenantId!, new Date());
-
-            await tx.auditLog.create({
-                data: {
-                    id: commandId,
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'MANUAL_BATCH_COMMAND',
-                    details: JSON.stringify({
-                        version: 1,
-                        commandType,
-                        payloadHash,
-                        resultAuditId,
-                        movementId,
-                        resourceId: batchId,
-                    }),
-                },
-            });
-
-            const batchLedger = await applyBatchWarehouseDelta({
-                tx,
-                mode,
-                tenantId: authReq.tenantId!,
-                productId: product.id,
-                batchId,
-                warehouseId: operationWarehouse.id,
-                delta: writeoffQuantity.negated().toFixed(4),
-                movementType: 'WRITEOFF',
-                referenceId: movementId,
-                referenceType: 'KARDEX_MOVEMENT',
-                userId: authReq.userId!,
-                reason,
-                sourceKey: `manual-batch-writeoff:${clientEventId}`,
-                allowNegative: false,
-            });
-            if (batchLedger.replay) {
-                throw new ManualBatchMovementError(
-                    'MANUAL_BATCH_COMMAND_CORRUPT', 500,
-                    'El subledger ya contenía esta merma sin su claim de comando.',
-                );
-            }
-
-            await materializeWarehouseRow(tx, {
-                tenantId: authReq.tenantId!,
-                productId: product.id,
-                warehouseId: operationWarehouse.id,
-                isDefault: operationWarehouse.isDefault,
-            });
-            const localRows: Array<{ stock: any }> = await tx.$queryRaw`
-                SELECT stock FROM \`ProductStock\`
-                WHERE tenantId = ${authReq.tenantId!}
-                  AND productId = ${product.id}
-                  AND warehouseId = ${operationWarehouse.id}
-                FOR UPDATE`;
-            if (!localRows[0]) throw new Error('No se pudo preparar el stock de la bodega seleccionada.');
-            const localStockBefore = new Decimal(localRows[0].stock.toString());
-            if (localStockBefore.lessThan(writeoffQuantity)) {
-                throw new StockError(
-                    'INSUFFICIENT_STOCK',
-                    `Stock insuficiente en ${operationWarehouse.name}. Disponible: ${localStockBefore.toString()}.`,
-                );
-            }
-
-            const stockResult = await applyStockDelta(tx, {
-                tenantId: authReq.tenantId!,
-                productId: product.id,
-                delta: writeoffQuantity.negated().toNumber(),
-                enforceSufficient: true,
-                warehouseId: operationWarehouse.id,
-            });
-            const updatedBatch = await tx.productBatch.updateMany({
-                where: {
-                    id: batchId,
-                    tenantId: authReq.tenantId!,
-                    stock: { gte: writeoffQuantity.toNumber() },
-                },
-                data: { stock: { decrement: writeoffQuantity.toNumber() } },
-            });
-            if (updatedBatch.count !== 1) {
-                throw new StockError('INSUFFICIENT_STOCK', 'El saldo agregado del lote cambió concurrentemente.');
-            }
-
-            await tx.kardexMovement.create({
-                data: {
-                    id: movementId,
-                    tenantId: authReq.tenantId!,
-                    productId: product.id,
-                    type: 'ADJUST_LOSS',
-                    quantity: writeoffQuantity.negated().toNumber(),
-                    stockBefore: localStockBefore.toNumber(),
-                    stockAfter: localStockBefore.minus(writeoffQuantity).toNumber(),
-                    referenceId: batchId,
-                    referenceType: 'BATCH_WRITEOFF',
-                    reason,
-                    userId: authReq.userId!,
-                    batchId,
-                    warehouseId: operationWarehouse.id,
-                },
-            });
-
-            const lossValue = writeoffQuantity
-                .times(new Decimal(product.cost?.toString() ?? '0'))
-                .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            if (lossValue.greaterThan(0)) {
-                // createJournalEntry conserva un contrato number legado; la
-                // conversión ocurre solo después de cerrar el Decimal a 2dp.
-                const journalValue = lossValue.toNumber();
-                await createJournalEntry(
-                    tx, authReq.tenantId!, `Baja de lote vencido ${batch.batchNumber}`, batchId, 'BATCH_WRITEOFF', authReq.userId!,
-                    [
-                        { accountCode: '5.1.2', debit: journalValue, credit: 0 },
-                        { accountCode: '1.1.4', debit: 0, credit: journalValue },
-                    ]
-                );
-            }
-
-            const response: ManualBatchCommandResponse = {
-                message: `Lote ${batch.batchNumber}: baja de ${writeoffQuantityExact} uds. Merma: C$ ${lossValue.toFixed(2)}`,
-                batchId,
-                batchNumber: batch.batchNumber,
-                quantity: writeoffQuantityExact,
-                newStock: stockResult.stockAfter,
-                warehouseId: operationWarehouse.id,
-                warehouseStock: localStockBefore.minus(writeoffQuantity).toFixed(4),
-                batchStock: batchStockBefore.minus(writeoffQuantity).toFixed(4),
-                lossValue: lossValue.toFixed(2),
-                batchWarehouseStatus: batchLedger.status,
-            };
-            await tx.auditLog.create({
-                data: {
-                    id: resultAuditId,
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'BATCH_WRITEOFF',
-                    details: JSON.stringify({
-                        version: 1,
-                        commandId,
-                        commandType,
-                        payloadHash,
-                        response,
-                    }),
-                },
-            });
-            return response;
-        }, { isolationLevel: 'ReadCommitted' });
-
-        res.json(response);
+        return res.json(outcome.result);
     } catch (error: any) {
-        if (isUniqueConstraintFailure(error)) {
-            try {
-                const replay = await loadManualBatchReplay({
-                    tenantId: authReq.tenantId!, commandId, commandType, payloadHash,
-                });
-                if (replay) return res.json(replay);
-            } catch (replayError) {
-                if (manualBatchErrorResponse(res, replayError)) return;
-                throw replayError;
-            }
-        }
         if (productQuantityErrorResponse(res, error)) return;
         if (manualBatchErrorResponse(res, error)) return;
-        if (error instanceof PeriodLockedError) {
-            return res.status(423).json({ error: error.message, code: 'PERIOD_LOCKED' });
-        }
-        console.error('Error dando de baja lote:', error);
-        res.status(500).json({ error: 'Error dando de baja el lote' });
+        if (error instanceof BatchWriteoffError) return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        if (error instanceof PeriodLockedError) return res.status(423).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        console.error('Error dando de baja lote', { name: error instanceof Error ? error.name : 'UnknownError' });
+        return res.status(500).json({ error: 'Error dando de baja el lote' });
     }
 });
 
@@ -9132,855 +8763,8 @@ app.get(
     }
 });
 
-// POST /api/purchases - Registrar compra (Transacción ACID)
-app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), validate(CreatePurchaseSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { supplierId, warehouseId, invoiceNumber, date, postingDate, dueDate, paymentMethod, notes, items, purchaseOrderId } = req.body;
-    // Validaciones de formato ya realizadas por Zod
-
-    // MANAGER puede registrar la compra operativa, pero cambiar el precio de
-    // venta reescribe el catálogo comercial y conserva el permiso histórico de
-    // OWNER/ADMIN/SUPER_ADMIN. Este guard corre antes de cualquier lectura o tx.
-    if (hasPurchaseSalePriceIntent(items) && !canSetPurchaseSalePrice(authReq.role)) {
-        return res.status(403).json({
-            error: 'No tenés permiso para modificar precios de venta desde una compra',
-            code: 'PURCHASE_SALE_PRICE_FORBIDDEN',
-        });
-    }
-
-    try {
-        // A1/A5: el asiento de la compra necesita el catálogo YA sembrado. `getAccount`
-        // auto-siembra con el prisma GLOBAL (autocommit): bajo REPEATABLE READ esas filas
-        // son INVISIBLES dentro de la tx y el `tx.account.update` moría con P2025 en el
-        // primer movimiento de un tenant nuevo. Sembramos ANTES de abrir la transacción
-        // (idempotente, y solo si falta el ancla → sin escritura extra en cada compra).
-        const anchorPurchase = await prisma.account.findUnique({
-            where: { tenantId_code: { tenantId: authReq.tenantId!, code: '1.1.4' } },
-            select: { id: true },
-        });
-        const ppvAccount = purchaseOrderId
-            ? await prisma.account.findUnique({
-                where: { tenantId_code: { tenantId: authReq.tenantId!, code: '5.1.3' } },
-                select: { id: true },
-            })
-            : { id: 'NOT_REQUIRED' };
-        if (!anchorPurchase || !ppvAccount) await seedChartOfAccounts(authReq.tenantId!);
-        if (!purchaseOrderId) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
-
-        // Compra de CONTADO: el efectivo sale de la gaveta. Capturamos el turno
-        // antes de la tx (es el mismo que ve la píldora del POS), pero no
-        // devolvemos todavía SIN_CAJA_ABIERTA: para una factura con OC, la
-        // conciliación debe poder rechazar primero una diferencia que hace
-        // inválida la compra CASH por sí misma.
-        const { shift: turnoDeContado } = paymentMethod === 'CASH'
-            ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
-            : { shift: null };
-        // Snapshot de la gaveta para la auditoría (se llena dentro de la tx).
-        let efectivoAntesCompra: Decimal | null = null;
-        let efectivoDespuesCompra: Decimal | null = null;
-
-        const result = await prisma.$transaction(async (tx: any) => {
-            // Consolidar dentro de la misma unidad ACID: repetir el mismo precio
-            // para un SKU es idempotente; dos precios distintos son una intención
-            // ambigua y abortan la compra completa con 400.
-            const salePriceIntents = resolvePurchaseSalePriceIntents(items);
-            const salePriceIntentByProduct = new Map(
-                salePriceIntents.map((intent) => [intent.productId, intent]),
-            );
-
-            // Serializar las compras del proveedor antes de cualquier lectura consistente
-            // de la transacción. Así, un doble envío concurrente no puede pasar dos veces
-            // el chequeo de factura duplicada.
-            await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
-
-            // ORDEN DE BLOQUEO — Product ANTES que Shift, a propósito.
-            //
-            // El turno NO se bloquea acá: lo toma `registrarSalidaDeCajaPorCompra`
-            // en el punto 4, DESPUÉS de los locks de Product del punto 3. Ese es
-            // el mismo orden que usa la devolución en efectivo, que es la otra
-            // transacción del sistema que bloquea las dos tablas:
-            //   /api/returns:   Sale → Product (pre-lock ordenado) → Shift
-            //   /api/purchases: Supplier → Product → Shift
-            // Un intento anterior adelantó el lock del turno hasta acá creyendo
-            // que la devolución era Shift → Product. No lo es: la devolución
-            // prebloquea Product y `applyStockDelta` reutiliza ese lock después.
-            // Adelantar este lock de Shift INVERTIRÍA el orden y abriría el
-            // deadlock que pretendía cerrar: una devolución y una compra de
-            // contado del mismo producto, en el mismo turno, se trababan.
-            // Si algún día se cambia este orden, hay que cambiar los DOS lados.
-
-            // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
-            // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
-            // del proveedor de otro tenant (fuga cross-tenant).
-            const supplier = await tx.supplier.findFirst({
-                where: {
-                    id: supplierId,
-                    tenantId: authReq.tenantId!,
-                    status: 'ACTIVE',
-                    deletedAt: null,
-                },
-            });
-            if (!supplier) {
-                throw new Error('Proveedor no encontrado o no está activo');
-            }
-            // Una compra directa siempre tiene ubicación. Clientes anteriores
-            // pueden omitirla solo cuando el negocio mantiene una única bodega
-            // activa; con multi-bodega la ambigüedad se rechaza.
-            const operationWarehouse = purchaseOrderId
-                ? null
-                : await resolveOperationalWarehouse(tx, authReq.tenantId!, warehouseId);
-
-            const existingInvoice = await tx.purchase.findFirst({
-                where: { tenantId: authReq.tenantId!, supplierId, invoiceNumber },
-                select: { id: true },
-            });
-            if (existingInvoice) {
-                throw new Error('FACTURA_DUPLICADA');
-            }
-
-            // Una OC ya mueve (o moverá) las existencias mediante su recepción. La
-            // factura vinculada registra únicamente el efecto financiero para evitar
-            // duplicar stock, costo promedio, lotes y Kardex.
-            let linkedPurchaseOrder: {
-                id: string;
-                supplierId: string;
-                status: string;
-                items: {
-                    id: string;
-                    productId: string;
-                    productName: string;
-                    quantityReceived: number | string;
-                    quantityReceivedExact: Decimal | null;
-                }[];
-                receipts: {
-                    items: { productId: string; quantity: number; quantityExact: Decimal | null }[];
-                }[];
-            } | null = null;
-            if (purchaseOrderId) {
-                linkedPurchaseOrder = await tx.purchaseOrder.findFirst({
-                    where: { id: purchaseOrderId, tenantId: authReq.tenantId! },
-                    select: {
-                        id: true,
-                        supplierId: true,
-                        status: true,
-                        items: {
-                            select: {
-                                id: true,
-                                productId: true,
-                                productName: true,
-                                quantityReceived: true,
-                                quantityReceivedExact: true,
-                            },
-                        },
-                        receipts: {
-                            select: {
-                                items: {
-                                    select: { productId: true, quantity: true, quantityExact: true },
-                                },
-                            },
-                        },
-                    },
-                });
-                if (!linkedPurchaseOrder) {
-                    throw new Error('OC_NO_ENCONTRADA');
-                }
-                if (linkedPurchaseOrder.supplierId !== supplierId) {
-                    throw new Error('OC_DE_OTRO_PROVEEDOR');
-                }
-                if (!['PARTIALLY_RECEIVED', 'RECEIVED'].includes(linkedPurchaseOrder.status)) {
-                    throw new Error(`OC_ESTADO:${linkedPurchaseOrder.status}`);
-                }
-            }
-            // Disponibilidad facturable por producto = recibido físicamente menos
-            // lo ya incluido en facturas anteriores de la misma OC. Sin este saldo,
-            // una segunda factura parcial podía volver a cobrar todas las unidades
-            // recibidas desde el inicio.
-            const linkedProductAvailability = linkedPurchaseOrder
-                ? calculatePurchaseOrderInvoiceAvailability(
-                    linkedPurchaseOrder.items,
-                    linkedPurchaseOrder.receipts,
-                )
-                : null;
-            const requestedFromLinkedPO = new Map<string, Decimal>();
-
-            // El régimen sale del tenant autenticado y se congela junto con la
-            // compra dentro de esta misma transacción. Nunca se acepta del body.
-            const tenantFiscal = await tx.tenant.findUnique({
-                where: { id: authReq.tenantId! },
-                select: { fiscalRegime: true },
-            });
-            if (!tenantFiscal) throw new Error('TENANT_NOT_FOUND');
-            const fiscalRegimeAtPurchase = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
-            const cuotaFijaPurchase = fiscalRegimeAtPurchase === FISCAL_REGIME_CUOTA_FIJA;
-
-            // 1. Calcular totales. T2 Fase 2 — el crédito fiscal (IVA de compras)
-            //    se genera SOLO por los ítems GRAVADOS. Antes se aplicaba 15% a
-            //    TODO el subtotal, así que una farmacia que compra medicamentos
-            //    exonerados se acreditaba un crédito fiscal INEXISTENTE (menos IVA
-            //    a pagar del que corresponde). `product.ivaExento` es autoritativo
-            //    (viene de la BD scoped por tenant, nunca del cliente).
-            interface PreparedPurchaseItem {
-                productId: string;
-                productName: string;
-                purchaseOrderItemId: string | null;
-                quantity: number;
-                quantityExact: string;
-                baseQuantity: Decimal;
-                stockQuantity: number;
-                unit: string;
-                unitCost: string;
-                unitCostExact: string;
-                lineNet: Decimal;
-                taxable: boolean;
-                batchNumber: string | null;
-                expiryDate: Date | null;
-            }
-            const preparedItems: PreparedPurchaseItem[] = [];
-
-            const productIds = [...new Set(items.map((item: any) => String(item.productId)))];
-            const ownedProducts: Array<{
-                id: string;
-                name: string;
-                unit: string;
-                ivaExento: boolean;
-                requiresBatchTracking: boolean;
-                saleMode: SaleMode | null;
-                quantityStep: any;
-                packUnit: string | null;
-                packSize: number | null;
-            }> = await tx.product.findMany({
-                where: { id: { in: productIds }, tenantId: authReq.tenantId! },
-                select: {
-                    id: true,
-                    name: true,
-                    unit: true,
-                    ivaExento: true,
-                    requiresBatchTracking: true,
-                    saleMode: true,
-                    quantityStep: true,
-                    packUnit: true,
-                    packSize: true,
-                },
-            });
-            const productsById = new Map<string, (typeof ownedProducts)[number]>(
-                ownedProducts.map((product) => [product.id, product]),
-            );
-
-            for (const item of items) {
-                const product = productsById.get(item.productId);
-
-                if (!product) {
-                    throw new Error(`Producto no encontrado: ${item.productId}`);
-                }
-
-                let resolvedLine: ReturnType<typeof resolvePurchaseLine>;
-                try {
-                    resolvedLine = resolvePurchaseLine(item, product);
-                } catch (error) {
-                    if (error instanceof QuantityValidationError) {
-                        throw new QuantityValidationError(error.code, `${product.name}: ${error.message}`);
-                    }
-                    throw error;
-                }
-                const exactQuantity = resolvedLine.baseQuantity;
-                // PurchaseItem.unitCost sigue siendo Decimal(10,2) legacy; el
-                // snapshot nuevo conserva seis decimales del costo base resuelto.
-                const unitCost = resolvedLine.baseUnitCost.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-                const linkedItem = linkedProductAvailability?.get(item.productId);
-                if (linkedProductAvailability && !linkedItem) {
-                    throw new Error(`ITEM_FUERA_DE_OC|${product.name}`);
-                }
-                if (item.purchaseOrderItemId) {
-                    const explicitOrderItem = linkedPurchaseOrder?.items.find(
-                        (orderItem) => orderItem.id === item.purchaseOrderItemId,
-                    );
-                    if (!explicitOrderItem || explicitOrderItem.productId !== item.productId) {
-                        throw new Error(`ITEM_OC_INVALIDO|${product.name}`);
-                    }
-                }
-                if (linkedItem) {
-                    const remainingToInvoice = linkedItem.remaining;
-                    const requested = (requestedFromLinkedPO.get(item.productId) ?? new Decimal(0))
-                        .plus(exactQuantity);
-                    if (remainingToInvoice.lte(0) || requested.greaterThan(remainingToInvoice)) {
-                        throw new Error(`CANTIDAD_SUPERA_RECEPCION|${linkedItem.productName}|${Decimal.max(0, remainingToInvoice).toString()}`);
-                    }
-                    requestedFromLinkedPO.set(item.productId, requested);
-                }
-
-                if (!linkedPurchaseOrder && product.requiresBatchTracking && (!item.batchNumber || !item.expiryDate)) {
-                    throw new Error(`LOTE_REQUERIDO|${product.name}`);
-                }
-
-                preparedItems.push({
-                    productId:   item.productId,
-                    productName: product.name,
-                    purchaseOrderItemId: item.purchaseOrderItemId ?? null,
-                    quantity:    legacyPurchaseQuantity(exactQuantity),
-                    quantityExact: exactQuantity.toFixed(),
-                    baseQuantity: exactQuantity,
-                    stockQuantity: exactQuantity.toNumber(),
-                    unit: product.unit,
-                    unitCost:    unitCost.toFixed(2),
-                    unitCostExact: resolvedLine.baseUnitCost
-                        .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
-                        .toFixed(6),
-                    // Recalcular desde los operandos Decimal preserva el importe
-                    // previo al redondeo; purchaseMoney aplica HALF_UP explícito.
-                    lineNet: resolvedLine.visibleQuantity.mul(resolvedLine.visibleUnitCost),
-                    taxable: !product.ivaExento,
-                    batchNumber: item.batchNumber || null,
-                    expiryDate:  item.expiryDate ? normalizeCalendarDateInput(item.expiryDate) : null
-                });
-            }
-
-            // La factura, el subledger y el mayor se liquidan por línea a centavos.
-            // Sumar IVA sobre la base agregada dejaba casos como C$0.10 + C$0.015
-            // persistidos en balanceDue (4dp) aunque Purchase.total y el mayor son 2dp.
-            const purchaseMoney = calculatePurchaseMoney(
-                preparedItems.map((item) => ({ lineNet: item.lineNet, taxable: item.taxable })),
-                !cuotaFijaPurchase,
-            );
-            const subtotalAmount = purchaseMoney.subtotal;
-            const taxAmount = purchaseMoney.tax;
-            const totalAmount = purchaseMoney.total;
-            const creditableTax = purchaseMoney.creditableTax;
-            // El modo es configuración persistida del tenant, jamás del payload. Se
-            // resuelve una sola vez por documento y solo cuando realmente hay una
-            // entrada directa con lote; las compras sin lote y las facturas de OC no
-            // pagan una lectura ni materializan filas del sidecar.
-            // La identidad de PurchaseItem responde al tipo de documento, no al
-            // sidecar: toda compra directa necesita una línea retornable aunque el
-            // producto no maneje lotes o el ledger esté OFF. La lectura del modo sí
-            // queda limitada al subconjunto que realmente puede usar el sidecar.
-            const isDirectPurchase = !linkedPurchaseOrder;
-            const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some((item) =>
-                productsById.get(item.productId)?.requiresBatchTracking === true);
-            const batchWarehouseLedgerMode = hasTrackedDirectPurchaseItem
-                ? await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)
-                : null;
-            const processedItems = preparedItems.map((item, index) => {
-                const lineMoney = purchaseMoney.lines[index];
-                // `calculatePurchaseMoney` conserva exactamente una salida por
-                // entrada; este guard evita persistir una línea sin snapshots si
-                // ese contrato cambiara accidentalmente.
-                if (!lineMoney) throw new Error('TOTAL_COMPRA_INCONSISTENTE');
-                const {
-                    baseQuantity,
-                    lineNet: _lineNet,
-                    taxable,
-                    ...persisted
-                } = item;
-                const inventoryLineCost = cuotaFijaPurchase && taxable
-                    ? lineMoney.lineTotal
-                    : lineMoney.lineNet;
-                return {
-                    ...persisted,
-                    // Identidad interna de la línea: el sidecar lote+bodega usa este
-                    // mismo id persistido y nunca depende del orden de retorno de MySQL.
-                    // Va después del snapshot para que ninguna ampliación futura del
-                    // payload preparado pueda reemplazar la autoridad del servidor.
-                    // Toda línea directa recibe identidad server-side antes de los
-                    // efectos físicos. Así incluso SKUs duplicados conservan una
-                    // evidencia de bodega/lote/costo inequívoca para devoluciones.
-                    ...(isDirectPurchase ? { id: crypto.randomUUID() } : {}),
-                    averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
-                    totalCost: lineMoney.lineNet.toFixed(2),
-                    taxAmountExact: lineMoney.lineTax.toFixed(2),
-                    creditableTaxExact: lineMoney.creditableTax.toFixed(2),
-                };
-            });
-
-            // CASH nace pagada y liquidada en el mismo instante autoritativo.
-            const settledNow = paymentMethod === 'CASH' ? new Date() : null;
-
-            // 2. Crear cabecera de compra
-            const purchase = await tx.purchase.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    supplierId,
-                    invoiceNumber,
-                    purchaseOrderId: linkedPurchaseOrder?.id ?? null,
-                    // `date` es obligatorio: inferirlo desde createdAt clasifica
-                    // mal las facturas retroactivas en constancias/libros/DGI.
-                    date: normalizeCalendarDateInput(date),
-                    postingDate: normalizeCalendarDateInput(postingDate ?? date),
-                    dueDate: dueDate ? normalizeCalendarDateInput(dueDate) : null,
-                    subtotal: subtotalAmount.toFixed(2),
-                    tax: taxAmount.toFixed(2),
-                    fiscalRegimeAtPurchase,
-                    creditableTax: creditableTax.toFixed(2),
-                    total: totalAmount.toFixed(2),
-                    documentStatus: 'POSTED',
-                    matchStatus: 'NOT_REQUIRED',
-                    paymentHold: false,
-                    status: paymentMethod === 'CASH' ? 'COMPLETED' : 'PENDING_PAYMENT',
-                    paymentMethod,
-                    // El saldo de CxP nace junto con la compra. Los NULL quedan
-                    // reservados exclusivamente para filas históricas previas al
-                    // subledger; así un abono parcial nunca depende de inferencias.
-                    balanceDue: paymentMethod === 'CASH' ? '0.00' : totalAmount.toFixed(2),
-                    paidAt: settledNow,
-                    settledAt: settledNow,
-                    notes: notes || null,
-                    createdBy: authReq.userId!,
-                    items: {
-                        create: processedItems.map(({
-                            stockQuantity: _stockQuantity,
-                            unit: _unit,
-                            averageUnitCost: _averageUnitCost,
-                            ...persisted
-                        }) => persisted),
-                    }
-                },
-                include: { items: true, supplier: true }
-            });
-
-            // La conciliación toma la línea de OC como identidad y reserva las
-            // recepciones antes de cualquier efecto financiero. Una compra CASH
-            // fuera de tolerancia falla aquí y revierte la factura completa.
-            const procurementMatch = await executeProcurementMatch({
-                tx,
-                tenantId: authReq.tenantId!,
-                userId: authReq.userId!,
-                purchaseId: purchase.id,
-            });
-            // `executeProcurementMatch` falla cerrado para CASH antes de crear
-            // allocations, tocar dinero o auditar cuando la OC/recepción/factura
-            // no se pueden conciliar. Si falta caja, su requisito operativo se
-            // evalúa solo después de esa validación de integridad; la excepción
-            // queda dentro de la misma tx y revierte la cabecera recién creada.
-            if (paymentMethod === 'CASH' && !turnoDeContado) {
-                throw new CashSupplierPaymentError(
-                    'SIN_CAJA_ABIERTA',
-                    'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.',
-                );
-            }
-            // executeProcurementMatch materializa identidad OC y snapshots exactos
-            // mediante UPDATE SQL. El objeto devuelto por purchase.create conserva
-            // los items previos; refrescarlos evita responder costos/variancias stale.
-            const matchedPurchaseItems = await tx.purchaseItem.findMany({
-                where: {
-                    purchaseId: purchase.id,
-                    purchase: { tenantId: authReq.tenantId! },
-                },
-                orderBy: { id: 'asc' },
-            });
-            if (matchedPurchaseItems.length !== purchase.items.length) {
-                throw new ProcurementMatchError(
-                    'PURCHASE_ITEM_REFRESH_FAILED',
-                    409,
-                    'No se pudieron confirmar todas las líneas conciliadas de la factura',
-                );
-            }
-
-            // 3. Actualizar inventario + Kardex + Costo promedio ponderado. Si hay OC,
-            // la recepción es la única responsable de estos movimientos.
-            const costChanges: any[] = []; // before/after de stock y costo valorizado por producto
-            const priceChanges: Array<{
-                productId: string;
-                priceBefore: string;
-                priceAfter: string;
-            }> = [];
-            const directSalePriceProductsProcessed = new Set<string>();
-            // Dos compras directas de proveedores distintos no comparten el lock
-            // inicial del Supplier. Ejecutar [P1,P2] y [P2,P1] en paralelo podía
-            // ciclar los locks Product/ProductStock. La copia ordenada afecta solo
-            // efectos físicos; no cambia el orden ni la identidad de PurchaseItem.
-            const inventoryMutationItems = linkedPurchaseOrder
-                ? []
-                : [...processedItems].sort((left, right) =>
-                    left.productId.localeCompare(right.productId)
-                    || (left.batchNumber ?? '').localeCompare(right.batchNumber ?? '')
-                    || (left.id ?? '').localeCompare(right.id ?? ''));
-            for (const item of inventoryMutationItems) {
-                const product = productsById.get(item.productId);
-                if (!product) continue;
-
-                // Stock por applyStockDelta: incremento ATÓMICO (sin lost-update del
-                // patrón leer→escribir absoluto) + doble escritura del desglose por
-                // bodega (invariante multi-bodega: Σ bodegas == agregado).
-                const { stockBefore, stockAfter, warehouseId: purchaseWarehouseId } = await applyStockDelta(tx, {
-                    tenantId: authReq.tenantId!,
-                    productId: item.productId,
-                    delta: item.stockQuantity,
-                    enforceSufficient: false,
-                    warehouseId: operationWarehouse?.id,
-                });
-                const oldStock = stockBefore;
-                const newStock = stockAfter;
-
-                // C2 — costo viejo re-leído con la fila YA BLOQUEADA por applyStockDelta
-                // (FOR UPDATE). El `product.cost` de arriba viene de un findUnique
-                // NO-bloqueante ANTES del lock: bajo REPEATABLE READ es el snapshot de la
-                // tx y puede estar STALE si una compra concurrente del MISMO producto ya
-                // movió el costo → el promedio mezclaría stock nuevo con costo viejo
-                // (ej. graba 6.3333 donde lo correcto era 7.00). La lectura locking
-                // devuelve el costo comprometido más reciente.
-                const lockedProductRows: any[] = await tx.$queryRaw`SELECT cost, price FROM \`Product\` WHERE id = ${item.productId} AND \`tenantId\` = ${authReq.tenantId} FOR UPDATE`;
-                const lockedProduct = lockedProductRows[0];
-                if (!lockedProduct) {
-                    throw new PurchaseSalePriceError(
-                        'PURCHASE_PRODUCT_NOT_FOUND',
-                        404,
-                        `Producto no encontrado: ${item.productId}`,
-                    );
-                }
-                const oldCost = new Decimal(lockedProduct.cost.toString());
-                const priceChange = buildPurchaseSalePriceChange(
-                    item.productId,
-                    lockedProduct.price,
-                    directSalePriceProductsProcessed.has(item.productId)
-                        ? undefined
-                        : salePriceIntentByProduct.get(item.productId),
-                );
-
-                // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
-                const newAvgCost = weightedAverageCost(
-                    oldStock,
-                    oldCost,
-                    item.quantityExact,
-                    item.averageUnitCost,
-                ).toNumber();
-
-                await tx.product.update({
-                    where: { id: item.productId, tenantId: authReq.tenantId! },
-                    data: {
-                        cost: newAvgCost, // ya redondeado a 4 d.p. por Decimal
-                        // Ausente o igual conserva Product.price; nunca se reescribe
-                        // por el mero hecho de registrar una compra.
-                        ...(priceChange
-                            ? { price: new Decimal(priceChange.priceAfter).toNumber() }
-                            : {}),
-                    }
-                });
-                directSalePriceProductsProcessed.add(item.productId);
-                if (priceChange) priceChanges.push(priceChange);
-
-                costChanges.push({
-                    productId: item.productId,
-                    stockBefore: oldStock,
-                    stockAfter: newStock,
-                    costBefore: oldCost.toNumber(),
-                    costAfter: newAvgCost,
-                    quantityExact: item.quantityExact,
-                    unit: item.unit,
-                });
-
-                // Control de Lotes
-                let batchId = null;
-                if (product.requiresBatchTracking && item.batchNumber && item.expiryDate) {
-                    // `applyStockDelta` ya bloqueó Product. Esta lectura locking
-                    // conserva ese orden global y cierra la carrera entre dos
-                    // compras que intenten crear el mismo número de lote con
-                    // vencimientos distintos.
-                    const existingBatches: Array<{ id: string; expiryDate: Date }> = await tx.$queryRaw`
-                        SELECT id, expiryDate
-                        FROM \`ProductBatch\`
-                        WHERE tenantId = ${authReq.tenantId!}
-                          AND productId = ${item.productId}
-                          AND batchNumber = ${item.batchNumber}
-                        FOR UPDATE`;
-                    const existingBatch = existingBatches[0] ?? null;
-                    if (existingBatch) {
-                        assertProductBatchExpiryIdentity({
-                            productId: item.productId,
-                            productName: product.name,
-                            batchNumber: item.batchNumber,
-                            existingExpiryDate: existingBatch.expiryDate,
-                            incomingExpiryDate: item.expiryDate,
-                        });
-                    }
-                    if (existingBatch) {
-                        const updatedBatch = await tx.productBatch.updateMany({
-                            where: {
-                                id: existingBatch.id,
-                                tenantId: authReq.tenantId!,
-                                productId: item.productId,
-                            },
-                            data: { stock: { increment: item.stockQuantity } },
-                        });
-                        if (updatedBatch.count !== 1) {
-                            throw new Error('PURCHASE_BATCH_CONCURRENT_WRITE');
-                        }
-                        batchId = existingBatch.id;
-                    } else {
-                        const createdBatch = await tx.productBatch.create({
-                            data: {
-                                tenantId: authReq.tenantId!,
-                                productId: item.productId,
-                                batchNumber: item.batchNumber,
-                                // `processedItems` ya normalizó la fecha calendario a Date.
-                                expiryDate: item.expiryDate,
-                                stock: item.stockQuantity,
-                            },
-                            select: { id: true },
-                        });
-                        batchId = createdBatch.id;
-                    }
-
-                    // Sidecar exacto lote+bodega. Product/ProductStock, ProductBatch
-                    // y Kardex siguen siendo los agregados legacy; cualquier fallo
-                    // acá aborta la misma tx antes del Kardex y la auditoría final.
-                    if (batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED') {
-                        if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED');
-                        await applyBatchWarehouseDelta({
-                            tx,
-                            mode: batchWarehouseLedgerMode,
-                            tenantId: authReq.tenantId!,
-                            productId: item.productId,
-                            batchId,
-                            warehouseId: purchaseWarehouseId,
-                            delta: item.quantityExact,
-                            movementType: 'DIRECT_PURCHASE',
-                            referenceId: purchase.id,
-                            referenceType: 'PURCHASE',
-                            userId: authReq.userId!,
-                            reason: `Compra Factura #${invoiceNumber}`,
-                            sourceKey: `direct-purchase:${purchase.id}:item:${item.id}`,
-                            allowNegative: false,
-                        });
-                    }
-                }
-
-                // Evidencia física de la entrada directa. Se escribe únicamente
-                // después de confirmar stock y lote; count!=1 aborta toda la tx.
-                if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED');
-                const evidenceWrite = await tx.purchaseItem.updateMany({
-                    where: { id: item.id, purchaseId: purchase.id },
-                    data: {
-                        inventoryWarehouseId: purchaseWarehouseId,
-                        inventoryBatchId: batchId,
-                        inventoryUnitCostExact: new Decimal(item.averageUnitCost)
-                            .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)
-                            .toFixed(6),
-                    },
-                });
-                if (evidenceWrite.count !== 1) {
-                    throw new Error('PURCHASE_ITEM_INVENTORY_EVIDENCE_WRITE_FAILED');
-                }
-
-                // Kardex: Registro de entrada por compra
-                await tx.kardexMovement.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        productId: item.productId,
-                        type: 'IN_PURCHASE',
-                        quantity: item.stockQuantity,
-                        stockBefore: oldStock,
-                        stockAfter: newStock,
-                        referenceId: purchase.id,
-                        referenceType: 'PURCHASE',
-                        reason: `Compra Factura #${invoiceNumber}`,
-                        userId: authReq.userId!,
-                        batchId: batchId,
-                        // Bodega real del movimiento (la default hoy): sin esto la
-                        // reconstrucción del stock por bodega desde Kardex queda coja.
-                        warehouseId: purchaseWarehouseId
-                    }
-                });
-            }
-
-            // La factura de una OC no toca stock/costo y, por tanto, no entra al
-            // bucle anterior. Sus precios explícitos toman Product locks propios en
-            // orden estable, todavía antes del posible lock de Shift (CASH).
-            if (linkedPurchaseOrder && salePriceIntents.length > 0) {
-                priceChanges.push(...await applyLinkedPurchaseSalePriceIntents({
-                    tx,
-                    tenantId: authReq.tenantId!,
-                    intents: salePriceIntents,
-                }));
-            }
-
-            // 4. Registro financiero — LA PLATA SALE DE LA GAVETA, no de la
-            //    billetera fintech (`Tenant.walletBalance`, que se fondea con
-            //    /api/loans/request y solo se gasta en el marketplace B2B).
-            //    Antes se debitaba esa billetera y, como ninguna PyME la tiene
-            //    fondeada, TODA compra de contado moría con "SALDO_INSUFICIENTE …
-            //    recarga tu billetera" aunque hubiera efectivo real en la caja.
-            //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
-            //    billetera nunca fue la contrapartida correcta.
-            if (paymentMethod === 'CASH') {
-                // `turnoDeContado` se resolvió y validó ANTES de abrir la tx.
-                const salida = await registrarSalidaDeCajaPorCompra(tx, {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    shiftId: turnoDeContado!.id,
-                    invoiceNumber,
-                    supplierName: purchase.supplier.name,
-                    total: totalAmount,
-                });
-                efectivoAntesCompra = salida.efectivoAntes;
-                efectivoDespuesCompra = salida.efectivoDespues;
-            }
-            // Si es CREDIT, no se descuenta dinero - queda como cuenta por pagar
-
-            // A1: ASIENTO CONTABLE de la compra. Antes NO se posteaba ninguno
-            // (`recordPurchase` estaba importada pero nunca se llamaba), así que
-            // Inventario (1.1.4) solo DECRECÍA por el COGS de las ventas y llegaba a
-            // saldo negativo con stock físico real; IVA Crédito (1.1.5) y CxP (2.1.1)
-            // quedaban permanentemente en cero y la utilidad salía inflada.
-            // Va DENTRO de la tx y sin try/catch: si el asiento no se puede registrar
-            // (p. ej. período cerrado), la compra entera se revierte — el dinero y el
-            // inventario NO se mueven sin su contrapartida contable.
-            await recordPurchase(
-                tx as Parameters<typeof recordPurchase>[0],
-                authReq.tenantId!,
-                authReq.userId!,
-                purchase.id,
-                totalAmount.toFixed(2),
-                taxAmount.toFixed(2),
-                paymentMethod,
-                creditableTax.toFixed(2),
-                normalizeCalendarDateInput(postingDate ?? date),
-                linkedPurchaseOrder ? procurementMatch.plan.expectedAmount : undefined,
-            );
-
-            // Auditoría granular del catálogo, dentro de la misma tx que compra,
-            // stock, caja y mayor. Un fallo posterior revierte también el precio.
-            await createPurchaseSalePriceAudits({
-                tx,
-                tenantId: authReq.tenantId!,
-                userId: authReq.userId!,
-                purchaseId: purchase.id,
-                purchaseOrderId: linkedPurchaseOrder?.id ?? null,
-                invoiceNumber,
-                changes: priceChanges,
-            });
-
-            // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
-            // financiero; solo una compra directa mueve además inventario valorizado.
-            // Registrar el before/after de la GAVETA (null si fue a crédito: ahí no
-            // sale efectivo) y los cambios de stock/costo aplicados.
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'PURCHASE_CREATED',
-                    details: JSON.stringify({
-                        purchaseId: purchase.id,
-                        supplierId,
-                        invoiceNumber,
-                        purchaseOrderId: linkedPurchaseOrder?.id ?? null,
-                        warehouseId: operationWarehouse?.id ?? null,
-                        paymentMethod,
-                        subtotal: subtotalAmount.toString(),
-                        tax: taxAmount.toString(),
-                        creditableTax: creditableTax.toString(),
-                        fiscalRegime: fiscalRegimeAtPurchase,
-                        total: totalAmount.toString(),
-                        matchStatus: procurementMatch.matchStatus,
-                        paymentHold: procurementMatch.paymentHold,
-                        priceTolerancePct: procurementMatch.priceTolerancePct,
-                        shiftId: paymentMethod === 'CASH' ? turnoDeContado?.id ?? null : null,
-                        efectivoAntes: efectivoAntesCompra?.toFixed(2) ?? null,
-                        efectivoDespues: efectivoDespuesCompra?.toFixed(2) ?? null,
-                        productChanges: costChanges,
-                        priceChanges,
-                        timestamp: new Date().toISOString()
-                    })
-                }
-            });
-
-            return {
-                ...purchase,
-                items: matchedPurchaseItems,
-                matchStatus: procurementMatch.matchStatus,
-                paymentHold: procurementMatch.paymentHold,
-            };
-        });
-
-        res.json({
-            message: result.purchaseOrderId
-                ? 'Factura registrada y vinculada a la Orden de Compra. El inventario se actualiza únicamente al recibir la OC.'
-                : `Compra registrada. ${items.length} línea(s) ingresada(s) al inventario.`,
-            purchase: result
-        });
-
-    } catch (error: any) {
-        console.error('Error registrando compra:', error);
-        if (productQuantityErrorResponse(res, error)) return;
-        // Período cerrado (A1): la compra ahora exige asiento, así que un período
-        // bloqueado la RECHAZA (423) en vez de dejar entrar mercancía sin registrar.
-        if (error instanceof PeriodLockedError) {
-            return res.status(423).json({ error: error.message });
-        }
-        if (error instanceof ProcurementMatchError) {
-            return res.status(error.httpStatus).json({
-                error: error.message,
-                code: error.code,
-                ...(error.details ? { details: error.details } : {}),
-            });
-        }
-        if (error instanceof BatchWarehouseLedgerError) {
-            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof PurchaseSalePriceError) {
-            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof ProductBatchIdentityError) {
-            return res.status(error.httpStatus).json({
-                error: error.message,
-                code: error.code,
-                details: error.details,
-            });
-        }
-        if (error?.message === 'PURCHASE_BATCH_CONCURRENT_WRITE') {
-            return res.status(409).json({
-                error: 'El lote cambió mientras se registraba la compra; intentá nuevamente',
-                code: 'PURCHASE_BATCH_CONCURRENT_WRITE',
-            });
-        }
-        if (error?.message === 'FACTURA_DUPLICADA' || error?.code === 'P2002') {
-            return res.status(409).json({ error: `Ya existe la factura #${invoiceNumber} para este proveedor. No se registró nuevamente.` });
-        }
-        if (error instanceof StockError && error.code === 'WAREHOUSE_REQUIRED') {
-            return res.status(400).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof StockError && error.code === 'WAREHOUSE_NOT_FOUND') {
-            return res.status(404).json({ error: error.message, code: error.code });
-        }
-        if (error?.message === 'OC_DE_OTRO_PROVEEDOR') {
-            return res.status(400).json({ error: 'La orden de compra pertenece a otro proveedor' });
-        }
-        if (error?.message === 'OC_NO_ENCONTRADA') {
-            return res.status(404).json({ error: 'Orden de compra no encontrada' });
-        }
-        if (error?.message === 'TENANT_NOT_FOUND') {
-            return res.status(404).json({ error: 'Negocio no encontrado' });
-        }
-        if (error?.message?.startsWith('LOTE_REQUERIDO|')) {
-            const productName = error.message.slice('LOTE_REQUERIDO|'.length);
-            return res.status(400).json({ error: `Ingresá el lote y la fecha de vencimiento de ${productName}` });
-        }
-        if (error?.message?.startsWith('ITEM_FUERA_DE_OC|')) {
-            const productName = error.message.slice('ITEM_FUERA_DE_OC|'.length);
-            return res.status(400).json({ error: `${productName} no pertenece a la orden de compra vinculada` });
-        }
-        if (error?.message?.startsWith('ITEM_OC_INVALIDO|')) {
-            const productName = error.message.slice('ITEM_OC_INVALIDO|'.length);
-            return res.status(400).json({
-                error: `La línea de orden indicada para ${productName} no pertenece a esta orden de compra`,
-                code: 'PURCHASE_ORDER_ITEM_INVALID',
-            });
-        }
-        if (error?.message?.startsWith('CANTIDAD_SUPERA_RECEPCION|')) {
-            const [, productName, remainingQty] = error.message.split('|');
-            return res.status(400).json({ error: `${productName} solo tiene ${remainingQty} unidades recibidas pendientes de facturar en esta OC` });
-        }
-        if (error?.message?.startsWith('OC_ESTADO:')) {
-            const status = error.message.split(':')[1];
-            return res.status(400).json({ error: status === 'APPROVED' ? 'Recibí la mercadería antes de facturar una orden de compra aprobada' : `No se puede facturar una orden de compra en estado ${status}` });
-        }
-        // Caja: sin turno abierto (409) o efectivo insuficiente en la gaveta (400).
-        // El status sale del código tipado, no de un substring del mensaje.
-        if (error instanceof CashSupplierPaymentError || error instanceof PayableSupplierPaymentError) {
-            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
-        }
-        const notFound = error?.message?.includes('no encontrado');
-        res.status(notFound ? 404 : 500).json({ error: error.message || 'Error al procesar la compra' });
-    }
-});
+// POST /api/purchases - Registro compartido con NortexGPT (Transacción ACID)
+app.post('/api/purchases', authenticate, checkRole(PURCHASE_WRITE_ROLES), validate(CreatePurchaseSchema), createPurchaseHandler);
 
 // POST /api/purchases/:id/pay — abono o liquidación de una CxP.
 app.post(
@@ -10033,7 +8817,7 @@ app.post(
                         : 'Abono a proveedor registrado.',
             });
         } catch (error: unknown) {
-            if (error instanceof PayableSupplierPaymentError || error instanceof CashSupplierPaymentError) {
+            if (error instanceof PayableSupplierPaymentError || error instanceof SupplierPaymentCajaError) {
                 return res.status(error.httpStatus).json({ error: error.message, code: error.code });
             }
             if (error instanceof PeriodLockedError) {
@@ -11939,7 +10723,7 @@ app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), asyn
 // ==========================================
 
 // GET /api/credits/debtors - Clientes con deuda pendiente
-app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         // Buscar ventas a CRÉDITO con saldo pendiente > 0
@@ -11982,7 +10766,7 @@ app.get('/api/credits/debtors', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES)
 
 // GET /api/collections/worklist - "Cobrar hoy" (Cobranza A1): deudas a crédito por
 // urgencia (vencidas primero) + KPIs de cobranza. dueSoonDays = ventana "por vencer".
-app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const dueSoonDays = Math.min(60, Math.max(1, parseInt(req.query.dueSoonDays) || 7));
@@ -12066,7 +10850,7 @@ app.get('/api/collections/worklist', authenticate, checkRole(CUSTOMER_HUB_READ_R
 
 // GET /api/customers/:id/statement - Estado de cuenta del cliente (Cobranza A2):
 // facturas a crédito con saldo/abonos + aging + totales. Para imprimir/enviar.
-app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_HUB_READ_ROLES), async (req: any, res: any) => {
+app.get('/api/customers/:id/statement', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const tenantId = authReq.tenantId!;
     const { id } = req.params;
@@ -15245,553 +14029,8 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
 
 // GET /api/fiscal/constancia-retencion/:purchaseId
 // Devuelve HTML listo para imprimir como PDF via window.print()
-app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { purchaseId } = req.params;
-
-    try {
-        // 1. Obtener la compra + proveedor
-        const purchase = await prisma.purchase.findFirst({
-            where: {
-                ...fiscalPurchaseScope(authReq.tenantId!, purchaseId),
-                documentStatus: 'POSTED',
-            },
-            include: { supplier: true },
-        });
-        if (!purchase) return res.status(404).json({ error: 'Compra no encontrada.' });
-
-        // 2. Obtener el tenant (datos del retenedor)
-        const tenant = await prisma.tenant.findUnique({
-            where: { id: authReq.tenantId! },
-            select: { businessName: true, taxId: true, address: true, phone: true, dgiAuthCode: true },
-        });
-        if (!tenant) return res.status(404).json({ error: 'Tenant no encontrado.' });
-
-        // 3. Obtener retenciones de esta compra
-        const retentions = await prisma.fiscalRetention.findMany({
-            where: fiscalRetentionScope(authReq.tenantId!, purchaseId),
-            orderBy: { type: 'asc' },
-        });
-
-        // Si no hay retenciones registradas, calcularlas al vuelo (documento fiscal
-        // legal → precisión Decimal, sin float ni Math.round sobre montos).
-        const baseAmountD = new Decimal(purchase.subtotal.toString());
-        const baseAmount = baseAmountD.toNumber();
-        const computedRetentions = retentions.length > 0 ? retentions : [
-            { type: 'IR_2PCT',  amount: baseAmountD.mul('0.02').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
-            { type: 'IMI_1PCT', amount: baseAmountD.mul('0.01').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
-            ...(new Decimal(purchase.tax.toString()).greaterThan(0)
-                ? [{
-                    type: 'IVA_RETENIDO',
-                    amount: new Decimal(purchase.tax.toString()).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-                    baseAmount,
-                }]
-                : []),
-        ];
-
-        const totalRetenido = computedRetentions
-            .reduce((s, r) => s.plus(r.amount.toString()), new Decimal(0))
-            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-        // `Purchase.date` es la fecha de la factura del proveedor. Es un día de
-        // calendario civil de Managua, no el instante en que el usuario digitó
-        // la compra ni la zona horaria accidental del proceso.
-        const fiscalInvoiceDate = fiscalCivilDate(purchase.date);
-        const fecha = fiscalInvoiceDate.longLabel;
-        const numeroConstancia = `RET-${purchase.id.slice(-8).toUpperCase()}`;
-        const period = retentions[0]?.period || fiscalInvoiceDate.period;
-        const printNonce = crypto.randomBytes(18).toString('base64url');
-        const previewCsp = fiscalPreviewCsp(printNonce);
-
-        // Todos estos campos son persistidos y algunos pueden ser capturados por
-        // MANAGER. La constancia se abre como HTML autenticado en un `blob:`;
-        // por eso jamás se interpolan sin codificación, aunque el dato pertenezca
-        // al mismo tenant.
-        const safe = {
-            numeroConstancia: escapeHtml(numeroConstancia),
-            period: escapeHtml(period),
-            fecha: escapeHtml(fecha),
-            tenantBusinessName: escapeHtml(tenant.businessName),
-            tenantTaxId: escapeHtml(tenant.taxId || 'Por configurar'),
-            tenantAddress: escapeHtml(tenant.address || 'Por configurar'),
-            tenantPhone: escapeHtml(tenant.phone || '---'),
-            tenantDgiAuthCode: escapeHtml(tenant.dgiAuthCode || ''),
-            supplierName: escapeHtml(purchase.supplier.name),
-            supplierRuc: escapeHtml((purchase.supplier as any).ruc || 'Por registrar'),
-            supplierPhone: escapeHtml((purchase.supplier as any).phone || '---'),
-            invoiceNumber: escapeHtml(purchase.invoiceNumber),
-        };
-
-        const typeLabel: Record<string, string> = {
-            IR_2PCT: 'Retención IR (Renta) 2%',
-            IMI_1PCT: 'Retención IMI (Municipal) 1%',
-            IVA_RETENIDO: 'IVA Retenido',
-        };
-
-        const retentionRows = computedRetentions.map(r => `
-            <tr>
-                <td>${escapeHtml(typeLabel[r.type] || r.type)}</td>
-                <td class="num">C$ ${escapeHtml(Number(r.baseAmount || baseAmount).toFixed(2))}</td>
-                <td class="num">${escapeHtml(r.type === 'IR_2PCT' ? '2%' : r.type === 'IMI_1PCT' ? '1%' : '15%')}</td>
-                <td class="num bold">C$ ${escapeHtml(Number(r.amount).toFixed(2))}</td>
-            </tr>
-        `).join('');
-
-        const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="${escapeHtml(previewCsp)}">
-<title>Constancia de Retención ${safe.numeroConstancia}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; font-size: 11px; color: #1a1a1a; padding: 20mm; }
-  .header { text-align: center; border-bottom: 2px solid #1a1a1a; padding-bottom: 12px; margin-bottom: 16px; }
-  .header h1 { font-size: 16px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
-  .header h2 { font-size: 12px; margin-top: 4px; color: #444; }
-  .numero { font-size: 13px; font-weight: bold; color: #1a56a0; margin-top: 6px; }
-  .section { margin-bottom: 14px; }
-  .section-title { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #666; border-bottom: 1px solid #ddd; padding-bottom: 3px; margin-bottom: 8px; letter-spacing: 0.5px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; }
-  .field { display: flex; flex-direction: column; }
-  .field label { font-size: 9px; color: #888; text-transform: uppercase; }
-  .field span { font-weight: bold; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th { background: #1a56a0; color: white; padding: 6px 8px; text-align: left; font-size: 10px; }
-  td { padding: 5px 8px; border-bottom: 1px solid #eee; }
-  .num { text-align: right; }
-  .bold { font-weight: bold; }
-  .total-row td { background: #f0f4ff; font-weight: bold; border-top: 2px solid #1a56a0; }
-  .footer { margin-top: 32px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
-  .firma { border-top: 1px solid #1a1a1a; padding-top: 6px; text-align: center; }
-  .firma p { font-size: 9px; color: #666; margin-top: 2px; }
-  .legal { margin-top: 24px; font-size: 9px; color: #888; border-top: 1px solid #eee; padding-top: 8px; text-align: center; }
-  .badge { display: inline-block; background: #f0f4ff; border: 1px solid #1a56a0; color: #1a56a0; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: bold; margin-top: 4px; }
-  @media print {
-    body { padding: 12mm; }
-    @page { size: letter; margin: 15mm; }
-    .no-print { display: none; }
-  }
-</style>
-</head>
-<body>
-
-<div class="no-print" style="background:#1a56a0;color:white;padding:10px 16px;margin:-20mm -20mm 16px;display:flex;justify-content:space-between;align-items:center;">
-  <span style="font-weight:bold;">Constancia de Retención — Vista Previa</span>
-  <button id="print-document" type="button" style="background:white;color:#1a56a0;border:none;padding:6px 16px;border-radius:4px;font-weight:bold;cursor:pointer;">🖨️ Imprimir / Guardar PDF</button>
-</div>
-
-<div class="header">
-  <h1>Constancia de Retención en la Fuente</h1>
-  <h2>República de Nicaragua — Dirección General de Ingresos (DGI)</h2>
-  <div class="numero">N° ${safe.numeroConstancia}</div>
-  <div class="badge">Período: ${safe.period}</div>
-</div>
-
-<div class="section">
-  <div class="section-title">Agente Retenedor (Quien retiene)</div>
-  <div class="grid">
-    <div class="field"><label>Razón Social</label><span>${safe.tenantBusinessName}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>${safe.tenantTaxId}</span></div>
-    <div class="field"><label>Dirección Fiscal</label><span>${safe.tenantAddress}</span></div>
-    <div class="field"><label>Teléfono</label><span>${safe.tenantPhone}</span></div>
-    ${tenant.dgiAuthCode ? `<div class="field"><label>Código Autorización DGI</label><span>${safe.tenantDgiAuthCode}</span></div>` : ''}
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Sujeto Retenido (Proveedor)</div>
-  <div class="grid">
-    <div class="field"><label>Razón Social / Nombre</label><span>${safe.supplierName}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>${safe.supplierRuc}</span></div>
-    <div class="field"><label>Teléfono</label><span>${safe.supplierPhone}</span></div>
-    <div class="field"><label>N° Factura del Proveedor</label><span>${safe.invoiceNumber}</span></div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Detalle de la Retención</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Concepto</th>
-        <th style="text-align:right">Base Gravable</th>
-        <th style="text-align:right">Tasa</th>
-        <th style="text-align:right">Monto Retenido</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${retentionRows}
-      <tr class="total-row">
-        <td colspan="3">TOTAL RETENIDO</td>
-        <td class="num">C$ ${escapeHtml(totalRetenido.toFixed(2))}</td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
-<div class="section">
-  <div class="grid">
-    <div class="field"><label>Fecha de Emisión</label><span>${safe.fecha}</span></div>
-    <div class="field"><label>Monto Total Factura</label><span>C$ ${escapeHtml(Number(purchase.total).toFixed(2))}</span></div>
-    <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${escapeHtml(new Decimal(purchase.total.toString()).minus(totalRetenido).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2))}</span></div>
-  </div>
-</div>
-
-<div class="footer">
-  <div class="firma">
-    <p>_________________________________</p>
-    <p><strong>Firma y Sello del Agente Retenedor</strong></p>
-    <p>${safe.tenantBusinessName}</p>
-  </div>
-  <div class="firma">
-    <p>_________________________________</p>
-    <p><strong>Firma de Recibido — Proveedor</strong></p>
-    <p>${safe.supplierName}</p>
-  </div>
-</div>
-
-<div class="legal">
-  Constancia generada por Nortex ERP. Documento válido conforme Arto. 44 LCT y Arto. 73 RLCT de Nicaragua.
-  El agente retenedor está obligado a entregar esta constancia al momento de efectuar el pago.
-</div>
-
-<script nonce="${printNonce}">
-  document.getElementById('print-document').addEventListener('click', function () { window.print(); });
-</script>
-
-</body>
-</html>`;
-
-        res.setHeader('Content-Security-Policy', previewCsp);
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Referrer-Policy', 'no-referrer');
-        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-        res.send(html);
-
-    } catch (error) {
-        console.error('Constancia error:', error);
-        res.status(500).json({ error: 'Error generando constancia.' });
-    }
-});
-
-// ==========================================
-// 📊 SPRINT A — EXPORTACIONES FISCALES DGI
-// ==========================================
-
-// El rango fiscal del mes vive en services/nicaTax.ts (fuente única): los libros,
-// el resumen VET y la declaración mensual TIENEN que recortar las mismas ventas.
-// Antes había una copia acá y otra fórmula distinta en generateMonthlyReport.
-
-const fiscalSaleSnapshotBreakdown = (sale: {
-    total: { toString(): string } | string | number;
-    exemptTotal?: { toString(): string } | string | number | null;
-    fiscalRegimeAtSale?: unknown;
-    vatAmountAtSale?: { toString(): string } | string | number | null;
-}) => {
-    const total = new Decimal(sale.total.toString()).toDecimalPlaces(4);
-    const fiscalRegime = normalizeFiscalRegime(sale.fiscalRegimeAtSale);
-    if (fiscalRegime === FISCAL_REGIME_CUOTA_FIJA) {
-        return {
-            fiscalRegime,
-            exonerado: new Decimal(0),
-            netoGravado: new Decimal(0),
-            iva: new Decimal(0),
-            cuotaFija: total,
-            total,
-        };
-    }
-
-    const legacy = desglosarVentaConExoneracion(
-        total,
-        sale.exemptTotal?.toString() ?? '0',
-    );
-    let iva = legacy.iva;
-    if (sale.vatAmountAtSale != null) {
-        const snapshot = new Decimal(sale.vatAmountAtSale.toString());
-        const maxVat = total.minus(legacy.exonerado);
-        if (snapshot.isFinite() && snapshot.greaterThanOrEqualTo(0) && snapshot.lessThanOrEqualTo(maxVat)) {
-            iva = snapshot.toDecimalPlaces(4);
-        }
-    }
-    return {
-        fiscalRegime,
-        exonerado: legacy.exonerado,
-        netoGravado: total.minus(legacy.exonerado).minus(iva).toDecimalPlaces(4),
-        iva,
-        cuotaFija: new Decimal(0),
-        total,
-    };
-};
-
-// ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
-// GET /api/fiscal/libro-ventas/:month/:year
-app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
-    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
-    const { month, year } = fiscalPeriod;
-
-    try {
-        const { start, end } = fiscalMonthRange(month, year);
-        const XLSX = await import('xlsx');
-
-        const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
-            include: { customer: true },
-            orderBy: { createdAt: 'asc' },
-        });
-
-        // Precisión fiscal: el desglose sale de `desglosarVentaConExoneracion`, la
-        // MISMA función que usan el asiento contable y la declaración mensual.
-        // Antes acá se hacía `total / 1.15` sobre la venta ENTERA, ignorando
-        // `Sale.exemptTotal`: en un negocio que marca productos de canasta básica
-        // como exentos (Inventory.tsx tiene el toggle), este libro declaraba IVA
-        // por ventas exoneradas que nunca se le cobraron al cliente — y no cuadraba
-        // con la declaración del mismo mes, que sí las respetaba.
-        const rows = sales.map((s, i) => {
-            const fiscalSaleDate = fiscalCivilDate(s.createdAt);
-            const d = fiscalSaleSnapshotBreakdown(s);
-            return {
-                'N°':            i + 1,
-                'Fecha':         fiscalSaleDate.shortLabel,
-                'N° Factura':    s.invoiceNumber ? `${s.invoiceSeries || 'A'}-${String(s.invoiceNumber).padStart(6, '0')}` : 'CF',
-                'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
-                'RUC/Cédula':    s.customer?.taxId || '---',
-                'Método Pago':   s.paymentMethod,
-                'Régimen':       d.fiscalRegime,
-                'Exento C$':     d.exonerado.toDecimalPlaces(2).toNumber(),
-                'Subtotal C$':   d.netoGravado.toDecimalPlaces(2).toNumber(),
-                'IVA 15% C$':    d.iva.toDecimalPlaces(2).toNumber(),
-                'Cuota Fija C$': d.cuotaFija.toDecimalPlaces(2).toNumber(),
-                'Total C$':      d.total.toDecimalPlaces(2).toNumber(),
-            };
-        });
-
-        // Totales (acumulados con Decimal; se convierten a number solo al escribir la celda)
-        const totals = {
-            'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
-            'RUC/Cédula': '', 'Método Pago': '', 'Régimen': '',
-            'Exento C$':   rows.reduce((s, r) => s.plus(r['Exento C$']), new Decimal(0)).toNumber(),
-            'Subtotal C$': rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
-            'IVA 15% C$':  rows.reduce((s, r) => s.plus(r['IVA 15% C$']), new Decimal(0)).toNumber(),
-            'Cuota Fija C$': rows.reduce((s, r) => s.plus(r['Cuota Fija C$']), new Decimal(0)).toNumber(),
-            'Total C$':    rows.reduce((s, r) => s.plus(r['Total C$']), new Decimal(0)).toNumber(),
-        };
-        rows.push(totals as any);
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, `Ventas ${month}-${year}`);
-
-        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="libro-ventas-${year}-${String(month).padStart(2,'0')}.xlsx"`);
-        res.send(buf);
-
-    } catch (error) {
-        console.error('Libro ventas error:', error);
-        res.status(500).json({ error: 'Error generando Libro de Ventas.' });
-    }
-});
-
-// ── A2: LIBRO DE COMPRAS (Excel) ─────────────────────────────────────────────
-// GET /api/fiscal/libro-compras/:month/:year
-app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
-    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
-    const { month, year } = fiscalPeriod;
-
-    try {
-        const { start, end } = fiscalMonthRange(month, year);
-        const XLSX = await import('xlsx');
-
-        // Mismo criterio que generateMonthlyReport (nicaTax.ts): filtrar por `date` y por
-        // estado válido de compra, para que el Libro reconcilie con el crédito fiscal del
-        // reporte mensual y no infle el IVA acreditable con compras no válidas.
-        const purchases = await prisma.purchase.findMany({
-            where: {
-                tenantId: authReq.tenantId!,
-                date: { gte: start, lt: end },
-                documentStatus: 'POSTED',
-                status: { in: [...PURCHASE_FISCAL_STATUSES] },
-            },
-            include: { supplier: true },
-            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        });
-
-        // Retenciones del período para cruzar con compras (acumuladas con Decimal).
-        const retentions = await prisma.fiscalRetention.findMany({
-            where: { tenantId: authReq.tenantId!, period: `${year}-${String(month).padStart(2,'0')}` },
-        });
-        const irByPurchase = new Map<string, Decimal>();
-        const imiByPurchase = new Map<string, Decimal>();
-        retentions.forEach(r => {
-            if (!r.purchaseId) return;
-            if (r.type === 'IR_2PCT')  irByPurchase.set(r.purchaseId,  (irByPurchase.get(r.purchaseId)  || new Decimal(0)).plus(r.amount.toString()));
-            if (r.type === 'IMI_1PCT') imiByPurchase.set(r.purchaseId, (imiByPurchase.get(r.purchaseId) || new Decimal(0)).plus(r.amount.toString()));
-        });
-
-        const rows = purchases.map((p, i) => {
-            const fiscalInvoiceDate = fiscalCivilDate(p.date);
-            const subtotalD = new Decimal(p.subtotal.toString());
-            const ivaFacturadoD = new Decimal(p.tax.toString());
-            const ivaD = new Decimal(p.creditableTax?.toString() ?? p.tax.toString());
-            const ivaNoAcreditableD = Decimal.max(0, ivaFacturadoD.minus(ivaD)).toDecimalPlaces(2);
-            const totalD    = new Decimal(p.total.toString());
-            const irD       = irByPurchase.get(p.id)  || new Decimal(0);
-            const imiD      = imiByPurchase.get(p.id) || new Decimal(0);
-            const netoD     = totalD.minus(irD).minus(imiD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            return {
-                'N°':              i + 1,
-                'Fecha':           fiscalInvoiceDate.shortLabel,
-                'N° Factura Prov.': p.invoiceNumber,
-                'Proveedor':       p.supplier.name,
-                'RUC Proveedor':   (p.supplier as any).ruc || '---',
-                'Régimen':         normalizeFiscalRegime(p.fiscalRegimeAtPurchase),
-                'Subtotal C$':     subtotalD.toNumber(),
-                'IVA Facturado C$': ivaFacturadoD.toNumber(),
-                'IVA Crédito C$':  ivaD.toNumber(),
-                'IVA no acreditable C$': ivaNoAcreditableD.toNumber(),
-                'IR Ret. 2% C$':   irD.toNumber(),
-                'IMI Ret. 1% C$':  imiD.toNumber(),
-                'Neto Pagado C$':  netoD.toNumber(),
-                'Total Factura C$': totalD.toNumber(),
-            };
-        });
-
-        const totals: any = {
-            'N°': '', 'Fecha': '', 'N° Factura Prov.': '', 'Proveedor': 'TOTALES', 'RUC Proveedor': '', 'Régimen': '',
-            'Subtotal C$':     rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
-            'IVA Facturado C$': rows.reduce((s, r) => s.plus(r['IVA Facturado C$']), new Decimal(0)).toNumber(),
-            'IVA Crédito C$':  rows.reduce((s, r) => s.plus(r['IVA Crédito C$']), new Decimal(0)).toNumber(),
-            'IVA no acreditable C$': rows.reduce((s, r) => s.plus(r['IVA no acreditable C$']), new Decimal(0)).toNumber(),
-            'IR Ret. 2% C$':   rows.reduce((s, r) => s.plus(r['IR Ret. 2% C$']), new Decimal(0)).toNumber(),
-            'IMI Ret. 1% C$':  rows.reduce((s, r) => s.plus(r['IMI Ret. 1% C$']), new Decimal(0)).toNumber(),
-            'Neto Pagado C$':  rows.reduce((s, r) => s.plus(r['Neto Pagado C$']), new Decimal(0)).toNumber(),
-            'Total Factura C$': rows.reduce((s, r) => s.plus(r['Total Factura C$']), new Decimal(0)).toNumber(),
-        };
-        rows.push(totals);
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 16, 28, 16, 14, 14, 14, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, `Compras ${month}-${year}`);
-
-        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="libro-compras-${year}-${String(month).padStart(2,'0')}.xlsx"`);
-        res.send(buf);
-
-    } catch (error) {
-        console.error('Libro compras error:', error);
-        res.status(500).json({ error: 'Error generando Libro de Compras.' });
-    }
-});
-
-// ── A3: ARCHIVO VET DGI (.TXT pipe-delimitado) ──────────────────────────────
-// GET /api/fiscal/vet-export/:month/:year
-// Formato: TIPO|FECHA|N_FACTURA|RUC_CLIENTE|NOMBRE|SUBTOTAL|IVA|TOTAL
-app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
-    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
-    const { month, year } = fiscalPeriod;
-
-    try {
-        const { start, end } = fiscalMonthRange(month, year);
-        const period = `${year}${String(month).padStart(2, '0')}`;
-
-        // Ventas
-        const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
-            include: { customer: true },
-            orderBy: { createdAt: 'asc' },
-        });
-
-        // Compras — mismo criterio que generateMonthlyReport (nicaTax.ts): `date` + estado válido.
-        const purchases = await prisma.purchase.findMany({
-            where: {
-                tenantId: authReq.tenantId!,
-                date: { gte: start, lt: end },
-                documentStatus: 'POSTED',
-                status: { in: [...PURCHASE_FISCAL_STATUSES] },
-            },
-            include: { supplier: true },
-            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        });
-
-        const lines: string[] = [];
-        // OJO: este NO es un archivo cargable en la Ventanilla Electrónica
-        // Tributaria. El formato de abajo es propio de Nortex — no hay en el repo
-        // ninguna referencia a una especificación publicada por la DGI. Sirve para
-        // TRANSCRIBIR los montos a la VET, no para subirlos. Mientras no se
-        // incorpore la spec oficial, el nombre tiene que decir la verdad: prometer
-        // un archivo que la DGI rechaza quema al contador en su primer intento.
-        lines.push(`# RESUMEN PARA TRANSCRIBIR A LA VET | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
-        lines.push(`# NO es un archivo cargable en la VET: formato propio de Nortex, para transcripcion manual.`);
-        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|EXENTO|SUBTOTAL|IVA|TOTAL`);
-        lines.push('');
-        lines.push('## LIBRO DE VENTAS');
-
-        for (const s of sales) {
-            // Mismo desglose que el Libro de Ventas y la declaración mensual.
-            const d = fiscalSaleSnapshotBreakdown(s);
-            const exentoD   = d.exonerado.toDecimalPlaces(2);
-            const subtotalD = (d.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA
-                ? d.cuotaFija
-                : d.netoGravado).toDecimalPlaces(2);
-            const ivaD      = d.iva.toDecimalPlaces(2);
-            const totalD    = d.total.toDecimalPlaces(2);
-            const fecha    = fiscalCivilDate(s.createdAt).compact;
-            const factura  = s.invoiceNumber
-                ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
-                : 'CF';
-            const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
-            const rucV     = s.customer?.taxId || '000-000000-0000X';
-            if (d.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA) {
-                lines.push(`# REGIMEN CUOTA_FIJA | FACTURA ${factura} | IVA TRASLADADO 0.00`);
-            }
-            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
-        }
-
-        lines.push('');
-        lines.push('## LIBRO DE COMPRAS');
-
-        for (const p of purchases) {
-            const totalD    = new Decimal(p.total.toString()).toDecimalPlaces(2);
-            const ivaD      = new Decimal(p.creditableTax?.toString() ?? p.tax.toString()).toDecimalPlaces(2);
-            // El IVA no acreditable se capitaliza; por eso el subtotal contable
-            // de cuota fija es el total completo y el crédito mostrado queda en 0.
-            const subtotalD = totalD.minus(ivaD).toDecimalPlaces(2);
-            // La compra guarda subtotal/IVA/total por separado; lo que no cuadra
-            // contra el total es la parte exenta (proveedor exonerado, canasta
-            // básica). Se acota a ≥0 para que un dato inconsistente no salga en
-            // negativo. Misma columna que las ventas, para que el archivo alinee.
-            const exentoD = Decimal.max(0, totalD.minus(subtotalD).minus(ivaD)).toDecimalPlaces(2);
-            const fecha    = fiscalCivilDate(p.date).compact;
-            const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
-            const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
-            if (normalizeFiscalRegime(p.fiscalRegimeAtPurchase) === FISCAL_REGIME_CUOTA_FIJA) {
-                lines.push(`# COMPRA CUOTA_FIJA | FACTURA ${p.invoiceNumber} | IVA ACREDITABLE 0.00`);
-            }
-            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
-        }
-
-        const content = lines.join('\r\n'); // CRLF como exige la VET
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="VET-${period}.txt"`);
-        res.send(content);
-
-    } catch (error) {
-        console.error('VET export error:', error);
-        res.status(500).json({ error: 'Error generando archivo VET.' });
-    }
-});
+registerRetentionCertificate(app);
+registerFiscalExports(app);
 
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION

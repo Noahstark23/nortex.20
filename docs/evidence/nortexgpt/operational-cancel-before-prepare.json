@@ -1,0 +1,26 @@
+{
+  "status": "CANCELLED",
+  "proposalExists": false,
+  "checkpointProposalIds": [],
+  "recoveredResult": null,
+  "steps": [
+    {
+      "id": "step1",
+      "tool": "check_inventory_burn_rate",
+      "label": "Cobertura de inventario",
+      "status": "SUCCEEDED",
+      "evidenceId": "e1"
+    },
+    {
+      "id": "step2",
+      "tool": "prepare_purchase_order",
+      "label": "Orden de compra",
+      "status": "RUNNING"
+    }
+  ],
+  "syntheticProviderCalls": 2,
+  "paidCalls": 0,
+  "getAndListRecover": true,
+  "actionRevocationHidesReferences": true,
+  "roleRevocationBlocksGetAndList": true
+}

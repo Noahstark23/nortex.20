@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
 import { parseQuantity } from '../../utils/quantity.js';
+import { batchExpiryDayStart } from '../lib/batchExpiry.js';
 import {
     buildBoundedBatchWarehouseSourceKey,
     normalizeBatchWarehouseLedgerMode,
@@ -11,7 +12,6 @@ import {
     applyBatchWarehouseDelta,
     BatchWarehouseLedgerError,
 } from './productBatchWarehouseLedgerService.js';
-import { managuaCalendarDateFloor } from '../lib/managuaBusinessDate.js';
 
 type PrismaTx = Prisma.TransactionClient;
 
@@ -371,7 +371,7 @@ export async function consumeProductBatchesFefo(
     const requested = parseQuantity(params.quantity);
     let remaining = requested;
     const allocations: FefoAllocation[] = [];
-    const cutoff = managuaCalendarDateFloor(params.capturedAt ?? new Date());
+    const cutoff = batchExpiryDayStart(params.capturedAt);
 
     const batches = await tx.productBatch.findMany({
         where: {
@@ -522,7 +522,7 @@ export const consumeProductBatchesByWarehouseFefo = async (
     },
 ): Promise<FefoAllocationResult> => {
     const requested = parseQuantity(params.quantity);
-    const cutoff = managuaCalendarDateFloor(params.capturedAt ?? new Date());
+    const cutoff = batchExpiryDayStart(params.capturedAt);
     const candidates = await tx.productBatchWarehouseStock.findMany({
         where: {
             tenantId: params.tenantId,

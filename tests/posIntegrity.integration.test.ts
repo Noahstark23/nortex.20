@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
+import { seedChartOfAccounts } from '../backend/services/accounting';
 import { approveQaCorrection, inviteQaMember } from './helpers/saleCorrectionQa';
 
 /** HTTP real + MySQL descartable. No importa el servidor ni simula sus servicios. */
@@ -120,6 +121,51 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
         expect(database.pathname).toMatch(/^\/nortex_(qa|quality|test)(_[a-z0-9_]+)?$/);
     });
     afterAll(async () => { await prisma.$disconnect(); });
+
+    it('caja legacy rechaza fracciones sin efectos y conserva venta entera idempotente', async () => {
+        const f = await fixture('cajas enteras');
+        await seedChartOfAccounts(f.tenantId);
+        const id = await product(f, 5);
+        await prisma.product.updateMany({ where: { id, tenantId: f.tenantId }, data: {
+            unit: 'caja', saleMode: null, quantityStep: null,
+        } });
+        const before = await snapshot(f);
+        const rejectedId = randomUUID();
+        const quotationsBefore = await prisma.quotation.count({ where: { tenantId: f.tenantId } });
+        status(await api(f.token, '/api/quotations', {
+            customerName: 'Cliente QA', items: [{ id, quantity: '1.5' }],
+        }), 400);
+        expect(await prisma.quotation.count({ where: { tenantId: f.tenantId } })).toBe(quotationsBefore);
+        expect(await snapshot(f)).toBe(before);
+        for (const quantity of [0.5, 1.5, 1.0001, 1.5]) {
+            status(await api(f.token, '/api/sales', salePayload(id, 'CASH', quantity, rejectedId)), 400);
+            expect(await snapshot(f)).toBe(before);
+        }
+        const accepted = salePayload(id, 'CASH', 1);
+        status(await api(f.token, '/api/sales', accepted), 200);
+        expect(fixed(await stock(f, id))).toBe('4.0000');
+        const after = await snapshot(f);
+        status(await api(f.token, '/api/sales', accepted), 200);
+        expect(await snapshot(f)).toBe(after);
+        await assertBalanced(f);
+    }, 60_000);
+
+    it('empaque fraccionado se rechaza sin efectos aunque sus piezas sean enteras', async () => {
+        const f = await fixture('empaques completos');
+        await seedChartOfAccounts(f.tenantId);
+        const id = await product(f, 36);
+        await prisma.product.updateMany({ where: { id, tenantId: f.tenantId }, data: {
+            packUnit: 'caja', packSize: 12, packPrice: 600,
+        } });
+        const before = await snapshot(f);
+        status(await api(f.token, '/api/sales', {
+            ...salePayload(id), items: [{ id, quantity: '18', presentation: { quantity: '1.5', unit: 'caja' } }],
+        }), 400);
+        expect(await snapshot(f)).toBe(before);
+        status(await api(f.token, '/api/sales', salePayload(id, 'CASH', 18)), 200);
+        expect(fixed(await stock(f, id))).toBe('18.0000');
+        await assertBalanced(f);
+    }, 60_000);
 
     it('movimiento manual rechaza USD y moneda inválida sin efectos en gaveta o contabilidad', async () => {
         const f = await fixture('moneda manual', '20.00');

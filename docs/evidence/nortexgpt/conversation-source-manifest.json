@@ -1,0 +1,320 @@
+{
+  "candidate": "/tmp/nortexgpt-conversation-20260905",
+  "type": "local_uncommitted_changes",
+  "files": [
+    {
+      "path": "backend/prisma/migrations/20260905_nortex_assistant_purchase_conversation/migration.sql",
+      "beforeSha256": null,
+      "afterSha256": "9e9e0e52f9e83737c528077fe37381a7f3d04695714fba8179e5209d33c69f0a"
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "beforeSha256": "bf5e0349b721ee22559b0ffd2cea77be0e7780f3c4a85990e88700ddae758488",
+      "afterSha256": "f5adc2b306ca883370d379605cb58857963f2160c986ce23f04e1f8e002413ec"
+    },
+    {
+      "path": "backend/routes/assistantDocuments.ts",
+      "beforeSha256": "43a687779f95c3936bb6133abf9bb70418f574d92d78e7cac115b97fdcba9b57",
+      "afterSha256": "dad47174b6ae1065b07024011eb7ce0f3be760cf2f9726a81a49e8a5d25db6cc"
+    },
+    {
+      "path": "backend/routes/assistantProposals.ts",
+      "beforeSha256": "0b74c9a7d398e29094a86ef04ba1283787d4c0620e92cd84b88daec83c7f7921",
+      "afterSha256": "3bc118d41d2c67d465e2a01c9f127254335fb880ffc7ccea228e5fd667a23b33"
+    },
+    {
+      "path": "backend/services/assistant/access.ts",
+      "beforeSha256": "3addd272007ff784bf37f6dd4a2f9f3b11f2a65317c3f41b4787707476867c3d",
+      "afterSha256": "511258b250e7b62cedb7a2a3c01374fb12b523481aa96ebe7a69b128477dd77c"
+    },
+    {
+      "path": "backend/services/assistant/attachments.ts",
+      "beforeSha256": "5cf404df49e819a402cb662a586d0b20fe4f215fad3f7c83999db74fef5cdf99",
+      "afterSha256": "08412332e6ff1d88e1d01a5facf7849d65100629b174be4ac0634fa045bb56ab"
+    },
+    {
+      "path": "backend/services/assistant/conversations.ts",
+      "beforeSha256": "b96a3224a55f91183123db6dea23a79f8c5c72575094634548ff3778213f0cae",
+      "afterSha256": "050eb830a9959c3c884b1c90c87d6c768ffdcbe564950424b4a27449abab93fd"
+    },
+    {
+      "path": "backend/services/assistant/language.ts",
+      "beforeSha256": "ce04e0df964fd1ed04a5cb745d9f5a7b8daec9871723d028023351ce2904157c",
+      "afterSha256": "9b9328d1ae2d8c9a411a369ff07aa10c65f25dbb0eed4a7b7a6cee41f01ccbfc"
+    },
+    {
+      "path": "backend/services/assistant/proposals.ts",
+      "beforeSha256": "a05baf21a71776607e03cd67d0467c1d30e291a4ef0100628c52b8e0d4d80b01",
+      "afterSha256": "9288d1c10c931bebe9e919840d87c60fd43a57285f1bee644794efca3806c12f"
+    },
+    {
+      "path": "backend/services/assistant/purchaseDocumentContext.ts",
+      "beforeSha256": null,
+      "afterSha256": "e7ff66efeebf64d115bc98c6ed5ac7629c604f5090846e634aafb5b9b9eca5ab"
+    },
+    {
+      "path": "backend/services/assistant/purchaseIntake.ts",
+      "beforeSha256": null,
+      "afterSha256": "ca62e7063dbc5886a06f5d34365d13aa375eed7f8e74235ad8a962acd5b00e2a"
+    },
+    {
+      "path": "backend/services/assistant/purchaseIntakeParsing.ts",
+      "beforeSha256": null,
+      "afterSha256": "49b68da37cf5e3c2188947ff1aa9ffcd247c612dfd039aab8becaeea82d9b23b"
+    },
+    {
+      "path": "backend/services/assistant/purchaseIntakeTypes.ts",
+      "beforeSha256": null,
+      "afterSha256": "8832f13a98f30206bd69fdc76bb2d7be735509359e0ec07fe482449f5e1f3bf9"
+    },
+    {
+      "path": "backend/services/assistant/purchaseSource.ts",
+      "beforeSha256": null,
+      "afterSha256": "349fb91c834eb8846599df2c094fe4b0eb700a8144134f394af1f29542f777b4"
+    },
+    {
+      "path": "backend/services/assistant/worker.ts",
+      "beforeSha256": "708b7501b2512b9c67c462dcff2f41314193ac4ebe994a583a5bfed3796e197f",
+      "afterSha256": "962014aff9ac2f81be3227ae7643d52927d5ae0e3d929dbd288bfdbf2b04a93d"
+    },
+    {
+      "path": "components/assistant/AssistantInvoiceReview.tsx",
+      "beforeSha256": "19c1c021b73d578f97da93127dabbb07dffcaff60e927da8606f2e9e84d94a5b",
+      "afterSha256": "c1780a7d20c5e2543921eece3cd127cf1655302f77221cf2c63c1ecd10823577"
+    },
+    {
+      "path": "components/assistant/AssistantPurchaseIntake.tsx",
+      "beforeSha256": null,
+      "afterSha256": "fa4e03ff99e243cfc953aed4c7bd7fb8b3ef27d15cba193c7e687517094cc846"
+    },
+    {
+      "path": "components/assistant/NortexAssistantPanel.tsx",
+      "beforeSha256": "450b5cfad17dd52fe1bf867acf2dcc52263474ec7a829f6414df970693513e99",
+      "afterSha256": "78bf7b5a5a3ba69a5d340da2a6ccd2c26609c5f50555dff6408e627f8480b39f"
+    },
+    {
+      "path": "components/assistant/assistantJobMessage.ts",
+      "beforeSha256": "1ab3f2ff2a052d6158c93718f8e260be0d8ead0f819ceee888b81252976f489c",
+      "afterSha256": "5688e3fbef0a37cf9d96a3907bcf0f8cacc15e3629d0448ddd0866eda8dc0afa"
+    },
+    {
+      "path": "hooks/useNortexAssistant.ts",
+      "beforeSha256": "e6fc704db4cfffe1f2e18b45219bd2685d8f906bd16603ccaa54a219cf20453d",
+      "afterSha256": "e2be38ec95f2a4b49358e32bfb02035b65edb31193ce629f86d7dea9f0b2c011"
+    },
+    {
+      "path": "scripts/quality-gate-contract.mjs",
+      "beforeSha256": "416474180223c6fc4b095acf2e59757985dcdec940f8e0178d90bb44c2674315",
+      "afterSha256": "611327e041760b144ec84cd7c6f59bb1283daedba904daab18a00f8cc2f97a69"
+    },
+    {
+      "path": "shared/assistant.ts",
+      "beforeSha256": "cfac2f5c876483825d05cd194b543697850560571172271ec360df9d3bfcdbaa",
+      "afterSha256": "476470f4a899150d7685b50b096fb53d00d1abfb6e0fd11cb19416202d857329"
+    },
+    {
+      "path": "tests/assistantAccess.test.ts",
+      "beforeSha256": "491cb6059baf20d2361a1536e325203fdf208e82d4d0280003aa0b8af379f5a8",
+      "afterSha256": "b7dfd98cc56a1e26af40cb75d10ea56156fb0f69e02f200cb242989ae601d23a"
+    },
+    {
+      "path": "tests/assistantAttachments.test.ts",
+      "beforeSha256": "2b1c596351de803c56905d226eff6adceb77d11b7bbb116c628e4ea1668cd91c",
+      "afterSha256": "040d94b5bf81cd8cebd53572bb3ac2b429db65f81c2331f92a3270dcbfa2c7f4"
+    },
+    {
+      "path": "tests/assistantConversations.test.ts",
+      "beforeSha256": "8822db30ab6943d6ab840cc709a2d4ecee54ce54e33d14faf2ad26f7a5e844e8",
+      "afterSha256": "ecde5590f24b586e17fbe7efa6b2d1a9511e8008f438b86422f8b26e91bcfc34"
+    },
+    {
+      "path": "tests/assistantDocumentContext.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "6cf84c28a9f67c4a4933f2c296594a54d1a0e576e48b59ba0a982bb9eda0ae14"
+    },
+    {
+      "path": "tests/assistantInvoiceReview.test.tsx",
+      "beforeSha256": "1628d85d72ce3d241ebb8dd2f06d5545d223d3db722cf7acaf63522c3e8f4437",
+      "afterSha256": "56a20f7d3fbf758e3e43b89a701fcc686280d7ae4e7119031afcb85f341ca05b"
+    },
+    {
+      "path": "tests/assistantKnowledge.test.ts",
+      "beforeSha256": "c4d42decc1d6908c1046122719d850dd95b71aa458c7a5b5ff856d18253a4604",
+      "afterSha256": "1231b16132e9257850835223c162579ea68b8bfcabe4c428240d2aa68d1c5ab0"
+    },
+    {
+      "path": "tests/assistantLanguage.test.ts",
+      "beforeSha256": "921de4adc6a0b66591b36cc20508a578073ba7ccb7f9273021dec636a9a207ba",
+      "afterSha256": "d4db25ee539c29cdc5b373cd6c0f298e48534ee169aa67296609e4bb60f5be78"
+    },
+    {
+      "path": "tests/assistantManualProposal.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "488eaebae06fb5ebec3f2253bb83d99b79dcf7f93580d46114612ed923c18591"
+    },
+    {
+      "path": "tests/assistantPanel.test.tsx",
+      "beforeSha256": "9c1cc8b99ad11881e3aab66017c892bd4206c43b3bc0f07ea5b6069c7529855a",
+      "afterSha256": "1a18581c3c45e0744c00d0d3a9e6bb63c8a97a2b7e5be2b2879f5374e3985f87"
+    },
+    {
+      "path": "tests/assistantPurchaseIntake.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "61df78dfb735e17ea145c0e2c910692fa03a1e54ec9c3a38fe57464c6be3b925"
+    },
+    {
+      "path": "tests/assistantTextPurchase.integration.test.ts",
+      "beforeSha256": null,
+      "afterSha256": "2c0910275774937d53d5029e2dc22543f99ccb246238f7423cfc343a2a063c73"
+    },
+    {
+      "path": "tests/assistantWorker.test.ts",
+      "beforeSha256": "d337b48c2ecd0a105c0b60e8786ccc93c8cf59509cd05a045b592347995303fe",
+      "afterSha256": "631a86a2a2dd54d833a3ef40fcaf065285714a1caa4c4ddc763ddfa10a3a5283"
+    },
+    {
+      "path": "tests/fixtures/assistant/manualPurchaseHelpers.ts",
+      "beforeSha256": null,
+      "afterSha256": "49a61c4306063a1ec33c66e061693ff90d2ee1302494b63c7f18e0546902dfb3"
+    },
+    {
+      "path": "tests/qualityGateContract.test.ts",
+      "beforeSha256": "1b4a344dc22979c5ce471e275e849d9f2f69fb5c6b19a80ceb02890c23bae23d",
+      "afterSha256": "4ddf8265bdc96d4072cb0d6f786d41c7711e2535599b97bc4ebceccd9269be31"
+    }
+  ],
+  "digest": "392d09a1fdd85b6b87cc4b17944b264c48a822ad530b39cc97cc58448eb9b6f9",
+  "lineFootprint": {
+    "files": [
+      {
+        "path": "backend/prisma/migrations/20260905_nortex_assistant_purchase_conversation/migration.sql",
+        "before": 0,
+        "after": 9,
+        "delta": 9
+      },
+      {
+        "path": "backend/prisma/schema.prisma",
+        "before": 3307,
+        "after": 3314,
+        "delta": 7
+      },
+      {
+        "path": "backend/routes/assistantDocuments.ts",
+        "before": 50,
+        "after": 50,
+        "delta": 0
+      },
+      {
+        "path": "backend/routes/assistantProposals.ts",
+        "before": 53,
+        "after": 53,
+        "delta": 0
+      },
+      {
+        "path": "backend/services/assistant/access.ts",
+        "before": 76,
+        "after": 79,
+        "delta": 3
+      },
+      {
+        "path": "backend/services/assistant/attachments.ts",
+        "before": 135,
+        "after": 144,
+        "delta": 9
+      },
+      {
+        "path": "backend/services/assistant/conversations.ts",
+        "before": 167,
+        "after": 247,
+        "delta": 80
+      },
+      {
+        "path": "backend/services/assistant/language.ts",
+        "before": 61,
+        "after": 65,
+        "delta": 4
+      },
+      {
+        "path": "backend/services/assistant/proposals.ts",
+        "before": 136,
+        "after": 195,
+        "delta": 59
+      },
+      {
+        "path": "backend/services/assistant/purchaseDocumentContext.ts",
+        "before": 0,
+        "after": 118,
+        "delta": 118
+      },
+      {
+        "path": "backend/services/assistant/purchaseIntake.ts",
+        "before": 0,
+        "after": 227,
+        "delta": 227
+      },
+      {
+        "path": "backend/services/assistant/purchaseIntakeParsing.ts",
+        "before": 0,
+        "after": 93,
+        "delta": 93
+      },
+      {
+        "path": "backend/services/assistant/purchaseIntakeTypes.ts",
+        "before": 0,
+        "after": 39,
+        "delta": 39
+      },
+      {
+        "path": "backend/services/assistant/purchaseSource.ts",
+        "before": 0,
+        "after": 38,
+        "delta": 38
+      },
+      {
+        "path": "backend/services/assistant/worker.ts",
+        "before": 83,
+        "after": 117,
+        "delta": 34
+      },
+      {
+        "path": "components/assistant/AssistantInvoiceReview.tsx",
+        "before": 109,
+        "after": 111,
+        "delta": 2
+      },
+      {
+        "path": "components/assistant/AssistantPurchaseIntake.tsx",
+        "before": 0,
+        "after": 29,
+        "delta": 29
+      },
+      {
+        "path": "components/assistant/NortexAssistantPanel.tsx",
+        "before": 86,
+        "after": 112,
+        "delta": 26
+      },
+      {
+        "path": "components/assistant/assistantJobMessage.ts",
+        "before": 12,
+        "after": 16,
+        "delta": 4
+      },
+      {
+        "path": "hooks/useNortexAssistant.ts",
+        "before": 172,
+        "after": 191,
+        "delta": 19
+      },
+      {
+        "path": "shared/assistant.ts",
+        "before": 44,
+        "after": 52,
+        "delta": 8
+      }
+    ],
+    "before": 4491,
+    "after": 5299,
+    "delta": 808
+  }
+}

@@ -36,6 +36,7 @@ describe('closeShiftWithReport', () => {
             $queryRaw: vi.fn(async (query: unknown) => {
                 queries.push(query);
                 const sql = sqlText(query);
+                if (sql.includes('FROM `User`')) return [{ id: 'user-a', role: 'CASHIER', status: 'ACTIVE' }];
                 if (sql.includes('FROM `Shift`') && sql.includes('FOR UPDATE')) {
                     return [{
                         id: 'shift-a',
@@ -226,6 +227,7 @@ describe('closeShiftWithReport', () => {
         const tx: any = {
             $queryRaw: vi.fn(async (query: unknown) => {
                 const sql = sqlText(query);
+                if (sql.includes('FROM `User`')) return [{ id: 'user-a', role: 'CASHIER', status: 'ACTIVE' }];
                 if (sql.includes('FROM `Shift`') && sql.includes('FOR UPDATE')) {
                     return [{
                         id: 'shift-a',
@@ -311,7 +313,8 @@ describe('closeShiftWithReport', () => {
             movements: [],
         });
         const tx: any = {
-            $queryRaw: vi.fn(async () => [{
+            $queryRaw: vi.fn(async (query: unknown) => sqlText(query).includes('FROM `User`')
+                ? [{ id: 'user-a', role: 'CASHIER', status: 'ACTIVE' }] : [{
                 id: 'shift-a', tenantId: 'tenant-a', userId: 'user-a', employeeId: null,
                 initialCash: decimal('0'), initialCashUsd: decimal('0'), status: 'CLOSED', ...buildLegacyShiftCloseIdentity(closeCommand, closeCommand),
                 startTime: new Date('2026-08-30T12:00:00.000Z'), endTime: fixedNow(),

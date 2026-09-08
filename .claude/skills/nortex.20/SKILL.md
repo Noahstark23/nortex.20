@@ -1,39 +1,36 @@
 ---
 name: nortex-20
-description: Reglas reales de contribución y promoción para Nortex ERP/POS.
+description: Punto de entrada a las reglas canónicas de Nortex y al método de desarrollo, QA y promoción por candidato identificado.
 ---
 
-# Nortex.20 — patrones de trabajo reales
+# Contribuir a Nortex
 
-Antes de editar, lee por completo `AGENTS.md` y `CLAUDE.md`, ejecuta
-`git status --short --branch` y conserva todo cambio ajeno. Nortex maneja dinero e
-inventario: el `tenantId` viene del JWT, dinero nuevo usa `decimal.js`, stock usa
-`applyStockDelta`, y las mutaciones requieren auditoría atómica.
+Leé por completo `AGENTS.md` y `CLAUDE.md`, ejecutá
+`git status --short --branch` y preservá cambios, índice y rama existentes.
+Esta skill orienta; no duplica políticas del dominio ni autoriza releases.
 
-## Toolchain y pruebas
+| Necesidad | Fuente operativa |
+|---|---|
+| Implementar, reparar o integrar | `.claude/skills/nortex-feature/SKILL.md` |
+| Extraer módulos y reducir acoplamiento | `.claude/skills/nortex-clean-code/SKILL.md` |
+| Verificar contratos, UI, dinero e inventario | `.claude/skills/nortex-qa/SKILL.md` |
+| Smoke con recursos propios descartables | `.claude/skills/run-nortex/SKILL.md` |
+| Promover un candidato | `docs/runbooks/release-promotion.md` y workflows de release vigentes |
 
-- Node `22.23.2` mediante `mise exec -- ...`; npm y `package-lock.json` son
-  canónicos. Prisma es `6.4.1` con `npx --no-install prisma`; MySQL 8, no Postgres.
-- La prueba es Vitest (`npm test`), con suites en `tests/**/*.test.ts` y verificación
-  de tipos `npx tsc --noEmit`. Usa `npm run check:design` y `npm run build` para
-  cambios de interfaz; no inventes comandos ni lockfiles alternos.
-- Si cambia dinero o inventario, `npm run test:integration:required` es adicional
-  y obligatorio: solo MySQL 8 temporal y datos sintéticos; una suite ausente,
-  fallida u omitida impide aprobar el candidato.
-- La app local segura es `nortex frontend` en `127.0.0.1:4174`; backend y Docker se
-  levantan solo según los límites de `AGENTS.md`.
+Node `22.23.2` mediante `mise exec --`; npm/`package-lock.json`, Prisma `6.4.1`
+local con `npx --no-install prisma`, MySQL 8. No leer/copiar secretos ni probar con
+bases de usuarios. Identidad viene del JWT, cálculos usan Decimal, stock usa
+`applyStockDelta` y efectos financieros requieren auditoría atómica.
 
-## Releases y agentes
+La compuerta general no sustituye `mise exec -- npm run test:integration:required`
+para dinero/inventario. Ese comando crea su MySQL efímero; no se le entrega una
+conexión real. El registro de suites y los presupuestos de modularidad viven en
+código: no usar cantidades históricas como condiciones actuales de aprobación.
 
-CI, staging, aprobación del environment y producción son estados separados. Un
-merge —incluido uno documental— solo ejecuta CI y no actualiza staging ni
-producción. `release-staging.yml` es la única ruta a staging: SHA completo en
-`main`, `STAGE <SHA>` exacto, CI terminal y revalidación posterior al environment.
-`ci.yml` no contiene staging ni producción; la única ruta técnica a producción es
-`.github/workflows/release-production.yml`, que exige SHA candidato completo,
-`PROMOTE <SHA>`, staging sano y revalidación tras la aprobación.
+Antes de delegar, acordar contratos, archivos y un propietario por dominio; los
+archivos compartidos tienen un único integrador. No promover por acuerdo entre
+agentes: la evidencia corresponde a un candidato exacto.
 
-No hagas push, merge, deploy, webhook ni cambies secrets, variables, reglas de
-Environment o protección de ramas sin autorización explícita y separada. Consulta
-`docs/runbooks/release-promotion.md`; los informes en `docs/releases/` son evidencia
-histórica, no recetas ejecutables.
+Commit, push, merge, deploy, webhooks, secrets, variables o protecciones solo dentro
+del alcance autorizado. CI, staging y producción se verifican por separado según
+el runbook y workflows actuales; un merge o un informe anterior no prueba despliegue.

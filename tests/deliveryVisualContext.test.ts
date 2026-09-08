@@ -39,17 +39,12 @@ describe('contexto visual de Entregas', () => {
         expect(deliverySurface).not.toMatch(/\btransition-all\b/);
     });
 
-    it('deja entregado fuera del gesto y preserva el auto-despacho después de asignar', () => {
+    it('deja entregado fuera del gesto y separa asignar de despachar', () => {
         expect(kanban).toContain("pendiente: 'preparando'");
         expect(kanban).toContain("preparando: 'en_camino'");
         expect(kanban).not.toMatch(/(?:pendiente|preparando|en_camino):\s*'entregado'/);
         expect(manager).toContain('motorizadoId: motorizadoId || null');
-        expect(manager).toContain("estado: 'preparando'");
-        expect(manager).toContain('inventario reservado antes del despacho');
-        expect(manager).toContain("estado: 'en_camino'");
-        expect(manager).toContain('Motorizado asignado — pedido despachado.');
-        expect(manager).toContain('pendingTransitionsRef.current.add(pedidoId)');
-        expect(manager).toContain('pendingTransitionsRef.current.delete(pedidoId)');
-        expect(manager).not.toContain('El despacho sigue siendo un paso separado.');
+        expect(manager).toContain('El despacho sigue siendo un paso separado.');
+        expect(manager).not.toContain('pedido despachado');
     });
 });

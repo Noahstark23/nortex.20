@@ -621,6 +621,129 @@ autorización de producción. La validación E2E autenticada de pedidos en naveg
 los swipes de Inventario/Ventas y las demás superficies del programa Apple siguen
 abiertos.
 
+## Bitácoras históricas de Delivery conservadas durante la integración
+
+Se conservan ambos registros con su alcance original. Las expresiones «actual», «ahora» y «este candidato» dentro de estas bitácoras se refieren a sus respectivos snapshots de septiembre, no al merge del 2026-09-08. Sus divergencias deben adjudicarse con el código final y nuevas pruebas; ninguno acredita el estado actual de producción.
+
+### Registro del worktree local de auditoría
+
+## Ciclo 3 — Entregas: backend autoritativo y contrato de flota
+
+El tablero ya no depende solo del frontend para proteger la operación. En este
+ciclo el backend quedó alineado con el flujo real del kanban y con el contrato
+del alta de motorizados.
+
+### Garantías nuevas del backend
+
+- `GET /api/v1/pedidos` ahora pagina con `page` y `limit`, conserva el arreglo
+  `pedidos` para compatibilidad y agrega `pageInfo`.
+- `PATCH /api/v1/pedidos/:id/estado` ya no permite despachar un pedido sin
+  motorizado ni saltar de `pendiente` a `en_camino`.
+- `reservePedidoInTransaction` solo acepta `pendiente`, `asignado` o
+  `en_tienda` como origen hacia `preparando`, y conserva el replay seguro si
+  otra operación ya reclamó la reserva.
+- `PATCH /api/v1/pedidos/:id/motorizado` hace row-lock, revalida tenant,
+  rechaza pedidos entregados/cancelados y escribe con `updateMany` scoped por
+  `tenantId`.
+- `POST` y `PATCH /api/v1/motorizados` usan schemas estrictos, separan
+  `zonaCobertura` de `vehiculoPlaca`, permiten `null` explícito en placa/PIN
+  para limpieza controlada y nunca devuelven `pinHash` en contratos operativos.
+- `backend/routes/motorizados.ts` ya usa el singleton compartido de Prisma y no
+  vuelve a abrir otro pool local.
+
+### Evidencia local de este ciclo
+
+- QA focal backend/frontend: 4 archivos, 39 tests pasaron.
+- QA focal extendida de Delivery: 3 archivos, 19 tests pasaron.
+- Compuerta completa más reciente: Prisma generate, TypeScript, 253 archivos y
+  3,328 tests pasaron; 10 archivos y 63 tests quedaron omitidos por su propia
+  configuración; diseño 75/0, build de 2,511 módulos y PWA de 154 entradas
+  pasaron.
+- `git diff --check` quedó limpio al cierre de este ciclo.
+
+### Límite de evidencia
+
+Estas garantías endurecen el backend y el contrato del UI. La validación
+autenticada y visual que faltaba se ejecutó en la ampliación siguiente; eso no
+equivale a validación touch física, staging o autorización de producción.
+
+### Ampliación del ciclo 3 — MySQL efímero y producto autenticado
+
+Se creó una compuerta repetible que levanta una base MySQL y un usuario de base de
+datos aleatorios, un backend QA en loopback y un frontend QA con proxy también en
+loopback. El tenant, usuario, producto, inventario, pedido y motorizado son
+sintéticos. No se leyó ni modificó información de usuarios reales.
+
+#### Flujo de dominio verificado
+
+- El E2E HTTP registra dos tenants y prueba que el segundo no puede leer, mover ni
+  asignar un motorizado al pedido del primero.
+- Un pedido público de dos unidades nace con stock `10`; `preparando` reserva y
+  deja `8`; `cancelado` libera y devuelve `10`; repetir la cancelación es
+  idempotente.
+- El servidor rechaza `pendiente → en_camino`, el despacho sin motorizado y el
+  motorizado de otro tenant.
+- El pedido no crea `Sale`, `Payment` ni `JournalEntry`; Kardex y AuditLog dejan
+  evidencia de reserva, liberación y cancelación.
+- La corrida automática real contra MySQL pasó `1/1` y su cleanup verificó puerto
+  backend libre, puerto frontend libre, cero bases `nortex_delivery_*` y cero
+  usuarios efímeros restantes.
+
+#### Recorrido visual autenticado
+
+Desde `/login`, con el navegador integrado y el tenant sintético, se abrió el
+Nortex completo —no `/demo` ni una landing—, se registró un motorizado desde el
+sheet, se movió el pedido `pendiente → preparando`, se asignó la flota y se
+despachó a `en_camino`. No se marcó `entregado`.
+
+La inspección visual y la revisión independiente encontraron y repararon cinco
+defectos adicionales:
+
+- el lanzador de `Primeros pasos` cubría `Agregar Motorizado`; ahora queda en la
+  esquina inferior, por encima de la navegación móvil y fuera de las acciones;
+- después de una mutación móvil, el selector podía quedarse en una columna vacía;
+  ahora selecciona y desplaza el carrusel al estado confirmado por el servidor;
+- la respuesta al asignar motorizado podía incluir el modelo completo; ahora usa
+  exclusivamente el select operativo y excluye KYC, saldo y `pinHash`;
+- las banderas de onboarding eran globales al navegador; ahora se aíslan por
+  `tenantId + userId` y no se persisten sin identidad completa;
+- el botón `Link` reconstruía un magic-link legado que ya no autentica; ahora
+  copia y nombra honestamente el login general `/driver`, que exige teléfono y
+  PIN.
+
+Capturas frescas de la misma sesión autenticada:
+
+- Login de referencia: `.codex/apple-delivery-e2e-2026-09-01-cycle3/00-login-reference.png`
+- Inicio completo Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/00b-home-desktop-day.png`
+- Delivery pendiente Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/01-delivery-desktop-day-pending.png`
+- Sheet de motorizado Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/02-rider-sheet-desktop-day.png`
+- Pedido en ruta Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/03-delivery-desktop-day-en-route.png`
+- Pedido en ruta Noche: `.codex/apple-delivery-e2e-2026-09-01-cycle3/04-delivery-desktop-night-en-route.png`
+- Menú móvil Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/05-mobile-menu-day.png`
+- Delivery móvil Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/06-delivery-mobile-day.png`
+- Sheet móvil Día: `.codex/apple-delivery-e2e-2026-09-01-cycle3/07-rider-sheet-mobile-day.png`
+- Menú móvil Noche: `.codex/apple-delivery-e2e-2026-09-01-cycle3/08-mobile-menu-night.png`
+- Delivery móvil Noche: `.codex/apple-delivery-e2e-2026-09-01-cycle3/09-delivery-mobile-night.png`
+
+QA posterior a estas reparaciones: 12 archivos y 84 tests focales pasaron;
+TypeScript pasó; diseño revisó 75 archivos con 0 violaciones; `git diff --check`
+quedó limpio. La compuerta completa pasó Prisma generate, TypeScript, 255
+archivos y 3,340 tests; 11 archivos y 64 tests quedaron omitidos por su propia
+configuración; diseño 75/0, build de 2,512 módulos y PWA de 154 entradas también
+pasaron. Solo permanecen los avisos no bloqueantes ya conocidos de Browserslist
+desactualizado y chunks mayores de 500 kB.
+
+#### Límites y estado de release
+
+- La sesión visual local queda temporalmente abierta solo para revisión humana;
+  sigue siendo un entorno desechable en loopback y se limpia al cerrar el script.
+- No hubo datos reales, staging, SHA candidato, dispositivo iOS físico ni prueba
+  táctil; tampoco se recorrió el cobro de una entrega marcada como entregada.
+- **Producción no está autorizada.** Esta evidencia demuestra el ciclo local de
+  Delivery, no la aplicación total del programa Apple/HIG a cada ruta de Nortex.
+
+### Registro del candidato de release anterior
+
 ## Ciclo 3 — Entregas: reconciliación histórica y contrato del candidato
 
 Este apartado conserva el historial de la auditoría sin trasladar garantías entre

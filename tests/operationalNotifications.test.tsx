@@ -103,7 +103,7 @@ describe('avisos operativos accionables', () => {
         await open();
         expect(await screen.findByText(/Pedidos web por atender/)).toHaveTextContent('(4)');
         expect(screen.queryByText(/Productos sin existencia/)).not.toBeInTheDocument();
-        expect(fetcher).toHaveBeenLastCalledWith('/api/operational-alerts', expect.objectContaining({ cache: 'no-store', headers: { Authorization: 'Bearer tenant-b-token' } }));
+        expect(fetcher.mock.calls.filter(([url]) => url === '/api/operational-alerts').at(-1)).toEqual(['/api/operational-alerts', expect.objectContaining({ cache: 'no-store', headers: { Authorization: 'Bearer tenant-b-token' } })]);
     });
 
     it('separa pendientes de revisión y solo el botón explícito invoca el reintento', async () => {
