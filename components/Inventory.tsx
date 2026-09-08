@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { resolveLegacySaleMode } from '../utils/legacySaleMode';
 import { trackEvent } from '../utils/analytics';
 import { batchExpiryPresentation } from '../utils/batchExpiry';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
@@ -1632,7 +1633,7 @@ export default function Inventory() {
                     <option value="">Todas las formas</option>
                     <option value="COUNTED">Contados</option>
                     <option value="MEASURED">Medidos</option>
-                    <option value="LEGACY">Legado fraccionable</option>
+                    <option value="LEGACY">Configuración automática (legado)</option>
                 </select>
                 <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
                     aria-label="Filtrar por estado de existencias"
@@ -1829,7 +1830,9 @@ export default function Inventory() {
                                                             ? `Contado · paso ${product.quantityStep || 1}`
                                                             : product.saleMode === 'MEASURED'
                                                                 ? `Medido · paso ${product.quantityStep || '0.0001'}`
-                                                                : 'Legado fraccionable'}
+                                                                : resolveLegacySaleMode(product) === 'COUNTED'
+                                                                    ? 'Legado · cantidades enteras'
+                                                                    : 'Legado · fraccionable'}
                                                         {' · '}{product.productFamily || 'GENERAL'}
                                                     </span>
                                                     {product.description && (
@@ -2555,7 +2558,7 @@ export default function Inventory() {
                                         }}
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
                                     >
-                                        <option value="LEGACY">Legado fraccionable</option>
+                                        <option value="LEGACY">Configuración automática (legado)</option>
                                         <option value="COUNTED">Por unidades contadas</option>
                                         <option value="MEASURED">Por peso/medida</option>
                                     </select>

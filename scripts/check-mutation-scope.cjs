@@ -87,9 +87,11 @@ const PISO_MUTANTES = {
     // creció con la resolución segura de Enter: 62/62 mutantes detectados. El
     // recorte nunca es silencioso y una búsqueda ambigua jamás adivina producto.
     'utils/posSearch.ts': 62,
-    // Alta rápida, compatibilidad de cantidades y clasificación de errores del
-    // POS: 221/221. Protege precio/costo/stock, pasos y reintentos idempotentes.
-    'utils/posActivation.ts': 221,
+    // La regla legacy salió de posActivation: se eliminaron 29 mutantes de su
+    // implementación duplicada. Medición conjunta: 192 + 33 = 225 killed,
+    // frente a 221 previos. No se redujo el umbral ni se excluyeron mutantes.
+    'utils/posActivation.ts': 192,
+    'utils/legacySaleMode.ts': 33,
     // Efectivo recibido, faltante, vuelto y denominaciones NIO: 99/99.
     'utils/posCash.ts': 99,
     // Foto de recibido/vuelto para ticket inmediato: 23/23.

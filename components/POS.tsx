@@ -5504,7 +5504,7 @@ const POS: React.FC = () => {
                             cashReceived={cashReceived}
                             cashOpen={showCashPreModal}
                             processing={processing}
-                            disabled={cart.length === 0 || turnoAjeno}
+                            disabled={cart.length === 0 || turnoAjeno || Object.keys(quantityErrors).length > 0}
                             onCashReceivedChange={setCashReceived}
                             onOpenCash={openCashCheckout}
                             onCancelCash={() => {

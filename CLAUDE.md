@@ -237,6 +237,14 @@ libro firmado de caja · keyring JWT rotable.
 
 ## Convenciones del repo
 
+- Cantidades de venta y cotización: usar `resolveLegacySaleMode`, compartido por
+  POS, normalización de ventas y creación de cotizaciones. Cajas/unidades legacy
+  sin modo ni paso son enteras; preservar medidas explícitas e históricos.
+  PACK exige empaques completos. No truncar la entrada ni borrar pendientes.
+  Evidencia y límites: `docs/releases/2026-09-08-cajas-recuperacion.md`.
+- Una reparación pendiente no debe tener su única copia en `/tmp`: conservar
+  candidato y evidencia en ubicación persistente, sin alterar worktrees ajenos.
+
 - Ramas: una por feature (`claude/<feature>`) desde `origin/main`; PRs en **draft**;
   fases grandes = PRs secuenciales (mergear la Fase A antes de construir la B).
 - Mensajes, UI y comentarios en **español** (variante nicaragüense; voseo en UI).
