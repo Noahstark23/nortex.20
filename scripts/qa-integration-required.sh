@@ -33,7 +33,14 @@ docker image inspect mysql:8.0 >/dev/null 2>&1 \
 
 # Lista cerrada: si falta una suite nueva, el gate falla y obliga a registrarla.
 qa_required_suites=(
+    'tests/journalSingleConnection.mysql.test.ts'
+    'tests/whatsappIdentity.mysql.test.ts'
+    'tests/cashCloseJournal.mysql.test.ts'
+    'tests/posIntegrity.integration.test.ts'
+    'tests/manualCashMovementVoid.integration.test.ts'
     'tests/customerFlow.integration.test.ts'
+    'tests/hrAccess.integration.test.ts'
+    'tests/productRefresh.integration.test.ts'
     'tests/fiscalFlow.integration.test.ts'
     'tests/inventoryAdjust.integration.test.ts'
     'tests/batchWarehouseManualMovements.test.ts'
@@ -44,7 +51,7 @@ qa_required_suites=(
     'tests/purchaseSalePrice.integration.test.ts'
     'tests/returnIdempotency.integration.test.ts'
     'tests/stockCountWarehouse.integration.test.ts'
-    'tests/cashCloseJournal.mysql.test.ts'
+    'tests/delivery.mysql.integration.test.ts'
 )
 
 for qa_suite in "${qa_required_suites[@]}"; do
@@ -70,12 +77,16 @@ done < <(
         # Algunas rondas HTTP históricas no llevan el sufijo integration. Si
         # dependen de la URL QA, también son obligatorias: así no quedan
         # omitidas por convención de nombre.
-        rg -l 'NORTEX_QA_BASE_URL|NORTEX_MYSQL_INTEGRATION' tests --glob '*.test.ts' || true
+        rg -l 'process\.env\.(NORTEX_QA_BASE_URL|NORTEX_MYSQL_INTEGRATION)' tests --glob '*.test.ts' || true
     } | LC_ALL=C sort -u
 )
 
 qa_random() {
     node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))"
+}
+
+qa_key() {
+    node -e "process.stdout.write(require('node:crypto').randomBytes(32).toString('base64'))"
 }
 
 qa_run_id="$(node -e "process.stdout.write(process.pid + '-' + require('node:crypto').randomBytes(8).toString('hex'))")"
@@ -85,6 +96,9 @@ qa_user='nortex_qa_required'
 qa_root_password="$(qa_random)"
 qa_database_password="$(qa_random)"
 qa_jwt_secret="$(qa_random)"
+qa_data_key="$(qa_key)"
+qa_ledger_key="$(qa_key)"
+qa_index_key="$(qa_key)"
 qa_tmp_dir="$(mktemp -d /tmp/nortex-qa-required.XXXXXX)"
 qa_container_started=0
 qa_server_pid=''
@@ -117,6 +131,9 @@ qa_cleanup() {
     qa_root_password=''
     qa_database_password=''
     qa_jwt_secret=''
+    qa_data_key=''
+    qa_ledger_key=''
+    qa_index_key=''
     exit "$qa_status"
 }
 
@@ -163,24 +180,36 @@ env -i \
     NODE_ENV='test' \
     ./node_modules/.bin/prisma db push --schema backend/prisma/schema.prisma --skip-generate
 
-qa_api_port="$(node -e "const net=require('node:net'); const server=net.createServer(); server.listen(0, '127.0.0.1', () => { const address=server.address(); process.stdout.write(String(address.port)); server.close(); }); server.on('error', () => process.exit(1));")"
-[ -n "$qa_api_port" ] || qa_die 'no se pudo reservar un puerto loopback para el backend QA.'
-qa_base_url="http://127.0.0.1:${qa_api_port}"
+qa_stop_backend() {
+    if [ -n "$qa_server_pid" ] && kill -0 "$qa_server_pid" >/dev/null 2>&1; then
+        kill "$qa_server_pid" >/dev/null 2>&1 || true
+        wait "$qa_server_pid" >/dev/null 2>&1 || true
+    fi
+    qa_server_pid=''
+}
 
-env -i \
-    PATH="$PATH" \
-    DATABASE_URL="$qa_database_url" \
-    NODE_ENV='test' \
-    JWT_SECRET="$qa_jwt_secret" \
-    HOST='127.0.0.1' \
-    PORT="$qa_api_port" \
-    FRONTEND_URL="$qa_base_url" \
-    WHATSAPP_ENABLED='false' \
-    ./node_modules/.bin/tsx backend/server.ts >"$qa_tmp_dir/backend.log" 2>&1 &
-qa_server_pid=$!
+qa_start_backend() {
+    qa_api_port="$(node -e "const net=require('node:net'); const server=net.createServer(); server.listen(0, '127.0.0.1', () => { const address=server.address(); process.stdout.write(String(address.port)); server.close(); }); server.on('error', () => process.exit(1));")"
+    [ -n "$qa_api_port" ] || qa_die 'no se pudo reservar un puerto loopback para el backend QA.'
+    qa_base_url="http://127.0.0.1:${qa_api_port}"
 
-for ((qa_attempt = 1; qa_attempt <= 60; qa_attempt += 1)); do
-    if env -i PATH="$PATH" node -e '
+    env -i \
+        PATH="$PATH" \
+        DATABASE_URL="$qa_database_url" \
+        NODE_ENV='test' \
+        JWT_SECRET="$qa_jwt_secret" \
+        NORTEX_DATA_KEYS="qa:$qa_data_key" \
+        NORTEX_LEDGER_KEYS="qa:$qa_ledger_key" \
+        NORTEX_INDEX_KEY="$qa_index_key" \
+        HOST='127.0.0.1' \
+        PORT="$qa_api_port" \
+        FRONTEND_URL="$qa_base_url" \
+        WHATSAPP_ENABLED='false' \
+        ./node_modules/.bin/tsx backend/server.ts >"$qa_tmp_dir/backend.log" 2>&1 &
+    qa_server_pid=$!
+
+    for ((qa_attempt = 1; qa_attempt <= 60; qa_attempt += 1)); do
+        if env -i PATH="$PATH" node -e '
 const url = process.argv[1];
 fetch(url)
   .then(async (response) => {
@@ -190,47 +219,33 @@ fetch(url)
   })
   .catch(() => process.exit(1));
 ' "$qa_base_url/api/health"; then
-        break
-    fi
-    kill -0 "$qa_server_pid" >/dev/null 2>&1 || qa_die 'el backend QA se detuvo antes de responder saludable.'
-    sleep 1
-done
-
-env -i PATH="$PATH" node -e '
-const url = process.argv[1];
-fetch(url)
-  .then(async (response) => {
-    const body = await response.json();
-    const cacheControl = response.headers.get("cache-control") ?? "";
-    if (response.status !== 200 || body?.ok !== true || body?.db !== "up" || !cacheControl.includes("no-store")) process.exit(1);
-  })
-  .catch(() => process.exit(1));
-' "$qa_base_url/api/health" \
-    || qa_die 'el backend QA no respondió /api/health sano en 60 segundos.'
+            return
+        fi
+        kill -0 "$qa_server_pid" >/dev/null 2>&1 || qa_die 'el backend QA se detuvo antes de responder saludable.'
+        sleep 1
+    done
+    qa_die 'el backend QA no respondió /api/health sano en 60 segundos.'
+}
 
 for qa_suite in "${qa_required_suites[@]}"; do
+    qa_start_backend
     qa_report="$qa_tmp_dir/$(basename "$qa_suite").json"
     printf 'Ejecutando integración requerida: %s\n' "$qa_suite"
 
-    if [ "$qa_suite" = 'tests/cashCloseJournal.mysql.test.ts' ]; then
-        env -i \
-            PATH="$PATH" \
-            DATABASE_URL="$qa_database_url" \
-            NODE_ENV='test' \
-            JWT_SECRET="$qa_jwt_secret" \
-            NORTEX_MYSQL_INTEGRATION='1' \
-            ./node_modules/.bin/vitest run "$qa_suite" --reporter=default --reporter=json --outputFile="$qa_report"
-    else
-        env -i \
-            PATH="$PATH" \
-            DATABASE_URL="$qa_database_url" \
-            NODE_ENV='test' \
-            JWT_SECRET="$qa_jwt_secret" \
-            NORTEX_QA_BASE_URL="$qa_base_url" \
-            ./node_modules/.bin/vitest run "$qa_suite" --reporter=default --reporter=json --outputFile="$qa_report"
-    fi
+    env -i \
+        PATH="$PATH" \
+        DATABASE_URL="$qa_database_url" \
+        NODE_ENV='test' \
+        JWT_SECRET="$qa_jwt_secret" \
+        NORTEX_DATA_KEYS="qa:$qa_data_key" \
+        NORTEX_LEDGER_KEYS="qa:$qa_ledger_key" \
+        NORTEX_INDEX_KEY="$qa_index_key" \
+        NORTEX_MYSQL_INTEGRATION='1' \
+        NORTEX_QA_BASE_URL="$qa_base_url" \
+        ./node_modules/.bin/vitest run "$qa_suite" --reporter=default --reporter=json --outputFile="$qa_report"
 
     env -i PATH="$PATH" node scripts/qa-verify-integration-report.mjs "$qa_report" "$qa_suite"
+    qa_stop_backend
 done
 
 printf '%s\n' '✓ Integración requerida superada en MySQL 8 local, efímero y aislado.'

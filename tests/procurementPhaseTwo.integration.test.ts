@@ -730,6 +730,15 @@ qaDescribe('QA integracion: procurement Fase 2A', () => {
       'REMISION-CASH-SIN-CAJA',
     );
 
+    // La preparación común abre una caja para los casos CASH anteriores. Este
+    // escenario prueba exactamente la ausencia de turno: cerrarlo primero evita
+    // que el test confunda su propio fixture con una aceptación del backend.
+    const closedShift = await prisma.shift.updateMany({
+      where: { tenantId: tenantAId, userId: tenantAUserId, status: 'OPEN' },
+      data: { status: 'CLOSED', endTime: new Date() },
+    });
+    expect(closedShift.count).toBe(1);
+
     const invoiceNumber = `FAC-CASH-SIN-CAJA-${crypto.randomUUID()}`;
     const before = {
       purchases: await prisma.purchase.count({ where: { tenantId: tenantAId } }),

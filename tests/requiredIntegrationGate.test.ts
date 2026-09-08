@@ -15,6 +15,6 @@ describe('compuerta de integración requerida', () => {
     });
 
     it('descubre pruebas QA/MySQL por contrato, no solo por nombre de archivo', () => {
-        expect(gate).toContain(`rg -l '${qaBaseUrlMarker}|${mysqlMarker}' tests --glob '*.test.ts' || true`);
+        expect(gate).toContain(`rg -l 'process\\.env\\.(${qaBaseUrlMarker}|${mysqlMarker})' tests --glob '*.test.ts' || true`);
     });
 });

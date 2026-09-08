@@ -23,8 +23,7 @@
     "mobile:sync": "npm run build && cap sync android",
     "mobile:assets": "npx @capacitor/assets generate --android",
     "mobile:open": "cap open android",
-    "check:design": "node scripts/check-design-system.cjs",
-    "test:integration:required": "node scripts/run-quality-integration.mjs"
+    "check:design": "node scripts/check-design-system.cjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",

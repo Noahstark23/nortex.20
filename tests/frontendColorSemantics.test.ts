@@ -18,6 +18,7 @@ const inventoryOracle = readFileSync(new URL('../components/InventoryOracle.tsx'
 const inventory = readFileSync(new URL('../components/Inventory.tsx', import.meta.url), 'utf8');
 const quickAddProduct = readFileSync(new URL('../components/QuickAddProduct.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../components/Layout.tsx', import.meta.url), 'utf8');
+const operationalNotifications = readFileSync(new URL('../components/notifications/OperationalNotifications.tsx', import.meta.url), 'utf8');
 const pinPadClock = readFileSync(new URL('../components/PinPadClock.tsx', import.meta.url), 'utf8');
 
 function rootToken(name: string): string {
@@ -204,13 +205,13 @@ describe('contrato semántico del tema frontend', () => {
     it('mantiene tinta semántica en iconos descendientes de rellenos sólidos', () => {
         expect(quickAddProduct).toMatch(/bg-brand-600[\s\S]{0,300}<Zap size=\{20\} className="text-brand-on" \/>/);
 
-        const webOrderToast = layout.slice(layout.indexOf('Toast de pedidos web'));
-        expect(webOrderToast).toMatch(
-            /bg-brand[\s\S]{0,1400}className="[^"]*text-brand-on hover:bg-white\/10[^"]*"[\s\S]{0,300}aria-label="Cerrar notificación"/,
-        );
-        expect(webOrderToast).not.toContain('text-white/60 hover:bg-white/10 hover:text-white');
-        expect(webOrderToast).toContain('text-brand-on/80');
-        expect(contrastRatio(over(rootToken('nx-on-brand'), '#16C784', 0.8), '#16C784')).toBeGreaterThanOrEqual(4.5);
+        // Los toasts de pedidos se sustituyeron por el panel operativo: no se
+        // debe mantener una aserción sobre UI eliminada, pero sí conservar que
+        // Layout lo compone y que su cierre usa el control semántico del shell.
+        expect(layout).toContain("import { OperationalNotifications } from './notifications/OperationalNotifications';");
+        expect(operationalNotifications).toContain('aria-label="Cerrar avisos"');
+        expect(operationalNotifications).toContain('nx-shell-control nx-fluid-press');
+        expect(operationalNotifications).not.toContain('text-white/60 hover:bg-white/10 hover:text-white');
     });
 
     it('no rebaja una tinta de control peligrosa por opacidad en el reloj', () => {

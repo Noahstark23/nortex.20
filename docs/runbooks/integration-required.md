@@ -29,9 +29,11 @@ y el contenedor al terminar, incluso ante fallo o interrupción. No usa
 reales.
 
 El backend recibe un entorno vacío salvo sus valores locales mínimos, incluido un
-JWT aleatorio de una sola corrida. Así no hereda claves de correo, WhatsApp,
-Stripe, LLM ni telemetría. Los tenants, correos y movimientos de prueba son
-sintéticos; no se envía correo ni se llama un servicio externo.
+JWT y anillos de cifrado, índice y libro aleatorios de una sola corrida. Así no
+hereda claves de correo, WhatsApp, Stripe, LLM ni telemetría. Los tenants,
+correos y movimientos de prueba son sintéticos; no se envía correo ni se llama
+un servicio externo. Cada suite recibe un backend nuevo para que los limitadores
+públicos reales no se desactiven ni se filtren entre recorridos.
 
 Durante el arranque se exige que `/api/health` responda con
 `Cache-Control: no-store`. Esto evita que la misma ruta usada para observar el
@@ -41,23 +43,33 @@ SHA de una release acepte una respuesta en caché como si fuera salud actual.
 
 La lista cerrada está en `scripts/qa-integration-required.sh`. El script descubre
 todos los archivos versionados `*.integration.test.ts` y `*.mysql.test.ts`; además
-incluye cualquier prueba que use `NORTEX_QA_BASE_URL`, aunque su nombre no lleve el
-sufijo habitual. Si una prueba descubierta no está inscrita, la compuerta falla.
+incluye cualquier prueba que lea `process.env.NORTEX_QA_BASE_URL` o
+`process.env.NORTEX_MYSQL_INTEGRATION`, aunque su nombre no lleve el sufijo
+habitual. Si una prueba descubierta no está inscrita, la compuerta falla. Esta
+forma evita incluir tests que solo mencionan esos nombres al comprobar el workflow,
+sin ocultar una ronda que sí los consume.
 
-Actualmente exige estos doce recorridos:
+Actualmente exige estos diecinueve recorridos:
 
-1. cliente/cartera;
-2. fiscal;
-3. ajuste de inventario;
-4. movimientos manuales de lote y bodega;
-5. compras — fase uno;
-6. compras — fase dos;
-7. pedidos/correcciones — fase dos B;
-8. flujo de compra;
-9. compra y cambio de precio de venta;
-10. devolución idempotente;
-11. conteo físico por bodega;
-12. cierre de caja y asientos concurrentes.
+1. asiento con una sola conexión MySQL;
+2. identidad WhatsApp;
+3. cierre de caja y asientos concurrentes;
+4. integridad del POS;
+5. anulación de movimientos manuales de caja;
+6. cliente/cartera;
+7. acceso RRHH;
+8. refresco de catálogo;
+9. fiscal;
+10. ajuste de inventario;
+11. movimientos manuales de lote y bodega;
+12. compras — fase uno;
+13. compras — fase dos;
+14. pedidos/correcciones — fase dos B;
+15. flujo de compra;
+16. compra y cambio de precio de venta;
+17. devolución idempotente;
+18. conteo físico por bodega;
+19. delivery aislado por tenant.
 
 Cada archivo corre por separado y su reporte JSON se valida antes de continuar.
 Una suite inexistente, sin casos, fallida, omitida o marcada `todo` cierra la

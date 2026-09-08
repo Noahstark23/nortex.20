@@ -47,11 +47,12 @@ jobs:
       - name: Sistema de diseño
         run: npm run check:design
 
-      # Pruebas de MUTACIÓN sobre los módulos de dinero: no basta con que los
-      # tests pasen, tienen que MATAR bugs. Stryker introduce fallas (invierte
-      # comparaciones, cambia signos, vacía cuerpos) y falla el CI si un mutante
-      # sobrevive por debajo del umbral. Alcance acotado a lógica pura → ~30 s.
+      # Mutación se solicita de forma explícita para cambios de lógica monetaria
+      # pura. El scope actual contiene 5,694 mutantes y tarda horas: ejecutarlo
+      # en cada cambio visual/documental haría que CI deje de ser una compuerta
+      # útil. Un push o PR jamás puede activarlo por accidente.
       - name: Mutación (Stryker — módulos de dinero)
+        if: github.event_name == 'workflow_dispatch' && vars.NORTEX_CI_MUTATION == 'true'
         run: npm run test:mutation
 
       # Si el score cae, el reporte HTML dice QUÉ mutante sobrevivió y dónde.

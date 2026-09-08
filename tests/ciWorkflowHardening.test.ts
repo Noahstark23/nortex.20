@@ -23,4 +23,9 @@ describe('CI: mínimo privilegio y toolchain fijado', () => {
         expect(source.match(/npx --no-install prisma/g)?.length).toBeGreaterThanOrEqual(4);
         expect(source).toContain('npx --no-install tsc --noEmit');
     });
+
+    it('solo ejecuta mutación costosa cuando se solicita para lógica monetaria', () => {
+        const mutation = workflow.jobs.verify.steps.find((step: Record<string, unknown>) => step.run === 'npm run test:mutation');
+        expect(mutation?.if).toBe("github.event_name == 'workflow_dispatch' && vars.NORTEX_CI_MUTATION == 'true'");
+    });
 });

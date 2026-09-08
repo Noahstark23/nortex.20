@@ -40,6 +40,12 @@ webhook o secretos de staging es `release-staging.yml`; el único con webhook o
 secretos de producción es `release-production.yml`. Ninguno se activa por
 `push`, PR ni merge.
 
+La mutación de lógica monetaria es una compuerta adicional y explícita: solo se
+ejecuta en un `workflow_dispatch` de CI cuando `NORTEX_CI_MUTATION=true`. No se
+usa para acreditar cambios visuales, documentación o workflow; cuando cambia
+lógica monetaria pura, el responsable debe pedirla y registrar su resultado por
+separado. Un timeout o una ejecución cancelada nunca se presenta como verde.
+
 ## Ejecutar staging manual
 
 Antes de usar staging, identificá un SHA completo de 40 caracteres que sea el tip
