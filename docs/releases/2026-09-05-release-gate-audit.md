@@ -120,3 +120,52 @@ por environment; dispatch manual de staging exitoso con su confirmación, SHA y
 health `no-store`; recorridos QA sintéticos autenticados; demostración humana del
 producto final; y autorización de producción separada que nombre SHA, alcance,
 ventana, responsable y rollback. Si falta uno, la promoción queda bloqueada.
+
+## Adenda 2026-09-07 — candidato remoto y recorrido autenticado
+
+La rama `codex/staging-release-gate-20260907` quedó publicada como PR #205 sobre
+`origin/main` `38e9c6f2ae0809fecff9d6edd09204dc4c756fe8`. El estado de código
+`cea7af1d249e54588523460303f6f63abbfb6356` aprobó el workflow remoto
+`34181797895`: `verify`, `deploy-schema-smoke`, `backup-restore-smoke` e
+`integration-required`. La compuerta requerida ejecutó las 19 suites registradas
+contra MySQL 8 efímero; el cambio que la desbloqueó genera el cliente Prisma dentro
+del mismo entorno aislado antes de arrancar el backend. Mutación quedó omitida por
+la condición documentada para cambios de algoritmos de dinero; no se cuenta como
+evidencia ejecutada.
+
+Después del CI se levantó el mismo código en loopback con una base nueva
+`nortex_preprod_qa`, un tenant sintético `Ferretería Nortex QA Preproducción` y 14
+productos de ejemplo. No se conectó ninguna base, usuario, llave, correo, pago,
+mensajería ni telemetría real. El health observado por el proxy del frontend fue
+`ok=true` y `db=up`.
+
+El recorrido humano en el navegador integrado comprobó:
+
+- `/login` en Día y Noche: shell común, etiquetas, campos y selector visibles;
+- `/app/inicio` en Día y Noche: menú, iconos, métricas y primeras acciones legibles;
+- `/app/inventory` en Día: catálogo de 14 productos y formulario manual; se escribió
+  nombre, SKU, categoría, precio, costo y stock sin perder tinta, etiqueta, foco ni
+  placeholder. El formulario se canceló y no creó el producto;
+- `/app/pos`: catálogo, búsqueda, ticket y total visibles; se agregó un producto al
+  carrito, sin abrir caja ni confirmar venta;
+- `/app/purchases`, `/app/team`, `/app/cash-registers` y `/app/delivery`: estados
+  iniciales, formularios, permisos y vacíos legibles en las variantes recorridas;
+- `/app/delivery` y el menú completo a 390 x 720 en Día y Noche: reflujo, pestañas,
+  iconos, etiquetas y navegación inferior visibles;
+- `/landing.html` en Día y Noche y `/ferreterias` en Día: navegación, hero, llamadas
+  a la acción y shell público consistentes con acceso y ERP.
+
+Las tres pestañas finales (ERP, POS y público) devolvieron cero entradas de consola
+con nivel warning/error. Las capturas aceptadas se mostraron inline durante la
+sesión de revisión; no se obtuvo un artefacto PNG versionado, por lo que esta adenda
+no las presenta como evidencia durable de staging.
+
+### Límites que siguen vigentes
+
+Este recorrido no ejecutó una venta, compra, cierre, devolución ni ajuste por UI;
+esas mutaciones están cubiertas por la integración MySQL remota, no por una prueba
+visual extremo a extremo. Tampoco recorrió todos los roles, estados de facturación,
+periféricos, navegador/dispositivo físico ni todas las rutas del ERP. No hubo merge,
+staging ni producción. Antes de producción todavía hacen falta: integrar un SHA
+autorizado, CI de ese SHA en `main`, staging saludable del SHA exacto, smoke
+autenticado en staging y una demostración final con evidencia durable.
