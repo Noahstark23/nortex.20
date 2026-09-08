@@ -93,7 +93,8 @@ const assertTerminalCiGate = (gate: Workflow, scope: string) => {
         'run.head_sha === candidate',
         "run.head_branch === 'main'",
         "run.event === 'push'",
-        "const expectedPath = '.github/workflows/ci.yml@';",
+        "const expectedPath = '.github/workflows/ci.yml';",
+        'run.path === expectedPath',
         'runs.every((run) =>',
         "run.status === 'completed'",
         "run.conclusion === 'success'",
@@ -123,7 +124,8 @@ const assertSuccessfulManualStagingGate = (gate: Workflow, scope: string) => {
         'run.head_sha === candidate',
         "run.head_branch === 'main'",
         "run.event === 'workflow_dispatch'",
-        "const expectedPath = '.github/workflows/release-staging.yml@';",
+        "const expectedPath = '.github/workflows/release-staging.yml';",
+        'run.path === expectedPath',
         'runs.some',
         "run.status === 'completed'",
         "run.conclusion === 'success'",
@@ -741,4 +743,88 @@ describe('contrato de separación CI, staging y producción', () => {
         ].join(String.fromCharCode(10));
         expect(() => parse(duplicateYaml)).toThrow();
     });
+});
+
+// REST actions.listWorkflowRuns returns repository paths, without an @ref suffix.
+// This sanitized projection reproduces the CI response from run 34290504701.
+const restCandidateSha = 'ca8e31da4d49f85a54817d0000d272cfec85bdc2';
+const successfulRestCiRun = {
+    id: 34290504701,
+    path: '.github/workflows/ci.yml',
+    head_sha: restCandidateSha,
+    head_branch: 'main',
+    event: 'push',
+    status: 'completed',
+    conclusion: 'success',
+};
+
+const executableRunGates = [
+    { release: 'staging', source: stagingSource, job: 'preflight', name: 'Verificar CI terminal y exitoso del candidato', workflow: 'ci.yml', event: 'push' },
+    { release: 'staging', source: stagingSource, job: 'deploy-staging', name: 'Verificar CI terminal y exitoso del candidato', workflow: 'ci.yml', event: 'push' },
+    { release: 'production', source: productionSource, job: 'preflight', name: 'Verificar CI terminal y exitoso del candidato', workflow: 'ci.yml', event: 'push' },
+    { release: 'production', source: productionSource, job: 'deploy-production', name: 'Verificar CI terminal y exitoso del candidato', workflow: 'ci.yml', event: 'push' },
+    { release: 'production', source: productionSource, job: 'preflight', name: 'Verificar staging manual exitoso del candidato', workflow: 'release-staging.yml', event: 'workflow_dispatch' },
+    { release: 'production', source: productionSource, job: 'deploy-production', name: 'Revalidar staging manual exitoso del candidato', workflow: 'release-staging.yml', event: 'workflow_dispatch' },
+];
+
+// Execute the actual github-script body extracted from YAML. The only injected
+// boundaries are the GitHub REST client, context and a synthetic environment.
+function executeRestGate(target: typeof executableRunGates[number], runs: unknown) {
+    const gate = step(parse(target.source).jobs[target.job].steps, target.name);
+    const execute = new Function('github', 'context', 'process',
+        `return (async () => {\n${gate.with.script}\n})();`) as (...args: unknown[]) => Promise<void>;
+    const github = {
+        rest: { actions: { listWorkflowRuns: async (query: Workflow) => {
+            expect(query).toEqual({
+                owner: 'qa-owner', repo: 'qa-repo', workflow_id: target.workflow,
+                head_sha: restCandidateSha, branch: 'main', event: target.event, per_page: 100,
+            });
+            return { data: { workflow_runs: runs } };
+        } } },
+    };
+    return execute(github, { repo: { owner: 'qa-owner', repo: 'qa-repo' } },
+        { env: { CANDIDATE_SHA: restCandidateSha } });
+}
+
+describe.each(executableRunGates)('REST gate $release / $workflow / $job / $name', (target) => {
+    const validRun = { ...successfulRestCiRun, path: `.github/workflows/${target.workflow}`, event: target.event };
+    const rejection = target.workflow === 'ci.yml' ? 'CI_TERMINAL_SUCCESS_REQUIRED' : 'MANUAL_STAGING_SUCCESS_REQUIRED';
+
+    it('acepta la ruta REST exacta sin sufijo de referencia', async () => {
+        await expect(executeRestGate(target, [validRun])).resolves.toBeUndefined();
+    });
+
+    it.each([
+        ['ruta parecida', { path: `.github/workflows/${target.workflow}.other` }],
+        ['ruta con otro ref', { path: `.github/workflows/${target.workflow}@refs/heads/other` }],
+        ['ruta con ref main tampoco es el contrato REST', { path: `.github/workflows/${target.workflow}@refs/heads/main` }],
+        ['ruta con prefijo ajeno', { path: `other/.github/workflows/${target.workflow}` }],
+        ['ruta ausente', { path: undefined }],
+        ['ruta de tipo inesperado', { path: 123 }],
+        ['otro SHA', { head_sha: '1'.repeat(40) }],
+        ['otra rama', { head_branch: 'release' }],
+        ['otro evento', { event: 'pull_request' }],
+        ['fallo terminal', { conclusion: 'failure' }],
+        ['pendiente', { status: 'in_progress', conclusion: null }],
+        ['cancelado', { conclusion: 'cancelled' }],
+    ])('rechaza %s', async (_label, difference) => {
+        await expect(executeRestGate(target, [{ ...validRun, ...difference }])).rejects.toThrow(rejection);
+    });
+
+    it.each([{ label: 'lista vacía', runs: [] }, { label: 'null', runs: null }, { label: 'objeto inesperado', runs: { unexpected: true } }])('rechaza ausencia de evidencia: $label', async ({ runs }) => {
+        await expect(executeRestGate(target, runs)).rejects.toThrow(rejection);
+    });
+
+    if (target.workflow === 'ci.yml') {
+        it.each([
+            { status: 'in_progress', conclusion: null },
+            { status: 'completed', conclusion: 'failure' },
+        ])('un CI verde no oculta otro run del candidato: %j', async (other) => {
+            await expect(executeRestGate(target, [validRun, { ...validRun, id: 34290504702, ...other }])).rejects.toThrow(rejection);
+        });
+    } else {
+        it('conserva la procedencia de staging con un run manual exitoso aunque exista un intento anterior fallido', async () => {
+            await expect(executeRestGate(target, [{ ...validRun, conclusion: 'failure' }, validRun])).resolves.toBeUndefined();
+        });
+    }
 });
