@@ -182,6 +182,12 @@ env -i \
     PATH="$PATH" \
     DATABASE_URL="$qa_database_url" \
     NODE_ENV='test' \
+    ./node_modules/.bin/prisma generate --schema backend/prisma/schema.prisma
+
+env -i \
+    PATH="$PATH" \
+    DATABASE_URL="$qa_database_url" \
+    NODE_ENV='test' \
     ./node_modules/.bin/prisma db push --schema backend/prisma/schema.prisma --skip-generate
 
 qa_stop_backend() {

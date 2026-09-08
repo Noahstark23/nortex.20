@@ -18,4 +18,9 @@ describe('compuerta de integración requerida', () => {
         expect(gate).toContain(`rg -l 'process\\.env\\.(${qaBaseUrlMarker}|${mysqlMarker})' tests --glob '*.test.ts' || true`);
         expect(gate).toContain(`grep -El 'process\\.env\\.(${qaBaseUrlMarker}|${mysqlMarker})' tests/*.test.ts 2>/dev/null || true`);
     });
+
+    it('genera el cliente Prisma dentro del entorno aislado antes de arrancar el backend', () => {
+        expect(gate).toContain('./node_modules/.bin/prisma generate --schema backend/prisma/schema.prisma');
+        expect(gate).toContain('./node_modules/.bin/prisma db push --schema backend/prisma/schema.prisma --skip-generate');
+    });
 });
