@@ -54,6 +54,13 @@ El contrato Coolify vive en `scripts/verify-coolify-staging-target.mjs` y
 - Si el webhook exige bearer, un `COOLIFY_*_DEPLOY_TOKEN` separado con permiso
   `deploy`; no mezclar lectura con `write`, `read:sensitive` o `root`.
 
+Los webhooks usan POST explícito; no reintentar automáticamente un resultado
+incierto. Coolify 4.1.2 omite `settings` en GET application y no satisface la
+compuerta: no interpretar ausencia como Auto Deploy apagado ni elevar permisos.
+La fuente 4.3.18 incluye la relación, pero actualizar el panel exige acreditar
+su propia recuperación; el respaldo MySQL de Nortex no respalda Coolify.
+Ver `docs/releases/2026-09-08-coolify-compatibility.md` antes de ese cambio.
+
 Tokens distintos por environment no prueban aislamiento entre aplicaciones. Comprobar
 su equipo y alcance efectivo; registrar vencimiento y responsable de renovación.
 Los verificadores leen el pin, nunca lo escriben. Un token existente, una app sana

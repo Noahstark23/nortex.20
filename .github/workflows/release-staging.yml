@@ -207,10 +207,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "$TOKEN" ]; then
-            curl --fail --silent --max-time 30 --output /dev/null \
+            curl --request POST --fail --silent --max-time 30 --output /dev/null \
               -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
           else
-            curl --fail --silent --max-time 30 --output /dev/null "$WEBHOOK"
+            curl --request POST --fail --silent --max-time 30 --output /dev/null "$WEBHOOK"
           fi
           echo "🚀 Deploy de staging disparado"
 
