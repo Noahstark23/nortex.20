@@ -108,9 +108,9 @@ permanece como autoridad final ante reintentos y carreras.
    `STAGING_URL`/`PROD_URL`. No se inventó ese dato. Infraestructura debe aportar
    un payload/fixture saneado y versionado o una verificación independiente de
    esa identidad antes de staging y producción.
-4. No existe evidencia de CI remoto, staging manual exitoso del SHA candidato,
-   health remoto con `Cache-Control: no-store`, smoke autenticado sintético, QA
-   visual autenticada ni prueba de periféricos.
+4. La adenda posterior registra CI remoto y QA visual autenticada local. Siguen
+   sin evidencia el staging manual del SHA candidato, su health remoto con
+   `Cache-Control: no-store`, el smoke autenticado en staging y los periféricos.
 
 ## Salida de la auditoría
 
