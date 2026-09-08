@@ -169,3 +169,33 @@ periféricos, navegador/dispositivo físico ni todas las rutas del ERP. No hubo 
 staging ni producción. Antes de producción todavía hacen falta: integrar un SHA
 autorizado, CI de ese SHA en `main`, staging saludable del SHA exacto, smoke
 autenticado en staging y una demostración final con evidencia durable.
+
+## Adenda 2026-09-07 — preflight externo de staging
+
+La consulta de sólo lectura a GitHub confirmó que el SHA documental final
+`7a3de0957580eb68608ece4fb7a64067db2a6228` terminó el workflow remoto
+`34183521781` con `verify`, `deploy-schema-smoke`, `backup-restore-smoke` e
+`integration-required` exitosos. El PR #205 seguía en borrador, limpio para
+fusionar y sin alterar `main`.
+
+El environment `staging` no tenía reglas de revisión ni una política de ramas. El
+workflow candidato sigue fallando cerrado porque exige dispatch desde `main`, SHA
+completo, confirmación `STAGE <SHA>`, `main` inmóvil, CI terminal del mismo SHA y
+revalidación antes del webhook. Sin embargo, su despliegue real todavía no puede
+pasar la compuerta de identidad Coolify observada:
+
+- a nivel de repositorio existen los nombres `NORTEX_DEPLOY_ENABLED` y
+  `STAGING_URL`, sin registrar ni revelar sus valores;
+- el environment contiene `COOLIFY_STAGING_WEBHOOK` y `COOLIFY_TOKEN`;
+- no aparecen `COOLIFY_STAGING_API_ORIGIN`,
+  `COOLIFY_STAGING_APPLICATION_UUID` ni `COOLIFY_STAGING_READ_TOKEN` en los
+  ámbitos consultados;
+- el workflow `release-staging.yml` todavía no existe en la rama predeterminada,
+  por lo que GitHub no permite ejecutarlo antes de integrar el candidato;
+- los deployments históricos listados para `staging` corresponden a otros SHA de
+  `main`; ninguno acredita este candidato.
+
+No se leyeron valores, tokens ni URLs. Configurar esas tres entradas requiere al
+dueño de infraestructura y debe hacerse por environment. La ausencia observada es
+un bloqueo previo al webhook, no una razón para desactivar las comprobaciones ni
+usar una ruta de despliegue alternativa.
