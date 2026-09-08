@@ -4,6 +4,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/whatsappIdentity.mysql.test.ts',
   'tests/cashCloseJournal.mysql.test.ts',
   'tests/posIntegrity.integration.test.ts',
+  'tests/manualCashMovementVoid.integration.test.ts',
   'tests/customerFlow.integration.test.ts',
   'tests/hrAccess.integration.test.ts',
   'tests/productRefresh.integration.test.ts',
@@ -29,6 +30,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/promotionsShiftClose.integration.test.ts',
   'tests/assistantPrivateWhatsapp.integration.test.ts',
   'tests/productBulkEdit.integration.test.ts',
+  'tests/purchaseSalePrice.integration.test.ts',
   'tests/procurementPhaseOne.integration.test.ts',
   'tests/procurementPhaseTwo.integration.test.ts',
   'tests/procurementPhaseTwoB.integration.test.ts',
@@ -51,8 +53,15 @@ export function validateQualityDatabase(raw, acknowledgement) {
 export function assertExecutedSuite(report, filename) {
   const matching = report?.testResults?.filter(result => result.name?.replaceAll('\\', '/').endsWith('/' + filename)) ?? [];
   if (report?.success !== true || matching.length !== 1) throw new Error(`No se ejecutó la suite requerida: ${filename}`);
+  const counters = ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'numTodoTests', 'numTotalTestSuites', 'numFailedTestSuites', 'numPendingTestSuites'];
+  if (counters.some(key => !Number.isInteger(report[key]) || report[key] < 0)
+      || report.numTotalTests === 0 || report.numPassedTests !== report.numTotalTests
+      || report.numFailedTests || report.numPendingTests || report.numTodoTests
+      || report.numFailedTestSuites || report.numPendingTestSuites) {
+    throw new Error(`Contadores incompletos, fallidos u omitidos: ${filename}`);
+  }
   const suite = matching[0];
-  if (suite.status !== 'passed' || !suite.assertionResults?.length
+  if (suite.status !== 'passed' || !suite.assertionResults?.length || suite.assertionResults.length !== report.numTotalTests
       || suite.assertionResults.some(test => test.status !== 'passed')) {
     throw new Error(`Suite incompleta, fallida u omitida: ${filename}`);
   }

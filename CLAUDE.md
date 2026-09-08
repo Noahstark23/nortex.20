@@ -34,13 +34,31 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   libre suficiente en Colima y no es el flujo host predeterminado.
 - No iniciar jobs `deploy-*`, webhooks, backup remoto, push, merge o DNS sin una
   autorización explícita y separada. No asumir nunca que el worktree está limpio.
+- CI, staging, aprobación del environment y producción son cuatro compuertas
+  diferentes. Un estado verde o una aprobación técnica no autoriza producción por
+  inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
+  confirmación tipada y una autorización de producto que nombre alcance, ventana y
+  rollback; ver `docs/runbooks/release-promotion.md`.
 
 - Backend: `tsx backend/server.ts` (sin build). Verificar con `npx tsc --noEmit`.
 - Frontend: `npm run build` (Vite + PWA). Producción usa `npm run build:seo`
   (build + prerender por-ruta: 70+ HTML estáticos + sitemap — ver `scripts/prerender.ts`).
+- Contraste: los aliases Tailwind de color no representan una paleta independiente;
+  `blue`/`emerald` se remapean a marca y `orange`/`rose` a estados. Para un
+  relleno sólido con texto claro, medir estado base y hover, usar tinta
+  semántica AA y cubrirlo en `tests/frontendColorSemantics.test.ts`. Los guards
+  de compatibilidad en `index.css` deben usar clases exactas; no tocar fondos
+  translúcidos ni fusionar los tokens de estado con sus canales RGB. Si la
+  tinta vive en un descendiente, corregir y probar el par contenedor--hijo:
+  un selector que sólo coincide en el contenedor no protege el icono.
+- Bridge Día: si una utilidad de fondo se traduce a canvas claro, el
+  `text-white` o `text-slate-*` heredado debe tomar la tinta contextual de esa
+  superficie por token. Las islas oscuras reales cortan esa herencia con una
+  clase semántica y prueba; no se arregla con selectores de subcadena ni
+  excepciones por ruta.
 - Deploy: Docker + `prisma db push` (aplica **solo DDL**; los backfills de datos van
   en la aplicación con patrón perezoso). Prisma pinneado a **6.4.1** — correr
-  `npm install` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
+  `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
 - Auth: JWT. `authenticate` (`backend/middleware/auth.ts`) pone `req.tenantId`,
   `req.userId` y `req.role`. **Esa es la única fuente confiable del tenant** — nunca
   tomarlo de `req.body`/query. La home `/` de producción se sirve desde
@@ -220,6 +238,14 @@ libro firmado de caja · keyring JWT rotable.
 
 ## Convenciones del repo
 
+- Cantidades de venta y cotización: usar `resolveLegacySaleMode`, compartido por
+  POS, normalización de ventas y creación de cotizaciones. Cajas/unidades legacy
+  sin modo ni paso son enteras; preservar medidas explícitas e históricos.
+  PACK exige empaques completos. No truncar la entrada ni borrar pendientes.
+  Evidencia y límites: `docs/releases/2026-09-08-cajas-recuperacion.md`.
+- Una reparación pendiente no debe tener su única copia en `/tmp`: conservar
+  candidato y evidencia en ubicación persistente, sin alterar worktrees ajenos.
+
 - Ramas: una por feature (`claude/<feature>`) desde `origin/main`; PRs en **draft**;
   fases grandes = PRs secuenciales (mergear la Fase A antes de construir la B).
 - Mensajes, UI y comentarios en **español** (variante nicaragüense; voseo en UI).
@@ -230,7 +256,7 @@ libro firmado de caja · keyring JWT rotable.
   y las funciones puras de `nicaTax`/`stockService`/`accounting`), no alcanza con
   que los tests pasen: tienen que **matar bugs**. Stryker inyecta fallas (invierte
   comparaciones, cambia signos, vacía cuerpos) y falla el CI si el score baja del
-  umbral. Línea base histórica: **95.59%**. Al 2026-09-04 el umbral configurado es **99.85%**;
+  umbral. Línea base histórica: **95.59%**. En el candidato integrado con main al 2026-09-04 el umbral configurado es **100%**;
   no equivale a cobertura global ni a una ejecución actual. El umbral
   (`stryker.config.json`) **solo sube**: si un cambio lo hunde, se arregla el test
   —nunca se baja el umbral ni se debilita una aserción para pasar—. Al agregar una
@@ -239,7 +265,7 @@ libro firmado de caja · keyring JWT rotable.
 - **Presupuesto del POS (`tests/presupuestoPos.test.ts`, en CI).**
   `components/POS.tsx` tiene ~7.580 líneas y 123 apariciones textuales de `useState`
   como línea base del checkout auditado el 2026-09-04 (no un conteo AST de hooks).
-  El corte local más reciente queda en 6.949 líneas y 114 referencias `useState`;
+  El candidato integrado de release queda en 6.595 líneas y 110 referencias `useState`;
   las cifras y sus límites están en [la verificación local](docs/VERIFICACION_MODULOS_2026-09-04.md):
   cualquier `setState` re-ejecuta el cuerpo entero. Hay un trinquete con la
   MISMA regla que el umbral de mutación — **el número solo baja**. Feature nueva
@@ -254,3 +280,9 @@ libro firmado de caja · keyring JWT rotable.
 - No introducir dependencias pesadas sin necesidad; el bundle del SPA ya roza el
   límite de precache del PWA (SWR se eligió sobre react-query por esto).
 - Commits: `feat|fix(<área>): <qué>` con el porqué + resumen de QA en el cuerpo.
+
+## Preparación de promoción del 4 de septiembre
+
+La integración de release se valida sobre main2834497, con compuerta explícita
+y SHA completo. Ver `docs/releases/2026-09-04-production-gate.md` y la evidencia
+del candidato; los resultados de snapshots anteriores no acreditan esta release.

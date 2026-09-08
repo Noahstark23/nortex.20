@@ -1,5 +1,11 @@
 # Reporte de mejora preproducción — auditoría frontend — 2026-09-01
 
+> **Registro histórico — no ejecutar como receta de release.** Este reporte
+> conserva evidencia local del 2026-09-01 y no declara estado actual de staging o
+> producción. Para una promoción nueva, usá el [runbook canónico de
+> promoción](../runbooks/release-promotion.md); CI, una demostración local y
+> staging no autorizan producción por inferencia.
+
 Estado: **QA LOCAL · WORKSPACE AUTENTICADO DÍA/NOCHE · MENÚ + TICKET + SELECTOR + EFECTIVO + ENTREGAS FLUIDOS · PROGRAMA APPLE INCOMPLETO · NO PRODUCCIÓN**
 
 Base local observada: `d326c589a756db7977d14c94a625b6c895cb3313`
@@ -615,6 +621,12 @@ autorización de producción. La validación E2E autenticada de pedidos en naveg
 los swipes de Inventario/Ventas y las demás superficies del programa Apple siguen
 abiertos.
 
+## Bitácoras históricas de Delivery conservadas durante la integración
+
+Se conservan ambos registros con su alcance original. Las expresiones «actual», «ahora» y «este candidato» dentro de estas bitácoras se refieren a sus respectivos snapshots de septiembre, no al merge del 2026-09-08. Sus divergencias deben adjudicarse con el código final y nuevas pruebas; ninguno acredita el estado actual de producción.
+
+### Registro del worktree local de auditoría
+
 ## Ciclo 3 — Entregas: backend autoritativo y contrato de flota
 
 El tablero ya no depende solo del frontend para proteger la operación. En este
@@ -729,6 +741,113 @@ desactualizado y chunks mayores de 500 kB.
   táctil; tampoco se recorrió el cobro de una entrega marcada como entregada.
 - **Producción no está autorizada.** Esta evidencia demuestra el ciclo local de
   Delivery, no la aplicación total del programa Apple/HIG a cada ruta de Nortex.
+
+### Registro del candidato de release anterior
+
+## Ciclo 3 — Entregas: reconciliación histórica y contrato del candidato
+
+Este apartado conserva el historial de la auditoría sin trasladar garantías entre
+worktrees. El ciclo original se ejecutó sobre una variante local más amplia; el
+candidato de release actual integra solo una parte de ese trabajo y se describe por
+separado a continuación.
+
+### Registro histórico del worktree de auditoría
+
+El registro original atribuyó a aquella variante paginación de pedidos, una matriz
+de transiciones impuesta por el backend, row-lock en la asignación, schemas estrictos
+de flota, un select operativo mínimo, migración al singleton de Prisma y una compuerta
+E2E con MySQL efímero. También registró:
+
+- QA focal backend/frontend de 4 archivos y 39 tests, seguida por 3 archivos y 19
+  tests de Delivery;
+- una compuerta completa de 253 archivos y 3,328 tests y, después del recorrido
+  visual, otra de 255 archivos y 3,340 tests;
+- una corrida HTTP `1/1` contra MySQL con dos tenants sintéticos, reserva/liberación
+  de inventario y cleanup de puertos, base y usuario efímeros;
+- un recorrido autenticado desde `/login` hasta `en_camino`, sin marcar
+  `entregado`, y las siguientes capturas:
+  `.codex/apple-delivery-e2e-2026-09-01-cycle3/00-login-reference.png`,
+  `00b-home-desktop-day.png`, `01-delivery-desktop-day-pending.png`,
+  `02-rider-sheet-desktop-day.png`, `03-delivery-desktop-day-en-route.png`,
+  `04-delivery-desktop-night-en-route.png`, `05-mobile-menu-day.png`,
+  `06-delivery-mobile-day.png`, `07-rider-sheet-mobile-day.png`,
+  `08-mobile-menu-night.png` y `09-delivery-mobile-night.png`.
+
+Esos conteos, capturas y resultados preservan la trazabilidad de aquella sesión,
+pero **no son evidencia de que esas mismas piezas estén presentes o hayan pasado en
+el candidato actual**. En particular, no se usan para afirmar paginación, matriz de
+estados, row-lock de asignación, singleton ni E2E MySQL en esta rama.
+
+### Contrato real del candidato actual
+
+- `GET /api/v1/pedidos` devuelve en una sola respuesta todos los pedidos del tenant,
+  ordenados por fecha. No acepta `page`/`limit` ni devuelve `pageInfo`. El frontend
+  hace una sola petición compatible con ese contrato y ya no introduce un límite
+  artificial de 5 o 1,000 filas; la paginación de extremo a extremo sigue pendiente.
+- Una selección de motorizado sigue siendo una sola acción para la persona, pero el
+  frontend ejecuta y valida una cadena explícita contra el servidor:
+  `PATCH motorizado → PATCH preparando/reserva → PATCH en_camino`. Si el pedido ya
+  estaba en `preparando`, continúa desde el despacho. `en_camino` solo se solicita
+  después de recibir confirmación de `preparando`, de modo que un fallo de reserva no
+  dispara el despacho; si falla el último paso, la UI conserva y comunica que la
+  asignación y la reserva sí quedaron confirmadas.
+- La UI adopta el `motorizadoId` canónico de la respuesta, bloquea cambios simultáneos
+  y evita que el polling de 15 segundos reemplace una transición pendiente con datos
+  viejos. Cada respuesta de estado debe confirmar el estado esperado antes de
+  actualizar la vista.
+- El backend sí aísla por `tenantId` las lecturas de pedido y la reserva hacia
+  `preparando`; esta última usa la transacción de fulfillment y mueve inventario con
+  `applyStockDelta` y Kardex. También protege estados terminales en el handler
+  general. Este apartado no atribuye un AuditLog general a la reserva: el código
+  actual solo lo escribe para condiciones específicas de reconciliación de lotes.
+- El backend impone una matriz autoritativa de estados bajo row-lock: la reserva solo
+  puede comenzar desde `pendiente` o `asignado`; la entrega solo puede reclamarse
+  desde un estado ya reservado/activo; y los estados de ruta `en_ruta`, `en_camino`
+  y `en_punto` exigen un motorizado asignado. Un cliente PWA anterior ya no puede
+  ejecutar `pendiente → en_camino`, reabrir terminales ni entregar sin pasar por la
+  reserva. Los reintentos de preparación y cancelación conservan sus contratos de
+  error/idempotencia.
+- La Driver App ahora solo ofrece `Entregar y Cobrar` cuando el pedido ya está en un
+  estado entregable (`en_tienda`, `en_ruta`, `en_camino`, `en_punto`). Si un pedido
+  viejo aparece todavía como `asignado` o `preparando`, la UI lo muestra como
+  pendiente de preparación en vez de invitar a una operación que el backend rechaza.
+- `PATCH /api/v1/pedidos/:id/motorizado` ejecuta lock, relectura tenant-scoped,
+  autorización del motorizado, compare-and-set del pedido y evento de tracking en una
+  sola transacción. Rechaza pedidos facturados/terminales y devuelve `409` si pierde
+  una carrera; asignar, reasignar o desasignar nunca deja el evento separado de la
+  escritura canónica.
+- El alta visual exige un PIN numérico de 4 a 6 dígitos y envía nombre, teléfono,
+  zona, PIN y placa opcional al endpoint; el backend recorta los textos y normaliza
+  el teléfono. El `POST` exige un PIN numérico de 4 a 6 dígitos antes de consultar
+  credenciales o crear la fila, detecta conflictos por teléfono y el login del
+  repartidor falla cerrado si encuentra identidades ambiguas. `PATCH` conserva el
+  bootstrap/reset de PIN para registros legacy que todavía tengan `pinHash = null`.
+- `GET`, `POST` y `PATCH /api/v1/motorizados` usan un select operativo explícito que
+  excluye `pinHash`, tenant, KYC, imágenes de documentos, saldo y metadatos de wallet.
+  El listado y el detalle autenticado de pedidos reutilizan ese mismo select al
+  anidar el motorizado, por lo que tampoco serializan el modelo completo.
+- `backend/routes/motorizados.ts` todavía instancia su propio `PrismaClient`; la
+  migración al cliente compartido no forma parte de este candidato.
+- `GET /api/v1/motorizados/:id/liquidacion` permanece aislado por el `tenantId`
+  autenticado, pero aún devuelve el identificador interno `walletId`; reducir ese
+  DTO queda como deuda de minimización y no se presenta como una fuga cross-tenant.
+
+### Pendientes verificables antes de declarar completo el hardening
+
+1. Paginar o cursar `GET /api/v1/pedidos` y hacer que el tablero consuma todas las
+   páginas sin ocultar pedidos.
+2. Auditar los teléfonos legacy y, después de sanear colisiones, definir una garantía
+   de unicidad resistente a carreras para la identidad de login del repartidor.
+3. Retirar `walletId` de la liquidación operativa si ningún consumidor autorizado lo
+   necesita y fijar el DTO con una prueba de contrato.
+4. Migrar la ruta al singleton Prisma y ampliar pruebas de integración de rutas y
+   concurrencia contra MySQL 8.
+
+Los tests focales del candidato cubren la secuencia de asignación, fallo de reserva,
+fallo de despacho, respuestas no autoritativas, polling tardío, cambios rápidos y
+conflictos de identidad. Sus resultados deben reportarse con la corrida terminal del
+candidato, no heredarse de las cifras históricas anteriores. No hay en este apartado
+evidencia nueva de staging, dispositivo iOS físico ni autorización de producción.
 
 ## Ciclo 4 — Día/Noche legible en el ERP autenticado completo auditado
 
@@ -1531,3 +1650,10 @@ este arreglo visual.
 
 El procedimiento repetible vive en
 `docs/runbooks/frontend-preprod-audit.md`.
+
+## Integración local del 4 de septiembre
+
+Se conserva el historial vigente de `main` (2834497). La entrega local posterior
+del POS, activación y avisos se documenta en `docs/VERIFICACION_MODULOS_2026-09-04.md`.
+Los resultados de esa copia anterior no acreditan este candidato integrado ni
+un despliegue: requiere nuevas pruebas sobre el árbol final.

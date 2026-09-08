@@ -273,8 +273,57 @@ ${typeof data.change === 'number' && data.change > 0 ? `<div style="font-size:10
 }
 
 export function printTicket(data: InvoiceData): boolean {
-    return detectThermalTicketPopupMode(buildTicket80mmHtml(data), false)
-        || printTicketFromCurrentDocument(data);
+    if (typeof window === 'undefined') return false;
+
+    const prefersPopup = detectThermalTicketPopupMode();
+    if (prefersPopup) {
+        return openPrintWindow(buildTicket80mmHtml(data), {
+            width: 420,
+            height: 720,
+            thermal: true,
+            alertWhenBlocked: false,
+        })
+            || printTicketFromCurrentDocument(data);
+    }
+    return printTicketFromCurrentDocument(data)
+        || openPrintWindow(buildTicket80mmHtml(data), {
+            width: 420,
+            height: 720,
+            thermal: true,
+            alertWhenBlocked: false,
+        });
+}
+
+type TicketPrintEnvironment = {
+    userAgent?: string;
+    capacitor?: unknown;
+};
+
+export function detectThermalTicketPopupMode(environment: TicketPrintEnvironment = {}): boolean {
+    const userAgent = environment.userAgent
+        ?? (typeof navigator === 'undefined' ? '' : navigator.userAgent ?? '');
+    const androidWebView = /Android/i.test(userAgent)
+        && /(?:;\s*wv\)|\bwv\b|Version\/\d+\.\d+.*Chrome)/i.test(userAgent);
+    if (androidWebView) return true;
+
+    const capacitor = environment.capacitor
+        ?? (typeof window === 'undefined' ? undefined : (window as typeof window & { Capacitor?: unknown }).Capacitor);
+    if (!capacitor || typeof capacitor !== 'object') return false;
+    const maybeCapacitor = capacitor as {
+        isNativePlatform?: (() => boolean) | boolean;
+        platform?: string;
+    };
+    if (typeof maybeCapacitor.isNativePlatform === 'function') {
+        try {
+            if (maybeCapacitor.isNativePlatform()) return true;
+        } catch {
+            return true;
+        }
+    } else if (maybeCapacitor.isNativePlatform === true) {
+        return true;
+    }
+    return typeof maybeCapacitor.platform === 'string'
+        && maybeCapacitor.platform.toLowerCase() !== 'web';
 }
 
 function printTicketFromCurrentDocument(data: InvoiceData): boolean {
@@ -420,25 +469,33 @@ export function buildA4Html(data: InvoiceData): string {
 }
 
 export function printA4(data: InvoiceData) {
-    openPrintWindow(buildA4Html(data));
-}
-
-export function detectThermalTicketPopupMode(html: string, alertWhenBlocked = true): boolean {
-    return openPrintWindow(html, alertWhenBlocked);
+    openPrintWindow(buildA4Html(data), {
+        width: 800,
+        height: 600,
+        thermal: false,
+        alertWhenBlocked: true,
+    });
 }
 
 // =============================
 // Helper: Open Print Window
 // =============================
-function openPrintWindow(html: string, alertWhenBlocked = true): boolean {
+type OpenPrintWindowOptions = {
+    width: number;
+    height: number;
+    thermal: boolean;
+    alertWhenBlocked: boolean;
+};
+
+function openPrintWindow(html: string, options: OpenPrintWindowOptions): boolean {
     let printWindow: Window | null = null;
     try {
-        printWindow = window.open('', '_blank', 'width=800,height=600');
+        printWindow = window.open('', '_blank', `width=${options.width},height=${options.height}`);
     } catch {
         // Algunos WebViews lanzan SecurityError en vez de retornar null.
     }
     if (!printWindow) {
-        if (alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
+        if (options.alertWhenBlocked) alert('Permite ventanas emergentes para imprimir.');
         return false;
     }
     let printScheduled = false;

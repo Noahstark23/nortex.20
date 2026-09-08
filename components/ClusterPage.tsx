@@ -4,6 +4,7 @@ import { blogPosts } from '../data/blog-posts';
 import { getClusterBySlug } from '../data/blog-clusters';
 import { buildBreadcrumbJsonLd } from '../utils/seo';
 import { ArrowRight, ChevronRight, Clock, Star } from 'lucide-react';
+import BlogShell from './blog/BlogShell';
 
 /**
  * Hub de clúster: /blog/categoria/:slug
@@ -44,78 +45,68 @@ const ClusterPage: React.FC = () => {
     if (!cluster) return <Navigate to="/blog" replace />;
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <nav className="bg-white border-b border-slate-200 py-4 px-6">
-                <div className="max-w-5xl mx-auto flex items-center justify-between">
-                    <Link to="/blog" className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-slate-900 rounded flex items-center justify-center text-white font-bold">N</div>
-                        <span className="font-bold text-slate-900">NORTEX</span>
-                        <span className="text-slate-400 ml-2">/ Blog</span>
-                    </Link>
-                    <Link to="/register" className="text-sm font-bold bg-slate-900 text-white px-4 py-2 rounded-lg">
-                        Prueba Gratis
-                    </Link>
-                </div>
+        <BlogShell>
+            <nav className="nx-public-subtle flex flex-wrap items-center gap-1 text-sm" aria-label="Migas de pan">
+                <Link to="/blog" className="nx-public-link inline-flex min-h-[44px] items-center px-1">Blog</Link>
+                <ChevronRight size={14} aria-hidden="true" />
+                <span aria-current="page" className="nx-public-muted">{cluster.name}</span>
             </nav>
 
-            <main className="max-w-5xl mx-auto px-6 py-12">
-                <nav className="flex items-center gap-1 text-xs text-slate-400 mb-6" aria-label="Breadcrumb">
-                    <Link to="/blog" className="hover:text-slate-600">Blog</Link>
-                    <ChevronRight size={12} />
-                    <span className="text-slate-500">{cluster.name}</span>
-                </nav>
+            <header className="mt-5 max-w-3xl">
+                <p className="nx-public-badge inline-flex min-h-[32px] items-center px-3 text-sm font-semibold">Tema</p>
+                <h1 className="mt-5 text-balance text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] sm:text-[48px]">{cluster.name}</h1>
+                <p className="nx-public-muted mt-4 max-w-2xl text-[17px] leading-7 sm:text-[19px]">{cluster.description}</p>
+            </header>
 
-                <div className="flex items-center gap-3 mb-3">
-                    <span className="text-3xl">{cluster.emoji}</span>
-                    <h1 className="text-3xl font-bold text-slate-900">{cluster.name}</h1>
-                </div>
-                <p className="text-slate-500 mb-10 max-w-2xl">{cluster.description}</p>
-
-                {/* Pilar destacado */}
-                {pillar && (
+            {/* Pilar destacado */}
+            {pillar && (
+                <section aria-labelledby="pillar-title" className="mt-10">
                     <Link
                         to={`/blog/${pillar.slug}`}
-                        className="block bg-slate-900 text-white rounded-2xl p-8 mb-10 hover:bg-slate-800 transition-colors group"
+                        className="nx-public-card group block p-7 sm:p-9"
                     >
-                        <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400 mb-3">
-                            <Star size={12} /> Guía principal
+                        <span className="nx-public-badge inline-flex min-h-[32px] items-center gap-2 px-3 text-sm font-semibold">
+                            <Star size={15} aria-hidden="true" /> Guía principal
                         </span>
-                        <h2 className="text-2xl font-bold mb-2 group-hover:text-emerald-300 transition-colors">{pillar.title}</h2>
-                        <p className="text-slate-300 text-sm mb-4">{pillar.description}</p>
-                        <span className="text-emerald-400 font-medium text-sm flex items-center gap-1">
-                            Leer la guía <ArrowRight size={14} />
+                        <h2 id="pillar-title" className="mt-5 max-w-3xl text-[28px] font-semibold leading-tight tracking-[-0.02em] sm:text-[32px]">{pillar.title}</h2>
+                        <p className="nx-public-muted mt-3 max-w-3xl text-base leading-7">{pillar.description}</p>
+                        <span className="nx-public-link mt-6 inline-flex min-h-[44px] items-center gap-1 font-semibold">
+                            Leer la guía <ArrowRight size={17} aria-hidden="true" />
                         </span>
                     </Link>
-                )}
+                </section>
+            )}
 
-                {/* Artículos de soporte */}
-                {supporting.length > 0 ? (
-                    <div className="grid md:grid-cols-2 gap-6">
+            {/* Artículos de soporte */}
+            {supporting.length > 0 ? (
+                <section aria-labelledby="supporting-title" className="mt-12">
+                    <h2 id="supporting-title" className="text-2xl font-semibold tracking-[-0.02em]">Más guías de este tema</h2>
+                    <div className="mt-5 grid gap-5 md:grid-cols-2">
                         {supporting.map(post => (
                             <Link
                                 key={post.slug}
                                 to={`/blog/${post.slug}`}
-                                className="block bg-white border border-slate-200 rounded-xl p-6 hover:border-emerald-300 hover:shadow-md transition-all group"
+                                className="nx-public-card group flex min-h-[260px] flex-col p-6 sm:p-7"
                             >
-                                <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">{post.category}</span>
-                                <h3 className="font-bold text-slate-900 mt-3 mb-2 text-lg leading-snug group-hover:text-emerald-700 transition-colors">{post.title}</h3>
-                                <p className="text-slate-500 text-sm mb-4 leading-relaxed">{post.description}</p>
-                                <div className="flex items-center justify-between text-xs text-slate-400">
-                                    <span className="flex items-center gap-1"><Clock size={12} /> {post.readTime} lectura</span>
-                                    <span className="text-emerald-600 font-medium flex items-center gap-1">Leer <ArrowRight size={12} /></span>
+                                <span className="nx-public-badge inline-flex w-fit min-h-[32px] items-center px-3 text-sm font-semibold">{post.category}</span>
+                                <h3 className="mt-5 text-xl font-semibold leading-snug tracking-[-0.015em]">{post.title}</h3>
+                                <p className="nx-public-muted mt-3 text-[15px] leading-6">{post.description}</p>
+                                <div className="mt-auto flex items-center justify-between gap-4 pt-6 text-sm">
+                                    <span className="nx-public-subtle flex items-center gap-2"><Clock size={15} aria-hidden="true" /> {post.readTime} lectura</span>
+                                    <span className="nx-public-link flex items-center gap-1 font-semibold">Leer <ArrowRight size={15} aria-hidden="true" /></span>
                                 </div>
                             </Link>
                         ))}
                     </div>
-                ) : (
-                    <p className="text-slate-400 text-sm">Más artículos de este tema vienen en camino.</p>
-                )}
+                </section>
+            ) : (
+                <p className="nx-public-muted mt-12 text-sm">Más artículos de este tema vienen en camino.</p>
+            )}
 
-                <div className="mt-12">
-                    <Link to="/blog" className="text-sm font-medium text-emerald-700 hover:text-emerald-600">← Volver a todos los temas</Link>
-                </div>
-            </main>
-        </div>
+            <div className="mt-12">
+                <Link to="/blog" className="nx-public-secondary inline-flex min-h-[44px] items-center justify-center px-5 text-sm font-semibold">← Volver a todos los temas</Link>
+            </div>
+        </BlogShell>
     );
 };
 

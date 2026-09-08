@@ -88,7 +88,7 @@ const routeHandler = (path: string, method: 'post'): any => {
 };
 
 describe('driver login route', () => {
-    it('falla cerrado si el teléfono devuelve más de 50 candidatos con PIN', async () => {
+    it('falla cerrado cuando la consulta devuelve identidades ambiguas', async () => {
         const login = routeHandler('/login', 'post');
         const res = response();
         prismaMock.motorizado.findMany.mockResolvedValue(
@@ -109,7 +109,7 @@ describe('driver login route', () => {
 
         expect(prismaMock.motorizado.findMany).toHaveBeenCalledWith({
             where: { telefono: '88880000', pinHash: { not: null } },
-            take: 51,
+            take: 2,
             select: {
                 id: true,
                 nombre: true,
@@ -126,7 +126,7 @@ describe('driver login route', () => {
         expect(res.payload).toEqual({ error: 'Teléfono o PIN incorrectos.' });
     });
 
-    it('solo autentica si hay exactamente una coincidencia de PIN entre todos los candidatos del teléfono', async () => {
+    it('rechaza dos identidades sin usar el PIN para escoger una', async () => {
         const login = routeHandler('/login', 'post');
         const res = response();
         prismaMock.motorizado.findMany.mockResolvedValue([
@@ -157,7 +157,7 @@ describe('driver login route', () => {
 
         expect(prismaMock.motorizado.findMany).toHaveBeenCalledWith({
             where: { telefono: '88880000', pinHash: { not: null } },
-            take: 51,
+            take: 2,
             select: {
                 id: true,
                 nombre: true,
@@ -168,27 +168,18 @@ describe('driver login route', () => {
                 pinHash: true,
             },
         });
-        expect(compareMock).toHaveBeenCalledTimes(2);
+        expect(compareMock).not.toHaveBeenCalled();
         expect(signDriverTokenMock).not.toHaveBeenCalled();
-        expect(res.statusCode).toBe(409);
+        expect(res.statusCode).toBe(401);
         expect(res.payload).toEqual({
-            error: 'No pudimos identificar una sola cuenta con esas credenciales. Contacta a Nortex.',
+            error: 'Teléfono o PIN incorrectos.',
         });
     });
 
-    it('compara todos los candidatos y emite token solo para la coincidencia única', async () => {
+    it('emite token solo para un teléfono único con PIN válido', async () => {
         const login = routeHandler('/login', 'post');
         const res = response();
         prismaMock.motorizado.findMany.mockResolvedValue([
-            {
-                id: 'driver-a',
-                nombre: 'Driver A',
-                tipoFlota: 'NORTEX',
-                zonaCobertura: 'Managua',
-                kycStatus: 'APROBADO',
-                activo: true,
-                pinHash: 'hash-a',
-            },
             {
                 id: 'driver-b',
                 nombre: 'Driver B',
@@ -199,15 +190,13 @@ describe('driver login route', () => {
                 pinHash: 'hash-b',
             },
         ]);
-        compareMock
-            .mockResolvedValueOnce(false)
-            .mockResolvedValueOnce(true);
+        compareMock.mockResolvedValueOnce(true);
 
         await login({
             body: { telefono: '8888-0000', pin: '1234' },
         }, res);
 
-        expect(compareMock).toHaveBeenCalledTimes(2);
+        expect(compareMock).toHaveBeenCalledExactlyOnceWith('1234', 'hash-b');
         expect(signDriverTokenMock).toHaveBeenCalledOnce();
         expect(signDriverTokenMock).toHaveBeenCalledWith('driver-b');
         expect(res.statusCode).toBe(200);

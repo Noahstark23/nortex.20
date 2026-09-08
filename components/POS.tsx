@@ -10,7 +10,6 @@ import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
 import { useUiMode } from '../hooks/useUiMode';
 import { ToastViewport, useToast } from './ui/Toast';
-import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
 import { buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
 import { usePosSearchIndex } from '../hooks/usePosSearchIndex';
@@ -45,6 +44,12 @@ import { buildPromotionSaleIntent } from './pos/PromotionSaleIntent';
 import { resolvePosCartTotals, promotionReceiptCart } from './pos/PromotionTotals';
 import { usePosOfflineQueue } from '../hooks/usePosOfflineQueue';
 import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
+import POSCatalogAdminTools from './pos/POSCatalogAdminTools';
+import {
+    ShiftCloseReport,
+    resolveShiftCloseResult,
+    type ShiftCloseResult,
+} from './pos/ShiftCloseReport';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
 import { buildPostSalePrintCash } from '../utils/postSalePrintCash';
@@ -58,7 +63,6 @@ import {
     normalizeFiscalSettingsSnapshot,
     type FiscalSettingsSnapshot,
 } from '../utils/fiscalSettingsSnapshot';
-// xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
 import {
     generateOfflineId, saveSaleOffline,
     getScaleContext, saveScaleContext,
@@ -361,55 +365,6 @@ interface PendingDuplicateScaleLabel {
     requiresManagerOverride: boolean;
 }
 
-interface ReturnSaleLine {
-    saleItemId: string;
-    productId: string;
-    productNameAtSale: string;
-    unitAtSale: string;
-    saleModeAtSale: 'COUNTED' | 'MEASURED';
-    presentationAtSale: 'BASE' | 'PACK';
-    presentationQuantityAtSale: string;
-    quantity: string;
-    returnedQuantity: string;
-    returnableQuantity: string;
-    quantityStep: string;
-    priceAtSale: string;
-    refundUnitPrice: string;
-    measurement?: { source: string; sourceValue: string; sourceUnit: string } | null;
-}
-
-interface ReturnSaleData {
-    id: string;
-    total: string | number;
-    paymentMethod: string;
-    balance: string;
-    allowedRefundMethods: ReturnRefundMethod[];
-    items: ReturnSaleLine[];
-    /**
-     * Fecha de anulación (DGI-5), o null si la factura está vigente.
-     *
-     * Se mira ESTE campo y no `status`: un `cancelledAt` no nulo es
-     * inequívoco y evita traer al frontend el literal del estado, que vive
-     * en el backend (`saleCancellation.ts`) y es la única fuente. La decisión
-     * autoritativa igual la toma el servidor; acá solo se evita mostrarle al
-     * cajero un formulario que va a ser rechazado.
-     */
-    cancelledAt: string | null;
-}
-
-type ReturnRefundMethod = 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
-
-const RETURN_REFUND_METHOD_LABELS: Record<ReturnRefundMethod, string> = {
-    CASH: 'Efectivo',
-    CARD: 'Tarjeta',
-    QR: 'QR',
-    TRANSFER: 'Transferencia',
-};
-
-interface ReturnItemSelection extends ReturnSaleLine {
-    quantityDraft: string;
-}
-
 interface PendingScaleLabelOverride {
     rawCode: string;
     preview: ScalePreviewResponse;
@@ -539,14 +494,6 @@ const POS: React.FC = () => {
     // cajero vea QUÉ entró sin despegar la vista del producto que tiene en la mano.
     // El contador fuerza un render incluso al agregar dos veces el mismo SKU.
     const [lineaResaltada, setLineaResaltada] = useState<{ id: string; n: number } | null>(null);
-    // Anulación de comprobantes (DGI-5). Vive junto a la búsqueda de la factura
-    // en el modal de devoluciones porque es donde el cajero YA llega con la
-    // factura en la mano — no tiene sentido una segunda pantalla para buscar lo
-    // mismo. El motivo es obligatorio: termina en el expediente fiscal.
-    const [mostrarAnular, setMostrarAnular] = useState(false);
-    const [motivoAnulacion, setMotivoAnulacion] = useState('');
-    const [anulando, setAnulando] = useState(false);
-    const [errorAnulacion, setErrorAnulacion] = useState('');
     const contadorResaltado = useRef(0);
 
     // 🅿️ PARQUEO DE VENTAS STATE
@@ -621,7 +568,6 @@ const POS: React.FC = () => {
     const inlineCustomerSavingRef = useRef(false);
 
     const [showAddModal, setShowAddModal] = useState(false);
-    const [newProduct, setNewProduct] = useState({ name: '', sku: '', price: '', costPrice: '', stock: '', category: 'General' });
 
     // SHIFT STATE
     const [currentShift, setCurrentShift] = useState<Shift | null>(null);
@@ -648,7 +594,7 @@ const POS: React.FC = () => {
     const [declaredCash, setDeclaredCash] = useState('');
     // Fase D: dólares contados al cierre (solo se manda si hay algo que declarar)
     const [declaredCashUsd, setDeclaredCashUsd] = useState('');
-    const [shiftReport, setShiftReport] = useState<{ expected: number, diff: number } | null>(null);
+    const [shiftReport, setShiftReport] = useState<ShiftCloseResult | null>(null);
     const [shiftLoading, setShiftLoading] = useState(true);
 
     // UI State
@@ -658,21 +604,6 @@ const POS: React.FC = () => {
     const [showCustomerPicker, setShowCustomerPicker] = useState(false);
     const [showSaleDetails, setShowSaleDetails] = useState(false);
     const [showQuickDetails, setShowQuickDetails] = useState(false);
-
-    // 🔄 RETURNS STATE
-    const [showReturnModal, setShowReturnModal] = useState(false);
-    const [returnSaleSearch, setReturnSaleSearch] = useState('');
-    const [returnSaleData, setReturnSaleData] = useState<ReturnSaleData | null>(null);
-    const [returnItems, setReturnItems] = useState<ReturnItemSelection[]>([]);
-    const [returnReason, setReturnReason] = useState('');
-    const [returnProcessing, setReturnProcessing] = useState(false);
-    const [returnSearching, setReturnSearching] = useState(false);
-    const [returnErrors, setReturnErrors] = useState<Record<string, string>>({});
-    const [returnGeneralError, setReturnGeneralError] = useState('');
-    const [returnRefundMethod, setReturnRefundMethod] = useState<ReturnRefundMethod | ''>('');
-    // Se conserva entre reintentos (incluido "respuesta perdida") y solo se
-    // reemplaza cuando cambia la intención material o la devolución confirma.
-    const returnRequestRef = useRef<{ signature: string; clientEventId: string } | null>(null);
 
     // POST-SALE MODAL STATE
     const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
@@ -725,10 +656,6 @@ const POS: React.FC = () => {
 
     // EXCEL IMPORT MODAL STATE
     const [showImportModal, setShowImportModal] = useState(false);
-    const [importData, setImportData] = useState<any[]>([]);
-    const [importProgress, setImportProgress] = useState<{ step: string; pct: number } | null>(null);
-    const [importResult, setImportResult] = useState<{ created: number; updated: number; errors: string[] } | null>(null);
-    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // 💰 CASH MOVEMENT STATE
     const [showCashModal, setShowCashModal] = useState<'IN' | 'OUT' | null>(null);
@@ -1628,14 +1555,16 @@ const POS: React.FC = () => {
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({
                     shiftId: currentShift.id,
-                    declaredCash: parseFloat(declaredCash),
-                    ...(declaredCashUsd.trim() !== '' ? { declaredCashUsd: parseFloat(declaredCashUsd) } : {}),
+                    declaredCash: Number(toDecimal(declaredCash).toFixed(2)),
+                    ...(declaredCashUsd.trim() !== ''
+                        ? { declaredCashUsd: Number(toDecimal(declaredCashUsd).toFixed(2)) }
+                        : {}),
                 })
             });
             const data = await res.json();
             if (!res.ok) throw new Error(data.error);
 
-            setShiftReport({ expected: parseFloat(data.systemExpectedCash), diff: parseFloat(data.difference) });
+            setShiftReport(resolveShiftCloseResult(data, declaredCash));
             setCurrentShift(null);
         } catch (error: any) {
             showToast({
@@ -2503,46 +2432,6 @@ const POS: React.FC = () => {
         }
     }, [identidad]);
 
-    // Reset del panel de anulación. Se llama al cerrar el modal Y al buscar otra
-    // factura: sin esto, el cajero abre el panel para la factura A, escribe el
-    // motivo, busca la B (el buscador queda activo arriba) y el botón de anular
-    // sigue armado — con el motivo de A y apuntando a la B.
-    const limpiarAnulacion = useCallback(() => {
-        setMostrarAnular(false);
-        setMotivoAnulacion('');
-        setErrorAnulacion('');
-    }, []);
-
-    const anularFactura = useCallback(async () => {
-        if (!returnSaleData?.id) return;
-        setAnulando(true);
-        setErrorAnulacion('');
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const res = await fetch(`/api/sales/${returnSaleData.id}/cancel`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({ motivo: motivoAnulacion }),
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.error || 'No se pudo anular la factura');
-
-            // El stock volvió y la caja cambió: se refresca lo que el cajero
-            // tiene a la vista, en vez de dejarlo con números viejos.
-            await Promise.all([fetchProducts(), fetchCashBalance()]);
-            limpiarAnulacion();
-            setReturnSaleData(null);
-            setShowReturnModal(false);
-            setReturnItems([]);
-            setReturnSaleSearch('');
-            alert('Factura anulada. La mercadería volvió al inventario y la venta dejó de contar en los reportes.');
-        } catch (err: any) {
-            setErrorAnulacion(err?.message || 'No se pudo anular la factura');
-        } finally {
-            setAnulando(false);
-        }
-    }, [returnSaleData, motivoAnulacion, limpiarAnulacion, fetchProducts, fetchCashBalance]);
-
     const handleRemoveHeldCart = useCallback((heldId: string) => {
         setHeldCarts(prev => prev.filter(h => h.id !== heldId));
         setHeldCartToDiscard(null);
@@ -2684,7 +2573,7 @@ const POS: React.FC = () => {
                     if (showHeldCarts) { setShowHeldCarts(false); return; }
                     if (showQuickCreate) { if (!quickSaving) setShowQuickCreate(false); return; }
                     if (showAddModal) { setShowAddModal(false); return; }
-                    if (showImportModal) { closeImportModal(); return; }
+                    if (showImportModal) { setShowImportModal(false); return; }
                     if (showCloseShift) { setShowCloseShift(false); return; }
                     if (showMovementsList) { setShowMovementsList(false); return; }
                     if (showCashPreModal) { setShowCashPreModal(false); return; }
@@ -2936,166 +2825,6 @@ const POS: React.FC = () => {
         } finally {
             quickSavingRef.current = false;
             setQuickSaving(false);
-        }
-    };
-
-    // ==========================================
-    // EXCEL IMPORT
-    // ==========================================
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-
-        setImportProgress({ step: 'Leyendo archivo...', pct: 10 });
-        setImportResult(null);
-
-        const reader = new FileReader();
-        reader.onload = async (evt) => {
-            try {
-                const XLSX = await import('xlsx');
-                const data = evt.target?.result;
-                const workbook = XLSX.read(data, { type: 'binary' });
-                const sheetName = workbook.SheetNames[0];
-                const worksheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet);
-
-                setImportProgress({ step: `${jsonData.length} filas leídas`, pct: 30 });
-
-                // Parser compartido (utils/importProducts.ts): sinónimos de
-                // encabezados nicas, dinero con "C$"/comas, códigos en notación
-                // científica y duplicados — mismo criterio que Inventario.
-                const parsed = parseWorkbookRows(jsonData as Record<string, unknown>[]);
-                const valid = parsed.rows.filter(r => r.valid).map(r => ({
-                    sku: r.data.sku,
-                    name: r.data.nombre,
-                    price: r.data.precio,
-                    cost: r.data.costo,
-                    stock: r.data.stock,
-                    minStock: r.data.minStock,
-                    category: r.data.categoria,
-                    unit: r.data.unidad,
-                    excelRow: r.excelRow,
-                }));
-                const skipped = parsed.rows.length - valid.length;
-                setImportData(valid);
-                setImportProgress({
-                    step: skipped > 0
-                        ? `${valid.length} productos listos (${skipped} filas con problemas — usá el importador de Inventario para ver el detalle)`
-                        : `${valid.length} productos válidos listos`,
-                    pct: 50,
-                });
-            } catch (err: any) {
-                setImportProgress({ step: `Error: ${err.message}`, pct: 0 });
-            }
-        };
-        reader.readAsBinaryString(file);
-    };
-
-    const executeImport = async () => {
-        if (importData.length === 0) return;
-
-        // En lotes de 200 (R2.7): un solo POST reventaba contra el tope de 500
-        // del server al final, con 0 productos cargados.
-        setImportProgress({ step: 'Enviando al servidor...', pct: 60 });
-
-        const result = await importInChunks(
-            importData,
-            async (chunk) => {
-                const res = await fetch('/api/products/bulk', {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify({ products: chunk })
-                });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || `Error ${res.status}`);
-                return data;
-            },
-            (done, total) => setImportProgress({
-                step: `Importando… ${done} de ${total}`,
-                pct: 60 + Math.round((done / Math.max(1, total)) * 40),
-            }),
-        );
-
-        setImportProgress({ step: 'Completado', pct: 100 });
-        setImportResult({ created: result.created, updated: result.updated, errors: result.serverErrors });
-
-        // Refresh products list
-        fetchProducts();
-    };
-
-    const closeImportModal = () => {
-        setShowImportModal(false);
-        setImportData([]);
-        setImportProgress(null);
-        setImportResult(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-    };
-
-    // ==========================================
-    // LEGACY ADD (now creates in DB too)
-    // ==========================================
-    const handleCreateProduct = async (e: React.FormEvent) => {
-        e.preventDefault();
-        const validated = validateQuickProductDraft({
-            name: newProduct.name,
-            sku: newProduct.sku,
-            price: newProduct.price,
-            cost: newProduct.costPrice,
-            stock: newProduct.stock,
-        }, `SKU-${Date.now().toString(36).toUpperCase()}`);
-        if ('errors' in validated) {
-            showToast({
-                tone: 'warning',
-                title: 'Revisá el producto',
-                message: Object.values(validated.errors)[0] || 'Hay datos inválidos.',
-            });
-            return;
-        }
-
-        try {
-            const res = await fetch('/api/products', {
-                method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    ...validated.payload,
-                    category: newProduct.category,
-                })
-            });
-
-            const data = await res.json().catch(() => ({}));
-            if (!res.ok) {
-                const failure = normalizeApiFailure(res.status, data, 'No pudimos guardar el producto.');
-                throw new Error(Object.values(failure.fields)[0] || failure.message);
-            }
-
-            const productToAdd: Product = {
-                id: data.id,
-                name: data.name,
-                sku: data.sku,
-                category: data.category || newProduct.category,
-                price: data.price,
-                costPrice: data.cost,
-                stock: data.stock,
-                minStock: data.minStock,
-                ...mapApiProductImage(data),
-                wholesalePrice: data.wholesalePrice ?? null,
-                wholesaleMinQty: data.wholesaleMinQty ?? null,
-                packUnit: data.packUnit ?? null,
-                packSize: data.packSize ?? null,
-                packPrice: data.packPrice ?? null,
-                unit: data.unit ?? 'unidad',
-                saleMode: data.saleMode ?? 'COUNTED',
-                quantityStep: data.quantityStep ?? 1,
-            };
-            setProducts(prev => [productToAdd, ...prev]);
-            setShowAddModal(false);
-            setNewProduct({ name: '', sku: '', price: '', costPrice: '', stock: '', category: 'General' });
-        } catch (error: any) {
-            showToast({
-                tone: 'error',
-                title: 'No se pudo guardar el producto',
-                message: error?.message ? `Error: ${error.message}` : 'Reintentá en un momento.',
-            });
         }
     };
 
@@ -3755,217 +3484,6 @@ const POS: React.FC = () => {
         }
     };
 
-    const resetReturnFlow = () => {
-        returnRequestRef.current = null;
-        // El panel de anulación se limpia acá, con todo lo demás: si quedara
-        // armado, el cajero podría reabrir el modal, buscar OTRA factura y
-        // encontrarse el botón de anular listo con el motivo de la anterior.
-        limpiarAnulacion();
-        setShowReturnModal(false);
-        setReturnSaleData(null);
-        setReturnItems([]);
-        setReturnSaleSearch('');
-        setReturnReason('');
-        setReturnRefundMethod('');
-        setReturnErrors({});
-        setReturnGeneralError('');
-    };
-
-    const normalizeReturnSale = (raw: any): ReturnSaleData => {
-        if (!raw || typeof raw.id !== 'string' || !Array.isArray(raw.items)) {
-            throw new Error('La venta no devolvió líneas válidas');
-        }
-        const items = raw.items.map((item: any): ReturnSaleLine => {
-            const saleItemId = String(item.saleItemId ?? item.id ?? '').trim();
-            if (!saleItemId) throw new Error('Una línea vendida no tiene identidad para devolverla con seguridad');
-            const saleModeAtSale = item.saleModeAtSale === 'COUNTED' ? 'COUNTED' : 'MEASURED';
-            const unitAtSale = String(item.unitAtSale || 'unidad');
-            return {
-                saleItemId,
-                productId: String(item.productId ?? ''),
-                productNameAtSale: String(item.productNameAtSale || item.name || item.productId || 'Producto'),
-                unitAtSale,
-                saleModeAtSale,
-                presentationAtSale: item.presentationAtSale === 'PACK' ? 'PACK' : 'BASE',
-                presentationQuantityAtSale: String(item.presentationQuantityAtSale ?? item.quantity ?? '0'),
-                quantity: String(item.quantity ?? '0'),
-                returnedQuantity: String(item.returnedQuantity ?? '0'),
-                returnableQuantity: String(item.returnableQuantity ?? item.quantity ?? '0'),
-                quantityStep: String(item.quantityStep ?? (saleModeAtSale === 'COUNTED' ? '1' : '0.0001')),
-                priceAtSale: String(item.priceAtSale ?? '0'),
-                refundUnitPrice: String(item.refundUnitPrice ?? item.priceAtSale ?? '0'),
-                measurement: item.measurement ?? null,
-            };
-        });
-        const supportedRefundMethods = new Set<ReturnRefundMethod>(['CASH', 'CARD', 'QR', 'TRANSFER']);
-        const allowedRefundMethods = Array.isArray(raw.allowedRefundMethods)
-            ? raw.allowedRefundMethods.filter((method: unknown): method is ReturnRefundMethod => (
-                typeof method === 'string' && supportedRefundMethods.has(method as ReturnRefundMethod)
-            ))
-            : [];
-        return {
-            id: raw.id,
-            total: raw.total,
-            paymentMethod: String(raw.paymentMethod ?? ''),
-            balance: String(raw.balance ?? '0'),
-            allowedRefundMethods,
-            items,
-            // `?? null` y no `String(...)`: si la factura está vigente el campo
-            // viene null/undefined, y convertirlo a texto daría "null", que es
-            // truthy — la pantalla diría que TODA factura está anulada.
-            cancelledAt: raw.cancelledAt ?? null,
-        };
-    };
-
-    const searchReturnSale = async () => {
-        if (!returnSaleSearch.trim() || returnSearching) return;
-        setReturnSearching(true);
-        setReturnGeneralError('');
-        setReturnErrors({});
-        // Se busca OTRA factura: el panel de anulación vuelve a cero. Si no, el
-        // motivo escrito para la factura anterior quedaría apuntando a esta.
-        limpiarAnulacion();
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const response = await fetch(`/api/sales/search?q=${encodeURIComponent(returnSaleSearch.trim())}`, {
-                headers: { Authorization: `Bearer ${token}` },
-            });
-            const body = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(body.error || 'No pudimos buscar la venta');
-            const sale = normalizeReturnSale(body);
-            setReturnSaleData(sale);
-            setReturnItems(sale.items.map((item) => ({ ...item, quantityDraft: '0' })));
-            setReturnRefundMethod(sale.allowedRefundMethods.length === 1 ? sale.allowedRefundMethods[0] : '');
-        } catch (error) {
-            setReturnSaleData(null);
-            setReturnItems([]);
-            setReturnRefundMethod('');
-            setReturnGeneralError(error instanceof Error ? error.message : 'No pudimos buscar la venta');
-        } finally {
-            setReturnSearching(false);
-        }
-    };
-
-    const validateReturnDraft = (item: ReturnItemSelection): { quantity: Decimal | null; error: string | null } => {
-        let parsed: Decimal;
-        try {
-            parsed = new Decimal(item.quantityDraft.trim() || '0');
-        } catch {
-            return { quantity: null, error: 'Ingresá una cantidad decimal válida' };
-        }
-        if (!parsed.isFinite() || parsed.isNegative()) return { quantity: null, error: 'La cantidad no puede ser negativa' };
-        if (parsed.isZero()) return { quantity: parsed, error: null };
-        try {
-            const validated = validateQuantity(parsed.toString(), {
-                saleMode: item.saleModeAtSale,
-                quantityStep: item.quantityStep,
-            });
-            const maximum = new Decimal(item.returnableQuantity);
-            if (validated.greaterThan(maximum)) {
-                return { quantity: null, error: `Máximo disponible: ${formatQuantityValue(maximum)} ${item.unitAtSale}` };
-            }
-            return { quantity: validated, error: null };
-        } catch (error) {
-            return { quantity: null, error: error instanceof Error ? error.message : 'Cantidad inválida' };
-        }
-    };
-
-    const setReturnQuantity = (saleItemId: string, raw: string) => {
-        const quantityDraft = sanitizeDecimalInput(raw);
-        setReturnItems(previous => previous.map(item => item.saleItemId === saleItemId ? { ...item, quantityDraft } : item));
-        setReturnGeneralError('');
-        setReturnErrors(previous => {
-            if (!previous[saleItemId]) return previous;
-            const next = { ...previous };
-            delete next[saleItemId];
-            return next;
-        });
-    };
-
-    const stepReturnQuantity = (item: ReturnItemSelection, direction: -1 | 1) => {
-        const current = (() => {
-            try { return new Decimal(item.quantityDraft || 0); }
-            catch { return new Decimal(0); }
-        })();
-        const step = new Decimal(item.quantityStep);
-        const maximum = new Decimal(item.returnableQuantity);
-        const next = Decimal.max(0, Decimal.min(maximum, current.plus(step.mul(direction))));
-        setReturnQuantity(item.saleItemId, formatQuantityValue(next));
-    };
-
-    const returnEstimate = returnItems.reduce((total, item) => {
-        const validation = validateReturnDraft(item);
-        return validation.quantity?.greaterThan(0)
-            ? total.plus(validation.quantity.mul(item.refundUnitPrice))
-            : total;
-    }, new Decimal(0)).toDecimalPlaces(2);
-    const returnCreditReduction = returnSaleData?.paymentMethod === 'CREDIT'
-        ? Decimal.min(returnEstimate, Decimal.max(toDecimal(returnSaleData.balance), 0)).toDecimalPlaces(2)
-        : new Decimal(0);
-    const returnSettledRefund = returnEstimate.minus(returnCreditReduction).toDecimalPlaces(2);
-    const returnRequiresRefundMethod = returnSaleData?.paymentMethod === 'CREDIT'
-        && returnSettledRefund.greaterThan(0);
-
-    const submitReturn = async () => {
-        if (!returnSaleData || returnProcessing) return;
-        const errors: Record<string, string> = {};
-        const selected: Array<{ saleItemId: string; quantity: string }> = [];
-        for (const item of returnItems) {
-            const validation = validateReturnDraft(item);
-            if (validation.error) errors[item.saleItemId] = validation.error;
-            else if (validation.quantity?.greaterThan(0)) {
-                selected.push({ saleItemId: item.saleItemId, quantity: validation.quantity.toString() });
-            }
-        }
-        if (selected.length === 0) setReturnGeneralError('Seleccioná al menos una cantidad para devolver');
-        else if (returnReason.trim().length < 3) setReturnGeneralError('Escribí un motivo de al menos 3 caracteres');
-        else if (returnRequiresRefundMethod && !returnRefundMethod) setReturnGeneralError('Elegí cómo reembolsar el importe ya cobrado');
-        else setReturnGeneralError('');
-        setReturnErrors(errors);
-        if (
-            Object.keys(errors).length > 0
-            || selected.length === 0
-            || returnReason.trim().length < 3
-            || (returnRequiresRefundMethod && !returnRefundMethod)
-        ) return;
-
-        setReturnProcessing(true);
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const materialPayload = {
-                saleId: returnSaleData.id,
-                items: [...selected].sort((left, right) => left.saleItemId.localeCompare(right.saleItemId)),
-                reason: returnReason.trim(),
-                ...(returnRequiresRefundMethod ? { refundMethod: returnRefundMethod } : {}),
-            };
-            const signature = JSON.stringify(materialPayload);
-            if (!returnRequestRef.current || returnRequestRef.current.signature !== signature) {
-                returnRequestRef.current = { signature, clientEventId: generateOfflineId() };
-            }
-            const response = await fetch('/api/returns', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-                body: JSON.stringify({
-                    ...materialPayload,
-                    clientEventId: returnRequestRef.current.clientEventId,
-                }),
-            });
-            const body = await response.json().catch(() => ({}));
-            if (!response.ok) throw new Error(body.error || 'No pudimos procesar la devolución');
-            showToast({
-                tone: 'success',
-                title: 'Devolución registrada',
-                message: `Devolución procesada por ${formatMoney(Number(body.total ?? returnEstimate.toString()))}. Stock restaurado.`,
-            });
-            resetReturnFlow();
-            await fetchProducts();
-        } catch (error) {
-            setReturnGeneralError(error instanceof Error ? error.message : 'No pudimos procesar la devolución');
-        } finally {
-            setReturnProcessing(false);
-        }
-    };
-
     if (shiftLoading) return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin" /> Cargando Sistema...</div>;
 
     return (
@@ -4233,11 +3751,12 @@ const POS: React.FC = () => {
                                             </button>
                                         )}
                                         <button
-                                            onClick={() => { setShowCashActions(false); window.location.assign('/app/sales'); }}
+                                            onClick={() => { setShowCashActions(false); navigate('/app/sales'); }}
                                             className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                            title="Solicitá y aprobá devoluciones o anulaciones antes de ejecutarlas"
                                         >
                                             <RefreshCw size={16} className="text-slate-400 shrink-0" />
-                                            <span>Ventas y devoluciones</span>
+                                            <span>Correcciones y aprobaciones</span>
                                         </button>
                                         <button
                                             onClick={() => { openHeldCarts(); setShowCashActions(false); }}
@@ -4979,10 +4498,15 @@ const POS: React.FC = () => {
 
             {showCloseShift && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby={shiftReport ? 'shift-close-report-title' : 'shift-close-form-title'}
+                        className={`bg-surface-900 rounded-xl shadow-2xl w-full overflow-hidden animate-in zoom-in duration-200 motion-reduce:animate-none ${shiftReport ? 'max-w-2xl' : 'max-w-md'}`}
+                    >
                         {!shiftReport ? (
                             <div className="p-8">
-                                <h2 className="text-xl font-bold text-slate-100 mb-1">Cierre de Caja (Ciego)</h2>
+                                <h2 id="shift-close-form-title" className="text-xl font-bold text-slate-100 mb-1">Cierre de Caja (Ciego)</h2>
                                 <p className="text-slate-500 text-sm mb-6">Contá el dinero físico e ingresalo abajo.</p>
                                 <form onSubmit={handleCloseShift}>
                                     <label className="text-xs font-mono font-bold text-slate-500">EFECTIVO CONTADO</label>
@@ -5022,93 +4546,17 @@ const POS: React.FC = () => {
                                 </form>
                             </div>
                         ) : (
-                            <div className="bg-surface-800/40">
-                                <div className="p-8 text-center border-b border-white/[0.06] bg-surface-900 text-slate-100">
-                                    <div className={`w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 ${shiftReport.diff >= 0 ? 'bg-green-500/15 text-green-400' : 'bg-red-500/15 text-red-400'}`}>
-                                        {shiftReport.diff >= 0 ? <Check size={32} /> : <AlertTriangle size={32} />}
-                                    </div>
-                                    <h2 className="text-2xl font-bold text-slate-100">Resumen de Cierre</h2>
-                                    <p className={`text-lg font-bold mt-2 ${shiftReport.diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                                        {shiftReport.diff >= 0 ? 'Cuadre exitoso' : 'Discrepancia de efectivo'}
-                                    </p>
-                                </div>
-                                <div className="p-8 space-y-4">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Esperado (Sistema)</span>
-                                        <span className="font-bold nx-num">{formatMoney(shiftReport.expected)}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-500">Declarado (Cajero)</span>
-                                        <span className="font-bold nx-num">{formatMoney(parseFloat(declaredCash))}</span>
-                                    </div>
-                                    <div className="border-t border-white/[0.06] pt-3 flex justify-between text-base text-slate-100">
-                                        <span className="font-bold text-slate-200">Diferencia</span>
-                                        <span className={`font-mono font-bold ${shiftReport.diff < 0 ? 'text-red-500' : 'text-green-500'}`}>
-                                            {shiftReport.diff > 0 ? '+' : ''}{shiftReport.diff.toFixed(2)}
-                                        </span>
-                                    </div>
-                                    <button onClick={finishClose} className="w-full mt-6 py-3 bg-slate-900 text-white font-bold rounded-lg hover:bg-slate-800">
-                                        FINALIZAR TURNO
-                                    </button>
-                                </div>
-                            </div>
+                            <ShiftCloseReport
+                                result={shiftReport}
+                                token={localStorage.getItem('nortex_token')}
+                                onFinish={finishClose}
+                                onPreviewError={(message) => showToast({
+                                    tone: 'error',
+                                    title: 'No se pudo abrir el reporte',
+                                    message,
+                                })}
+                            />
                         )}
-                    </div>
-                </div>
-            )}
-
-            {/* ADD PRODUCT MODAL (Full) */}
-            {showAddModal && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] text-slate-100">
-                        <div className="p-5 border-b border-white/[0.04] flex justify-between items-center bg-surface-800/40 text-slate-100">
-                            <h3 className="font-bold text-slate-100 flex items-center gap-2">
-                                <PackagePlus size={20} className="text-nortex-500" /> Nuevo Producto
-                            </h3>
-                            <button onClick={() => setShowAddModal(false)} className="text-slate-400 hover:text-red-500 transition-colors">
-                                <X size={24} />
-                            </button>
-                        </div>
-
-                        <form onSubmit={handleCreateProduct} className="p-6 space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">NOMBRE DEL PRODUCTO *</label>
-                                    <input type="text" required {...validacionEs('Escribí el nombre del producto.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
-                                        placeholder="Ej. Taladro Percutor 500W" value={newProduct.name} onChange={e => setNewProduct({ ...newProduct, name: e.target.value })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">SKU / CÓDIGO DE BARRAS</label>
-                                    <input type="text" className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100"
-                                        placeholder="Escaneá o escribí" value={newProduct.sku} onChange={e => setNewProduct({ ...newProduct, sku: e.target.value.toUpperCase() })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">CATEGORÍA</label>
-                                    <select className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-900"
-                                        value={newProduct.category} onChange={e => setNewProduct({ ...newProduct, category: e.target.value })} >
-                                        <option>General</option><option>Construcción</option><option>Ferretería</option><option>Herramientas</option>
-                                    </select>
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">PRECIO VENTA *</label>
-                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el precio de venta.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
-                                        placeholder="0.00" value={newProduct.price} onChange={e => setNewProduct({ ...newProduct, price: sanitizeDecimalInput(e.target.value) })} />
-                                </div>
-                                <div>
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">COSTO (COMPRA) *</label>
-                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el costo del producto.')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 bg-surface-800/40 text-slate-100 font-mono tabular-nums"
-                                        placeholder="0.00" value={newProduct.costPrice} onChange={e => setNewProduct({ ...newProduct, costPrice: sanitizeDecimalInput(e.target.value) })} />
-                                </div>
-                                <div className="col-span-2">
-                                    <label className="block text-xs font-mono text-slate-500 mb-1">STOCK INICIAL *</label>
-                                    <input type="text" inputMode="decimal" required {...validacionEs('Ingresá el stock inicial (puede ser 0).')} className="w-full px-3 py-2 border border-white/10 rounded-lg focus:outline-none focus:ring-2 focus:ring-nortex-500 text-slate-100 font-mono tabular-nums"
-                                        placeholder="0" value={newProduct.stock} onChange={e => setNewProduct({ ...newProduct, stock: sanitizeDecimalInput(e.target.value) })} />
-                                </div>
-                            </div>
-                            <button type="submit" className="btn-primary w-full py-3 flex items-center justify-center gap-2">
-                                <Save size={18} /> Guardar en Inventario
-                            </button>
-                        </form>
                     </div>
                 </div>
             )}
@@ -5272,141 +4720,6 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            {/* ==========================================
-          EXCEL IMPORT MODAL
-         ========================================== */}
-            {showImportModal && (
-                <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06]">
-                        <div className="bg-gradient-to-r from-blue-600 to-indigo-600 px-5 py-4 flex items-center justify-between">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <Upload size={18} /> Importar Productos (Excel/CSV)
-                            </h3>
-                            <button onClick={closeImportModal} className="text-white/80 hover:text-white">
-                                <X size={20} />
-                            </button>
-                        </div>
-
-                        <div className="p-6 space-y-4">
-                            {/* Instructions */}
-                            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
-                                <p className="text-xs text-blue-300 font-medium mb-1">Columnas esperadas en el archivo:</p>
-                                <p className="text-[11px] text-blue-400 font-mono">Nombre | SKU | Precio | Costo | Stock | Categoria | Unidad</p>
-                                <p className="text-[10px] text-blue-400 mt-1">Acepta .xlsx y .csv. Los nombres de columna son flexibles (Nombre/name/producto, etc.)</p>
-                            </div>
-
-                            {/* File Input */}
-                            <div>
-                                <input
-                                    ref={fileInputRef}
-                                    type="file"
-                                    accept=".xlsx,.xls,.csv"
-                                    onChange={handleFileUpload}
-                                    className="w-full text-sm text-slate-300 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:font-bold file:bg-blue-500/15 file:text-blue-400 hover:file:bg-blue-200 file:cursor-pointer"
-                                />
-                            </div>
-
-                            {/* Progress Bar */}
-                            {importProgress && (
-                                <div>
-                                    <div className="flex justify-between text-xs mb-1">
-                                        <span className="text-slate-300 font-medium">{importProgress.step}</span>
-                                        <span className="text-slate-500">{importProgress.pct}%</span>
-                                    </div>
-                                    <div className="w-full bg-white/[0.06] rounded-full h-2.5 overflow-hidden">
-                                        <div
-                                            className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-[width] duration-500"
-                                            style={{ width: `${importProgress.pct}%` }}
-                                        />
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Preview */}
-                            {importData.length > 0 && !importResult && (
-                                <div>
-                                    <p className="text-sm font-bold text-slate-200 mb-2">Vista previa ({importData.length} productos):</p>
-                                    <div className="max-h-40 overflow-y-auto border border-white/[0.06] rounded-lg">
-                                        <table className="w-full text-xs">
-                                            <thead className="bg-white/[0.04] sticky top-0">
-                                                <tr>
-                                                    <th className="text-left px-2 py-1.5 text-slate-300">SKU</th>
-                                                    <th className="text-left px-2 py-1.5 text-slate-300">Nombre</th>
-                                                    <th className="text-right px-2 py-1.5 text-slate-300">Precio</th>
-                                                    <th className="text-right px-2 py-1.5 text-slate-300">Stock</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody className="divide-y divide-white/[0.04]">
-                                                {importData.slice(0, 10).map((row, i) => (
-                                                    <tr key={i} className="hover:bg-surface-800/40">
-                                                        <td className="px-2 py-1 font-mono text-slate-500">{row.sku}</td>
-                                                        <td className="px-2 py-1 text-slate-200">{row.name}</td>
-                                                        <td className="px-2 py-1 text-right text-slate-200">{row.price}</td>
-                                                        <td className="px-2 py-1 text-right text-slate-200">{row.stock}</td>
-                                                    </tr>
-                                                ))}
-                                                {importData.length > 10 && (
-                                                    <tr>
-                                                        <td colSpan={4} className="text-center py-1 text-slate-400 text-[10px]">
-                                                            ... y {importData.length - 10} mas
-                                                        </td>
-                                                    </tr>
-                                                )}
-                                            </tbody>
-                                        </table>
-                                    </div>
-
-                                    <button
-                                        onClick={executeImport}
-                                        className="w-full mt-3 py-3 rounded-lg bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-bold hover:from-blue-700 hover:to-indigo-700 shadow-lg flex items-center justify-center gap-2"
-                                    >
-                                        <Upload size={18} /> Importar {importData.length} Productos
-                                    </button>
-                                </div>
-                            )}
-
-                            {/* Results */}
-                            {importResult && (
-                                <div className="space-y-3">
-                                    <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-4 text-center">
-                                        <Check size={32} className="text-emerald-500 mx-auto mb-2" />
-                                        <p className="font-bold text-emerald-300">Importación Completada</p>
-                                        <div className="flex justify-center gap-6 mt-2">
-                                            <div>
-                                                <p className="text-2xl font-bold text-emerald-400">{importResult.created}</p>
-                                                <p className="text-[10px] text-emerald-400">Creados</p>
-                                            </div>
-                                            <div>
-                                                <p className="text-2xl font-bold text-blue-400">{importResult.updated}</p>
-                                                <p className="text-[10px] text-blue-400">Actualizados</p>
-                                            </div>
-                                        </div>
-                                    </div>
-
-                                    {importResult.errors.length > 0 && (
-                                        <div className="bg-red-500/10 border border-red-500/20 rounded-lg p-3">
-                                            <p className="text-xs font-bold text-red-400 mb-1">Errores ({importResult.errors.length}):</p>
-                                            <ul className="text-[10px] text-red-400 space-y-0.5 max-h-20 overflow-y-auto">
-                                                {importResult.errors.map((err, i) => (
-                                                    <li key={i}>{err}</li>
-                                                ))}
-                                            </ul>
-                                        </div>
-                                    )}
-
-                                    <button
-                                        onClick={closeImportModal}
-                                        className="w-full py-3 rounded-lg bg-slate-800 text-white font-bold hover:bg-slate-900"
-                                    >
-                                        Cerrar
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
             <PosCatalogPane
                 products={products}
                 quantitiesByProduct={cart.reduce((map, item) => map.set(item.id, (map.get(item.id) ?? 0) + item.quantity), new Map<string, number>())}
@@ -5427,8 +4740,19 @@ const POS: React.FC = () => {
                 avisarProductoAgotado={avisarProductoAgotado}
                 fetchProducts={fetchProducts}
                 openQuickCreate={openQuickCreate}
-                onFullCreate={() => setShowAddModal(true)}
-                onImport={() => setShowImportModal(true)}
+                adminTools={<POSCatalogAdminTools
+                    guidedSimpleMode={guidedSimpleMode}
+                    headers={headers}
+                    showAddModal={showAddModal}
+                    showImportModal={showImportModal}
+                    onOpenAddModal={() => setShowAddModal(true)}
+                    onCloseAddModal={() => setShowAddModal(false)}
+                    onOpenImportModal={() => setShowImportModal(true)}
+                    onCloseImportModal={() => setShowImportModal(false)}
+                    onProductCreated={(product) => setProducts(previous => [product, ...previous])}
+                    onProductsReload={fetchProducts}
+                    showToast={showToast}
+                />}
                 onPractice={(source) => navigate(`/demo?source=${source}`)}
             />
 
@@ -6123,7 +5447,7 @@ const POS: React.FC = () => {
                             cashReceived={cashReceived}
                             cashOpen={showCashPreModal}
                             processing={processing}
-                            disabled={cart.length === 0 || turnoAjeno}
+                            disabled={cart.length === 0 || turnoAjeno || Object.keys(quantityErrors).length > 0}
                             onCashReceivedChange={setCashReceived}
                             onOpenCash={openCashCheckout}
                             onCancelCash={() => {
@@ -6213,298 +5537,6 @@ const POS: React.FC = () => {
             </PosTicketShell>
 
             {/* =============================== */}
-            {/* 🔄 RETURNS MODAL                */}
-            {/* =============================== */}
-            {showReturnModal && (
-                <div
-                    className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4"
-                    role="dialog"
-                    aria-modal="true"
-                    aria-labelledby="return-modal-title"
-                >
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] max-h-[90dvh] flex flex-col">
-                        <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 flex items-center justify-between">
-                            <h3 id="return-modal-title" className="text-lg font-bold text-white flex items-center gap-2"><RefreshCw size={20} /> Devolución de Producto</h3>
-                            <button onClick={resetReturnFlow} className="text-white/80 hover:text-white" aria-label="Cerrar devolución"><X size={20} /></button>
-                        </div>
-                        <div className="p-5 flex-1 overflow-y-auto space-y-4">
-                            {/* Sale Search */}
-                            <div>
-                                <label className="text-xs font-bold text-slate-300 mb-1 block">Buscar Venta por ID</label>
-                                <form
-                                    className="flex gap-2"
-                                    onSubmit={(event) => { event.preventDefault(); void searchReturnSale(); }}
-                                >
-                                    <input
-                                        type="text"
-                                        placeholder="Ej: clp8..."
-                                        className="flex-1 px-3 py-2 border border-white/10 rounded-lg text-sm outline-none focus:border-amber-500 text-slate-100"
-                                        value={returnSaleSearch}
-                                        onChange={e => setReturnSaleSearch(e.target.value)}
-                                    />
-                                    <button
-                                        type="submit"
-                                        disabled={returnSearching || !returnSaleSearch.trim()}
-                                        className="px-4 py-2 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 text-sm disabled:opacity-50"
-                                        aria-label="Buscar venta"
-                                    >
-                                        {returnSearching ? <Loader2 size={16} className="animate-spin" /> : <Search size={16} />}
-                                    </button>
-                                </form>
-                                {returnGeneralError && !returnSaleData && <p role="alert" className="mt-2 text-xs text-danger">{returnGeneralError}</p>}
-                            </div>
-
-                            {/* Sale Found */}
-                            {returnSaleData && (
-                                <>
-                                    <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.06]">
-                                        <div className="flex justify-between text-xs mb-1">
-                                            <span className="text-slate-500">ID:</span>
-                                            <span className="font-mono font-bold text-slate-200">{returnSaleData.id.slice(0, 12)}...</span>
-                                        </div>
-                                        <div className="flex justify-between text-xs mb-1">
-                                            <span className="text-slate-500">Total:</span>
-                                            <span className="font-bold text-slate-100">{formatMoney(Number(returnSaleData.total))}</span>
-                                        </div>
-                                        <div className="flex justify-between text-xs">
-                                            <span className="text-slate-500">Método:</span>
-                                            <span className="text-slate-200">{returnSaleData.paymentMethod}</span>
-                                        </div>
-                                    </div>
-
-                                    {/* Una factura YA anulada no ofrece ninguno de los dos
-                                        caminos. Devolver sobre ella sumaría el stock por
-                                        segunda vez (la anulación ya lo devolvió) — el
-                                        backend lo rechaza, pero mostrar el formulario y
-                                        recién ahí decir que no es una pérdida de tiempo
-                                        con un cliente esperando. */}
-                                    {returnSaleData.cancelledAt ? (
-                                        <div className="rounded-control border border-danger/30 bg-danger-soft p-3 flex gap-2.5">
-                                            <Ban size={16} className="text-danger shrink-0 mt-0.5" />
-                                            <div>
-                                                <p className="text-[12px] font-bold text-danger">Esta factura está anulada</p>
-                                                <p className="text-[11px] text-slate-300 leading-snug mt-1">
-                                                    La mercadería ya volvió al inventario y la venta ya no cuenta en los
-                                                    reportes. No hay nada que devolver.
-                                                </p>
-                                            </div>
-                                        </div>
-                                    ) : (
-                                    <>
-
-                                    {/* ── ANULAR LA FACTURA (DGI-5) ─────────────────────
-                                        Distinto de devolver: devolver es mercadería que
-                                        vuelve de una venta que SÍ ocurrió; anular es
-                                        decir que la factura no debió emitirse. Se ofrece
-                                        acá porque el cajero ya buscó la factura, pero
-                                        separado y en rojo — no es la acción de todos los
-                                        días y no debe confundirse con la devolución. */}
-                                    {!mostrarAnular ? (
-                                        <button
-                                            onClick={() => { setMostrarAnular(true); setErrorAnulacion(''); }}
-                                            className="w-full text-[12px] text-danger hover:bg-danger-soft rounded-control py-2 transition-colors flex items-center justify-center gap-1.5"
-                                        >
-                                            <Ban size={14} /> Esta factura no debió emitirse — anularla
-                                        </button>
-                                    ) : (
-                                        <div className="rounded-control border border-danger/30 bg-danger-soft p-3 space-y-2">
-                                            <p className="text-[12px] font-bold text-danger flex items-center gap-1.5">
-                                                <AlertTriangle size={14} /> Anular la factura completa
-                                            </p>
-                                            <p className="text-[11px] text-slate-300 leading-snug">
-                                                La mercadería vuelve al inventario y la venta deja de contar en los
-                                                reportes y en la declaración. El comprobante NO se borra: queda
-                                                marcado como anulado y su número no se reutiliza.
-                                            </p>
-                                            <textarea
-                                                value={motivoAnulacion}
-                                                onChange={e => setMotivoAnulacion(e.target.value)}
-                                                rows={2}
-                                                maxLength={500}
-                                                placeholder="¿Por qué se anula? (ej: cobro duplicado al mismo cliente)"
-                                                aria-label="Motivo de la anulación"
-                                                className="w-full text-[12px] bg-surface-900 border border-white/10 rounded-control px-2 py-1.5 text-slate-100 outline-none focus:border-danger placeholder:text-slate-500"
-                                            />
-                                            {errorAnulacion && (
-                                                <p role="alert" className="text-[11px] text-danger font-medium">{errorAnulacion}</p>
-                                            )}
-                                            <div className="flex gap-2">
-                                                <button
-                                                    onClick={() => { setMostrarAnular(false); setMotivoAnulacion(''); setErrorAnulacion(''); }}
-                                                    className="flex-1 h-touch rounded-control bg-white/[0.06] text-slate-200 text-[12px] font-bold hover:bg-white/[0.12] transition-colors"
-                                                >
-                                                    Mejor no
-                                                </button>
-                                                <button
-                                                    onClick={anularFactura}
-                                                    disabled={anulando || motivoAnulacion.trim().length < 10}
-                                                    className="flex-1 h-touch rounded-control bg-danger text-white text-[12px] font-bold hover:opacity-90 transition-opacity disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5"
-                                                >
-                                                    {anulando ? <Loader2 size={14} className="animate-spin" /> : <Ban size={14} />}
-                                                    Anular factura
-                                                </button>
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {/* Items Selection */}
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-300 mb-2 block">Seleccionar Items a Devolver</label>
-                                        <div className="space-y-2">
-                                            {returnItems.map((item) => {
-                                                const errorId = `return-error-${item.saleItemId}`;
-                                                const exhausted = new Decimal(item.returnableQuantity).lessThanOrEqualTo(0);
-                                                const currentQuantity = toDecimal(item.quantityDraft);
-                                                return (
-                                                    <div key={item.saleItemId} className="bg-surface-800/40 p-3 rounded-lg border border-white/[0.04]">
-                                                        <div className="flex items-start justify-between gap-3">
-                                                            <div className="flex-1 min-w-0">
-                                                                <p className="text-sm font-semibold text-slate-100 truncate">{item.productNameAtSale}</p>
-                                                                <p className="mt-0.5 text-[11px] text-slate-400">
-                                                                    {item.presentationAtSale === 'PACK'
-                                                                        ? `${formatQuantityValue(item.presentationQuantityAtSale)} empaque(s) · ${formatQuantityValue(item.quantity)} ${item.unitAtSale}`
-                                                                        : `${formatQuantityValue(item.quantity)} ${item.unitAtSale}`}
-                                                                </p>
-                                                                {item.measurement && (
-                                                                    <p className="mt-0.5 text-[11px] text-sky-300">
-                                                                        Medición: {formatQuantityValue(item.measurement.sourceValue)} {item.measurement.sourceUnit}
-                                                                    </p>
-                                                                )}
-                                                                <p className="mt-1 text-[11px] text-slate-400">
-                                                                    {formatMoney(Number(item.refundUnitPrice))} / {item.unitAtSale} · Devuelto {formatQuantityValue(item.returnedQuantity)} · Disponible {formatQuantityValue(item.returnableQuantity)}
-                                                                </p>
-                                                            </div>
-                                                            <span className={`shrink-0 rounded px-2 py-0.5 text-[10px] font-bold ${item.presentationAtSale === 'PACK' ? 'bg-violet-500/15 text-violet-300' : 'bg-slate-500/15 text-slate-300'}`}>
-                                                                {item.presentationAtSale === 'PACK' ? 'EMPAQUE' : 'BASE'}
-                                                            </span>
-                                                        </div>
-
-                                                        {exhausted ? (
-                                                            <p className="mt-2 text-xs font-medium text-slate-500">Ya fue devuelto por completo.</p>
-                                                        ) : (
-                                                            <div className="mt-3">
-                                                                <div className="flex items-center gap-2">
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => stepReturnQuantity(item, -1)}
-                                                                        disabled={currentQuantity.lessThanOrEqualTo(0)}
-                                                                        className="w-9 h-9 flex items-center justify-center hover:bg-white/[0.06] rounded-lg text-slate-300 disabled:opacity-30"
-                                                                        aria-label={`Restar ${formatQuantityValue(item.quantityStep)} ${item.unitAtSale} de ${item.productNameAtSale}`}
-                                                                    ><Minus size={14} /></button>
-                                                                    <div className="flex-1">
-                                                                        <input
-                                                                            type="text"
-                                                                            inputMode="decimal"
-                                                                            value={item.quantityDraft}
-                                                                            onChange={(event) => setReturnQuantity(item.saleItemId, event.target.value)}
-                                                                            onBlur={() => {
-                                                                                const validation = validateReturnDraft(item);
-                                                                                setReturnErrors(previous => {
-                                                                                    const next = { ...previous };
-                                                                                    if (validation.error) next[item.saleItemId] = validation.error;
-                                                                                    else delete next[item.saleItemId];
-                                                                                    return next;
-                                                                                });
-                                                                            }}
-                                                                            className="w-full h-9 px-2 rounded-lg border border-white/10 bg-surface-950 text-center text-sm font-bold text-slate-100 outline-none focus:border-amber-500"
-                                                                            aria-label={`Cantidad a devolver de ${item.productNameAtSale} en ${item.unitAtSale}`}
-                                                                            aria-invalid={!!returnErrors[item.saleItemId] || undefined}
-                                                                            aria-describedby={returnErrors[item.saleItemId] ? errorId : undefined}
-                                                                        />
-                                                                        <p className="mt-1 text-center text-[10px] text-slate-500">Paso {formatQuantityValue(item.quantityStep)} {item.unitAtSale}</p>
-                                                                    </div>
-                                                                    <button
-                                                                        type="button"
-                                                                        onClick={() => stepReturnQuantity(item, 1)}
-                                                                        disabled={currentQuantity.greaterThanOrEqualTo(new Decimal(item.returnableQuantity))}
-                                                                        className="w-9 h-9 flex items-center justify-center hover:bg-white/[0.06] rounded-lg text-slate-300 disabled:opacity-30"
-                                                                        aria-label={`Sumar ${formatQuantityValue(item.quantityStep)} ${item.unitAtSale} a ${item.productNameAtSale}`}
-                                                                    ><Plus size={14} /></button>
-                                                                </div>
-                                                                {returnErrors[item.saleItemId] && (
-                                                                    <p id={errorId} role="alert" className="mt-1 text-xs text-danger">{returnErrors[item.saleItemId]}</p>
-                                                                )}
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                );
-                                            })}
-                                        </div>
-                                    </div>
-
-                                    {/* Reason */}
-                                    <div>
-                                        <label className="text-xs font-bold text-slate-300 mb-1 block">Motivo</label>
-                                        <input
-                                            type="text"
-                                            placeholder="Ej: Producto defectuoso"
-                                            className="w-full px-3 py-2 border border-white/10 rounded-lg text-sm outline-none focus:border-amber-500 text-slate-100"
-                                            value={returnReason}
-                                            onChange={e => { setReturnReason(e.target.value); setReturnGeneralError(''); }}
-                                            onKeyDown={event => {
-                                                if (event.key === 'Enter') {
-                                                    event.preventDefault();
-                                                    void submitReturn();
-                                                }
-                                            }}
-                                            aria-label="Motivo de la devolución"
-                                        />
-                                    </div>
-
-                                    {returnRequiresRefundMethod && (
-                                        <div className="rounded-lg border border-sky-500/20 bg-sky-500/10 p-3">
-                                            <label htmlFor="return-refund-method" className="text-xs font-bold text-sky-200 mb-1 block">
-                                                Canal del reembolso cobrado
-                                            </label>
-                                            <p className="mb-2 text-[11px] text-slate-400">
-                                                Esta devolución reduce {formatMoney(returnCreditReduction.toNumber())} de la cuenta por cobrar y devuelve {formatMoney(returnSettledRefund.toNumber())} por el canal seleccionado.
-                                            </p>
-                                            <select
-                                                id="return-refund-method"
-                                                value={returnRefundMethod}
-                                                onChange={(event) => {
-                                                    setReturnRefundMethod(event.target.value as ReturnRefundMethod | '');
-                                                    setReturnGeneralError('');
-                                                }}
-                                                className="w-full rounded-lg border border-white/10 bg-surface-950 px-3 py-2 text-sm text-slate-100 outline-none focus:border-sky-500"
-                                                aria-required="true"
-                                            >
-                                                <option value="">Seleccioná cómo devolver</option>
-                                                {returnSaleData.allowedRefundMethods.map((method) => (
-                                                    <option key={method} value={method}>{RETURN_REFUND_METHOD_LABELS[method]}</option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                    )}
-
-                                    {/* Confirm */}
-                                    <div>
-                                        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3 mb-3">
-                                            <div className="flex justify-between font-bold">
-                                                <span className="text-amber-300">Total estimado:</span>
-                                                <span className="text-amber-400">{formatMoney(returnEstimate.toNumber())}</span>
-                                            </div>
-                                        </div>
-                                        {returnGeneralError && <p role="alert" className="mb-2 text-xs text-danger">{returnGeneralError}</p>}
-                                        <button
-                                            type="button"
-                                            onClick={() => void submitReturn()}
-                                            disabled={returnProcessing}
-                                            className="w-full py-3 bg-amber-500 text-white font-bold rounded-lg hover:bg-amber-600 disabled:opacity-50 flex items-center justify-center gap-2"
-                                        >
-                                            {returnProcessing ? <Loader2 size={18} className="animate-spin" /> : <RefreshCw size={18} />}
-                                            Confirmar Devolución
-                                        </button>
-                                    </div>
-                                    </>
-                                    )}
-                                </>
-                            )}
-                        </div>
-                    </div>
-                </div>
-            )}
-
             {/* =============================== */}
             {/* 🔴 CREDIT THERMOMETER PANEL       */}
             {/* =============================== */}

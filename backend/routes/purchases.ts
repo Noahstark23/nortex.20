@@ -1,5 +1,7 @@
 import type { Response } from 'express';
 import type { AuthRequest } from '../middleware/auth';
+import { ProductBatchIdentityError } from '../lib/productBatchIdentity';
+import { PurchaseSalePriceError } from '../services/purchaseSalePriceService';
 import { registerPurchase } from '../services/purchaseRegistrationService';
 import { PurchaseRegistrationError } from '../services/purchaseRegistrationAuthority';
 import { QuantityValidationError } from '../../utils/quantity';
@@ -27,6 +29,7 @@ export async function createPurchaseHandler(req: AuthRequest, res: Response) {
             purchase: result,
         });
     } catch (error: any) {
+        if (error instanceof ProductBatchIdentityError || error instanceof PurchaseSalePriceError) return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         if (error instanceof QuantityValidationError) return res.status(400).json({ error: error.message, code: error.code });
         if (error instanceof PurchaseRegistrationError) return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         // Período cerrado (A1): la compra ahora exige asiento, así que un período
@@ -44,6 +47,7 @@ export async function createPurchaseHandler(req: AuthRequest, res: Response) {
         if (error instanceof BatchWarehouseLedgerError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
+        if (error?.message === 'PURCHASE_BATCH_CONCURRENT_WRITE') return res.status(409).json({ error: 'El lote cambió durante la compra. Intentá nuevamente.', code: 'PURCHASE_BATCH_CONCURRENT_WRITE' });
         if (error?.message === 'FACTURA_DUPLICADA' || error?.code === 'P2002') {
             return res.status(409).json({ error: `Ya existe la factura #${invoiceNumber} para este proveedor. No se registró nuevamente.` });
         }

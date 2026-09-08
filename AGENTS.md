@@ -13,6 +13,22 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 - No hagas deploy, push, merge, cambios DNS, llamadas a webhooks ni mensajes externos
   salvo autorización explícita y separada.
 
+## Promoción de releases
+
+- CI verde, staging sano, una aprobación de GitHub Environment y una autorización
+  de producción son compuertas distintas. Ninguna implica las otras.
+- CI solo verifica el SHA candidato: no puede llegar a staging ni producción.
+  Staging solo se inicia con `release-staging.yml`, desde `main`, con el SHA
+  completo y `STAGE <SHA>` exacto; un merge o un cambio documental no lo inicia.
+  El health con SHA y base disponibles acredita infraestructura, no reemplaza el
+  smoke con tenant sintético proporcional al riesgo.
+- Producción solo se considera con una autorización explícita que nombre alcance,
+  SHA completo, ventana, responsable y rollback. El único flujo técnico permitido
+  es `release-production.yml`, con `candidate_sha` y `PROMOTE <SHA>` exactos.
+- No cambies variables, secrets, reglas de Environment, protección de rama ni
+  dispares ese workflow sin la autorización anterior. Sigue y actualiza
+  `docs/runbooks/release-promotion.md`; los informes históricos no son recetas.
+
 ## Toolchain canónico
 
 - Node `22.23.2`, fijado en `.mise.toml`; usa `mise install` y `mise exec -- ...`.
@@ -29,8 +45,40 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
 - Compuerta rápida, sin deploy: `nortex check` o `sh scripts/ci-local-safe.sh`.
 - La compuerta mínima es: Prisma generate, TypeScript, Vitest, sistema de diseño y
   build. Activa mutación con `NORTEX_CI_MUTATION=1` cuando cambie lógica de dinero.
+- Para cambios de dinero o inventario también ejecuta
+  `npm run test:integration:required`. Solo puede usar MySQL 8 temporal y datos
+  sintéticos; una suite ausente, fallida, omitida o una infraestructura no
+  disponible deja el candidato sin aprobar, nunca se sustituye por una base de
+  desarrollo, staging o producción.
 - Los servicios locales viven en `~/Developer/Nortex`; no uses el Compose de
   producción para desarrollo general ni inicies su servicio de backup.
+
+## Contraste y evidencia visual
+
+- Los aliases Tailwind no son una garantía de contraste: `blue`, `emerald`,
+  `orange` y `rose` se remapean a tonos propios. Un relleno sólido con
+  `text-white` debe medirse en su estado base y hover; usar la tinta semántica
+  correspondiente o ampliar el contrato exacto en `index.css` y
+  `tests/frontendColorSemantics.test.ts`.
+- No cambies ni unifiques a ciegas los tokens de estado: las utilidades
+  `bg-danger`/`bg-warning` consumen canales RGB distintos del texto de estado.
+  Mantén el alcance de los guards a clases opacas exactas; nunca a selectores
+  amplios ni fondos con opacidad.
+- Si el color está en un icono o botón hijo, el guard del contenedor no lo
+  alcanza por sí solo: aplicar la tinta semántica al descendiente y cubrir la
+  pareja contenedor--descendiente en `frontendColorSemantics`.
+- Cuando el bridge Día convierte una superficie heredada en canvas claro,
+  `text-white` y las tintas `text-slate-*` también deben heredar el contexto
+  de esa superficie. Mantén esa traducción por token y clases exactas, corta
+  la herencia en una isla oscura real (`nx-ticket-*`, `nx-code-surface` o
+  `nx-dark-island`) y prueba ambos estados; nunca uses un selector de
+  subcadena o una excepción por pantalla.
+- Si una primitive TypeScript conserva clases Tailwind, su carpeta debe estar
+  en `content` de `tailwind.config.js`; cubrí el contrato con una prueba de la
+  primitive y del escaneo, no leyendo componentes monolíticos como texto.
+- Capturas o el demo local prueban un escenario visual, no el producto entero.
+  Antes de una release, repite los recorridos de tenant QA sobre el SHA
+  candidato y registra probado, pendiente y riesgo en la auditoría visual.
 
 ## Reglas de revisión
 
@@ -98,3 +146,9 @@ dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.
   borrar o recrear una venta pendiente por una coincidencia aproximada o un 404.
 - Cambiar documentación de reglas operativas implica reconciliar recetas antiguas
   de la skill y `CLAUDE.md`; la documentación nunca sustituye pruebas ejecutables.
+
+## Promoción de producción
+
+Seguir `docs/releases/2026-09-04-production-gate.md`: staging y producción son
+compuertas distintas. Un push/documento no constituye intención de promoción.
+La autorización debe identificar el SHA completo; no inferirla de un verde local.

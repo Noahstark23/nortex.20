@@ -1,0 +1,287 @@
+# NORTEX — Producción es una promoción manual de un candidato ya probado en staging.
+# Este archivo es la única ruta de GitHub Actions que puede leer el webhook de PROD.
+name: Promote production
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: SHA completo (40 minúsculas) ya sano en staging y actual en main
+        required: true
+        type: string
+      confirmation:
+        description: Escribe exactamente PROMOTE <candidate_sha>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# Una promoción no debe ser cancelada por un push de CI ni por otra ejecución
+# accidental. La intervención humana debe cancelar explícitamente una promoción
+# abierta antes de iniciar otra.
+concurrency:
+  group: nortex-production-promotion
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: validate-production-candidate
+    runs-on: ubuntu-latest
+    steps:
+      # El ref elegido al despachar debe ser main. La compuerta valida después
+      # que GITHUB_SHA, el SHA introducido y origin/main sean exactamente iguales.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Verificar intención, main y staging del candidato
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+        run: node scripts/authorize-production-release.mjs
+
+      - name: Verificar CI terminal y exitoso del candidato
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const candidate = process.env.CANDIDATE_SHA;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: candidate,
+              branch: 'main',
+              event: 'push',
+              per_page: 100,
+            });
+            const runs = Array.isArray(data.workflow_runs)
+              ? data.workflow_runs.filter((run) =>
+                  run.head_sha === candidate
+                  && run.head_branch === 'main'
+                  && run.event === 'push')
+              : [];
+            const expectedPath = '.github/workflows/ci.yml@';
+            const terminalSuccess = runs.length > 0 && runs.every((run) =>
+              typeof run.path === 'string'
+              && run.path.startsWith(expectedPath)
+              && run.status === 'completed'
+              && run.conclusion === 'success');
+            if (!terminalSuccess) {
+              throw new Error('CI_TERMINAL_SUCCESS_REQUIRED');
+            }
+
+      # La salud actual prueba que staging responde, pero no cómo llegó allí. Esta
+      # evidencia adicional exige que el mismo SHA haya superado la ruta manual
+      # `release-staging.yml`; así un Auto Deploy u otra ruta externa no sustituye
+      # la intención STAGE ni sus revalidaciones.
+      - name: Verificar staging manual exitoso del candidato
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const candidate = process.env.CANDIDATE_SHA;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release-staging.yml',
+              head_sha: candidate,
+              branch: 'main',
+              event: 'workflow_dispatch',
+              per_page: 100,
+            });
+            const runs = Array.isArray(data.workflow_runs)
+              ? data.workflow_runs.filter((run) =>
+                  run.head_sha === candidate
+                  && run.head_branch === 'main'
+                  && run.event === 'workflow_dispatch')
+              : [];
+            const expectedPath = '.github/workflows/release-staging.yml@';
+            const successfulManualStaging = runs.some((run) =>
+              typeof run.path === 'string'
+              && run.path.startsWith(expectedPath)
+              && run.status === 'completed'
+              && run.conclusion === 'success');
+            if (!successfulManualStaging) {
+              throw new Error('MANUAL_STAGING_SUCCESS_REQUIRED');
+            }
+
+  deploy-production:
+    name: deploy-production
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ vars.PROD_URL }}
+    steps:
+      # Se vuelve a fijar el checkout al candidato explícito, no a un SHA que
+      # haya cambiado mientras se esperaba la aprobación del environment.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+
+      # Esta segunda prueba ocurre DESPUÉS de la aprobación humana. Si main o
+      # staging avanzaron, falla cerrada antes de exponer el webhook de producción.
+      - name: Revalidar candidato después de la aprobación
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+        run: node scripts/authorize-production-release.mjs
+
+      - name: Verificar CI terminal y exitoso del candidato
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const candidate = process.env.CANDIDATE_SHA;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: candidate,
+              branch: 'main',
+              event: 'push',
+              per_page: 100,
+            });
+            const runs = Array.isArray(data.workflow_runs)
+              ? data.workflow_runs.filter((run) =>
+                  run.head_sha === candidate
+                  && run.head_branch === 'main'
+                  && run.event === 'push')
+              : [];
+            const expectedPath = '.github/workflows/ci.yml@';
+            const terminalSuccess = runs.length > 0 && runs.every((run) =>
+              typeof run.path === 'string'
+              && run.path.startsWith(expectedPath)
+              && run.status === 'completed'
+              && run.conclusion === 'success');
+            if (!terminalSuccess) {
+              throw new Error('CI_TERMINAL_SUCCESS_REQUIRED');
+            }
+
+      # Repetir la procedencia después de la aprobación: un staging sano no
+      # reemplaza la prueba de que la ruta manual exacta fue la que lo acreditó.
+      - name: Revalidar staging manual exitoso del candidato
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const candidate = process.env.CANDIDATE_SHA;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'release-staging.yml',
+              head_sha: candidate,
+              branch: 'main',
+              event: 'workflow_dispatch',
+              per_page: 100,
+            });
+            const runs = Array.isArray(data.workflow_runs)
+              ? data.workflow_runs.filter((run) =>
+                  run.head_sha === candidate
+                  && run.head_branch === 'main'
+                  && run.event === 'workflow_dispatch')
+              : [];
+            const expectedPath = '.github/workflows/release-staging.yml@';
+            const successfulManualStaging = runs.some((run) =>
+              typeof run.path === 'string'
+              && run.path.startsWith(expectedPath)
+              && run.status === 'completed'
+              && run.conclusion === 'success');
+            if (!successfulManualStaging) {
+              throw new Error('MANUAL_STAGING_SUCCESS_REQUIRED');
+            }
+
+      # El webhook por sí solo despliega lo que tenga configurado Coolify. Antes
+      # de tocarlo, la aplicación debe estar fijada al mismo SHA y sin Auto Deploy.
+      - name: Verificar destino Coolify fijado al candidato
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          COOLIFY_PROD_WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          COOLIFY_PROD_API_ORIGIN: ${{ vars.COOLIFY_PROD_API_ORIGIN }}
+          COOLIFY_PROD_APPLICATION_UUID: ${{ vars.COOLIFY_PROD_APPLICATION_UUID }}
+          COOLIFY_PROD_READ_TOKEN: ${{ secrets.COOLIFY_PROD_READ_TOKEN }}
+        run: node scripts/verify-coolify-production-target.mjs
+
+      - name: Validar configuración de PROD
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          APP_URL: ${{ vars.PROD_URL }}
+          READ_TOKEN: ${{ secrets.COOLIFY_PROD_READ_TOKEN }}
+        run: |
+          set -euo pipefail
+          [ -n "$WEBHOOK" ] || { echo "::error::Falta COOLIFY_PROD_WEBHOOK"; exit 1; }
+          [ -n "$APP_URL" ] || { echo "::error::Falta la variable PROD_URL"; exit 1; }
+          [ -n "$READ_TOKEN" ] || { echo "::error::Falta COOLIFY_PROD_READ_TOKEN"; exit 1; }
+          # PROD_URL es el origen público canónico; no se permiten bases de ruta.
+          node -e '
+            const value = process.env.APP_URL;
+            const rawAuthority = typeof value === "string"
+              ? /^https?:\/\/([^/?#\\\s]+)\/?$/i.exec(value)?.[1]
+              : null;
+            if (typeof value !== "string"
+              || !value
+              || value.trim() !== value
+              || /[\x00-\x20\x7f]/.test(value)
+              || value.includes("?")
+              || value.includes("#")
+              || !rawAuthority
+              || rawAuthority.includes("@")) {
+              process.exit(1);
+            }
+            try {
+              const url = new URL(value);
+              if (url.protocol !== "https:"
+                || !url.hostname
+                || url.username
+                || url.password
+                || url.search
+                || url.hash
+                || url.pathname !== "/") {
+                process.exit(1);
+              }
+            } catch {
+              process.exit(1);
+            }
+          ' || { echo "::error::PROD_URL debe ser un origen HTTPS raíz sin credenciales, query, fragmento ni espacios"; exit 1; }
+
+      - name: Desplegar PROD (webhook de Coolify)
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_PROD_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_PROD_DEPLOY_TOKEN }}
+        run: |
+          if [ -n "$TOKEN" ]; then
+            if ! curl --fail --silent --max-time 30 --output /dev/null \
+              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"; then
+              echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
+            fi
+          elif ! curl --fail --silent --max-time 30 --output /dev/null "$WEBHOOK"; then
+            echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
+          fi
+          echo "🚀 Deploy de prod disparado"
+
+      - name: Verificar PROD sano y en el candidato esperado
+        env:
+          APP_URL: ${{ vars.PROD_URL }}
+          EXPECTED_COMMIT: ${{ inputs.candidate_sha }}
+        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"

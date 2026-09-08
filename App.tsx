@@ -59,6 +59,7 @@ const TeamManagement = lazy(() => import('./components/TeamManagement'));
 const HelpCenter = lazy(() => import('./components/HelpCenter'));
 const PublicCatalog = lazy(() => import('./components/PublicCatalog'));
 const TrackPedido = lazy(() => import('./components/TrackPedido'));
+const AcceptInvitation = lazy(() => import('./components/AcceptInvitation'));
 
 // SEO Landing Pages (en prod las sirve el prerender estático; el chunk solo
 // baja si alguien navega a ellas DENTRO del SPA)
@@ -287,17 +288,53 @@ function RouteAnalytics() {
   return null;
 }
 
+/**
+ * Mantiene el mismo contexto visual mientras baja el chunk lazy del blog.
+ * El fallback global oscuro hacía que una navegación editorial mostrara un
+ * fogonazo Obsidian antes de aterrizar en la superficie clara del artículo.
+ */
+function RouteFallback() {
+  const { pathname } = useLocation();
+
+  const usesPublicAppleShell = pathname === '/'
+    || pathname === '/apple'
+    || pathname === '/login'
+    || pathname === '/register'
+    || pathname === '/forgot-password'
+    || pathname.startsWith('/invite/')
+    || pathname.startsWith('/reset-password/')
+    || pathname === '/ferreterias'
+    || pathname === '/farmacias'
+    || pathname === '/nicaragua'
+    || pathname === '/privacy'
+    || pathname === '/terms'
+    || pathname === '/blog'
+    || pathname.startsWith('/blog/');
+
+  if (usesPublicAppleShell) {
+    return (
+      <div className="nx-public-loading" role="status" aria-live="polite">
+        <img src="/icon-192.svg" alt="" className="h-8 w-8 rounded-control" aria-hidden="true" />
+        <span>Cargando recursos…</span>
+      </div>
+    );
+  }
+
+  return <div className="min-h-[60vh] flex items-center justify-center text-slate-400">Cargando…</div>;
+}
+
 function App() {
   return (
     <BrowserRouter>
       <RouteAnalytics />
-      <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center text-slate-400">Cargando…</div>}>
+      <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/" element={<PublicLanding />} />
           <Route path="/apple" element={<LandingPageApple />} />
           <Route path="/register" element={<RegisterTenant />} />
           <Route path="/demo" element={<GuestPOS />} />
           <Route path="/login" element={<Login />} />
+          <Route path="/invite/:token" element={<AcceptInvitation />} />
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="/terms" element={<TermsOfService />} />
           <Route path="/ferreterias" element={<LandingFerreteria />} />

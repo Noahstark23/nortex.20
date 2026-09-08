@@ -3,17 +3,15 @@ import { describe, expect, it } from 'vitest';
 
 const workflow = readFileSync('.github/workflows/ci.yml', 'utf8');
 const job = (name: string, source = workflow) => source.split(`  ${name}:\n`)[1]?.split(/\n  [a-z][a-z-]+:\n/)[0] ?? '';
-const protectsStaging = (source: string) => /needs: \[[^\]\n]*\bintegration-required\b[^\]\n]*\]/.test(job('deploy-staging', source));
-describe('CI exige integración antes de promover', () => {
+describe('CI exige integración aislada', () => {
   it('la suite real es obligatoria y usa solo el servicio MySQL de QA', () => {
     const integration = job('integration-required');
-    expect(integration).toContain('image: mysql:8.0');
-    expect(integration).toContain('NORTEX_QA_DATABASE_ACK: disposable-database');
+    expect(integration).toContain('docker pull mysql:8.0');
     expect(integration).toContain('run: npm run test:integration:required');
-    expect(integration).not.toMatch(/continue-on-error:\s*true|NORTEX_QA_BASE_URL:\s*https/);
-    expect(protectsStaging(workflow)).toBe(true);
+    expect(integration).not.toMatch(/continue-on-error:\s*true|NORTEX_QA_BASE_URL:\s*https|secrets\./);
   });
-  it('quitar la dependencia produce una compuerta inválida', () => {
-    expect(protectsStaging(workflow.replace('verify, integration-required,', 'verify,'))).toBe(false);
+  it('no vuelve a mezclar promoción con CI', () => {
+    expect(job('deploy-staging')).toBe('');
+    expect(job('deploy-production')).toBe('');
   });
 });

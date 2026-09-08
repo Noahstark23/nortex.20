@@ -2,9 +2,25 @@
 
 **Estado: propuesta de desarrollo basada en código y fuentes oficiales. Fecha: 2026-09-08.**
 
-Este documento integra tres revisiones: investigación de RAG, contraste de contratos del asistente y pendientes de desarrollo/infraestructura, más revisión final del plan. No implementa las tareas, no certifica producción y no autoriza despliegue. Conserva React/Vite, Express, Prisma 6.4.1, MySQL 8, Node 22.23.2, npm, la rama y los cambios actuales. El [manifiesto de 30 archivos revisados](evidence/nortexgpt/rag-plan-20260908/code-manifest.json) identifica el corte de código mediante hashes.
+Este documento integra tres revisiones: investigación de RAG, contraste de contratos del asistente y pendientes de desarrollo/infraestructura, más revisión final del plan. No implementa las tareas, no certifica producción y no autoriza despliegue. Conserva React/Vite, Express, Prisma 6.4.1, MySQL 8, Node 22.23.2, npm, la rama y los cambios actuales. El [manifiesto de 30 archivos revisados](evidence/nortexgpt/rag-plan-20260908/code-manifest.json) identifica el corte de código mediante hashes. Ese manifiesto corresponde a la investigación anterior al merge; el candidato integrado requiere su propio manifiesto y nuevas verificaciones.
 
 **Inspección posterior de capacidad:** [Droplet Nortex](CAPACIDAD_DROPLET_NORTEX_2026-09-08.md): 2 vCPU, 4 GiB RAM y 80 GiB de disco verificados en DigitalOcean; se observó una semana de CPU/I/O. Memoria disponible, contenedores y throughput sostenible siguen sin medir. El informe añade a D06/D08/D09 una matriz de carga sintética de 10/25/50/100 cajas; no son capacidades aprobadas ni se ejecutará saturación sobre producción.
+
+## 0. Prioridad añadida: consolidar los cuatro clientes actuales
+
+**C00 — PROPUESTO, prioridad inmediata, 2026-09-08.** La autorización de preparar publicación y producción se gestiona por el integrador con sus compuertas; no convierte esta ampliación del plan en trabajo ejecutado. Consolidar los cuatro clientes indicados por el responsable del producto antes de ampliar capacidades operativas. Cuatro clientes no equivale a cuatro cajas simultáneas: medir cantidad de operadores, horas punta y recorridos, sin copiar datos personales ni documentos reales a fixtures.
+
+| Frente / responsable | Trabajo y evidencia de salida |
+|---|---|
+| Recuperación / Infraestructura | Verificar copia SQL y originales fuera del host; restaurar en un entorno aislado con ejecución, envíos y cobros apagados. Conciliar hashes, referencias y operaciones; medir tiempo de recuperación y pérdida máxima de datos. La existencia de un backup o snapshot no prueba restauración. |
+| Recursos y errores / Infraestructura | Medir memoria disponible, RSS por proceso, swap/OOM, disco libre y crecimiento, CPU, conexiones/espera MySQL, reinicios, errores API y edad de cola durante una ventana documentada que incluya apertura, pico y cierre. Fijar alertas y responsable de respuesta sin registrar secretos ni contenido privado. |
+| Carga y p95 / QA + Infraestructura | Reproducir fuera de producción la mezcla observada de los cuatro clientes con tenants sintéticos: búsqueda, venta, cobro, consulta y cierre. Medir p50/p95/p99, throughput, errores, timeouts, locks y recursos; aumentar carga por pasos y detener ante degradación o efectos incoherentes. Acordar el objetivo después del baseline y antes de la corrida de aceptación; las matrices 10/25/50/100 cajas son ensayos futuros, no capacidad acreditada. |
+| Venta y caja / QA de dominio | Recorrer venta/pago/vuelto, medios de pago vigentes, devoluciones/anulaciones, offline y respuesta perdida, apertura/cierre y conciliación de stock, caja, deuda y asiento. Usar HTTP/MySQL descartable y un recorrido de equipo/lector/impresora representativo; probar concurrencia, reintento, auditoría fallida y rollback. Cero diferencias o duplicaciones en los escenarios aceptados. |
+| Modularidad / Clean Code + integrador | Extraer por dominio con caracterización previa: alta rápida POS, conteos físicos y exportaciones fiscales en lotes separados; conservar los servicios financieros transaccionales. Reducir el presupuesto del origen y reportar origen/destinos/total sin elevar excepciones. Medir regresiones funcionales y p95 sobre el mismo escenario. |
+
+**Cierre de C00:** candidato identificado, restauración demostrada, recursos y errores observados, carga sintética aceptada y recorridos de venta/caja conciliados, con límites y pendientes explícitos. Un defecto de dinero, inventario, pérdida de trabajo o aislamiento bloquea el flujo afectado. Documentar baseline y primer lote modular; no exigir una reescritura completa para cerrar la consolidación. D00/D06/D08/D09/D10/D11/D12 aportan las entregas, sin duplicarlas. La curación de ayuda y las pruebas deterministas de RAG pueden avanzar en paralelo.
+
+**Escala del trabajo ya construido:** el rango de **3.500–6.500 horas-persona** es una aproximación de ingeniería al esfuerzo de reposición de funcionalidades comparables; no son horas registradas, presupuesto contractual, plazo de este plan ni valoración de la empresa. La referencia histórica de **611 commits en 94 días** tampoco demuestra esfuerzo laboral: commits, herramientas y concurrencia no permiten convertir ese historial en horas. Reestimar cada lote con su alcance y evidencia real.
 
 ## 1. Decisión recomendada
 
@@ -153,6 +169,7 @@ Cada fila es un paquete de entregas pequeñas, no un único PR gigante. Priorida
 
 | ID / prioridad | Entrega | Dependencias | Condición de cierre |
 |---|---|---|---|
+| C00 / inmediata | Consolidación de cuatro clientes: restauración, recursos/errores, carga p95, venta/caja y primer lote modular. | Baseline D00 y entregas pertinentes D06/D08–D12. | Criterios de sección 0 demostrados; ningún conteo de clientes sustituye carga ni conciliación. |
 | D00 / alta | Candidato reproducible, manifiesto de fuentes, baseline RAG y matriz de estado código/pruebas/piloto/despliegue. Reconciliar cifras/documentos obsoletos. | Ninguna. | Huellas y evidencia separadas; no duplicar trabajo ya implementado; resultados esperados con revisor identificado. |
 | D01 / alta | Reproducir y reparar citas de ayuda en run/UI; abrir fuente compatible sin perder carrito. | D00; endpoint completo se integra con D03. | Prueba `search_help → run → UI`, sección/version/pasaje visibles, rol negativo, móvil y teclado. |
 | D02 / alta | Curación de ayuda y manifiesto editorial, 40–60 secciones objetivo. | D00; participación de revisor del producto y farmacia. | Cada procedimiento coincide con función vigente, pruebas/evidencia y límites; ninguna aprobación ficticia. |
@@ -203,7 +220,7 @@ Un responsable de edición por dominio. Antes de cada lote se acuerdan firmas, r
 
 ### Primeras tandas ejecutables
 
-1. **Tanda 1:** D00; reproducción D01; bosquejo/revisión D02; primer lote D06; diseño y ensayo aislado D08; repro de CxP/seriales como D11. Edición de server/schema se serializa.
+1. **Tanda 1 — consolidación C00:** D00; medición de recursos/errores y diseño de carga representativa de cuatro clientes; caracterización de venta/caja;  reproducción D01; bosquejo/revisión D02; primer lote D06; diseño y ensayo aislado D08; repro de CxP/seriales como D11. Edición de server/schema se serializa.
 2. **Tanda 2:** D03/D04 y primer lote de evaluación D05; comercial D07; completar D09; extracción POS D10 independiente del backend.
 3. **Tanda 3:** cerrar matriz D12, primeras pruebas de dispositivos y backtest; completar revisiones humanas pendientes y preparar D13.
 4. **Después de resultados:** decidir D14. No fijar una fecha comercial antes de conocer disponibilidad de revisores, volumen y defectos reproducidos.

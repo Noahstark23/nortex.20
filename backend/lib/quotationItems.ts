@@ -1,4 +1,5 @@
 import Decimal from 'decimal.js';
+import { resolveLegacySaleMode } from '../../utils/legacySaleMode.js';
 import { QuantityValidationError, validateQuantity, type SaleMode } from '../../utils/quantity.js';
 
 type DecimalLike = Decimal.Value | { toString(): string };
@@ -62,10 +63,10 @@ export class QuotationItemError extends Error {
 }
 
 const quantityRulesForQuotationProduct = (
-    product: Pick<QuotationProductAuthority, 'saleMode' | 'quantityStep'>,
+    product: Pick<QuotationProductAuthority, 'saleMode' | 'quantityStep' | 'unit'>,
 ): { saleMode: SaleMode; quantityStep: Decimal.Value } => ({
-    saleMode: product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
-    quantityStep: product.quantityStep?.toString() || (product.saleMode === 'COUNTED' ? '1' : '0.0001'),
+    saleMode: resolveLegacySaleMode(product),
+    quantityStep: product.quantityStep?.toString() || (resolveLegacySaleMode(product) === 'COUNTED' ? '1' : '0.0001'),
 });
 
 export const legacyQuotationQuantity = (exactQuantity: Decimal.Value): number => {

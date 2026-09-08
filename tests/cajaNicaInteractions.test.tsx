@@ -152,7 +152,7 @@ describe('CajaNicaCatalog en interacción real', () => {
                         '1',
                         'Arroz integral',
                         10,
-                        'https://res.cloudinary.com/nortex/image/upload/v1/arroz.jpg',
+                        'https://res.cloudinary.com/dex1vy92h/image/upload/v1/arroz.jpg',
                     ),
                 ]}
                 totalProducts={1}

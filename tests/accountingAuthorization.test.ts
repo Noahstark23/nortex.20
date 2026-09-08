@@ -23,7 +23,7 @@ function runGuard(role: string) {
     return { next, res };
 }
 
-describe('autorizacion de lecturas contables y fiscales', () => {
+describe('autorización de lecturas contables y fiscales', () => {
     it('conserva acceso a dueño, administración, superadmin y contador', () => {
         expect(ACCOUNTING_READ_ROLES).toEqual([
             'OWNER', 'ADMIN', 'SUPER_ADMIN', 'ACCOUNTANT',
@@ -61,6 +61,7 @@ describe('autorizacion de lecturas contables y fiscales', () => {
         '/api/accounting/flujo-efectivo/:year/:month',
         '/api/accounting/retentions/:period',
         '/api/fiscal/renta-anual/:year',
+        '/api/financial-health',
     ])('conecta la política central antes del handler GET %s', (path) => {
         expect(server).toContain(
             `app.get('${path}', authenticate, checkRole(ACCOUNTING_READ_ROLES), async`,
@@ -71,6 +72,17 @@ describe('autorizacion de lecturas contables y fiscales', () => {
         expect(server).toContain(
             "app.get('/api/accounting/exchange-rate/latest', authenticate, async",
         );
+    });
+
+    it('revalida la asignación del vendedor antes de exponer métricas del hub', () => {
+        const start = server.indexOf("app.get('/api/customers/hub'");
+        const end = server.indexOf("app.get('/api/customers/:id/hub'", start);
+        const route = server.slice(start, end);
+
+        expect(route).toContain("if (authReq.role === 'VENDEDOR' && hub.length > 0)");
+        expect(route).toContain('sellerId: authReq.userId!');
+        expect(route).toContain('visibleHub = hub.filter((customer) => assignedIds.has(customer.id))');
+        expect(route.indexOf('visibleHub = hub.filter')).toBeLessThan(route.indexOf('res.json(filtered)'));
     });
 
     it('expone conflicto de período cerrado sin regenerar retenciones por otra ruta', () => {

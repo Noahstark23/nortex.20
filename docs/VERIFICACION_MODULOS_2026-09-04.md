@@ -1,5 +1,6 @@
 # Nortex: reparación de prioridades y verificación por módulo
 
+> Evidencia histórica del snapshot local basado en d326c589. El candidato integrado sobre main2834497 requiere resultados nuevos. Main ya aporta ProductBatchHold, heldStock y disponibilidad farmacéutica autoritativa: su ausencia en el snapshot no describe producción.
 Fecha: 2026-09-04. Estado: **VALIDADO_LOCAL en los escenarios descritos; módulos y pilotos pendientes explícitos**. Responsable de producto: fundador. Implementación: un editor por área; revisión independiente y QA del candidato aislado. Este documento sustituye el estado anterior de E01–E08, conserva sus límites y registra los hallazgos de la revisión posterior de módulos.
 
 ## Resultado del paquete E01–E08

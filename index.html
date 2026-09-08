@@ -42,11 +42,37 @@
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <!-- ===== PWA ===== -->
-    <meta name="theme-color" content="#09090b" />
+    <meta name="theme-color" content="#F4F5F7" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Nortex POS" />
+
+    <!-- Tema antes del primer paint. Usa el mismo key aislado por tenant/usuario
+         que el workspace y las superficies públicas para evitar un destello
+         oscuro en login, registro, blog o landings Día. -->
+    <script>
+      (function () {
+        var baseKey = 'nortex_workspace_theme';
+        var storageKey = baseKey;
+        var theme = 'light';
+        try {
+          try {
+            var user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+            var tenantId = user && user.tenant && typeof user.tenant.id === 'string' && user.tenant.id.trim()
+              ? user.tenant.id
+              : localStorage.getItem('nortex_tenant_id');
+            if (user && typeof user.id === 'string' && user.id.trim() && typeof tenantId === 'string' && tenantId.trim()) {
+              storageKey = baseKey + ':' + encodeURIComponent(tenantId) + ':' + encodeURIComponent(user.id);
+            }
+          } catch (error) {}
+          theme = localStorage.getItem(storageKey) === 'dark' ? 'dark' : 'light';
+        } catch (error) {}
+        document.documentElement.setAttribute('data-nx-theme', theme);
+        var themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.setAttribute('content', theme === 'dark' ? '#0B0D10' : '#F4F5F7');
+      })();
+    </script>
     
     <!-- Tipografía propia, no de un CDN. El porqué: public/fonts/fuentes.css -->
     <link rel="preload" href="/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
@@ -54,10 +80,14 @@
 
 
     <style>
-      /* Anti-flash: el tema Obsidian aplica antes de que cargue el CSS bundle */
+      /* Anti-flash coherente con Día/Noche antes de que cargue el CSS bundle. */
       body {
-        background-color: #09090b;
-        color: #f4f4f5;
+        background-color: #F4F5F7;
+        color: #171A1F;
+      }
+      html[data-nx-theme="dark"] body {
+        background-color: #0B0D10;
+        color: #E8EBF0;
       }
     </style>
 <!-- El importmap a esm.sh que vivía aquí era código muerto (Vite bundlea todo)

@@ -1,8 +1,8 @@
 # Plan maestro — Cámara, códigos y operación de bodega
 
-> **Estado:** Fase 0 en curso  
-> **Corte verificado:** 2026-08-30  
-> **Alcance de este lote:** investigación reproducible, contratos y arnés aislado.  
+> **Estado:** Fase 0 en curso\
+> **Corte verificado:** 2026-08-30\
+> **Alcance de este lote:** investigación reproducible, contratos y arnés aislado.\
 > **Cambios al runtime productivo, schema, permisos o inventario:** ninguno. El
 > arnés de Fase 0 vive fuera de `App.tsx` y no se conecta al backend.
 

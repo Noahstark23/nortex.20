@@ -4,7 +4,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, within, fireEvent, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom/vitest';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import React from 'react';
 import POS from '../components/POS';
 
@@ -139,7 +139,8 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-const montarPOS = () => render(<MemoryRouter><POS /></MemoryRouter>);
+const RutaActual = () => <output data-testid="ruta-actual">{useLocation().pathname}</output>;
+const montarPOS = () => render(<MemoryRouter initialEntries={['/app/pos']}><POS /><RutaActual /></MemoryRouter>);
 
 /** El buscador es el control donde el cajero pasa el turno; tiene autoFocus. */
 const buscador = () => screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i);
@@ -172,6 +173,112 @@ const installResponsiveMedia = (initialDesktop = true) => {
 };
 
 describe('POS · escanear y armar la venta', () => {
+    it('caja legacy rechaza 1.5 en el ticket y recupera el cobro al corregir a 2', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, name: 'Caja QA', unit: 'caja', saleMode: null, quantityStep: null }];
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        const input = await screen.findByRole('textbox', { name: 'Cantidad de Caja QA en caja' });
+        expect(screen.getByRole('button', { name: 'Agregar 1 caja de Caja QA' })).toBeTruthy();
+        fireEvent.change(input, { target: { value: '1.5' } });
+        fireEvent.blur(input);
+        expect(await screen.findByRole('alert')).toHaveTextContent('enteros');
+        expect(screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i })).toBeDisabled();
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+        fireEvent.change(input, { target: { value: '2' } });
+        fireEvent.blur(input);
+        expect(await screen.findByRole('button', { name: /Cobrar C\$ 50\.00 en efectivo/i })).toBeEnabled();
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+    it('respeta sellableStock=0 aunque la existencia física sea positiva', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, stock: 40, sellableStock: 0 }];
+        const user = userEvent.setup();
+        montarPOS();
+
+        await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+            '/api/products?includeSellableStock=true',
+            expect.objectContaining({ headers: expect.any(Object) }),
+        ));
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain(`${PRODUCTO.name} está agotado`);
+        expect(cuerpo).toContain('Tu venta está vacía');
+        expect(screen.queryByRole('textbox', { name: /Cantidad de Coca Cola/ })).not.toBeInTheDocument();
+    });
+
+    it('usa stock físico como fallback cuando sellableStock no viene en la respuesta', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, stock: 1 }];
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain(`${PRODUCTO.name} agregado`);
+        expect(screen.getByRole('textbox', { name: /Cantidad de Coca Cola/ })).toHaveValue('1');
+        expect(screen.getByRole('button', { name: /^Cobrar C\$ 25\.00 en efectivo/ })).toBeInTheDocument();
+    });
+
+    it('abre Nuevo y Excel desde una sola barra sin perder la venta al cerrar', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+        expect(screen.getAllByRole('button', { name: /^Nuevo$/ })).toHaveLength(1);
+        expect(screen.getAllByRole('button', { name: /^Excel$/ })).toHaveLength(1);
+        await user.click(screen.getByRole('button', { name: /^Nuevo$/ }));
+        expect(await screen.findByPlaceholderText('Ej. Taladro Percutor 500W')).toBeVisible();
+        await user.keyboard('{Escape}');
+        expect(screen.queryByPlaceholderText('Ej. Taladro Percutor 500W')).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: /^Excel$/ }));
+        expect(await screen.findByRole('heading', { name: /Importar/i })).toBeVisible();
+        await user.keyboard('{Escape}');
+        expect(screen.queryByRole('heading', { name: /Importar/i })).not.toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: /Cantidad de Coca Cola/ })).toHaveValue('1');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('presenta el reporte Z autoritativo al cerrar y conserva su folio para reimpresión', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        respuestas['/api/shifts/close'] = {
+            systemExpectedCash: '9999', difference: '9999',
+            closeReport: {
+                id: 'report-qa', shiftId: 's1', folio: 'Z-QA-0001', businessDate: '2026-09-04',
+                version: 1, contentHash: 'a'.repeat(64), createdAt: '2026-09-04T23:00:00.000Z',
+                documentUrl: '/api/reports/shifts/s1/document',
+                report: {
+                    version: 1, folio: 'Z-QA-0001', businessDate: '2026-09-04',
+                    timeZone: 'America/Managua', generatedAt: '2026-09-04T23:00:00.000Z',
+                    summary: { grossSales: '0', returnsTotal: '0', netSales: '0', transactionCount: 0,
+                        returnCount: 0, itemQuantityGross: '0', itemQuantityReturned: '0', itemQuantityNet: '0',
+                        discountTotal: '0', vatCollected: '0', cogs: '0', grossProfit: '0', averageTicket: '0' },
+                    paymentMethods: [], products: [],
+                    cash: { openingNio: '500', cashSalesNio: '0', cashRefundsNio: '0', paidInNio: '0',
+                        paidOutNio: '0', expectedNio: '500', countedNio: '499.99', differenceNio: '-0.01',
+                        openingUsd: '0', paidInUsd: '0', paidOutUsd: '0', expectedUsd: '0',
+                        countedUsd: '0', differenceUsd: '0' },
+                },
+            },
+        };
+        const user = userEvent.setup();
+        montarPOS();
+        await user.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
+        await user.type(screen.getByRole('textbox', { name: 'Efectivo contado en la gaveta' }), '499.99');
+        await user.click(screen.getByRole('button', { name: 'REALIZAR CORTE Z' }));
+        expect(await screen.findByRole('heading', { name: 'Resumen de cierre' })).toBeVisible();
+        expect(screen.getByText('Faltante de efectivo')).toBeVisible();
+        expect(screen.getByText('Folio Z-QA-0001')).toBeVisible();
+        expect(screen.getByRole('button', { name: /Ver \/ imprimir reporte completo/ })).toBeVisible();
+        expect(posteos.filter(p => p.ruta === '/api/shifts/close')).toEqual([
+            { ruta: '/api/shifts/close', cuerpo: { shiftId: 's1', declaredCash: 499.99 } },
+        ]);
+    });
+
     it('mantiene legibles y táctiles las acciones rápidas de producto', async () => {
         localStorage.setItem('nortex_ui_mode', 'full');
         montarPOS();
@@ -231,6 +338,29 @@ describe('POS · escanear y armar la venta', () => {
         expect(cuerpo).toContain('No encontramos');
         expect(cuerpo).toContain('0000000000000');
         expect(cuerpo).toContain('Tu venta está vacía');
+    });
+});
+
+describe('POS · correcciones de venta aprobadas', () => {
+    it('lleva al expediente con aprobación, sin ejecutar una devolución o anulación desde el POS', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.click(await screen.findByTitle('Acciones de caja'));
+        const menu = await screen.findByRole('menu', { name: 'Acciones de caja' });
+        const corrections = within(menu).getByRole('button', { name: 'Correcciones y aprobaciones' });
+        expect(corrections).toHaveAttribute(
+            'title',
+            'Solicitá y aprobá devoluciones o anulaciones antes de ejecutarlas',
+        );
+
+        await user.click(corrections);
+
+        expect(screen.getByTestId('ruta-actual')).toHaveTextContent('/app/sales');
+        expect(posteos.filter((posteo) => (
+            posteo.ruta === '/api/returns' || /\/api\/sales\/[^/]+\/cancel$/.test(posteo.ruta)
+        ))).toEqual([]);
     });
 });
 

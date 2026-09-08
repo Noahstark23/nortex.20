@@ -984,6 +984,26 @@ export function createBatchWarehouseReadinessService(database: Database = prisma
             );
         },
 
+        /**
+         * Reevalúa el readiness usando la transacción que controla una transición
+         * de modo. Evita promover un snapshot calculado antes del lock de Tenant.
+         */
+        async readinessInTransaction(
+            tx: PrismaTx,
+            tenantId: string,
+            query: BatchWarehouseReadinessQuery = {},
+        ) {
+            const scopedTenantId = tenantId.trim();
+            if (!scopedTenantId || scopedTenantId.length > 191) {
+                throw new BatchWarehouseReadinessError(
+                    'BATCH_READINESS_INVALID_INPUT',
+                    400,
+                    'tenantId autenticado no es válido',
+                );
+            }
+            return buildReadinessReport(tx, scopedTenantId, query);
+        },
+
         async reconcile(
             tenantId: string,
             userId: string,

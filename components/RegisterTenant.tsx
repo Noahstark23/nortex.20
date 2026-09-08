@@ -16,6 +16,7 @@ import {
   suggestedCapabilitiesForBusinessType,
   type TenantCapabilityCode,
 } from '../utils/tenantCapabilities';
+import AuthShell, { persistAuthenticatedTheme, useAuthTheme } from './auth/AuthShell';
 
 // El backend exige mínimo 8 caracteres (RegisterSchema en backend/validation/schemas.ts).
 const PASSWORD_MIN = 8;
@@ -89,6 +90,7 @@ const RegisterTenant: React.FC = () => {
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState('');
   const [showPassword, setShowPassword] = React.useState(false);
+  const { theme, toggleTheme } = useAuthTheme();
   // Errores por campo, mapeados desde `details` (validate() los devuelve como
   // { campo: [mensajes] }). Sin esto el usuario solo veía el genérico y quedaba mudo.
   const [fieldErrors, setFieldErrors] = React.useState<PublicRegistrationErrors>({});
@@ -220,6 +222,7 @@ const RegisterTenant: React.FC = () => {
       localStorage.setItem('nortex_tenant_id', data.tenant.id);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
       localStorage.setItem('nortex_onboarding_pin', '1234');
+      persistAuthenticatedTheme(theme);
       // La preferencia era global al navegador: al crear una empresa nueva podía
       // heredar el modo completo de otra cuenta usada antes en el mismo equipo.
       // Cada alta empieza en la experiencia calmada; el prestamista conserva su
@@ -254,40 +257,38 @@ const RegisterTenant: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [formData, navigate, registrationContext.intent, registrationContext.source]);
+  }, [formData, navigate, registrationContext.intent, registrationContext.source, theme]);
 
   const controlClass = (invalid: boolean, valid = false) => [
-    'w-full rounded-control border bg-white/[0.03] py-3 text-white outline-none transition-colors',
+    'nx-auth-control',
     invalid
-      ? 'border-red-500/70 focus:border-red-500 focus:ring-2 focus:ring-red-500/20'
+      ? 'nx-auth-control-invalid'
       : valid
-        ? 'border-brand/50 focus:border-brand focus:ring-2 focus:ring-brand/20'
-        : 'border-white/[0.10] focus:border-brand focus:ring-2 focus:ring-brand/20',
+        ? 'nx-auth-control-valid'
+        : '',
   ].join(' ');
 
   return (
-    <main className="min-h-[100dvh] bg-surface-950 px-4 py-8 text-slate-100 sm:py-12">
-      <section className="panel-premium relative mx-auto w-full max-w-md bg-surface-900/90 p-6 sm:p-8" aria-labelledby="register-title">
-        <header className="mb-7 text-center">
-          <div className="mx-auto mb-4 flex h-11 w-11 items-center justify-center rounded-control bg-brand text-lg font-bold text-surface-950">
-            N
-          </div>
-          <h1 id="register-title" className="text-2xl font-bold tracking-tight text-white">Creá tu cuenta Nortex</h1>
-          <p className="mt-2 text-sm text-slate-400">30 días gratis. Sin tarjeta. Empezá con tu primera venta.</p>
-        </header>
-
+    <AuthShell
+      title="Creá tu cuenta Nortex"
+      subtitle="30 días gratis. Sin tarjeta. Empezá con tu primera venta."
+      theme={theme}
+      onToggleTheme={toggleTheme}
+      headingId="register-title"
+      size="regular"
+    >
         {error && (
-          <div role="alert" aria-live="assertive" className="mb-5 flex items-start gap-2 rounded-control border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
-            <AlertCircle aria-hidden="true" size={17} className="mt-0.5 shrink-0" />
+          <div role="alert" aria-live="assertive" className="nx-auth-alert nx-auth-alert-danger">
+            <AlertCircle aria-hidden="true" size={17} />
             <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4" noValidate aria-busy={loading}>
-          <div>
-            <label htmlFor="register-companyName" className="mb-1.5 block text-sm font-medium text-slate-300">Nombre del negocio</label>
-            <div className="relative">
-              <Building2 aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+        <form onSubmit={handleSubmit} className="nx-auth-form" noValidate aria-busy={loading}>
+          <div className="nx-auth-field-group">
+            <label htmlFor="register-companyName">Nombre del negocio</label>
+            <div className="nx-auth-control-wrap">
+              <Building2 aria-hidden="true" className="nx-auth-control-icon" size={18} />
               <input
                 id="register-companyName"
                 type="text"
@@ -297,42 +298,42 @@ const RegisterTenant: React.FC = () => {
                 maxLength={120}
                 aria-invalid={Boolean(fieldErrors.companyName)}
                 aria-describedby={fieldErrors.companyName ? 'register-companyName-error' : undefined}
-                className={`${controlClass(Boolean(fieldErrors.companyName))} pl-10 pr-4`}
+                className={`${controlClass(Boolean(fieldErrors.companyName))} nx-auth-control-with-icon`}
                 placeholder="Ej. Ferretería San José"
                 value={formData.companyName}
                 onChange={e => updateField('companyName', e.target.value)}
               />
             </div>
-            {fieldErrors.companyName && <p id="register-companyName-error" className="mt-1 text-xs text-red-400">{fieldErrors.companyName}</p>}
+            {fieldErrors.companyName && <p id="register-companyName-error" className="nx-auth-field-error">{fieldErrors.companyName}</p>}
           </div>
 
-          <div>
-            <label htmlFor="register-type" className="mb-1.5 block text-sm font-medium text-slate-300">Tipo de negocio</label>
+          <div className="nx-auth-field-group">
+            <label htmlFor="register-type">Tipo de negocio</label>
             <select
               id="register-type"
               name="type"
               required
               aria-invalid={Boolean(fieldErrors.type)}
               aria-describedby={fieldErrors.type ? 'register-type-error' : undefined}
-              className={`${controlClass(Boolean(fieldErrors.type))} px-4`}
+              className={controlClass(Boolean(fieldErrors.type))}
               value={formData.type}
               onChange={e => updateBusinessType(e.target.value)}
             >
               <option value="" disabled>Seleccioná tu tipo de negocio</option>
               {BUSINESS_TYPES.map(({ value, label }) => <option key={value} value={value}>{label}</option>)}
             </select>
-            {fieldErrors.type && <p id="register-type-error" className="mt-1 text-xs text-red-400">{fieldErrors.type}</p>}
+            {fieldErrors.type && <p id="register-type-error" className="nx-auth-field-error">{fieldErrors.type}</p>}
           </div>
 
-          <details className="rounded-control border border-white/[0.08] bg-white/[0.02] px-3 py-2 text-sm text-slate-300">
-            <summary className="cursor-pointer select-none font-medium text-slate-300 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40">
+          <details className="nx-auth-details">
+            <summary>
               Opciones de inventario (opcional)
               {formData.capabilities.length > 0 ? ` · ${formData.capabilities.length} activas` : ''}
             </summary>
-            <fieldset className="mt-3 border-t border-white/[0.08] pt-3">
+            <fieldset>
               <legend className="sr-only">Opciones de inventario</legend>
-              <p className="mb-3 text-xs leading-relaxed text-slate-500">Elegí solo si vendés por peso, lote o mayoreo. Podés cambiarlo después.</p>
-              <div className="grid gap-2 sm:grid-cols-2">
+              <p className="nx-auth-help">Elegí solo si vendés por peso, lote o mayoreo. Podés cambiarlo después.</p>
+              <div className="nx-auth-capability-grid">
                 {([
                   ['CARNES_AVES', 'Carne o pollo por peso'],
                   ['ALIMENTO_ANIMAL', 'Alimento para animales'],
@@ -340,10 +341,9 @@ const RegisterTenant: React.FC = () => {
                   ['PERECEDEROS', 'Productos con lote o vencimiento'],
                   ['MAYOREO', 'Venta por mayor o sacos'],
                 ] as const).map(([code, label]) => (
-                  <label key={code} className="flex cursor-pointer items-start gap-2 text-sm text-slate-300">
+                  <label key={code} className="nx-auth-check-row">
                     <input
                       type="checkbox"
-                      className="mt-0.5 h-4 w-4 rounded border-white/20 bg-surface-950 text-brand focus:ring-brand/40"
                       checked={formData.capabilities.includes(code)}
                       onChange={event => updateCapability(code, event.target.checked)}
                     />
@@ -354,10 +354,10 @@ const RegisterTenant: React.FC = () => {
             </fieldset>
           </details>
 
-          <div>
-            <label htmlFor="register-email" className="mb-1.5 block text-sm font-medium text-slate-300">Correo del administrador</label>
-            <div className="relative">
-              <Mail aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+          <div className="nx-auth-field-group">
+            <label htmlFor="register-email">Correo del administrador</label>
+            <div className="nx-auth-control-wrap">
+              <Mail aria-hidden="true" className="nx-auth-control-icon" size={18} />
               <input
                 id="register-email"
                 type="email"
@@ -366,21 +366,21 @@ const RegisterTenant: React.FC = () => {
                 required
                 aria-invalid={Boolean(fieldErrors.email)}
                 aria-describedby={fieldErrors.email ? 'register-email-error' : undefined}
-                className={`${controlClass(Boolean(fieldErrors.email))} pl-10 pr-4`}
+                className={`${controlClass(Boolean(fieldErrors.email))} nx-auth-control-with-icon`}
                 placeholder="dueno@empresa.com"
                 value={formData.email}
                 onChange={e => updateField('email', e.target.value)}
               />
             </div>
-            {fieldErrors.email && <p id="register-email-error" className="mt-1 text-xs text-red-400">{fieldErrors.email}</p>}
+            {fieldErrors.email && <p id="register-email-error" className="nx-auth-field-error">{fieldErrors.email}</p>}
           </div>
 
-          <div>
-            <label htmlFor="register-phone" className="mb-1.5 block text-sm font-medium text-slate-300">
-              WhatsApp <span className="font-normal text-slate-500">(opcional)</span>
+          <div className="nx-auth-field-group">
+            <label htmlFor="register-phone">
+              WhatsApp <span className="nx-auth-label-optional">(opcional)</span>
             </label>
-            <div className="relative">
-              <Phone aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+            <div className="nx-auth-control-wrap">
+              <Phone aria-hidden="true" className="nx-auth-control-icon" size={18} />
               <input
                 id="register-phone"
                 type="tel"
@@ -390,21 +390,21 @@ const RegisterTenant: React.FC = () => {
                 maxLength={20}
                 aria-invalid={Boolean(fieldErrors.phone)}
                 aria-describedby={fieldErrors.phone ? 'register-phone-error' : 'register-phone-hint'}
-                className={`${controlClass(Boolean(fieldErrors.phone))} pl-10 pr-4`}
+                className={`${controlClass(Boolean(fieldErrors.phone))} nx-auth-control-with-icon`}
                 placeholder="8888 8888"
                 value={formData.phone}
                 onChange={e => updateField('phone', e.target.value)}
               />
             </div>
             {fieldErrors.phone
-              ? <p id="register-phone-error" className="mt-1 text-xs text-red-400">{fieldErrors.phone}</p>
-              : <p id="register-phone-hint" className="mt-1 text-xs text-slate-500">Solo para ayudarte a arrancar; no compartimos tu número.</p>}
+              ? <p id="register-phone-error" className="nx-auth-field-error">{fieldErrors.phone}</p>
+              : <p id="register-phone-hint" className="nx-auth-field-hint">Solo para ayudarte a arrancar; no compartimos tu número.</p>}
           </div>
 
-          <div>
-            <label htmlFor="register-password" className="mb-1.5 block text-sm font-medium text-slate-300">Contraseña</label>
-            <div className="relative">
-              <Lock aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+          <div className="nx-auth-field-group">
+            <label htmlFor="register-password">Contraseña</label>
+            <div className="nx-auth-control-wrap">
+              <Lock aria-hidden="true" className="nx-auth-control-icon" size={18} />
               <input
                 id="register-password"
                 type={showPassword ? 'text' : 'password'}
@@ -415,7 +415,7 @@ const RegisterTenant: React.FC = () => {
                 maxLength={200}
                 aria-invalid={Boolean(fieldErrors.password || passwordTooShort)}
                 aria-describedby="register-password-hint"
-                className={`${controlClass(Boolean(fieldErrors.password || passwordTooShort), passwordValid)} pl-10 pr-12`}
+                className={`${controlClass(Boolean(fieldErrors.password || passwordTooShort), passwordValid)} nx-auth-control-with-icon nx-auth-control-with-action`}
                 placeholder="••••••••"
                 value={formData.password}
                 onChange={e => updateField('password', e.target.value)}
@@ -423,33 +423,32 @@ const RegisterTenant: React.FC = () => {
               <button
                 type="button"
                 onClick={() => setShowPassword(current => !current)}
-                className="absolute right-1 top-1/2 flex h-touch w-touch -translate-y-1/2 items-center justify-center rounded-control text-slate-400 hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
+                className="nx-auth-control-action"
                 aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
                 aria-pressed={showPassword}
               >
                 {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
               </button>
             </div>
-            <p id="register-password-hint" className={`mt-1 flex items-center gap-1 text-xs ${(fieldErrors.password || passwordTooShort) ? 'text-red-400' : passwordValid ? 'text-brand' : 'text-slate-500'}`}>
+            <p id="register-password-hint" className={`nx-auth-field-hint ${(fieldErrors.password || passwordTooShort) ? 'nx-auth-field-error' : passwordValid ? 'nx-auth-field-valid' : ''}`}>
               {passwordValid && <Check aria-hidden="true" size={13} className="shrink-0" />}
               {fieldErrors.password || (passwordValid ? 'Contraseña lista' : `Mínimo ${PASSWORD_MIN} caracteres`)}
             </p>
           </div>
 
-          <button type="submit" disabled={loading} className="btn-primary mt-6 flex w-full items-center justify-center gap-2 py-3.5 disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100">
+          <button type="submit" disabled={loading} className="nx-auth-primary">
             {loading ? <><Loader2 aria-hidden="true" className="animate-spin" size={19} /> Creando tu negocio…</> : <>Crear mi negocio <ArrowRight aria-hidden="true" size={18} /></>}
           </button>
 
-          <p className="mt-3 text-center text-xs leading-relaxed text-slate-500">
-            Al registrarte, aceptás nuestros <Link to="/terms" className="text-brand hover:underline">Términos</Link> y <Link to="/privacy" className="text-brand hover:underline">Privacidad</Link>.
+          <p className="nx-auth-legal">
+            Al registrarte, aceptás nuestros <Link to="/terms" className="nx-auth-link">Términos</Link> y <Link to="/privacy" className="nx-auth-link">Privacidad</Link>.
           </p>
         </form>
 
-        <div className="mt-6 border-t border-white/[0.06] pt-5 text-center text-sm text-slate-500">
-          ¿Ya tenés cuenta? <Link to="/login" className="font-medium text-brand hover:text-brand-hover">Entrá aquí</Link>
+        <div className="nx-auth-footer nx-auth-footer-inline">
+          <p>¿Ya tenés cuenta?</p> <Link to="/login" className="nx-auth-link nx-auth-link-prominent">Entrá aquí</Link>
         </div>
-      </section>
-    </main>
+    </AuthShell>
   );
 };
 

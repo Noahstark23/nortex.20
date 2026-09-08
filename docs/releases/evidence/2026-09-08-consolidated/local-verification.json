@@ -1,0 +1,41 @@
+{
+  "status": "candidate_local_reviewed_not_deployed",
+  "sourceSnapshot": "9247626",
+  "integratedRemote": "64edea85bdd9275916f6460279f5684d33247455",
+  "qa": {
+    "prismaGenerate": "passed",
+    "prismaValidate": "passed",
+    "typescript": "passed",
+    "buildSeo": "passed",
+    "designSystem": "passed",
+    "npmAuditProductionVulnerabilities": 0,
+    "general": {
+      "passed": 5731,
+      "failed": 0,
+      "skipped": 318
+    },
+    "mandatoryMysql": "running_after_contract_reconciliation",
+    "mutation": "running_threshold_100"
+  },
+  "fiscalExtraction": {
+    "behaviorBefore": 8,
+    "behaviorAfter": 8,
+    "serverBefore": 14674,
+    "serverAfter": 14131,
+    "retentionCertificate": 244,
+    "fiscalExports": 330,
+    "aggregateDelta": 31,
+    "budgetBefore": 14266,
+    "budgetAfter": 14131
+  },
+  "backup": {
+    "timestamp": "2026-09-08T09:15:09Z",
+    "bytes": 1150696,
+    "tables": 111,
+    "sha256": "497fbfa8ac219fd8ddbb51f21ed19e354496592bdb80a79d9b8ca4c713dbfac3",
+    "remoteMetadataMatches": true,
+    "remoteObjectHashMatches": true,
+    "restoreDrill": "not_verified"
+  },
+  "deployment": "not_performed"
+}

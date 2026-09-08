@@ -450,23 +450,31 @@ eliminó y se verificó después que ya no existiera.
 
 ### 7.1 Checklist previo
 
-1. Confirmar MySQL 8 y una ventana con monitoreo de errores/sync.
-2. Crear un backup verificable con `scripts/backup-db.sh` y probar que se puede
-   restaurar en una base aislada.
-3. Aplicar primero sobre un clon reciente de producción.
+Esta sección conserva criterios técnicos de la implementación; no autoriza clonar
+datos de producción, ejecutar backups/restores, modificar schema ni desplegar. La
+ejecución real requiere una autorización separada con SHA, destino, ventana,
+responsable y rollback, y sigue el [runbook canónico de promoción](runbooks/release-promotion.md).
+Un merge, CI verde o una revisión de este documento no puede promover nada.
+
+1. Confirmar MySQL 8 y una ventana autorizada con monitoreo de errores/sync.
+2. Crear un backup verificable y probar la restauración únicamente mediante el
+   procedimiento de recuperación autorizado y una base aislada.
+3. Aplicar primero sobre una copia MySQL 8 descartable y aislada, con datos
+   sintéticos o una copia de producción cuya creación haya sido aprobada por
+   separado.
 4. Instalar exactamente el lockfile y generar Prisma:
 
    ```bash
-   npm ci
-   DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma validate --schema=backend/prisma/schema.prisma
-   DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
+   mise exec -- npm ci
+   DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma validate --schema=backend/prisma/schema.prisma
+   DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma generate --schema=backend/prisma/schema.prisma
    ```
 
-5. En el clon, ejecutar el mismo mecanismo del despliegue y comprobar que
-   Prisma no anuncia pérdida de datos:
+5. Solo en esa base descartable, ejecutar el mismo mecanismo controlado que el
+   despliegue y comprobar que Prisma no anuncia pérdida de datos:
 
    ```bash
-   npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+   DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
    ```
 
 No mezclar `db push` y `migrate deploy` en una instalación que no tenga el
@@ -476,8 +484,13 @@ migraciones explícitas.
 
 ### 7.2 Despliegue y smoke test
 
-1. Aplicar el schema sin `--accept-data-loss` y desplegar backend/frontend de la
-   misma revisión.
+Los pasos de esta lista son evidencia funcional posterior a una release ya
+autorizada; no son una receta para desplegar manualmente. Staging debe ser un run
+manual exitoso del mismo SHA y producción exige autorización explícita separada;
+la promoción automática está prohibida.
+
+1. Aplicar el schema mediante el flujo controlado sin `--accept-data-loss` y
+   desplegar backend/frontend de la misma revisión autorizada.
 2. Verificar login, inventario y una venta de producto legado antes de publicar
    perfiles.
 3. Crear productos `COUNTED` y `MEASURED`, probar un paso válido y uno inválido.
@@ -525,13 +538,14 @@ Kardex ni contabilidad y por tanto no es un rollback válido.
 
 ### 8.1 Automatización
 
-Desde la raíz del repositorio:
+Desde la raíz de un worktree autorizado, con MySQL 8 descartable y datos
+sintéticos o aprobados por separado:
 
 ```bash
-DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma validate --schema=backend/prisma/schema.prisma
-DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
-npx tsc --noEmit
-npx vitest run \
+DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma validate --schema=backend/prisma/schema.prisma
+DATABASE_URL="mysql://u:p@localhost:3306/db" mise exec -- npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+mise exec -- npx --no-install tsc --noEmit
+mise exec -- npx --no-install vitest run \
   tests/quantity.test.ts \
   tests/physicalQuantitySchemas.test.ts \
   tests/purchasePackaging.test.ts \
@@ -572,10 +586,10 @@ npx vitest run \
   tests/measuredReportExport.test.ts \
   tests/htmlSecurity.test.ts \
   tests/scaleNavigation.test.ts
-npm test
-npm run check:design
-npm run test:mutation
-npm run build
+mise exec -- npm test
+mise exec -- npm run check:design
+mise exec -- npm run test:mutation
+mise exec -- npm run build
 git diff --check
 ```
 
@@ -611,7 +625,7 @@ ambas filas y permitir convergencia solo después de una reparación explícita.
 Con backend y base descartables ya iniciados:
 
 ```bash
-NORTEX_QA_BASE_URL="http://127.0.0.1:PUERTO" npx vitest run \
+NORTEX_QA_BASE_URL="http://127.0.0.1:PUERTO" mise exec -- npx --no-install vitest run \
   tests/purchaseFlow.integration.test.ts \
   tests/inventoryAdjust.integration.test.ts \
   tests/stockCountWarehouse.integration.test.ts \

@@ -9,6 +9,8 @@ import { applyStockDelta, asegurarBodegaPorDefecto, weightedAverageCost } from '
 import { registrarSalidaDeCajaPorCompra, SupplierPaymentError } from './supplierPayment';
 import { executeProcurementMatch } from './procurementMatchService';
 import { applyBatchWarehouseDelta, resolveBatchWarehouseLedgerMode } from './productBatchWarehouseLedgerService';
+import { assertProductBatchExpiryIdentity } from '../lib/productBatchIdentity';
+import { canSetPurchaseSalePrice, hasPurchaseSalePriceIntent, resolvePurchaseSalePriceIntents, buildPurchaseSalePriceChange, applyLinkedPurchaseSalePriceIntents, createPurchaseSalePriceAudits, PurchaseSalePriceError, type PurchaseSalePriceChange } from './purchaseSalePriceService';
 import { preparePurchaseContext } from './purchaseRegistrationPreparation';
 import { buildPurchasePreview } from './purchaseRegistrationPreview';
 import { assertPurchasePrincipal, parsePurchaseIdempotencyKey, parsePurchaseInput, purchasePayloadHash,
@@ -50,6 +52,9 @@ export async function preparePurchasePreview(
     db: PrismaClient = prisma,
 ) {
     const input = parsePurchaseInput(options.input);
+    if (hasPurchaseSalePriceIntent(input.items) && !canSetPurchaseSalePrice(options.principal.role)) {
+        throw new PurchaseRegistrationError('PURCHASE_SALE_PRICE_FORBIDDEN', 403, 'No tenés permiso para modificar precios de venta desde una compra');
+    }
     await assertPurchasePrincipal(db, options.principal);
     return db.$transaction(async tx => {
         await assertPurchasePrincipal(tx, options.principal);
@@ -67,6 +72,9 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
         throw new PurchaseRegistrationError('PURCHASE_INVALID_PREVIEW', 400, 'La revisión de la compra no es válida.');
     }
     const input = parsePurchaseInput(options.input);
+    if (hasPurchaseSalePriceIntent(input.items) && !canSetPurchaseSalePrice(options.principal.role)) {
+        throw new PurchaseRegistrationError('PURCHASE_SALE_PRICE_FORBIDDEN', 403, 'No tenés permiso para modificar precios de venta desde una compra');
+    }
     const requestKey = parsePurchaseIdempotencyKey(options.idempotencyKey);
     const payloadHash = purchasePayloadHash(input);
     await assertPurchasePrincipal(db, principal);
@@ -91,6 +99,10 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             await assertPurchasePrincipal(tx, principal, true);
         }
         const { supplierId, warehouseId, invoiceNumber, date, postingDate, dueDate, paymentMethod, notes, items, purchaseOrderId } = input;
+        const salePriceIntents = resolvePurchaseSalePriceIntents(items);
+        const salePriceIntentByProduct = new Map(salePriceIntents.map(intent => [intent.productId, intent]));
+        const priceChanges: PurchaseSalePriceChange[] = [];
+        const directSalePriceProductsProcessed = new Set<string>();
         // Orden existente preservado: Supplier → Product → Shift. El servicio
         // contable resuelve/siembra cada cuenta usando esta misma transacción.
         await tx.$queryRaw`SELECT id FROM \`Supplier\` WHERE id = ${supplierId} AND \`tenantId\` = ${principal.tenantId} FOR UPDATE`;
@@ -117,8 +129,10 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
         // resuelve una sola vez por documento y solo cuando realmente hay una
         // entrada directa con lote; las compras sin lote y las facturas de OC no
         // pagan una lectura ni materializan filas del sidecar.
-        const batchWarehouseLedgerMode = !linkedPurchaseOrder && preparedItems.some((item) =>
-            productsById.get(item.productId)?.requiresBatchTracking === true)
+        const isDirectPurchase = !linkedPurchaseOrder;
+        const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some((item) =>
+            productsById.get(item.productId)?.requiresBatchTracking === true);
+        const batchWarehouseLedgerMode = hasTrackedDirectPurchaseItem
             ? await resolveBatchWarehouseLedgerMode(tx, principal.tenantId)
             : null;
         const processedItems = preparedItems.map((item, index) => {
@@ -127,10 +141,6 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             // entrada; este guard evita persistir una línea sin snapshots si
             // ese contrato cambiara accidentalmente.
             if (!lineMoney) throw new Error('TOTAL_COMPRA_INCONSISTENTE');
-            const requiresTrackedBatchIdentity = (
-                batchWarehouseLedgerMode === 'SHADOW'
-                || batchWarehouseLedgerMode === 'ENFORCED'
-            ) && productsById.get(item.productId)?.requiresBatchTracking === true;
             const {
                 baseQuantity,
                 lineNet: _lineNet,
@@ -149,7 +159,7 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
                 // Toda línea directa recibe identidad server-side antes de los
                 // efectos físicos. Así incluso SKUs duplicados conservan una
                 // evidencia de bodega/lote/costo inequívoca para devoluciones.
-                ...(!linkedPurchaseOrder || requiresTrackedBatchIdentity ? { id: crypto.randomUUID() } : {}),
+                ...(isDirectPurchase ? { id: crypto.randomUUID() } : {}),
                 averageUnitCost: inventoryLineCost.div(baseQuantity).toString(),
                 totalCost: lineMoney.lineNet.toFixed(2),
                 taxAmountExact: lineMoney.lineTax.toFixed(2),
@@ -266,8 +276,12 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             // movió el costo → el promedio mezclaría stock nuevo con costo viejo
             // (ej. graba 6.3333 donde lo correcto era 7.00). La lectura locking
             // devuelve el costo comprometido más reciente.
-            const lockedCostRows: any[] = await tx.$queryRaw`SELECT cost FROM \`Product\` WHERE id = ${item.productId} AND \`tenantId\` = ${principal.tenantId} FOR UPDATE`;
-            const oldCost = new Decimal((lockedCostRows[0]?.cost ?? 0).toString());
+            const lockedProductRows: any[] = await tx.$queryRaw`SELECT cost, price FROM \`Product\` WHERE id = ${item.productId} AND \`tenantId\` = ${principal.tenantId} FOR UPDATE`;
+            const lockedProduct = lockedProductRows[0];
+            if (!lockedProduct) throw new PurchaseSalePriceError('PURCHASE_PRODUCT_NOT_FOUND', 404, `Producto no encontrado: ${item.productId}`);
+            const oldCost = new Decimal(lockedProduct.cost.toString());
+            const priceChange = buildPurchaseSalePriceChange(item.productId, lockedProduct.price,
+                directSalePriceProductsProcessed.has(item.productId) ? undefined : salePriceIntentByProduct.get(item.productId));
 
             // Promedio ponderado móvil (función pura compartida — regla C1 adentro).
             const newAvgCost = weightedAverageCost(
@@ -278,12 +292,15 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             ).toNumber();
 
             await tx.product.update({
-                where: { id: item.productId },
+                where: { id: item.productId, tenantId: principal.tenantId },
                 data: {
+                    ...(priceChange ? { price: new Decimal(priceChange.priceAfter).toNumber(), promotionPriceVersion: { increment: 1 } } : {}),
                     cost: newAvgCost  // ya redondeado a 4 d.p. por Decimal
                 }
             });
 
+            directSalePriceProductsProcessed.add(item.productId);
+            if (priceChange) priceChanges.push(priceChange);
             costChanges.push({
                 productId: item.productId,
                 stockBefore: oldStock,
@@ -297,23 +314,50 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             // Control de Lotes
             let batchId = null;
             if (product.requiresBatchTracking && item.batchNumber && item.expiryDate) {
-                const batch = await tx.productBatch.upsert({
-                    where: {
-                        productId_batchNumber: { productId: item.productId, batchNumber: item.batchNumber }
-                    },
-                    update: { stock: { increment: item.stockQuantity } },
-                    create: {
-                        tenantId: principal.tenantId,
+                const existingBatches: Array<{ id: string; expiryDate: Date }> = await tx.$queryRaw`
+                    SELECT id, expiryDate
+                    FROM \`ProductBatch\`
+                    WHERE tenantId = ${principal.tenantId}
+                      AND productId = ${item.productId}
+                      AND batchNumber = ${item.batchNumber}
+                    FOR UPDATE`;
+                const existingBatch = existingBatches[0] ?? null;
+                if (existingBatch) {
+                    assertProductBatchExpiryIdentity({
                         productId: item.productId,
+                        productName: product.name,
                         batchNumber: item.batchNumber,
-                        // `processedItems` ya normalizó la fecha calendario a Date.
-                        // Volver a pasar el Date por el normalizador de strings
-                        // produciría una fecha inválida para compras con lote.
-                        expiryDate: item.expiryDate,
-                        stock: item.stockQuantity
+                        existingExpiryDate: existingBatch.expiryDate,
+                        incomingExpiryDate: item.expiryDate,
+                    });
+                }
+                if (existingBatch) {
+                    const updatedBatch = await tx.productBatch.updateMany({
+                        where: {
+                            id: existingBatch.id,
+                            tenantId: principal.tenantId,
+                            productId: item.productId,
+                        },
+                        data: { stock: { increment: item.stockQuantity } },
+                    });
+                    if (updatedBatch.count !== 1) {
+                        throw new Error('PURCHASE_BATCH_CONCURRENT_WRITE');
                     }
-                });
-                batchId = batch.id;
+                    batchId = existingBatch.id;
+                } else {
+                    const createdBatch = await tx.productBatch.create({
+                        data: {
+                            tenantId: principal.tenantId,
+                            productId: item.productId,
+                            batchNumber: item.batchNumber,
+                            // `processedItems` ya normalizó la fecha calendario a Date.
+                            expiryDate: item.expiryDate,
+                            stock: item.stockQuantity,
+                        },
+                        select: { id: true },
+                    });
+                    batchId = createdBatch.id;
+                }
 
                 // Sidecar exacto lote+bodega. Product/ProductStock, ProductBatch
                 // y Kardex siguen siendo los agregados legacy; cualquier fallo
@@ -325,7 +369,7 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
                         mode: batchWarehouseLedgerMode,
                         tenantId: principal.tenantId,
                         productId: item.productId,
-                        batchId: batch.id,
+                        batchId: batchId!,
                         warehouseId: purchaseWarehouseId,
                         delta: item.quantityExact,
                         movementType: 'DIRECT_PURCHASE',
@@ -385,6 +429,10 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
         //    recarga tu billetera" aunque hubiera efectivo real en la caja.
         //    El asiento de `recordPurchase` ya acreditaba Caja (1.1.1): la
         //    billetera nunca fue la contrapartida correcta.
+        if (linkedPurchaseOrder && salePriceIntents.length > 0) {
+            priceChanges.push(...await applyLinkedPurchaseSalePriceIntents({ tx, tenantId: principal.tenantId, intents: salePriceIntents }));
+        }
+
         if (paymentMethod === 'CASH') {
             // El turno se resolvió en esta transacción; el helper lo valida bajo lock.
             const salida = await registrarSalidaDeCajaPorCompra(tx, {
@@ -421,6 +469,9 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
             linkedPurchaseOrder ? procurementMatch.plan.expectedAmount : undefined,
         );
 
+        await createPurchaseSalePriceAudits({ tx, tenantId: principal.tenantId, userId: principal.userId,
+            purchaseId: purchase.id, purchaseOrderId: linkedPurchaseOrder?.id ?? null, invoiceNumber, changes: priceChanges });
+
         // Asiento inmutable de auditoría (Capa 3): toda compra mueve su efecto
         // financiero; solo una compra directa mueve además inventario valorizado.
         // Registrar el before/after de la GAVETA (null si fue a crédito: ahí no
@@ -449,6 +500,7 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
                     efectivoAntes: efectivoAntesCompra?.toNumber() ?? null,
                     efectivoDespues: efectivoDespuesCompra?.toNumber() ?? null,
                     productChanges: costChanges,
+                    priceChanges,
                     timestamp: new Date().toISOString()
                 })
             }

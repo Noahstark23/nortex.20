@@ -116,14 +116,20 @@ describe('catálogo compacto del mostrador', () => {
         expect(all).toHaveFocus();
     });
 
+    it.each(['https://example.com/cable.jpg', 'http://res.cloudinary.com/dex1vy92h/image/upload/v1/cable.jpg'])('no solicita fotos fuera del proveedor autorizado: %s', imageUrl => {
+        const { container } = render(<CajaNicaCatalog {...props({ products: [product({ imageUrl })] })} />);
+        expect(container.querySelector('img')).toBeNull();
+        expect(screen.getByText('Cable THHN calibre 12 azul')).toBeVisible();
+    });
+
     it('elimina la miniatura fallida y nunca sustituye una imagen por iniciales', () => {
-        const { container, rerender } = render(<CajaNicaCatalog {...props({ products: [product({ imageUrl: 'https://example.com/cable.jpg' })] })} />);
+        const { container, rerender } = render(<CajaNicaCatalog {...props({ products: [product({ imageUrl: 'https://res.cloudinary.com/dex1vy92h/image/upload/v1/cable.jpg' })] })} />);
         const photo = container.querySelector('img');
-        expect(photo).toHaveAttribute('src', 'https://example.com/cable.jpg');
+        expect(photo).toHaveAttribute('src', 'https://res.cloudinary.com/dex1vy92h/image/upload/v1/cable.jpg');
         fireEvent.error(photo!);
         expect(container.querySelector('img')).toBeNull();
         expect(screen.queryByText('CT')).not.toBeInTheDocument();
-        rerender(<CajaNicaCatalog {...props({ products: [product({ imageUrl: 'http://example.com/cable.jpg' })] })} />);
+        rerender(<CajaNicaCatalog {...props({ products: [product({ imageUrl: 'http://res.cloudinary.com/dex1vy92h/image/upload/v1/cable.jpg' })] })} />);
         expect(container.querySelector('img')).toBeNull();
     });
 });

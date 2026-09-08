@@ -79,7 +79,7 @@ describe('cobro sin atajos peligrosos', () => {
 
 describe('búsqueda operable con Enter', () => {
     it('solo agrega un SKU exacto o una coincidencia única', () => {
-        const searchKeyDown = between(pos, 'const handleSearchKeyDown', 'const resetReturnFlow');
+        const searchKeyDown = between(pos, 'const handleSearchKeyDown', 'if (shiftLoading)');
         expect(searchKeyDown).toContain('resolverEnterBusqueda(indiceProductos, term)');
         expect(searchKeyDown).toContain("resolution.kind === 'ambiguous'");
         expect(searchKeyDown).toContain('Tocá el producto correcto');
@@ -90,7 +90,7 @@ describe('búsqueda operable con Enter', () => {
     });
 
     it('conserva la búsqueda y anuncia el error cuando no hay coincidencias', () => {
-        const searchKeyDown = between(pos, 'const handleSearchKeyDown', 'const resetReturnFlow');
+        const searchKeyDown = between(pos, 'const handleSearchKeyDown', 'if (shiftLoading)');
         const noResult = between(searchKeyDown, "if (resolution.kind === 'none')", "if (resolution.kind === 'ambiguous')");
 
         expect(noResult).toContain('No encontramos');

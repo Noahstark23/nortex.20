@@ -18,6 +18,7 @@ interface Batch {
     warehouseId: string;
     expiryDate: Date;
     stock: number;
+    heldStock?: number;
 }
 
 const context = {
@@ -63,7 +64,7 @@ function database(day: string, yesterday: string, tomorrow: string) {
             findMany: vi.fn(async ({ where }: any) => candidates({ ...where.batch, stock: where.stock })
                 .filter(row => row.tenantId === where.tenantId && row.productId === where.productId
                     && row.warehouseId === where.warehouseId)
-                .map(row => ({ batchId: row.id, stock: row.stock, batch: { id: row.id, batchNumber: row.id } }))),
+                .map(row => ({ batchId: row.id, stock: row.stock, heldStock: row.heldStock ?? 0, batch: { id: row.id, batchNumber: row.id } }))),
         },
         saleItemBatchAllocation: { createMany: vi.fn(async ({ data }: any) => ({ count: data.length })) },
     };
@@ -156,6 +157,17 @@ describe.each(['OFF', 'SHADOW', 'ENFORCED'] as const)('vigencia civil FEFO en mo
 });
 
 describe('vigencia y controles conservados', () => {
+    it('ENFORCED descuenta la retención aun cuando el lote sigue vigente y físicamente disponible', async () => {
+        const { tx, rows } = database('2026-09-04', '2026-09-03', '2026-09-05');
+        rows.find(row => row.id === 'today-midnight')!.heldStock = 1;
+        const result = await allocateSaleItemBatchesFefo(tx, {
+            ...context, quantity: '1', enforceComplete: true,
+            capturedAt: new Date('2026-09-04T18:00:00Z'), batchWarehouseLedgerMode: 'ENFORCED',
+        });
+        expect(result.allocations.map(row => row.batchId)).toEqual(['today-noon']);
+        expect(rows.find(row => row.id === 'today-midnight')?.stock).toBe(1);
+    });
+
     it.each([
         ['2026-12-03T00:00:00Z', 'expiring'],
         ['2026-12-03T12:00:00Z', 'expiring'],

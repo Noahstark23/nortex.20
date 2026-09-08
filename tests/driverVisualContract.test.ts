@@ -58,13 +58,17 @@ describe('contrato visual y táctil de la app de repartidor', () => {
     });
 
     it('protege contraste y 44 px en las acciones operativas', () => {
-        for (const marker of ["{loggingIn ? 'Entrando...' : 'Entrar'}", 'Sí, cobré', 'Entregar y Cobrar']) {
+        for (const marker of ["{loggingIn ? 'Entrando...' : 'Entrar'}", 'Sí, cobré', 'handleDeliverTap(order)']) {
             const button = elementContaining('button', marker);
             expect(button).toContain('nx-fluid-press');
             expect(button).toContain('min-h-tap');
             expect(button).toContain('text-brand-on');
             expect(button).not.toContain('text-white');
         }
+
+        expect(driver).toContain("label: 'Entregar y Cobrar'");
+        expect(driver).toContain("label: 'Esperando preparación'");
+        expect(driver).toContain("label: 'Esperando en Ferretería'");
 
         for (const marker of ['openWallet', 'Cerrar sesión']) {
             const button = elementContaining('button', marker);

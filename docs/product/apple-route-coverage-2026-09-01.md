@@ -43,7 +43,8 @@ describe el candidato local del 1 de septiembre de 2026.
   billetera, confirmación y vacío tienen evidencia local Día/Noche, pero la red de
   la sesión autenticada fue sintética e interceptada.
 - Marketing, autenticación general, legal, blog, catálogo, tracking y admin no
-  heredan `workspaceTheme`; siguen siendo un programa visual separado.
+  heredan `workspaceTheme`; requieren evidencia propia. El 2026-09-02 la
+  familia pública principal quedó auditada otra vez con capturas frescas.
 
 ## Rutas autenticadas `/app/*`
 
@@ -88,16 +89,20 @@ describe el candidato local del 1 de septiembre de 2026.
 | Ruta o familia | Estado | Observación |
 | --- | --- | --- |
 | `/driver`, `/driver/:id` | Separada con evidencia sólida local | Tema propio por repartidor; sesión autenticada visual con API sintética |
-| `/` y `/apple` | Separada | Marketing; `/apple` es referencia, no prueba del ERP autenticado |
-| `/register`, `/login`, `/forgot-password`, `/reset-password/:token` | Separada | Flujos de acceso con estilo propio; no heredan el botón del ERP |
+| `/` y `/apple` | Separada con evidencia parcial + contractual | `/` conserva la entrega estática SEO con captura Día/Noche en escritorio; `/apple` es un alias de compatibilidad de la misma home SPA y queda cubierto por contrato. Falta completar el par móvil de la raíz y una captura propia de `/apple`. |
+| `/register`, `/login`, `/forgot-password`, `/reset-password/:token` | Separada con evidencia parcial + contractual | Login tiene captura Día/Noche. Registro, recuperación y reset inválido comparten `AuthShell` y pruebas propias, pero en este ciclo solo tienen captura clara. |
 | `/demo` | Separada | Demo pública; no satisface aceptación del producto autenticado |
-| `/ferreterias`, `/farmacias`, `/nicaragua` | Separada | Landings SEO |
-| `/blog`, `/blog/categoria/:slug`, `/blog/:slug` | Separada | Contenido público |
-| `/privacy`, `/terms` | Separada | Legal |
+| `/ferreterias`, `/farmacias`, `/nicaragua` | Separada con evidencia parcial + contractual | Landings SEO auditadas otra vez el 2026-09-02 con shell público Apple. La cobertura Día/Noche del shell está en tests; las capturas frescas de este ciclo son claras. |
+| `/blog`, `/blog/categoria/:slug`, `/blog/:slug` | Separada con evidencia contractual | Contenido público sobre `BlogShell`, cubierto por pruebas de tema y navegación. Las capturas editoriales previas no forman parte de la carpeta trazable de este release. |
+| `/privacy`, `/terms` | Separada con evidencia parcial + contractual | Legal sobre `BlogShell`; cada ruta tiene una captura clara en Día y contrato compartido de tema. Faltan sus pares visuales Noche y móvil. |
 | `/pedidos/:slug`, `/catalog/:slug` | Separada | Catálogo público; patrones alias del mismo componente |
 | `/track/:pedidoId` | Separada | Tracking público |
 | `/repartidor/registro` | Separada | Registro de repartidor con estilo propio |
 | `/admin` | Separada | Consola administrativa fuera de `ProtectedApp` |
+
+## Registro conservado de la auditoría autenticada
+
+Los pasajes siguientes son evidencia histórica del worktree original; no acreditan el candidato integrado del 2026-09-08.
 
 ## Evidencia del cierre del menú
 
@@ -192,6 +197,73 @@ declaraciones, retenciones, cierres, reaperturas, depreciaciones ni bajas de
 activos; esas conductas permanecieron bajo pruebas sintéticas y contratos de
 código, no bajo datos financieros reales.
 
+## Evidencia pública del 2026-09-02
+
+- Login Día/Noche:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/01-login-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/03-login-dark.png`
+- Registro:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/04-register-light.png`
+- Recuperación y reset inválido:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/05-forgot-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/06-reset-invalid.png`
+- Landings SEO:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/07-ferreterias-light.png`,
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/08-farmacias-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/09-nicaragua-light.png`
+- Legal:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/10-privacy-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/11-terms-light.png`
+- Landing estática real:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/12-landing-static-light.png`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/13-landing-static-dark.png`
+- Handoff final de la raíz sobre build limpio (`127.0.0.1:4192`):
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/final/05-home-final-4192-day.jpg`
+  y
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/final/06-home-final-4192-night.jpg`
+- Login claro con texto escrito en modo Día:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence/iab-2026-09-02-final/02-login-light-typed.png`
+- Evidencia ejecutable y logs de este ciclo:
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence`
+
+La sesión pública se ejecutó en `127.0.0.1:4188` para evitar la redirección
+automática provocada por una sesión previa del browser sobre `127.0.0.1:4174`.
+No se ejecutaron credenciales reales ni mutaciones de negocio.
+
+## Evidencia autenticada del 2026-09-01
+
+Las referencias antiguas a `.codex/apple-*-audit-*` son artefactos locales no
+versionados: permanecen en el workspace canónico del operador, pero no se copian
+a este worktree aislado ni forman parte del commit. Por tanto, sustentan el
+histórico de la auditoría, no una prueba reproducible desde Git ni una
+verificación del despliegue actual.
+
+Se conservan los estados de cobertura de `/app/*` porque siguen respaldados por:
+
+- La declaración real de las `33` rutas autenticadas dentro de `ProtectedApp`
+  en `App.tsx`.
+- La compuerta estructural de `tests/appleWorkspaceContract.test.ts`, que exige
+  que todos los destinos autenticados permanezcan dentro de `Layout` y mantiene
+  `/app/pos` como única excepción operativa.
+- La compuerta de `tests/layoutThemeToggle.test.tsx`, que exige un solo control
+  conceptual por viewport y persistencia de tema por identidad.
+- Los contratos semánticos específicos de `tests/teamVisualSemantics.test.ts`,
+  `tests/helpCenterThemeContract.test.ts` y
+  `tests/contabilidadThemeContract.test.ts`.
+- Los recorridos sintéticos de `tests/helpCenter.test.tsx` y
+  `tests/contabilidadUx.test.tsx`.
+
+Por honestidad, los estados `Sólida` de `/app/*` describen el cierre local del
+ciclo anterior y no deben presentarse como evidencia fresca de este release.
+La promoción actual solo vuelve a verificar las superficies públicas incluidas
+en `/private/tmp/nortex-public-apple.CdwEfO/evidence`; staging exige además salud
+y contenido servidos desde el SHA exacto.
+
 ## Compuertas que sostienen el resultado
 
 - `tests/appleWorkspaceContract.test.ts` clasifica cada destino autenticado,
@@ -213,9 +285,28 @@ código, no bajo datos financieros reales.
 - `tests/contabilidadUx.test.tsx` mantiene diálogos accesibles, fechas civiles de
   Managua, autorización, idempotencia y confirmaciones previas a las mutaciones.
 
+## Corridas conocidas de este ciclo
+
+- `mise exec -- npm run check:design`: `83` archivos revisados, `0`
+  violaciones.
+- Suite pública/auth enfocada del 2026-09-02: `61/61` verdes.
+- `mise exec -- npm test -- --run`: `3952` pruebas totales, `3884` verdes y
+  `68` skip.
+- `mise exec -- npm run build:seo`: `71` rutas prerenderizadas y `72` URLs en
+  sitemap.
+- Los logs y capturas de estas corridas viven fuera del repo en
+  `/private/tmp/nortex-public-apple.CdwEfO/evidence`.
+
 ## Regla para cerrar “todo Nortex”
 
 Una ruta solo pasa de **Contractual** a **Sólida** cuando tiene captura fresca de
 sus estados relevantes en Día/Noche, QA focal, ausencia de mutaciones inesperadas y
 un límite escrito. El orden siguiente se decide por impacto y deuda visible, no por
 la facilidad de producir una captura.
+
+## Integración local del 4 de septiembre
+
+Se conserva el historial vigente de `main` (2834497). La entrega local posterior
+del POS, activación y avisos se documenta en `docs/VERIFICACION_MODULOS_2026-09-04.md`.
+Los resultados de esa copia anterior no acreditan este candidato integrado ni
+un despliegue: requiere nuevas pruebas sobre el árbol final.

@@ -65,7 +65,41 @@ describe('fecha contable de una compra', () => {
         expect(tx.journalEntry.create).toHaveBeenCalledWith({
             data: expect.objectContaining({
                 tenantId: 'tenant-a',
+                description: 'Compra a crédito #purchase',
                 referenceId: 'purchase-a',
+                referenceType: 'PURCHASE',
+                date: postingDate,
+            }),
+        });
+        expect(tx.journalLine.create).toHaveBeenCalledTimes(3);
+    });
+
+    it('distingue una compra de contado y conserva la identidad corta en el asiento', async () => {
+        db.accountFindUnique.mockImplementation(({ where }: any) => {
+            const code = where.tenantId_code.code;
+            const type = code === '1.1.1' ? 'ASSET' : accountTypes[code];
+            return Promise.resolve({ id: `account-${code}`, code, type });
+        });
+        const tx = transaction();
+        const postingDate = new Date('2026-09-02T12:00:00.000Z');
+
+        await recordPurchase(
+            tx as any,
+            'tenant-a',
+            'user-a',
+            'purchase-cash-1234',
+            '11.50',
+            '1.50',
+            'CASH',
+            '1.50',
+            postingDate,
+        );
+
+        expect(tx.journalEntry.create).toHaveBeenCalledWith({
+            data: expect.objectContaining({
+                tenantId: 'tenant-a',
+                description: 'Compra de contado #purchase',
+                referenceId: 'purchase-cash-1234',
                 referenceType: 'PURCHASE',
                 date: postingDate,
             }),

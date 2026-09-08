@@ -21,6 +21,7 @@ import {
     resolverIdentidadPersistencia,
     serializarTraspasoCarrito,
 } from '../utils/cartPersistence';
+import { DAY_DARK_SURFACE } from '../utils/daySurfaceInk';
 
 type FiscalQuotation = Quotation & {
     fiscalRegimeAtQuote?: FiscalRegime;
@@ -571,7 +572,7 @@ const QuotationManager: React.FC = () => {
                     /* WEB_ORDERS Tab */
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                         {tenantSlug ? (
-                            <div className="mb-6 bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-5 text-white shadow-lg relative overflow-hidden">
+                            <div className={`${DAY_DARK_SURFACE.publicCatalog} mb-6 rounded-xl p-5 shadow-lg relative overflow-hidden`}>
                                 {/* Decorative Blur */}
                                 <div className="absolute -top-10 -right-10 w-32 h-32 bg-nortex-500/30 rounded-full blur-3xl pointer-events-none"></div>
 

@@ -70,7 +70,7 @@ try {
       try {
         const response = await fetch(runtime.NORTEX_QA_BASE_URL + '/api/health', { signal: AbortSignal.timeout(1000) });
         const health = await response.json();
-        if (response.ok && health.ok === true && health.db === 'up' && health.commit === env.SOURCE_COMMIT) { healthy = true; break; }
+        if (response.ok && health.ok === true && health.db === 'up' && health.commit === env.SOURCE_COMMIT && /(?:^|,)\s*no-store(?:\s|,|$)/i.test(response.headers.get('cache-control') ?? '')) { healthy = true; break; }
       } catch { /* Espera acotada por inicialización local. */ }
       await delay(500);
     }

@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = (path: string) => readFileSync(resolve(process.cwd(), path), 'utf8');
-const server = source('backend/server.ts');
+const server = source('backend/server.ts').replace('registerRetentionCertificate(app);\nregisterFiscalExports(app);', source('backend/routes/retentionCertificate.ts') + '\n' + source('backend/routes/fiscalExports.ts'));
 const accounting = source('backend/services/accounting.ts');
 
 const routeSlice = (startMarker: string, endMarker: string) => {

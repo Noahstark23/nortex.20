@@ -1,4 +1,5 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { motorizadoSafeSelect } from '../backend/services/motorizadoIdentity';
 
 const prismaMock = vi.hoisted(() => ({
     pedido: {
@@ -154,7 +155,7 @@ describe('delivery route hardening', () => {
         }));
     });
 
-    it('limita el producto del detalle privado para CASHIER y VIEWER', async () => {
+    it.each(['CASHIER', 'VIEWER'])('limita el producto del detalle privado para %s', async role => {
         const router = pedidosRouteModule.buildPedidosRouter();
         const handler = routeHandlers(router, '/:id', 'get').at(-1);
         const res = response();
@@ -166,7 +167,7 @@ describe('delivery route hardening', () => {
 
         await handler({
             tenantId: 'tenant-auth',
-            role: 'CASHIER',
+            role,
             params: { id: 'pedido-1' },
         }, res);
 
@@ -174,13 +175,7 @@ describe('delivery route hardening', () => {
             where: { id: 'pedido-1', tenantId: 'tenant-auth' },
             include: {
                 motorizado: {
-                    select: {
-                        id: true,
-                        nombre: true,
-                        telefono: true,
-                        tipoFlota: true,
-                        activo: true,
-                    },
+                    select: motorizadoSafeSelect,
                 },
                 items: {
                     include: {
@@ -244,13 +239,13 @@ describe('delivery route hardening', () => {
         expect(tx.pedido.updateMany).not.toHaveBeenCalled();
         expect(firstRes.statusCode).toBe(409);
         expect(firstRes.json).toHaveBeenCalledWith({
-            error: 'Asigná un motorizado antes de despachar el pedido.',
-            code: 'PEDIDO_INVALID_TRANSITION',
+            error: 'Asigná un motorizado antes de iniciar la ruta.',
+            code: 'PEDIDO_RIDER_REQUIRED',
         });
         expect(secondRes.statusCode).toBe(409);
         expect(secondRes.json).toHaveBeenCalledWith({
-            error: 'El pedido solo puede pasar a en camino desde preparando o una etapa de ruta activa.',
-            code: 'PEDIDO_INVALID_TRANSITION',
+            error: 'Transición de pendiente a en_camino no permitida.',
+            code: 'PEDIDO_INVALID_STATE_TRANSITION',
         });
     });
 
@@ -300,13 +295,15 @@ describe('delivery route hardening', () => {
                     { tipoFlota: 'NORTEX', kycStatus: 'APROBADO' },
                 ],
             },
+            select: { id: true },
         });
         expect(tx.pedido.updateMany).toHaveBeenCalledWith({
             where: {
                 id: 'pedido-1',
                 tenantId: 'tenant-auth',
                 facturaId: null,
-                estado: { notIn: ['entregado', 'cancelado'] },
+                motorizadoId: null,
+                AND: [{ estado: 'preparando' }, { estado: { notIn: ['entregado', 'cancelado'] } }],
             },
             data: { motorizadoId: 'rider-1' },
         });
@@ -314,13 +311,7 @@ describe('delivery route hardening', () => {
             where: { id: 'pedido-1', tenantId: 'tenant-auth' },
             include: {
                 motorizado: {
-                    select: {
-                        id: true,
-                        nombre: true,
-                        telefono: true,
-                        tipoFlota: true,
-                        activo: true,
-                    },
+                    select: motorizadoSafeSelect,
                 },
             },
         });
@@ -337,6 +328,7 @@ describe('delivery route hardening', () => {
         (prismaMock as any).motorizado = {
             create,
             findFirst: vi.fn().mockResolvedValue(null),
+            findMany: vi.fn().mockResolvedValue([]),
         };
         const res = response();
 
@@ -345,10 +337,12 @@ describe('delivery route hardening', () => {
             telefono: '8888-0000',
             zonaCobertura: ' Managua sur ',
             vehiculoPlaca: 'M-123456',
+            pin: '0042',
         })).toMatchObject({
             nombre: 'Juan Perez',
             zonaCobertura: 'Managua sur',
             vehiculoPlaca: 'M-123456',
+            pin: '0042',
         });
 
         await handler({
@@ -358,10 +352,11 @@ describe('delivery route hardening', () => {
                 telefono: '8888-0000',
                 zonaCobertura: 'Managua sur',
                 vehiculoPlaca: 'M-123456',
+                pin: '0042',
             },
         }, res);
 
-        expect(bcryptHashMock).not.toHaveBeenCalled();
+        expect(bcryptHashMock).toHaveBeenCalledWith('0042', 10);
         expect(create).toHaveBeenCalledWith(expect.objectContaining({
             data: expect.objectContaining({
                 tenantId: 'tenant-auth',
@@ -369,6 +364,7 @@ describe('delivery route hardening', () => {
                 zonaCobertura: 'Managua sur',
                 vehiculoPlaca: 'M-123456',
                 tipoFlota: 'PROPIA',
+                pinHash: 'hash:0042',
             }),
             select: expect.objectContaining({
                 id: true,

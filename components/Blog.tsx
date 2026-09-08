@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { blogPosts } from '../data/blog-posts';
 import { blogClusters, getClusterByName } from '../data/blog-clusters';
 import { ArrowRight, Clock } from 'lucide-react';
+import BlogShell from './blog/BlogShell';
 
 const PAGE_SIZE = 12;
 
@@ -31,33 +32,27 @@ const Blog: React.FC = () => {
     };
 
     return (
-        <div className="min-h-screen bg-slate-50">
-            <nav className="bg-white border-b border-slate-200 py-4 px-6">
-                <div className="max-w-5xl mx-auto flex items-center justify-between">
-                    <Link to="/" className="flex items-center gap-2">
-                        <div className="w-8 h-8 bg-slate-900 rounded flex items-center justify-center text-white font-bold">N</div>
-                        <span className="font-bold text-slate-900">NORTEX</span>
-                        <span className="text-slate-400 ml-2">/ Blog</span>
-                    </Link>
-                    <Link to="/register" className="text-sm font-bold bg-slate-900 text-white px-4 py-2 rounded-lg">
-                        Prueba Gratis
-                    </Link>
-                </div>
-            </nav>
-
-            <main className="max-w-5xl mx-auto px-6 py-12">
-                <h1 className="text-3xl font-bold text-slate-900 mb-3">
+        <BlogShell>
+            <header className="max-w-3xl">
+                <p className="nx-public-badge inline-flex min-h-[32px] items-center px-3 text-sm font-semibold">
+                    Biblioteca Nortex
+                </p>
+                <h1 className="mt-5 text-balance text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] sm:text-[48px]">
                     Recursos para negocios en Nicaragua
                 </h1>
-                <p className="text-slate-500 mb-8">
+                <p className="nx-public-muted mt-4 max-w-2xl text-[17px] leading-7 sm:text-[19px]">
                     Guías de nómina, facturación DGI, impuestos, inventario y gestión de negocios para PyMES nicaragüenses.
                 </p>
+            </header>
 
-                {/* Chips de clúster */}
-                <div className="flex flex-wrap gap-2 mb-10">
+            {/* Filtros temáticos sin iconografía decorativa. */}
+            <section aria-label="Filtrar por tema" className="mt-9">
+                <div className="flex flex-wrap gap-2">
                     <button
+                        type="button"
                         onClick={() => selectCluster(null)}
-                        className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${activeCluster === null ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'}`}
+                        aria-pressed={activeCluster === null}
+                        className={`${activeCluster === null ? 'nx-public-primary' : 'nx-public-secondary'} inline-flex min-h-[44px] items-center justify-center px-4 text-sm font-semibold`}
                     >
                         Todos
                     </button>
@@ -67,84 +62,92 @@ const Blog: React.FC = () => {
                         return (
                             <button
                                 key={c.slug}
+                                type="button"
                                 onClick={() => selectCluster(c.name)}
-                                className={`text-xs font-bold px-3 py-1.5 rounded-full border transition-colors ${activeCluster === c.name ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-slate-600 border-slate-200 hover:border-emerald-300'}`}
+                                aria-pressed={activeCluster === c.name}
+                                className={`${activeCluster === c.name ? 'nx-public-primary' : 'nx-public-secondary'} inline-flex min-h-[44px] items-center justify-center px-4 text-sm font-semibold`}
                             >
-                                {c.emoji} {c.name}
+                                {c.name}
                             </button>
                         );
                     })}
                 </div>
+            </section>
 
-                {activeCluster && (
-                    <div className="mb-6">
-                        <Link
-                            to={`/blog/categoria/${getClusterByName(activeCluster)?.slug ?? ''}`}
-                            className="text-sm font-medium text-emerald-700 hover:text-emerald-600"
-                        >
-                            Ver el hub completo de {activeCluster} →
-                        </Link>
-                    </div>
-                )}
-
-                <div className="grid md:grid-cols-2 gap-6">
-                    {visible.map(post => (
-                        <Link
-                            key={post.slug}
-                            to={`/blog/${post.slug}`}
-                            className="block bg-white border border-slate-200 rounded-xl p-6 hover:border-emerald-300 hover:shadow-md transition-all group"
-                        >
-                            <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
-                                {post.category}
-                            </span>
-                            <h2 className="font-bold text-slate-900 mt-3 mb-2 text-lg leading-snug group-hover:text-emerald-700 transition-colors">
-                                {post.title}
-                            </h2>
-                            <p className="text-slate-500 text-sm mb-4 leading-relaxed">
-                                {post.description}
-                            </p>
-                            <div className="flex items-center justify-between text-xs text-slate-400">
-                                <span className="flex items-center gap-1">
-                                    <Clock size={12} /> {post.readTime} lectura
-                                </span>
-                                <span className="text-emerald-600 font-medium flex items-center gap-1">
-                                    Leer <ArrowRight size={12} />
-                                </span>
-                            </div>
-                        </Link>
-                    ))}
+            {activeCluster && (
+                <div className="mt-5">
+                    <Link
+                        to={`/blog/categoria/${getClusterByName(activeCluster)?.slug ?? ''}`}
+                        className="nx-public-link inline-flex min-h-[44px] items-center gap-1 text-sm font-semibold"
+                    >
+                        Ver el hub completo de {activeCluster}
+                        <ArrowRight size={16} aria-hidden="true" />
+                    </Link>
                 </div>
+            )}
 
-                {/* Paginación */}
-                {totalPages > 1 && (
-                    <div className="flex items-center justify-center gap-2 mt-12">
+            <section aria-label="Artículos" className="mt-8 grid gap-5 md:grid-cols-2">
+                {visible.map(post => (
+                    <Link
+                        key={post.slug}
+                        to={`/blog/${post.slug}`}
+                        className="nx-public-card group flex min-h-[260px] flex-col p-6 sm:p-7"
+                    >
+                        <span className="nx-public-badge inline-flex w-fit min-h-[32px] items-center px-3 text-sm font-semibold">
+                            {post.category}
+                        </span>
+                        <h2 className="mt-5 text-xl font-semibold leading-snug tracking-[-0.015em] sm:text-[22px]">
+                            {post.title}
+                        </h2>
+                        <p className="nx-public-muted mt-3 text-[15px] leading-6">
+                            {post.description}
+                        </p>
+                        <div className="mt-auto flex items-center justify-between gap-4 pt-6 text-sm">
+                            <span className="nx-public-subtle flex items-center gap-2">
+                                <Clock size={15} aria-hidden="true" /> {post.readTime} lectura
+                            </span>
+                            <span className="nx-public-link flex items-center gap-1 font-semibold">
+                                Leer <ArrowRight size={15} aria-hidden="true" />
+                            </span>
+                        </div>
+                    </Link>
+                ))}
+            </section>
+
+            {/* Paginación */}
+            {totalPages > 1 && (
+                <nav aria-label="Paginación del blog" className="mt-12 flex flex-wrap items-center justify-center gap-2">
+                    <button
+                        type="button"
+                        onClick={() => setPage(p => Math.max(1, p - 1))}
+                        disabled={safePage === 1}
+                        className="nx-public-secondary inline-flex min-h-[44px] items-center justify-center px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Anterior
+                    </button>
+                    {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
                         <button
-                            onClick={() => setPage(p => Math.max(1, p - 1))}
-                            disabled={safePage === 1}
-                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 hover:border-slate-400 transition-colors"
+                            key={n}
+                            type="button"
+                            onClick={() => setPage(n)}
+                            aria-label={`Página ${n}`}
+                            aria-current={n === safePage ? 'page' : undefined}
+                            className={`${n === safePage ? 'nx-public-primary' : 'nx-public-secondary'} inline-flex min-h-[44px] min-w-[44px] items-center justify-center text-sm font-semibold`}
                         >
-                            Anterior
+                            {n}
                         </button>
-                        {Array.from({ length: totalPages }, (_, i) => i + 1).map(n => (
-                            <button
-                                key={n}
-                                onClick={() => setPage(n)}
-                                className={`w-9 h-9 text-sm font-medium rounded-lg border transition-colors ${n === safePage ? 'bg-slate-900 text-white border-slate-900' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-400'}`}
-                            >
-                                {n}
-                            </button>
-                        ))}
-                        <button
-                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                            disabled={safePage === totalPages}
-                            className="px-4 py-2 text-sm font-medium rounded-lg border border-slate-200 bg-white text-slate-600 disabled:opacity-40 hover:border-slate-400 transition-colors"
-                        >
-                            Siguiente
-                        </button>
-                    </div>
-                )}
-            </main>
-        </div>
+                    ))}
+                    <button
+                        type="button"
+                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                        disabled={safePage === totalPages}
+                        className="nx-public-secondary inline-flex min-h-[44px] items-center justify-center px-4 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                        Siguiente
+                    </button>
+                </nav>
+            )}
+        </BlogShell>
     );
 };
 

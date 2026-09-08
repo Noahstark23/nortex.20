@@ -37,7 +37,7 @@ const principal = { tenantId: 'tenant-1', userId: 'user-1', role: 'OWNER' };
 
 function fixture() {
     const events: string[] = [];
-    const state: any = { purchases: [], commands: [], stock: 5, cost: 4 };
+    const state: any = { purchases: [], commands: [], stock: 5, cost: 4, price: 15, promotionVersion: 1 };
     const product = { id: 'product-1', name: 'Tornillo', unit: 'unidad', ivaExento: false,
         requiresBatchTracking: false, saleMode: 'COUNTED', quantityStep: '1', packUnit: 'caja', packSize: 10 };
     const db: any = {
@@ -46,7 +46,7 @@ function fixture() {
         tenant: { findUnique: vi.fn(async () => ({ fiscalRegime: 'GENERAL' })) },
         supplier: { findFirst: vi.fn(async () => ({ id: 'supplier-1', name: 'Proveedor', status: 'ACTIVE', deletedAt: null })) },
         shift: { findFirst: vi.fn(async () => ({ id: 'shift-1' })) },
-        product: { findMany: vi.fn(async () => [product]), update: vi.fn(async ({ data }) => { state.cost = data.cost; }) },
+        product: { findMany: vi.fn(async () => [product]), update: vi.fn(async ({ data }) => { state.cost = data.cost; if (data.price !== undefined) state.price = data.price; if (data.promotionPriceVersion) state.promotionVersion += data.promotionPriceVersion.increment; }) },
         purchaseOrder: { findFirst: vi.fn(async () => null) },
         purchase: {
             findFirst: vi.fn(async ({ where }) => state.purchases.find(p => where.id ? p.id === where.id : p.invoiceNumber === where.invoiceNumber) ?? null),
@@ -73,13 +73,13 @@ function fixture() {
             }),
         },
         productBatch: { upsert: vi.fn(async () => ({ id: 'batch-1' })), findMany: vi.fn(async () => []) },
-        auditLog: { create: vi.fn(async () => { events.push('audit'); return { id: 'audit-1' }; }) },
+        auditLog: { create: vi.fn(async () => { events.push('audit'); return { id: 'audit-1' }; }), createMany: vi.fn(async ({ data }) => { events.push('price-audit'); return { count: data.length }; }) },
         kardexMovement: { create: vi.fn(async () => { events.push('kardex'); }) },
         $queryRaw: vi.fn(async (strings: TemplateStringsArray | { strings: string[] }, ...values: unknown[]) => {
             const sql = ('strings' in strings ? strings.strings : strings).join('?');
             if (sql.includes('FROM `User`')) return [{ ...principal, id: principal.userId, status: 'ACTIVE' }];
             if (sql.includes('FROM `PurchaseCommand`')) return state.commands.filter(c => c.tenantId === values[0] && c.requestKey === values[1]);
-            return sql.includes('SELECT cost') ? [{ cost: state.cost }] : [{ id: 'supplier-1' }];
+            return sql.includes('SELECT cost') ? [{ cost: state.cost, price: state.price }] : [{ id: 'supplier-1' }];
         }),
         $transaction: vi.fn(async (run: (tx: any) => Promise<unknown>) => {
             const before = structuredClone(state);
@@ -268,4 +268,32 @@ describe('registro de compra — caracterización conservada contra el servicio 
             .rejects.toMatchObject({ code: 'BATCH_EXPIRY_CONFLICT' });
         expect(fake.state.purchases).toEqual([]); expect(fake.state.stock).toBe(5);
     });
+    it('la compra con precio autorizado incrementa versión comercial una vez y su replay no repite efectos', async () => {
+        const fake = fixture();
+        const body = input({ items: [{ productId: 'product-1', quantity: '2', unitCost: '10', salePrice: '25' }] });
+        await register(fake, body, { idempotencyKey: 'purchase-price-once' });
+        expect(fake.state.price).toBe(25);
+        expect(fake.state.promotionVersion).toBe(2);
+        expect(fake.db.auditLog.createMany).toHaveBeenCalledOnce();
+        expect(JSON.parse(fake.db.auditLog.createMany.mock.calls[0][0].data[0].details)).toMatchObject({ priceBefore: '15', priceAfter: '25', source: 'PURCHASE' });
+        await register(fake, body, { idempotencyKey: 'purchase-price-once' });
+        expect(fake.state.promotionVersion).toBe(2);
+        expect(fake.state.stock).toBe(7);
+        expect(fake.db.auditLog.createMany).toHaveBeenCalledOnce();
+    });
+    it('MANAGER puede comprar pero no cambiar precios: falla antes de lecturas y transacción', async () => {
+        const fake = fixture();
+        await expect(register(fake, input({ items: [{ productId: 'product-1', quantity: '2', unitCost: '10', salePrice: '25' }] }), { principal: { ...principal, role: 'MANAGER' } }))
+            .rejects.toMatchObject({ code: 'PURCHASE_SALE_PRICE_FORBIDDEN', httpStatus: 403 });
+        expect(fake.db.user.findFirst).not.toHaveBeenCalled();
+        expect(fake.db.$transaction).not.toHaveBeenCalled();
+    });
+    it('fallo de auditoría del precio revierte precio, versión, compra e inventario', async () => {
+        const fake = fixture();
+        fake.db.auditLog.createMany.mockRejectedValueOnce(new Error('price audit unavailable'));
+        await expect(register(fake, input({ items: [{ productId: 'product-1', quantity: '2', unitCost: '10', salePrice: '25' }] })))
+            .rejects.toThrow('price audit unavailable');
+        expect(fake.state).toMatchObject({ price: 15, promotionVersion: 1, stock: 5, purchases: [] });
+    });
+
 });

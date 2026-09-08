@@ -79,11 +79,11 @@ afterEach(() => {
 
 describe('DeliveryManager — autoridad del servidor', () => {
     it('preserva la versión optimista mientras el polling trae un estado anterior', () => {
-        const current = [{ ...baseOrder, estado: 'preparando' }];
+        const current = [{ ...baseOrder, estado: 'preparando', motorizadoId: 'rider-1' }];
         const staleServer = [{ ...baseOrder, estado: 'pendiente' }];
 
-        expect(mergePendingOrders(staleServer, current, new Set(['pedido-1']))[0].estado)
-            .toBe('preparando');
+        expect(mergePendingOrders(staleServer, current, new Set(['pedido-1']))[0])
+            .toMatchObject({ estado: 'preparando', motorizadoId: 'rider-1' });
         expect(mergePendingOrders(staleServer, current, new Set())[0].estado)
             .toBe('pendiente');
     });
@@ -265,6 +265,30 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(JSON.parse(String(mutations[0][1]?.body))).toEqual({ motorizadoId: 'rider-1' });
     });
 
+    it('serializa cambios rápidos del selector sin reservar ni despachar por asignación', async () => {
+        let serverOrder = { ...baseOrder, estado: 'preparando' };
+        let resolveAssignment!: (response: Response) => void;
+        const pendingAssignment = new Promise<Response>(resolve => { resolveAssignment = resolve; });
+        const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+            const url = requestUrl(input);
+            if (isPedidosListGet(url, init)) return jsonResponse({ pedidos: [serverOrder] });
+            if (url === '/api/v1/motorizados' && !init?.method) return jsonResponse({ motorizados: [rider] });
+            if (url === '/api/v1/pedidos/pedido-1/motorizado' && init?.method === 'PATCH') return pendingAssignment;
+            throw new Error(`Solicitud inesperada: ${url} ${init?.method ?? 'GET'}`);
+        });
+        vi.stubGlobal('fetch', fetchMock);
+        render(<DeliveryManager />);
+        const select = await screen.findByLabelText('Motorizado');
+        fireEvent.change(select, { target: { value: 'rider-1' } });
+        fireEvent.change(select, { target: { value: 'rider-1' } });
+        await waitFor(() => expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1));
+        serverOrder = { ...serverOrder, motorizadoId: 'rider-1' };
+        resolveAssignment(jsonResponse({ pedido: serverOrder }));
+        expect(await screen.findByText('Motorizado asignado. El despacho sigue siendo un paso separado.')).toBeVisible();
+        expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'PATCH')).toHaveLength(1);
+        expect(screen.getByRole('button', { name: /Despachar/i })).toBeEnabled();
+    });
+
     it('obedece la asignación canónica del servidor aunque difiera de la solicitada', async () => {
         const serverOrder = { ...baseOrder, estado: 'preparando', motorizadoId: null };
         const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -329,6 +353,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         const nameInput = screen.getByLabelText('Nombre completo *');
         expect(screen.getByLabelText('Teléfono / WhatsApp *')).toBeVisible();
         expect(screen.getByLabelText('Zona de cobertura *')).toBeVisible();
+        expect(screen.getByLabelText('PIN de acceso *')).toBeVisible();
         expect(screen.getByLabelText('Placa / vehículo (opcional)')).toBeVisible();
         await waitFor(() => expect(nameInput).toHaveFocus());
         fireEvent.change(nameInput, { target: { value: 'Dato temporal' } });
@@ -366,6 +391,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         const nameInput = screen.getByLabelText('Nombre completo *');
         const phoneInput = screen.getByLabelText('Teléfono / WhatsApp *');
         const zoneInput = screen.getByLabelText('Zona de cobertura *');
+        const pinInput = screen.getByLabelText('PIN de acceso *');
         const vehicleInput = screen.getByLabelText('Placa / vehículo (opcional)');
 
         expect(registerButton).toBeDisabled();
@@ -378,6 +404,12 @@ describe('DeliveryManager — autoridad del servidor', () => {
         fireEvent.change(zoneInput, { target: { value: 'M' } });
         expect(registerButton).toBeDisabled();
         fireEvent.change(zoneInput, { target: { value: ' Managua sur ' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '12a4' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '123' } });
+        expect(registerButton).toBeDisabled();
+        fireEvent.change(pinInput, { target: { value: '1234' } });
         fireEvent.change(vehicleInput, { target: { value: ' M 123456 ' } });
         expect(registerButton).toBeEnabled();
 
@@ -392,6 +424,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
                 nombre: 'Juan Pérez',
                 telefono: '8888-0000',
                 zonaCobertura: 'Managua sur',
+                pin: '1234',
                 vehiculoPlaca: 'M 123456',
             });
         });
@@ -405,6 +438,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
         expect(screen.getByLabelText('Nombre completo *')).toHaveValue('');
         expect(screen.getByLabelText('Teléfono / WhatsApp *')).toHaveValue('');
         expect(screen.getByLabelText('Zona de cobertura *')).toHaveValue('');
+        expect(screen.getByLabelText('PIN de acceso *')).toHaveValue('');
         expect(screen.getByLabelText('Placa / vehículo (opcional)')).toHaveValue('');
         expect(screen.getByRole('button', { name: 'Registrar' })).toBeDisabled();
     });
@@ -436,6 +470,9 @@ describe('DeliveryManager — autoridad del servidor', () => {
         fireEvent.change(screen.getByLabelText('Zona de cobertura *'), {
             target: { value: 'Masaya urbana' },
         });
+        fireEvent.change(screen.getByLabelText('PIN de acceso *'), {
+            target: { value: '5678' },
+        });
 
         const registerButton = screen.getByRole('button', { name: 'Registrar' });
         expect(registerButton).toBeEnabled();
@@ -454,6 +491,7 @@ describe('DeliveryManager — autoridad del servidor', () => {
             nombre: 'María López',
             telefono: '7777-2222',
             zonaCobertura: 'Masaya urbana',
+            pin: '5678',
         });
     });
 });

@@ -207,8 +207,15 @@ describe('BatchWarehouseReadinessService', () => {
 
         const service = createBatchWarehouseReadinessService(database);
         const report = await service.readiness(' tenant-a ', { limit: 1 });
+        const lockedReport = await service.readinessInTransaction(
+            tx as unknown as Prisma.TransactionClient,
+            ' tenant-a ',
+            { limit: 1 },
+        );
 
         expect(report.pageInfo).toEqual({ limit: 1, nextCursor: 'batch-a' });
+        expect(lockedReport.data.summary).toEqual(report.data.summary);
+        expect(database.$transaction).toHaveBeenCalledOnce();
         expect(report.data).toMatchObject({
             mode: 'SHADOW',
             canEnterShadow: false,
@@ -284,7 +291,9 @@ describe('BatchWarehouseReadinessService', () => {
             warehouseId: 'warehouse-a',
             quantity: '-1.2500',
         })]);
-        expect(rawQueries).toHaveLength(9);
+        // Una lectura vía servicio y otra sobre la transacción ya bloqueada:
+        // ambas ejecutan el mismo reporte bounded de nueve consultas.
+        expect(rawQueries).toHaveLength(18);
         for (const call of rawQueries) {
             expect(call.values).toContain('tenant-a');
         }

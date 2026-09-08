@@ -5,6 +5,7 @@ import { useSearchParams } from 'react-router-dom';
 import ImageUploader from './ImageUploader';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { resolveLegacySaleMode } from '../utils/legacySaleMode';
 import { trackEvent } from '../utils/analytics';
 import { batchExpiryPresentation } from '../utils/batchExpiry';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
@@ -159,7 +160,10 @@ const MOVEMENT_LABELS: Record<string, { label: string; color: string; icon: stri
     'OUT_SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
     'OUT': { label: 'Salida', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
     'SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
-    'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-orange-900/60 text-orange-300 border-orange-700', icon: '' },
+    // El Kardex vive dentro de una isla ticket que no cambia de material entre
+    // Día y Noche. Usar sus tokens explícitos evita que la traducción Día de
+    // `orange-*` deje una tinta clara sobre un fondo claro.
+    'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-[var(--nx-ticket-raised)] text-[var(--nx-ticket-warning)] border-[color:var(--nx-ticket-warning)]', icon: '' },
     'ADJUST_GAIN': { label: 'Ganancia', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
     'ADJUSTMENT': { label: 'Ajuste', color: 'bg-yellow-900/60 text-yellow-300 border-yellow-700', icon: '' },
     'RETURN': { label: 'Devolución', color: 'bg-purple-900/60 text-purple-300 border-purple-700', icon: '↩' },
@@ -1629,7 +1633,7 @@ export default function Inventory() {
                     <option value="">Todas las formas</option>
                     <option value="COUNTED">Contados</option>
                     <option value="MEASURED">Medidos</option>
-                    <option value="LEGACY">Legado fraccionable</option>
+                    <option value="LEGACY">Configuración automática (legado)</option>
                 </select>
                 <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
                     aria-label="Filtrar por estado de existencias"
@@ -1826,7 +1830,9 @@ export default function Inventory() {
                                                             ? `Contado · paso ${product.quantityStep || 1}`
                                                             : product.saleMode === 'MEASURED'
                                                                 ? `Medido · paso ${product.quantityStep || '0.0001'}`
-                                                                : 'Legado fraccionable'}
+                                                                : resolveLegacySaleMode(product) === 'COUNTED'
+                                                                    ? 'Legado · cantidades enteras'
+                                                                    : 'Legado · fraccionable'}
                                                         {' · '}{product.productFamily || 'GENERAL'}
                                                     </span>
                                                     {product.description && (
@@ -2552,7 +2558,7 @@ export default function Inventory() {
                                         }}
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
                                     >
-                                        <option value="LEGACY">Legado fraccionable</option>
+                                        <option value="LEGACY">Configuración automática (legado)</option>
                                         <option value="COUNTED">Por unidades contadas</option>
                                         <option value="MEASURED">Por peso/medida</option>
                                     </select>

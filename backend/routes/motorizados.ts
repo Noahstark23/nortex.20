@@ -6,6 +6,11 @@ import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
 import prisma from '../lib/prisma.js';
+import {
+    hasPhoneCredentialConflict,
+    motorizadoSafeSelect,
+    normalizeMotorizadoPhone,
+} from '../services/motorizadoIdentity.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -20,7 +25,7 @@ const PhoneSchema = z
     .min(1, 'El teléfono es obligatorio.')
     .max(32, 'El teléfono es demasiado largo.')
     .regex(/^[+\d\s().-]+$/u, 'El teléfono contiene caracteres no permitidos.')
-    .transform(normalizePhone)
+    .transform(normalizeMotorizadoPhone)
     .refine((value) => /^\d{8,15}$/u.test(value), {
         message: 'El teléfono debe contener entre 8 y 15 dígitos.',
     });
@@ -49,10 +54,10 @@ export const FleetRiderCreateSchema = z.object({
         .min(2, 'La zona de cobertura debe tener al menos 2 caracteres.')
         .max(100, 'La zona de cobertura no puede superar 100 caracteres.'),
     vehiculoPlaca: PlateSchema.optional(),
-    pin: PinSchema.optional(),
+    pin: PinSchema,
     // Compatibilidad con clientes PWA anteriores. Solo se acepta el literal
     // seguro y el servidor sigue imponiendo PROPIA; jamás toma el tipo del body.
-    tipoFlota: z.literal('PROPIA').optional(),
+    tipoFlota: z.literal('PROPIA', 'La flota propia es el único tipo permitido.').optional(),
 }).strict();
 
 export const FleetRiderPatchSchema = z.object({
@@ -71,19 +76,7 @@ export const FleetRiderPatchSchema = z.object({
     { message: 'Debés enviar al menos un campo para actualizar.' },
 );
 
-const motorizadoOperationalSelect = {
-    id: true,
-    tenantId: true,
-    tipoFlota: true,
-    nombre: true,
-    telefono: true,
-    zonaCobertura: true,
-    activo: true,
-    calificacionPromedio: true,
-    vehiculoPlaca: true,
-    createdAt: true,
-    kycStatus: true,
-} as const;
+const motorizadoOperationalSelect = motorizadoSafeSelect;
 
 const validationErrorMessage = (error: z.ZodError): string => {
     if (error.issues.some((issue) => issue.code === 'unrecognized_keys')) {
@@ -159,9 +152,19 @@ export const buildMotorizadosRouter = () => {
                 });
             }
 
-            // PIN opcional al crear flota propia: necesario para que el repartidor
-            // entre a su app con teléfono+PIN (el magic-link ya no existe).
-            const pinHash = data.pin !== undefined ? await bcrypt.hash(data.pin, 10) : null;
+            // El teléfono es identidad de login global. No crear una segunda
+            // credencial aunque pertenezca a otro tenant o tenga un PIN distinto.
+            const conflictingDrivers = await prisma.motorizado.findMany({
+                where: { telefono: data.telefono, pinHash: { not: null } },
+                select: { id: true, pinHash: true },
+                take: 2,
+            });
+            if (hasPhoneCredentialConflict(conflictingDrivers)) {
+                return res.status(409).json({
+                    error: 'Ya existe un repartidor con ese teléfono y PIN. Usá otro número o restablecé el acceso del actual.',
+                });
+            }
+            const pinHash = await bcrypt.hash(data.pin, 10);
 
             const motorizado = await prisma.motorizado.create({
                 data: {
@@ -203,7 +206,7 @@ export const buildMotorizadosRouter = () => {
             // Solo un dueño de ferretería puede editar SU propia flota.
             const existing = await prisma.motorizado.findFirst({
                 where: { id, tenantId, tipoFlota: 'PROPIA' },
-                select: { id: true },
+                select: { id: true, telefono: true },
             });
 
             if (!existing) {
@@ -221,6 +224,22 @@ export const buildMotorizadosRouter = () => {
             if (parsed.data.vehiculoPlaca !== undefined) dataUpdate.vehiculoPlaca = parsed.data.vehiculoPlaca;
             // null revoca el acceso; un PIN válido lo asigna o lo resetea.
             if (parsed.data.pin !== undefined) {
+                if (parsed.data.pin !== null) {
+                    const conflictingDrivers = await prisma.motorizado.findMany({
+                        where: {
+                            telefono: existing.telefono,
+                            pinHash: { not: null },
+                            NOT: { id: existing.id },
+                        },
+                        select: { id: true, pinHash: true },
+                        take: 2,
+                    });
+                    if (hasPhoneCredentialConflict(conflictingDrivers, existing.id)) {
+                        return res.status(409).json({
+                            error: 'Ese teléfono ya está vinculado a otro acceso de repartidor. Cambiá el número o restablecé la cuenta existente.',
+                        });
+                    }
+                }
                 dataUpdate.pinHash = parsed.data.pin === null
                     ? null
                     : await bcrypt.hash(parsed.data.pin, 10);

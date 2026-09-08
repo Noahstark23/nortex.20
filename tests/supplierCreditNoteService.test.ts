@@ -324,6 +324,7 @@ interface FakeTxOptions {
     creditNoteCreateError?: unknown;
     priorAudit?: unknown;
     purchaseUpdateCount?: number;
+    retentionPurchaseIds?: string[];
 }
 
 const fakeTx = (options: FakeTxOptions = {}) => {
@@ -384,7 +385,8 @@ const fakeTx = (options: FakeTxOptions = {}) => {
             createMany: vi.fn(async () => ({ count: 2 })),
         },
         fiscalRetention: {
-            findMany: vi.fn(async () => []),
+            findMany: vi.fn(async () => (options.retentionPurchaseIds ?? [])
+                .map((purchaseId) => ({ purchaseId }))),
         },
         fiscalPeriod: {
             findUnique: vi.fn(async () => null),
@@ -519,6 +521,30 @@ describe('executeSupplierCreditNote', () => {
         expect(locks).toHaveLength(2);
         expect((tx.purchase.findMany as any).mock.calls).toHaveLength(0);
         expect((tx.supplierCreditNote.create as any).mock.calls).toHaveLength(0);
+        expect(recordSupplierCreditNoteMock).not.toHaveBeenCalled();
+    });
+
+    it('bloquea la contabilización cuando una compra aplicada tiene retenciones', async () => {
+        const { tx } = fakeTx({ retentionPurchaseIds: ['purchase-1'] });
+
+        await expectServiceError(executeSupplierCreditNote({
+            tx,
+            tenantId: 'tenant-1',
+            userId: 'user-1',
+            supplierId: 'supplier-1',
+            request: requestInput(),
+            now: NOW,
+        }), 'FISCAL_ADJUSTMENT_REVIEW_REQUIRED');
+
+        expect(tx.fiscalRetention.findMany).toHaveBeenCalledWith({
+            where: {
+                tenantId: 'tenant-1',
+                purchaseId: { in: ['purchase-1'] },
+            },
+            select: { purchaseId: true },
+        });
+        expect(tx.supplierCreditNote.create).not.toHaveBeenCalled();
+        expect(tx.auditLog.create).not.toHaveBeenCalled();
         expect(recordSupplierCreditNoteMock).not.toHaveBeenCalled();
     });
 

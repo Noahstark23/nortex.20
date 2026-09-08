@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="color-scheme" content="light dark" />
 <title>Nortex | Sistema de facturación DGI, inventario y planilla para PyMES de Nicaragua</title>
 <meta name="description" content="Sistema de facturación en Nicaragua para ferreterías, farmacias y pulperías. Cumple DGI (Serie A/B), controla inventario y planilla Ley 185. Prueba gratis 30 días." />
 <meta name="keywords" content="sistema facturación nicaragua, POS nicaragua, software inventario ferretería, sistema farmacia nicaragua, planilla ley 185, facturación DGI nicaragua" />
@@ -14,10 +15,31 @@
 <meta property="og:image" content="/og-image.svg" />
 <link rel="icon" type="image/svg+xml" href="/icon-192.svg" />
 <!-- Tipografía propia, no de un CDN. El porqué: public/fonts/fuentes.css -->
-<link rel="preload" href="/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/fonts/jetbrains-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="stylesheet" href="/fonts/fuentes.css" />
 <link rel="stylesheet" href="/landing.css" />
+
+<!-- Evita un destello de tema incorrecto sin bloquear la carga ni depender del SPA. -->
+<script>
+(function () {
+  var baseKey = 'nortex_workspace_theme';
+  var storageKey = baseKey;
+  var theme = 'light';
+  try {
+    try {
+      var user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+      var tenantId = user && user.tenant && typeof user.tenant.id === 'string' && user.tenant.id.trim()
+        ? user.tenant.id
+        : localStorage.getItem('nortex_tenant_id');
+      if (user && typeof user.id === 'string' && user.id.trim() && typeof tenantId === 'string' && tenantId.trim()) {
+        storageKey = baseKey + ':' + encodeURIComponent(tenantId) + ':' + encodeURIComponent(user.id);
+      }
+    } catch (e) {}
+    theme = localStorage.getItem(storageKey) === 'dark' ? 'dark' : 'light';
+  } catch (e) {}
+  document.documentElement.setAttribute('data-nx-theme', theme);
+})();
+</script>
 
 <script type="application/ld+json">
 {
@@ -93,10 +115,15 @@
 </head>
 <body>
 
+<a class="skip-link" href="#main-content">Saltar al contenido principal</a>
+
 <!-- ===================== NAV ===================== -->
-<nav class="nav" data-screen-label="00 Nav">
+<nav class="nav" aria-label="Navegación principal" data-screen-label="00 Nav">
   <div class="nav-inner">
-    <a class="brand" href="#top">nortex<span class="dot">.</span></a>
+    <a class="brand brand-lockup" href="#top" aria-label="Nortex, inicio">
+      <span class="brand-mark" aria-hidden="true">N</span>
+      <span>Nortex</span>
+    </a>
     <div class="nav-links">
       <a href="#producto">Producto</a>
       <a href="#para">Para tu negocio</a>
@@ -109,11 +136,64 @@
       </a>
       <!-- Puerta de vuelta: el que ya se registró tiene que poder ENTRAR desde la
            home (antes no había ni un solo enlace a /login en toda la página). -->
+      <button type="button" class="theme-toggle" id="landingThemeToggle" aria-pressed="false" aria-label="Modo día activo. Cambiar a modo noche">
+        <span id="landingThemeLabel">Modo noche</span>
+      </button>
       <a href="/login" class="nav-login">Entrar</a>
-      <a href="/demo?source=landing_html&amp;location=nav" class="nav-cta" data-loc="nav">Probar una venta</a>
+      <a href="/demo?source=landing_html&amp;location=nav" class="nav-cta" data-loc="nav" aria-label="Probar una venta">
+        <span class="nav-cta-full">Probar una venta</span>
+        <span class="nav-cta-short" aria-hidden="true">Probar</span>
+      </a>
     </div>
   </div>
 </nav>
+
+<script>
+(function () {
+  'use strict';
+  var STORAGE_KEY = 'nortex_workspace_theme';
+  var root = document.documentElement;
+  var toggle = document.getElementById('landingThemeToggle');
+  var label = document.getElementById('landingThemeLabel');
+
+  function themeStorageKey() {
+    try {
+      var user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+      var tenantId = user && user.tenant && typeof user.tenant.id === 'string' && user.tenant.id.trim()
+        ? user.tenant.id
+        : localStorage.getItem('nortex_tenant_id');
+      if (user && typeof user.id === 'string' && user.id.trim() && typeof tenantId === 'string' && tenantId.trim()) {
+        return STORAGE_KEY + ':' + encodeURIComponent(tenantId) + ':' + encodeURIComponent(user.id);
+      }
+    } catch (e) {}
+    return STORAGE_KEY;
+  }
+
+  function currentTheme() {
+    return root.getAttribute('data-nx-theme') === 'dark' ? 'dark' : 'light';
+  }
+
+  function renderTheme(theme) {
+    var dark = theme === 'dark';
+    var action = dark ? 'Modo día' : 'Modo noche';
+    root.setAttribute('data-nx-theme', theme);
+    toggle.setAttribute('aria-pressed', String(dark));
+    toggle.setAttribute('aria-label', (dark ? 'Modo noche' : 'Modo día') + ' activo. Cambiar a ' + action.toLowerCase());
+    toggle.setAttribute('title', 'Cambiar a ' + action.toLowerCase());
+    label.textContent = action;
+  }
+
+  toggle.addEventListener('click', function () {
+    var next = currentTheme() === 'dark' ? 'light' : 'dark';
+    renderTheme(next);
+    try { localStorage.setItem(themeStorageKey(), next); } catch (e) {}
+  });
+
+  renderTheme(currentTheme());
+})();
+</script>
+
+<main id="main-content" tabindex="-1">
 
 <!-- ===================== HERO ===================== -->
 <section class="hero" id="top" data-screen-label="01 Hero">
@@ -194,12 +274,12 @@
                   <svg viewBox="0 0 320 100" preserveAspectRatio="none">
                     <line x1="0" y1="80" x2="320" y2="80" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
                     <line x1="0" y1="50" x2="320" y2="50" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>
-                    <rect x="10"  y="50" width="26" height="40" rx="3" fill="#6366f1"/>
-                    <rect x="50"  y="32" width="26" height="58" rx="3" fill="#6366f1"/>
-                    <rect x="90"  y="42" width="26" height="48" rx="3" fill="#6366f1"/>
-                    <rect x="130" y="22" width="26" height="68" rx="3" fill="#6366f1"/>
-                    <rect x="170" y="38" width="26" height="52" rx="3" fill="#6366f1"/>
-                    <rect x="210" y="14" width="26" height="76" rx="3" fill="#6366f1"/>
+                    <rect x="10"  y="50" width="26" height="40" rx="3" fill="var(--cobalt)"/>
+                    <rect x="50"  y="32" width="26" height="58" rx="3" fill="var(--cobalt)"/>
+                    <rect x="90"  y="42" width="26" height="48" rx="3" fill="var(--cobalt)"/>
+                    <rect x="130" y="22" width="26" height="68" rx="3" fill="var(--cobalt)"/>
+                    <rect x="170" y="38" width="26" height="52" rx="3" fill="var(--cobalt)"/>
+                    <rect x="210" y="14" width="26" height="76" rx="3" fill="var(--cobalt)"/>
                     <rect x="250" y="26" width="26" height="64" rx="3" fill="#10b981"/>
                     <rect x="290" y="44" width="26" height="46" rx="3" fill="rgba(255,255,255,0.08)"/>
                   </svg>
@@ -345,14 +425,14 @@
       <p class="subhead">Tres pantallas del sistema real que usan tus colegas todos los días. No screenshots editados.</p>
     </div>
 
-    <div class="tabs" role="tablist">
-      <button class="tab-btn active" data-tab="pos" role="tab">Punto de venta</button>
-      <button class="tab-btn" data-tab="inv" role="tab">Inventario Kardex</button>
-      <button class="tab-btn" data-tab="pay" role="tab">Planilla Ley 185</button>
+    <div class="tabs" role="tablist" aria-label="Pantallas del producto" aria-orientation="horizontal">
+      <button type="button" class="tab-btn active" id="tab-button-pos" data-tab="pos" role="tab" aria-selected="true" aria-controls="tab-pos" tabindex="0">Punto de venta</button>
+      <button type="button" class="tab-btn" id="tab-button-inv" data-tab="inv" role="tab" aria-selected="false" aria-controls="tab-inv" tabindex="-1">Inventario Kardex</button>
+      <button type="button" class="tab-btn" id="tab-button-pay" data-tab="pay" role="tab" aria-selected="false" aria-controls="tab-pay" tabindex="-1">Planilla Ley 185</button>
     </div>
 
     <!-- TAB 1: POS -->
-    <div class="tab-panel active" id="tab-pos">
+    <div class="tab-panel active" id="tab-pos" role="tabpanel" aria-labelledby="tab-button-pos" tabindex="0">
       <div class="tp-frame">
         <div class="pos-screen">
           <div class="pos-left">
@@ -403,7 +483,7 @@
     </div>
 
     <!-- TAB 2: INVENTORY -->
-    <div class="tab-panel" id="tab-inv">
+    <div class="tab-panel" id="tab-inv" role="tabpanel" aria-labelledby="tab-button-inv" tabindex="0" hidden>
       <div class="tp-frame">
         <div class="inv-screen">
           <div class="inv-head">
@@ -477,7 +557,7 @@
     </div>
 
     <!-- TAB 3: PLANILLA -->
-    <div class="tab-panel" id="tab-pay">
+    <div class="tab-panel" id="tab-pay" role="tabpanel" aria-labelledby="tab-button-pay" tabindex="0" hidden>
       <div class="tp-frame">
         <div class="pay-screen">
           <div class="pay-head">
@@ -526,7 +606,7 @@
               <div class="c-check"><div class="pay-check">✓</div></div>
             </div>
             <div class="pay-row">
-              <div class="pay-avatar" style="background:linear-gradient(135deg,#818cf8,#6366f1);">DR</div>
+              <div class="pay-avatar" style="background:linear-gradient(135deg,#2997ff,#0071e3);">DR</div>
               <div><div class="pay-name">Denis Rocha</div><div class="pay-role">VENDEDOR</div></div>
               <div class="pay-amt">C$ 11,000</div>
               <div class="pay-amt c-comm green">+ C$ 1,420</div>
@@ -866,6 +946,8 @@
   </div>
 </section>
 
+</main>
+
 <!-- ===================== FOOTER ===================== -->
 <footer class="footer" data-screen-label="15 Footer">
   <div class="footer-grid">
@@ -932,29 +1014,30 @@
 </a>
 
 <!-- ===================== CHAT DE VENTAS (R2.8) ===================== -->
-<button class="nx-chat-fab" id="nxChatFab" aria-label="Chatear con el asesor de Nortex" data-loc="chat-fab">
+<button type="button" class="nx-chat-fab" id="nxChatFab" aria-label="Chatear con el asesor de Nortex" aria-controls="nxChat" aria-expanded="false" data-loc="chat-fab">
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
   <span>Preguntá aquí</span>
 </button>
 
-<div class="nx-chat" id="nxChat" role="dialog" aria-label="Chat con el asesor de Nortex">
+<div class="nx-chat" id="nxChat" role="dialog" aria-modal="true" aria-labelledby="nxChatTitle" aria-hidden="true" tabindex="-1">
   <div class="nx-chat-head">
     <div class="nx-avatar">N</div>
     <div class="nx-title">
-      <strong>Asesor de Nortex</strong>
+      <strong id="nxChatTitle">Asesor de Nortex</strong>
       <span>● En línea — respondé al instante</span>
     </div>
-    <button class="nx-chat-close" id="nxChatClose" aria-label="Cerrar chat">✕</button>
+    <button type="button" class="nx-chat-close" id="nxChatClose" aria-label="Cerrar chat">✕</button>
   </div>
-  <div class="nx-chat-msgs" id="nxChatMsgs"></div>
+  <div class="nx-chat-msgs" id="nxChatMsgs" aria-live="polite" aria-relevant="additions text"></div>
   <div class="nx-chips" id="nxChips"></div>
   <div class="nx-ctas">
     <a class="nx-cta reg" href="/register" data-loc="chat-cta" id="nxCtaReg">🚀 Probar 30 días gratis</a>
     <a class="nx-cta wa" href="https://wa.me/50576644030?text=Hola%20Nortex%2C%20vengo%20del%20chat%20de%20la%20p%C3%A1gina" target="_blank" rel="noopener" id="nxCtaWa">WhatsApp</a>
   </div>
   <div class="nx-chat-input">
+    <label class="sr-only" for="nxChatInput">Escribí tu pregunta</label>
     <input id="nxChatInput" type="text" maxlength="600" placeholder="Escribí tu pregunta…" autocomplete="off" />
-    <button id="nxChatSend" aria-label="Enviar">
+    <button type="button" id="nxChatSend" aria-label="Enviar">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4z"/><path d="M22 2 11 13"/></svg>
     </button>
   </div>
@@ -969,6 +1052,8 @@
   var chipsEl = document.getElementById('nxChips');
   var inputEl = document.getElementById('nxChatInput');
   var sendBtn = document.getElementById('nxChatSend');
+  var closeBtn = document.getElementById('nxChatClose');
+  var returnFocus = fab;
 
   var STORE_KEY = 'nx_chat_v1';
   var GREETING = '¡Hola! Soy el asesor de Nortex. ¿Qué tipo de negocio tenés? Te cuento en dos minutos cómo te ayuda y probás 30 días gratis, sin tarjeta.';
@@ -1063,6 +1148,18 @@
     inputEl.disabled = v;
   }
 
+  function isOpen() {
+    return panel.classList.contains('open');
+  }
+
+  function getDialogFocusableElements() {
+    return Array.prototype.slice.call(panel.querySelectorAll(
+      'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )).filter(function (element) {
+      return !element.closest('[hidden]') && element.getAttribute('aria-hidden') !== 'true';
+    });
+  }
+
   function send(text) {
     text = (text || '').trim().slice(0, 600);
     if (!text || sending) return;
@@ -1110,8 +1207,12 @@
       });
   }
 
-  function open() {
+  function open(e) {
+    var trigger = e && e.currentTarget;
+    returnFocus = trigger && typeof trigger.focus === 'function' ? trigger : fab;
     panel.classList.add('open');
+    panel.setAttribute('aria-hidden', 'false');
+    fab.setAttribute('aria-expanded', 'true');
     fab.style.display = 'none';
     if (history.length === 0) {
       history.push({ role: 'assistant', text: GREETING });
@@ -1119,19 +1220,66 @@
     }
     renderAll();
     track('landing_chat_open', {});
-    setTimeout(function () { inputEl.focus(); }, 100);
+    setTimeout(function () {
+      if (isOpen()) inputEl.focus();
+    }, 100);
   }
   function close() {
+    if (!isOpen()) return;
     panel.classList.remove('open');
+    panel.setAttribute('aria-hidden', 'true');
+    fab.setAttribute('aria-expanded', 'false');
     fab.style.display = '';
+    var focusTarget = returnFocus && document.documentElement.contains(returnFocus) ? returnFocus : fab;
+    focusTarget.focus();
+  }
+
+  function handleDialogKeydown(e) {
+    if (!isOpen()) return;
+
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+      return;
+    }
+
+    if (e.key !== 'Tab') return;
+    var focusable = getDialogFocusableElements();
+    if (focusable.length === 0) {
+      e.preventDefault();
+      panel.focus();
+      return;
+    }
+
+    var first = focusable[0];
+    var last = focusable[focusable.length - 1];
+    var activeElement = document.activeElement;
+    if (!panel.contains(activeElement)) {
+      e.preventDefault();
+      (e.shiftKey ? last : first).focus();
+    } else if (e.shiftKey && activeElement === first) {
+      e.preventDefault();
+      last.focus();
+    } else if (!e.shiftKey && activeElement === last) {
+      e.preventDefault();
+      first.focus();
+    }
+  }
+
+  function keepFocusInside(e) {
+    if (!isOpen() || panel.contains(e.target)) return;
+    var focusable = getDialogFocusableElements();
+    (focusable[0] || panel).focus();
   }
 
   fab.addEventListener('click', open);
-  document.getElementById('nxChatClose').addEventListener('click', close);
+  closeBtn.addEventListener('click', close);
   sendBtn.addEventListener('click', function () { send(inputEl.value); });
   inputEl.addEventListener('keydown', function (e) {
     if (e.key === 'Enter') send(inputEl.value);
   });
+  document.addEventListener('keydown', handleDialogKeydown);
+  document.addEventListener('focusin', keepFocusInside);
   document.getElementById('nxCtaReg').addEventListener('click', function () { track('landing_chat_cta', { cta: 'registro' }); });
   document.getElementById('nxCtaWa').addEventListener('click', function () { track('landing_chat_cta', { cta: 'whatsapp' }); });
 })();
@@ -1140,13 +1288,36 @@
 <!-- ===================== TABS JS ===================== -->
 <script>
 (function() {
-  const tabs = document.querySelectorAll('.tab-btn');
-  const panels = document.querySelectorAll('.tab-panel');
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      const target = tab.getAttribute('data-tab');
-      tabs.forEach(t => t.classList.toggle('active', t === tab));
-      panels.forEach(p => p.classList.toggle('active', p.id === 'tab-' + target));
+  const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+  const panels = Array.from(document.querySelectorAll('.tab-panel'));
+
+  function activate(tab, moveFocus) {
+    const targetId = tab.getAttribute('aria-controls');
+    tabs.forEach(t => {
+      const selected = t === tab;
+      t.classList.toggle('active', selected);
+      t.setAttribute('aria-selected', String(selected));
+      t.setAttribute('tabindex', selected ? '0' : '-1');
+    });
+    panels.forEach(panel => {
+      const selected = panel.id === targetId;
+      panel.classList.toggle('active', selected);
+      panel.hidden = !selected;
+    });
+    if (moveFocus) tab.focus();
+  }
+
+  tabs.forEach((tab, index) => {
+    tab.addEventListener('click', () => activate(tab, false));
+    tab.addEventListener('keydown', event => {
+      let nextIndex = index;
+      if (event.key === 'ArrowRight') nextIndex = (index + 1) % tabs.length;
+      else if (event.key === 'ArrowLeft') nextIndex = (index - 1 + tabs.length) % tabs.length;
+      else if (event.key === 'Home') nextIndex = 0;
+      else if (event.key === 'End') nextIndex = tabs.length - 1;
+      else return;
+      event.preventDefault();
+      activate(tabs[nextIndex], true);
     });
   });
 })();
@@ -1155,10 +1326,16 @@
 <!-- ===================== SCROLL REVEAL JS ===================== -->
 <script>
 (function() {
+  const revealItems = document.querySelectorAll('.reveal');
+  if (!revealItems.length) return;
+  if (!('IntersectionObserver' in window) || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    revealItems.forEach(el => el.classList.add('visible'));
+    return;
+  }
   const io = new IntersectionObserver((entries) => {
     entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
   }, { threshold: 0.1 });
-  document.querySelectorAll('.reveal').forEach(el => io.observe(el));
+  revealItems.forEach(el => io.observe(el));
 })();
 </script>
 </body>

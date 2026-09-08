@@ -1,4 +1,5 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import prisma from '../backend/lib/prisma';
 
 /**
  * QA HTTP real del módulo de clientes, cartera y cobranza.
@@ -20,6 +21,7 @@ type OperationalRole = 'MANAGER' | 'VENDEDOR' | 'CASHIER' | 'EMPLOYEE';
 type Session = {
     token: string;
     userId: string;
+    tenantId: string;
     role: string;
 };
 
@@ -73,6 +75,8 @@ const put = <T = any>(path: string, body: unknown, token: string): Promise<ApiRe
 const patch = <T = any>(path: string, body: unknown, token: string): Promise<ApiResult<T>> =>
     api<T>(path, token, { method: 'PATCH', body: JSON.stringify(body) });
 
+const wait = (milliseconds: number) => new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+
 function expectStatus(result: ApiResult, expected: number) {
     expect(result.status, JSON.stringify(result.body)).toBe(expected);
 }
@@ -91,6 +95,7 @@ async function registerTenant(label: string): Promise<Session> {
     return {
         token: registration.body.token,
         userId: registration.body.user.id,
+        tenantId: registration.body.tenant.id,
         role: registration.body.user.role,
     };
 }
@@ -111,6 +116,7 @@ async function inviteAndAccept(role: OperationalRole, name: string): Promise<Ses
     return {
         token: accepted.body.token,
         userId: accepted.body.user.id,
+        tenantId: accepted.body.tenant.id,
         role: accepted.body.user.role,
     };
 }
@@ -131,6 +137,179 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         employee = await inviteAndAccept('EMPLOYEE', 'Operación POS QA');
         foreignOwner = await registerTenant('Aislado');
     }, 120_000);
+
+    afterAll(async () => {
+        await prisma.$disconnect();
+    });
+
+    it('no revela los datos de una invitación que el responsable ya canceló', async () => {
+        const invitation = await post('/api/team/invite', {
+            email: `qa-clientes-cancelled-${runId}@example.invalid`,
+            role: 'CASHIER',
+        }, owner.token);
+        expectStatus(invitation, 200);
+
+        const cancelled = await api(`/api/team/invite/${invitation.body.invitation.id}`, owner.token, {
+            method: 'DELETE',
+        });
+        expectStatus(cancelled, 200);
+
+        const validation = await api(`/api/invite/${invitation.body.invitation.token}`);
+        expectStatus(validation, 400);
+        expect(validation.body).toEqual({ error: 'Esta invitación ya no es válida.' });
+        expect(JSON.stringify(validation.body)).not.toContain('qa-clientes-cancelled');
+    });
+
+    it('acepta una invitación concurrente una sola vez y nunca responde 500 al segundo intento', async () => {
+        const invitation = await post('/api/team/invite', {
+            email: `qa-clientes-concurrent-${runId}@example.invalid`,
+            role: 'CASHIER',
+        }, owner.token);
+        expectStatus(invitation, 200);
+
+        const payload = {
+            name: 'Caja Concurrente QA',
+            password: `Qa-${runId}-Concurrente-Seguro9!`,
+        };
+        const [first, second] = await Promise.all([
+            api(`/api/invite/${invitation.body.invitation.token}/accept`, '', {
+                method: 'POST', body: JSON.stringify(payload),
+            }),
+            api(`/api/invite/${invitation.body.invitation.token}/accept`, '', {
+                method: 'POST', body: JSON.stringify(payload),
+            }),
+        ]);
+
+        const outcomes = [first, second];
+        expect(outcomes.filter(result => result.status === 200)).toHaveLength(1);
+        expect(outcomes.filter(result => result.status === 500)).toHaveLength(0);
+        expect(outcomes.filter(result => result.status === 400 || result.status === 409)).toHaveLength(1);
+        expect(outcomes.find(result => result.status === 200)?.body.user).toMatchObject({
+            email: `qa-clientes-concurrent-${runId}@example.invalid`,
+            role: 'CASHIER',
+        });
+    });
+
+    it('devuelve al invitado solo la identidad mínima del negocio', async () => {
+        const invitation = await post('/api/team/invite', {
+            email: `qa-clientes-minimal-${runId}@example.invalid`,
+            role: 'CASHIER',
+        }, owner.token);
+        expectStatus(invitation, 200);
+
+        const accepted = await post(`/api/invite/${invitation.body.invitation.token}/accept`, {
+            name: 'Caja Mínima QA',
+            password: `Qa-${runId}-Minima-Seguro9!`,
+        });
+        expectStatus(accepted, 200);
+        expect(accepted.body.tenant).toEqual({
+            id: owner.tenantId,
+            businessName: `QA Clientes Principal ${runId}`,
+        });
+        expect(Object.keys(accepted.body.tenant).sort()).toEqual(['businessName', 'id']);
+        for (const forbidden of [
+            'walletBalance', 'creditLimit', 'creditScore', 'stripeCustomerId',
+            'stripeSubscriptionId', 'dgiAuthCode', 'theftAlertThreshold',
+            'agentCashMin', 'agentCashMax',
+        ]) {
+            expect(accepted.body.tenant).not.toHaveProperty(forbidden);
+        }
+    });
+
+    it('un GET vencido no reescribe una cancelación que ya ganó la carrera', async () => {
+        const invitation = await post('/api/team/invite', {
+            email: `qa-clientes-expiry-race-${runId}@example.invalid`,
+            role: 'CASHIER',
+        }, owner.token);
+        expectStatus(invitation, 200);
+        await prisma.invitation.update({
+            where: { id: invitation.body.invitation.id },
+            data: { expiresAt: new Date(Date.now() - 1_000) },
+        });
+
+        let releaseLock!: () => void;
+        let announceLock!: () => void;
+        const lockReady = new Promise<void>((resolve) => { announceLock = resolve; });
+        const release = new Promise<void>((resolve) => { releaseLock = resolve; });
+        const lockTransaction = prisma.$transaction(async (tx) => {
+            await tx.$queryRaw`SELECT \`id\` FROM \`Invitation\` WHERE \`id\` = ${invitation.body.invitation.id} FOR UPDATE`;
+            announceLock();
+            await release;
+        }, { maxWait: 5_000, timeout: 10_000 });
+
+        await lockReady;
+        const cancellation = api(`/api/team/invite/${invitation.body.invitation.id}`, owner.token, {
+            method: 'DELETE',
+        });
+        await wait(50);
+        const validation = api(`/api/invite/${invitation.body.invitation.token}`);
+        await wait(50);
+        releaseLock();
+        await lockTransaction;
+
+        const [cancelled, expiredView] = await Promise.all([cancellation, validation]);
+        expectStatus(cancelled, 200);
+        expectStatus(expiredView, 400);
+        await expect(prisma.invitation.findUniqueOrThrow({
+            where: { id: invitation.body.invitation.id },
+            select: { status: true },
+        })).resolves.toEqual({ status: 'CANCELLED' });
+    });
+
+    it('limita los reintentos públicos de una invitación antes del handler costoso', async () => {
+        const invitation = await post('/api/team/invite', {
+            email: `qa-clientes-limit-${runId}@example.invalid`,
+            role: 'CASHIER',
+        }, owner.token);
+        expectStatus(invitation, 200);
+        await prisma.invitation.update({
+            where: { id: invitation.body.invitation.id },
+            data: { expiresAt: new Date(Date.now() - 1_000) },
+        });
+
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+            const rejected = await post(`/api/invite/${invitation.body.invitation.token}/accept`, {
+                name: 'Caja Límite QA',
+                password: `Qa-${runId}-Limite-Seguro9!`,
+            });
+            expectStatus(rejected, 400);
+        }
+        const limited = await post(`/api/invite/${invitation.body.invitation.token}/accept`, {
+            name: 'Caja Límite QA',
+            password: `Qa-${runId}-Limite-Seguro9!`,
+        });
+        expectStatus(limited, 429);
+    });
+
+    it('no confirma una cancelación si la misma invitación ya ganó aceptación', async () => {
+        const invitation = await post('/api/team/invite', {
+            email: `qa-clientes-race-${runId}@example.invalid`,
+            role: 'CASHIER',
+        }, owner.token);
+        expectStatus(invitation, 200);
+
+        const acceptance = api(`/api/invite/${invitation.body.invitation.token}/accept`, '', {
+            method: 'POST',
+            body: JSON.stringify({
+                name: 'Caja Carrera QA',
+                password: `Qa-${runId}-Carrera-Seguro9!`,
+            }),
+        });
+        const cancellation = api(`/api/team/invite/${invitation.body.invitation.id}`, owner.token, {
+            method: 'DELETE',
+        });
+        const [accepted, cancelled] = await Promise.all([acceptance, cancellation]);
+
+        expect([accepted.status, cancelled.status]).not.toContain(500);
+        expect([accepted.status === 200, cancelled.status === 200].filter(Boolean)).toHaveLength(1);
+        if (accepted.status === 200) {
+            expect(cancelled.status).toBe(409);
+            expect(cancelled.body).toEqual({ error: 'Esta invitación ya no está pendiente.' });
+        } else {
+            expect(cancelled.status).toBe(200);
+            expect([400, 409]).toContain(accepted.status);
+        }
+    });
 
     it('permite el alta básica por rol operativo y reserva los controles para el responsable', async () => {
         const managerCustomer = await post('/api/customers', {

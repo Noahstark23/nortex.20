@@ -1,10 +1,14 @@
 # Documentación de Nortex
 
-Actualización: 2026-09-04. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
+Actualización del índice: 2026-09-08. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
 
 ## Dirección y evidencia actual
 
-**Última entrega local:** [Reparación de prioridades y verificación por módulo](VERIFICACION_MODULOS_2026-09-04.md). Estado E01–E08, dinero/stock/permisos, QA MySQL, navegador y nuevos pendientes M01–M07. Conserva el [rediseño aceptado](REDISENO_POS_2026-09-04.md). Piloto y publicación siguen separados.
+**Plan actual:** [RAG y estabilidad operativa](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md), con prioridad C00 para consolidar cuatro clientes. La integración del 2026-09-08 debe registrar su candidato y pruebas nuevas; los informes anteriores conservan su fecha y alcance.
+
+**Historial de preparación del 2026-09-04:** [Candidato POS, caja y calidad](releases/2026-09-04-pos-release-candidate.md), [compuerta de producción](releases/2026-09-04-production-gate.md) y [siguiente entrega de Stock, cámara y RAG](PLAN_STOCK_RAG_CAMARA_2026-09-04.md). Candidato integrado local; CI remoto, staging y producción son etapas pendientes.
+
+**Entrega local anterior a la integración:** [Reparación de prioridades y verificación por módulo](VERIFICACION_MODULOS_2026-09-04.md). Estado E01–E08, dinero/stock/permisos, QA MySQL, navegador y nuevos pendientes M01–M07. Conserva el [rediseño aceptado](REDISENO_POS_2026-09-04.md). Piloto y publicación siguen separados.
 
 1. [Plan de transformación](PLAN_TRANSFORMACION_TOTAL_2026.md): programa maestro, hipótesis comerciales, backlog T00–T19 y criterios de decisión.
 2. [Dirección UX y validación operativa](PLAN_DIRECCION_UX_Y_VALIDACION_2026.md): cuatro funciones de dirección, skills, contrato Apple/web, veinte escenarios y gates; incluye [ficha común de entrega](templates/CONTRATO_ENTREGA_VERIFICADA.md). Estado y evidencia E01–E08 en el informe por módulo; no es certificación global.

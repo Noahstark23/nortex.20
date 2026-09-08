@@ -13,7 +13,8 @@ const registrationSource = readFileSync(resolve(process.cwd(), 'backend/services
 const registrationStart = registrationSource.indexOf('export async function registerPurchase(');
 if (registrationStart < 0) throw new Error('No se encontró registerPurchase');
 const purchaseRoute = registrationSource.slice(registrationStart)
-    + '\n' + readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationPreparation.ts'), 'utf8');
+    + '\n' + readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationPreparation.ts'), 'utf8')
+    + '\n' + readFileSync(resolve(process.cwd(), 'backend/routes/purchases.ts'), 'utf8');
 
 const sqlText = (query: unknown): string => {
     const sql = query as { strings?: readonly string[]; sql?: string };
@@ -89,7 +90,12 @@ const makeSidecarTx = (options: {
         const text = sqlText(query);
         const values = sqlValues(query);
         if (text.includes('ProductBatchWarehouseStock')) {
-            return [{ id: 'balance-1', productId: 'product-1', stock }];
+            return [{
+                id: 'balance-1',
+                productId: 'product-1',
+                stock,
+                heldStock: new Decimal(0),
+            }];
         }
         if (text.includes('ProductBatchLedgerEntry')) {
             const [tenantId, sourceKey] = values.map(String);
@@ -223,24 +229,44 @@ describe('ingreso lote+bodega en compra directa', () => {
     });
 
     it('dos líneas del mismo SKU/lote conservan ids y sourceKeys distintos', async () => {
+        const modeResolutionStart = purchaseRoute.indexOf('const batchWarehouseLedgerMode =');
         const processedStart = purchaseRoute.indexOf('const processedItems = preparedItems.map');
         const purchaseCreate = purchaseRoute.indexOf('const purchase = await tx.purchase.create', processedStart);
         const processedBlock = purchaseRoute.slice(processedStart, purchaseCreate);
+        const sidecarStart = purchaseRoute.indexOf(
+            "if (batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED')",
+            purchaseCreate,
+        );
+        const sidecarEnd = purchaseRoute.indexOf('// Evidencia física de la entrada directa', sidecarStart);
+        const sidecarBlock = purchaseRoute.slice(sidecarStart, sidecarEnd);
         const persistedSpread = processedBlock.indexOf('...persisted');
         const authoritativeId = processedBlock.indexOf('id: crypto.randomUUID()');
 
+        expect(modeResolutionStart).toBeGreaterThan(0);
         expect(persistedSpread).toBeGreaterThan(0);
         expect(authoritativeId).toBeGreaterThan(persistedSpread);
-        expect(processedBlock).toContain("batchWarehouseLedgerMode === 'SHADOW'");
-        expect(processedBlock).toContain("batchWarehouseLedgerMode === 'ENFORCED'");
-        expect(processedBlock).toContain(
+        // La identidad es más fuerte que el sidecar: toda compra directa recibe
+        // UUID. Las líneas tracked en SHADOW/ENFORCED lo heredan y el ledger exige
+        // ese mismo UUID antes de formar el sourceKey idempotente.
+        expect(purchaseRoute).toContain('const isDirectPurchase = !linkedPurchaseOrder');
+        expect(purchaseRoute).toContain(
+            'const hasTrackedDirectPurchaseItem = isDirectPurchase && preparedItems.some',
+        );
+        expect(purchaseRoute).toContain(
             'productsById.get(item.productId)?.requiresBatchTracking === true',
         );
-        expect(processedBlock).toContain('? { id: crypto.randomUUID() }');
+        expect(processedBlock).toContain('isDirectPurchase ? { id: crypto.randomUUID() }');
+        expect(purchaseRoute).toContain(
+            "batchWarehouseLedgerMode === 'SHADOW' || batchWarehouseLedgerMode === 'ENFORCED'",
+        );
         expect(purchaseRoute).toContain('create: processedItems.map');
         expect(purchaseRoute).toContain("|| (left.id ?? '').localeCompare(right.id ?? '')");
-        expect(purchaseRoute).toContain("if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED')");
-        expect(purchaseRoute).toContain(
+        expect(sidecarStart).toBeGreaterThan(purchaseCreate);
+        expect(sidecarEnd).toBeGreaterThan(sidecarStart);
+        expect(sidecarBlock).toContain("batchWarehouseLedgerMode === 'SHADOW'");
+        expect(sidecarBlock).toContain("batchWarehouseLedgerMode === 'ENFORCED'");
+        expect(sidecarBlock).toContain("if (!item.id) throw new Error('PURCHASE_ITEM_ID_REQUIRED')");
+        expect(sidecarBlock).toContain(
             'sourceKey: `direct-purchase:${purchase.id}:item:${item.id}`',
         );
 
@@ -294,6 +320,29 @@ describe('ingreso lote+bodega en compra directa', () => {
         }
     });
 
+    it('bloquea la identidad producto+lote antes de incrementar una compra directa', () => {
+        const productLock = purchaseRoute.indexOf('await applyStockDelta(tx');
+        const batchIdentityLock = purchaseRoute.indexOf('SELECT id, expiryDate', productLock);
+        const tenantScope = purchaseRoute.indexOf('WHERE tenantId = ${principal.tenantId}', batchIdentityLock);
+        const forUpdate = purchaseRoute.indexOf('FOR UPDATE', batchIdentityLock);
+        const identityGuard = purchaseRoute.indexOf('assertProductBatchExpiryIdentity({', forUpdate);
+        const batchUpdate = purchaseRoute.indexOf('tx.productBatch.updateMany({', identityGuard);
+        const batchCreate = purchaseRoute.indexOf('tx.productBatch.create({', identityGuard);
+        const sidecar = purchaseRoute.indexOf('await applyBatchWarehouseDelta({', identityGuard);
+
+        expect(productLock).toBeGreaterThan(0);
+        expect(batchIdentityLock).toBeGreaterThan(productLock);
+        expect(tenantScope).toBeGreaterThan(batchIdentityLock);
+        expect(forUpdate).toBeGreaterThan(tenantScope);
+        expect(identityGuard).toBeGreaterThan(forUpdate);
+        expect(batchUpdate).toBeGreaterThan(identityGuard);
+        expect(batchCreate).toBeGreaterThan(identityGuard);
+        expect(sidecar).toBeGreaterThan(batchUpdate);
+        expect(sidecar).toBeGreaterThan(batchCreate);
+        expect(purchaseRoute).toContain('error instanceof ProductBatchIdentityError');
+        expect(purchaseRoute).toContain("code: 'PURCHASE_BATCH_CONCURRENT_WRITE'");
+    });
+
     it('propaga un fallo del ledger dentro de la tx antes de Kardex y auditoría final', async () => {
         const fake = makeSidecarTx({ ledgerCreateFailure: new Error('ledger no disponible') });
         const afterSidecar = vi.fn();
@@ -314,13 +363,17 @@ describe('ingreso lote+bodega en compra directa', () => {
         expect(afterSidecar).not.toHaveBeenCalled();
 
         const transactionStart = purchaseRoute.indexOf('return db.$transaction');
-        const batchUpsert = purchaseRoute.indexOf('const batch = await tx.productBatch.upsert');
-        const sidecar = purchaseRoute.indexOf('await applyBatchWarehouseDelta', batchUpsert);
+        const batchIdentityLock = purchaseRoute.indexOf('SELECT id, expiryDate', transactionStart);
+        const identityGuard = purchaseRoute.indexOf('assertProductBatchExpiryIdentity', batchIdentityLock);
+        const batchMutation = purchaseRoute.indexOf('tx.productBatch.updateMany', identityGuard);
+        const sidecar = purchaseRoute.indexOf('await applyBatchWarehouseDelta', batchMutation);
         const kardex = purchaseRoute.indexOf('await tx.kardexMovement.create', sidecar);
         const purchaseAudit = purchaseRoute.indexOf("action: 'PURCHASE_CREATED'", kardex);
         expect(transactionStart).toBeGreaterThan(0);
-        expect(batchUpsert).toBeGreaterThan(transactionStart);
-        expect(sidecar).toBeGreaterThan(batchUpsert);
+        expect(batchIdentityLock).toBeGreaterThan(transactionStart);
+        expect(identityGuard).toBeGreaterThan(batchIdentityLock);
+        expect(batchMutation).toBeGreaterThan(identityGuard);
+        expect(sidecar).toBeGreaterThan(batchMutation);
         expect(kardex).toBeGreaterThan(sidecar);
         expect(purchaseAudit).toBeGreaterThan(kardex);
         expect(purchaseRoute.slice(sidecar, kardex)).not.toContain('.catch(');

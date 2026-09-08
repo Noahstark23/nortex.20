@@ -77,7 +77,8 @@ identidad. El plan asume oscuro.
   `.modal-panel`) y botón primario canónico; documentar en `index.css` cuál
   es LA forma.
 - **Purga de emojis visibles** → íconos lucide (labels del POS y compañía).
-- QA: build + screenshots antes/después (`run-nortex`) + regresión visual de
+- QA: build + smoke `run-nortex` aislado y comparación visual antes/después en un
+  candidato local + regresión visual de
   las 5 pantallas Obsidian existentes (no deben cambiar).
 
 ### Fase 2 — El flujo del cajero (cirugía, 1 PR)
@@ -104,8 +105,8 @@ identidad. El plan asume oscuro.
 
 ## 4. Método
 Cada fase = rama + PR draft con el loop `nortex-feature`, con la skill
-`frontend-design` cargada, y QA visual: `run-nortex` + screenshots
-antes/después en el PR. Nada de re-estilizar y romper: cero cambios de
+`frontend-design` cargada, y QA visual: smoke `run-nortex` aislado + comparación
+antes/después en el candidato/PR. Nada de re-estilizar y romper: cero cambios de
 lógica/handlers en los diffs de estilo.
 
 ## 5. Fuera de alcance

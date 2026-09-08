@@ -400,3 +400,43 @@ export async function registrarSalidaDeCajaPorCompra(
         categoriaGasto: 'COMPRA_MERCADERIA',
     }, deps);
 }
+
+export interface AbonoProveedorEnCajaInput {
+    tenantId: string;
+    userId: string;
+    shiftId: string;
+    invoiceNumber: string;
+    monto: Decimal.Value;
+}
+
+/**
+ * ABONO PARCIAL (o total) A UNA CxP, PAGADO DE LA GAVETA.
+ *
+ * Es el mismo desembolso que `pagarFacturaProveedorEnCaja`, pero SIN el guard
+ * de estado ni el asiento: el subledger de CxP (`SupplierPayment`) ya resuelve
+ * la idempotencia por `clientEventId` y el saldo parcial, y `recordSupplierPayment`
+ * ya postea Debe CxP (2.1.1) / Haber Caja (1.1.1). Postear acá otra vez
+ * acreditaría Caja DOS VECES — el mismo bug que documenta
+ * `registrarSalidaDeCajaPorCompra`.
+ *
+ * Lo que sí aporta, y es todo el punto: el efectivo sale de donde realmente
+ * está (la gaveta del turno, con row-lock y relectura del disponible), no de
+ * `Tenant.walletBalance` — la billetera fintech que ninguna ferretería tiene
+ * fondeada y que hacía morir todo abono en efectivo con "no hay suficiente
+ * efectivo disponible" aunque hubiera plata en la caja.
+ */
+export async function registrarSalidaDeCajaPorAbonoProveedor(
+    tx: any,
+    input: AbonoProveedorEnCajaInput,
+    deps: PagoProveedorDeps = DEPS_REALES
+): Promise<DebitoDeGaveta> {
+    return debitarGaveta(tx, {
+        tenantId: input.tenantId,
+        userId: input.userId,
+        shiftId: input.shiftId,
+        monto: new Decimal(input.monto),
+        descripcion: `Abono Factura #${input.invoiceNumber}`,
+        categoriaCaja: CATEGORIA_PAGO_PROVEEDOR,
+        categoriaGasto: CATEGORIA_PAGO_PROVEEDOR,
+    }, deps);
+}

@@ -7,7 +7,8 @@ const source = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf
 const registration = source('components/RegisterTenant.tsx');
 const login = source('components/Login.tsx');
 const demo = source('components/GuestPOS.tsx');
-const spaLanding = source('components/LandingPage.tsx');
+const spaLanding = source('components/public/PublicHomePage.tsx');
+const publicChrome = source('components/public/PublicChrome.tsx');
 const staticLanding = source('public/landing.html');
 const staticLandingCss = source('public/landing.css');
 
@@ -65,8 +66,9 @@ describe('experiencia pública del release', () => {
         expect(staticLandingCss).toMatch(/@media \(max-width: 640px\)[\s\S]*?\.nav-whats \{ display: none; \}/);
         expect(staticLandingCss).toContain('.nav-cta');
         expect(staticLandingCss).toContain('white-space: nowrap;');
-        expect(spaLanding).toContain('<span className="sm:hidden">Probar</span>');
-        expect(spaLanding).toContain('<span className="block text-transparent');
+        expect(spaLanding).toContain("mobileLabel: 'Probar'");
+        expect(publicChrome).toContain('<span className="sm:hidden">{action.mobileLabel}</span>');
+        expect(publicChrome).toContain('min-h-[44px]');
     });
 
     it('el copy público evita liderazgo, cumplimiento y crédito no demostrados', () => {

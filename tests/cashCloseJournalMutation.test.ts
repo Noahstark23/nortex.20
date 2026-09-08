@@ -7,7 +7,7 @@ import {
     type JournalPayloadHashInput,
     type JournalPostingDatabase,
 } from '../backend/services/journalPosting';
-import { buildLegacyShiftCloseIdentity } from '../backend/services/shiftCloseService';
+import { buildLegacyShiftCloseIdentity } from '../backend/services/legacyShiftCloseService';
 import { canonicalizeCloseShiftPayload } from '../backend/validation/schemas';
 
 const ECONOMIC_DATE = new Date('2026-08-31T15:00:00.000Z');
@@ -433,7 +433,7 @@ describe('gate de mutación PR-01 — identidad canónica del cierre legacy', ()
         vi.resetModules();
         const [{ buildLegacyShiftCloseIdentity: freshIdentity }, { canonicalizeCloseShiftPayload: freshCanonicalize }]
             = await Promise.all([
-                import('../backend/services/shiftCloseService'),
+                import('../backend/services/legacyShiftCloseService'),
                 import('../backend/validation/schemas'),
             ]);
         expect(freshCanonicalize(closeInput)).toBe(

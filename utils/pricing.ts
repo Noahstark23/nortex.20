@@ -30,17 +30,15 @@ export const effectiveTier = (
 ): { unitPrice: number; kind: TierKind } => {
     let unitPrice = p.basePrice;
     let kind: TierKind = 'DETALLE';
-    let threshold = 0;
-    const selectedPresentation: PricePresentation = presentation === 'PACK' ? 'PACK' : 'BASE';
 
     const wp = p.wholesalePrice;
     if (wp > 0) {
         const t = wholesaleCustomer ? 0 : (p.wholesaleMinQty > 0 ? p.wholesaleMinQty : null);
-        if (t != null && qty >= t && t >= threshold) {
-            unitPrice = wp; kind = 'MAYOREO'; threshold = t;
+        if (t != null && qty >= t) {
+            unitPrice = wp; kind = 'MAYOREO';
         }
     }
-    if (selectedPresentation === 'PACK' && p.packPrice > 0 && p.packSize > 0) {
+    if (presentation === 'PACK' && p.packPrice > 0 && p.packSize > 0) {
         unitPrice = p.packPrice / p.packSize; kind = 'EMPAQUE';
     }
     return { unitPrice, kind };

@@ -7,12 +7,16 @@ const { verifyAuthToken, userFindUnique, tenantFindUnique } = vi.hoisted(() => (
 }));
 
 vi.mock('../backend/services/secrets', () => ({ verifyAuthToken }));
-vi.mock('@prisma/client', () => ({
-    PrismaClient: class {
-        user = { findUnique: userFindUnique };
-        tenant = { findUnique: tenantFindUnique };
-    },
-}));
+// Mockeamos el singleton que consume el middleware, no el paquete completo de
+// Prisma. Un mock global de `@prisma/client` puede contaminar otro archivo que
+// corra en el mismo worker y dejar `Prisma.raw`/`PrismaClient` indefinidos.
+vi.mock('../backend/lib/prisma.js', () => {
+    const prisma = {
+        user: { findUnique: userFindUnique },
+        tenant: { findUnique: tenantFindUnique },
+    };
+    return { default: prisma, prisma };
+});
 
 import { authenticate } from '../backend/middleware/auth';
 

@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync(resolve(process.cwd(), 'components/Contabilidad.tsx'), 'utf8');
+const styles = readFileSync(resolve(process.cwd(), 'index.css'), 'utf8');
 
 describe('Contabilidad: contrato visual Apple Día/Noche', () => {
     it('usa el workspace, encabezado y superficies semánticas en todos sus estados', () => {
@@ -49,6 +50,7 @@ describe('Contabilidad: contrato visual Apple Día/Noche', () => {
         expect(monthButtonClass).not.toContain('focus-visible:outline-none');
         expect(source).toContain('nx-module-tab nx-fluid-press flex min-h-tap');
         expect(tabButtonClass).not.toContain('focus-visible:outline-none');
+        expect(styles).toMatch(/\.nx-fluid-press:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--nx-brand-ring\)/s);
         expect(source).toContain('grid grid-cols-2 gap-2 sm:flex sm:flex-wrap');
         expect(source).toContain('grid grid-cols-2 items-end gap-2');
         expect(source).toContain('sm:grid-cols-[minmax(0,1fr)_120px_120px_44px]');

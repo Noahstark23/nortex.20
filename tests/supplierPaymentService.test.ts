@@ -14,6 +14,7 @@ import {
     SupplierPaymentError,
 } from '../backend/lib/supplierPayments';
 import { PeriodLockedError } from '../backend/services/accounting';
+import { SupplierPaymentError as CashSupplierPaymentError } from '../backend/services/supplierPayment';
 import {
     executeSupplierPayment,
     executeSupplierPaymentTransaction,
@@ -26,6 +27,7 @@ const purchase = (overrides: Record<string, unknown> = {}) => ({
     id: 'purchase-1',
     tenantId: 'tenant-1',
     supplierId: 'supplier-1',
+    invoiceNumber: 'F-001',
     total: new Decimal('100'),
     balanceDue: new Decimal('100'),
     status: 'PENDING_PAYMENT',
@@ -71,16 +73,28 @@ const existingPayment = (overrides: Record<string, unknown> = {}) => ({
 interface FakeTxOptions {
     lockedRows?: unknown[];
     replayReads?: unknown[];
-    walletCount?: number;
+    /** Efectivo en la gaveta del turno abierto (fondo inicial, sin movimientos). */
+    efectivoEnGaveta?: string;
+    /** `false` = el turno se cerró entre el handler y la transacción. */
+    turnoAbierto?: boolean;
     purchaseUpdateCount?: number;
     createError?: unknown;
 }
+
+const cajaDepsPorTx = new WeakMap<object, never>();
 
 const fakeTransaction = (options: FakeTxOptions = {}) => {
     const events: string[] = [];
     const replayReads = [...(options.replayReads ?? [])];
     const findFirst = vi.fn(async (): Promise<unknown | null> => replayReads.shift() ?? null);
+    // Dos locks distintos comparten $queryRaw: el de la compra llega como
+    // `Prisma.sql` (objeto) y el del turno como template literal (array). Si el
+    // fake no los distinguiera, un cambio de orden de bloqueo pasaría inadvertido.
     const queryRaw = vi.fn(async (query: unknown) => {
+        if (Array.isArray(query)) {
+            events.push('lock-turno');
+            return [];
+        }
         events.push('lock');
         return options.lockedRows ?? [purchase()];
     });
@@ -93,9 +107,23 @@ const fakeTransaction = (options: FakeTxOptions = {}) => {
             createdAt: CREATED_AT,
         };
     });
-    const walletUpdate = vi.fn(async () => {
-        events.push('wallet');
-        return { count: options.walletCount ?? 1 };
+    // La gaveta del turno: row-lock, relectura del disponible, gasto y
+    // movimiento FIRMADO. Reemplaza al débito de `Tenant.walletBalance`.
+    const shiftFindFirst = vi.fn(async () => (options.turnoAbierto === false
+        ? null
+        : { id: 'shift-1', initialCash: new Decimal(options.efectivoEnGaveta ?? '5000') }));
+    const saleFindMany = vi.fn(async () => []);
+    const cashMovementFindMany = vi.fn(async () => []);
+    const expenseCreate = vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+        events.push('caja');
+        return { id: 'expense-1', ...data };
+    });
+    const appendCashMovement = vi.fn(async (_tx: unknown, data: Record<string, unknown>) => ({
+        id: 'movement-1',
+        ...data,
+    }));
+    const recordCashMovement = vi.fn(() => {
+        throw new Error('El abono no postea el asiento de caja: lo postea recordSupplierPayment');
     });
     const purchaseUpdate = vi.fn(async () => {
         events.push('purchase');
@@ -105,8 +133,8 @@ const fakeTransaction = (options: FakeTxOptions = {}) => {
         events.push('audit');
         return { id: 'audit-1' };
     });
-    const expenseCreate = vi.fn(() => {
-        throw new Error('SupplierPayment nunca debe crear Expense');
+    const walletUpdate = vi.fn(() => {
+        throw new Error('El abono NUNCA debe tocar Tenant.walletBalance');
     });
     const tx = {
         $queryRaw: queryRaw,
@@ -115,10 +143,16 @@ const fakeTransaction = (options: FakeTxOptions = {}) => {
         purchase: { updateMany: purchaseUpdate },
         auditLog: { create: auditCreate },
         expense: { create: expenseCreate },
+        shift: { findFirst: shiftFindFirst },
+        sale: { findMany: saleFindMany },
+        cashMovement: { findMany: cashMovementFindMany },
     } as unknown as Prisma.TransactionClient;
+    const cajaDeps = { appendCashMovement, recordCashMovement } as never;
+    cajaDepsPorTx.set(tx as object, cajaDeps);
     return {
         tx,
         events,
+        cajaDeps,
         mocks: {
             findFirst,
             queryRaw,
@@ -127,6 +161,9 @@ const fakeTransaction = (options: FakeTxOptions = {}) => {
             purchaseUpdate,
             auditCreate,
             expenseCreate,
+            shiftFindFirst,
+            appendCashMovement,
+            recordCashMovement,
         },
     };
 };
@@ -135,12 +172,15 @@ const execute = (
     tx: Prisma.TransactionClient,
     request: Record<string, unknown> = {},
     purchaseId = 'purchase-1',
+    extra: { shiftId?: string | null; cajaDeps?: never } = {},
 ) => executeSupplierPayment({
     tx,
     tenantId: 'tenant-1',
     userId: 'user-1',
     purchaseId,
     request,
+    shiftId: 'shiftId' in extra ? extra.shiftId : 'shift-1',
+    cajaDeps: extra.cajaDeps ?? cajaDepsPorTx.get(tx as object),
     now: NOW,
 });
 
@@ -158,14 +198,29 @@ const expectServiceError = async (
     throw new Error('Se esperaba SupplierPaymentError');
 };
 
+/** El error de la GAVETA es otra clase (otro mapa de códigos → HTTP). */
+const expectCajaError = async (
+    promise: Promise<unknown>,
+    code: string,
+): Promise<CashSupplierPaymentError> => {
+    try {
+        await promise;
+    } catch (error) {
+        expect(error).toBeInstanceOf(CashSupplierPaymentError);
+        expect((error as CashSupplierPaymentError).code).toBe(code);
+        return error as CashSupplierPaymentError;
+    }
+    throw new Error('Se esperaba CashSupplierPaymentError');
+};
+
 describe('executeSupplierPayment', () => {
     beforeEach(() => {
         recordSupplierPaymentMock.mockReset();
         recordSupplierPaymentMock.mockResolvedValue(undefined);
     });
 
-    it('registra un abono CASH parcial con wallet, asiento, saldo y auditoría atómicos', async () => {
-        const { tx, events, mocks } = fakeTransaction();
+    it('registra un abono CASH parcial sacando el efectivo de la GAVETA, con asiento, saldo y auditoría atómicos', async () => {
+        const { tx, events, mocks, cajaDeps } = fakeTransaction();
         recordSupplierPaymentMock.mockImplementation(async () => {
             events.push('journal');
         });
@@ -176,7 +231,7 @@ describe('executeSupplierPayment', () => {
             clientEventId: 'event-0001',
             reference: ' REC-42 ',
             notes: ' primer abono ',
-        });
+        }, 'purchase-1', { cajaDeps });
 
         expect(result.replay).toBe(false);
         expect(result.purchase).toEqual({
@@ -196,14 +251,36 @@ describe('executeSupplierPayment', () => {
             reference: 'REC-42',
             notes: 'primer abono',
         });
-        expect(events).toEqual(['lock', 'payment', 'wallet', 'journal', 'purchase', 'audit']);
-        expect(mocks.walletUpdate).toHaveBeenCalledWith({
-            where: {
-                id: 'tenant-1',
-                walletBalance: { gte: new Decimal('40.12') },
-            },
-            data: { walletBalance: { decrement: new Decimal('40.12') } },
+        // ORDEN DE BLOQUEO: la compra primero, el turno DESPUÉS. Es el mismo
+        // orden que /api/purchases y /api/returns; invertirlo abre un deadlock.
+        expect(events).toEqual(['lock', 'payment', 'lock-turno', 'caja', 'journal', 'purchase', 'audit']);
+        expect(mocks.walletUpdate).not.toHaveBeenCalled();
+        expect(mocks.shiftFindFirst).toHaveBeenCalledWith({
+            where: { id: 'shift-1', tenantId: 'tenant-1', status: 'OPEN' },
+            select: { id: true, initialCash: true },
         });
+        expect(mocks.expenseCreate).toHaveBeenCalledWith({
+            data: {
+                tenantId: 'tenant-1',
+                amount: 40.12,
+                description: 'Abono Factura #F-001',
+                category: 'PAGO_PROVEEDOR',
+            },
+        });
+        expect(mocks.appendCashMovement).toHaveBeenCalledWith(tx, {
+            tenantId: 'tenant-1',
+            shiftId: 'shift-1',
+            userId: 'user-1',
+            type: 'OUT',
+            amount: 40.12,
+            currency: 'NIO',
+            category: 'PAGO_PROVEEDOR',
+            description: 'Abono Factura #F-001',
+            expenseId: 'expense-1',
+        });
+        // El asiento de caja lo postea recordSupplierPayment (Debe CxP / Haber
+        // Caja). Postearlo también acá acreditaría Caja dos veces.
+        expect(mocks.recordCashMovement).not.toHaveBeenCalled();
         expect(recordSupplierPaymentMock).toHaveBeenCalledWith(
             tx,
             'tenant-1',
@@ -227,12 +304,19 @@ describe('executeSupplierPayment', () => {
             before: { status: 'PENDING_PAYMENT', balanceDue: '100.0000' },
             after: { status: 'PARTIALLY_PAID', balanceDue: '59.8800', paidAt: null, settledAt: null },
             payment: { amount: '40.1200', method: 'CASH' },
+            // Capa 3: el before/after de la gaveta viaja en el mismo AuditLog.
+            caja: {
+                shiftId: 'shift-1',
+                cashMovementId: 'movement-1',
+                expenseId: 'expense-1',
+                efectivoAntes: '5000.00',
+                efectivoDespues: '4959.88',
+            },
         });
-        expect(mocks.expenseCreate).not.toHaveBeenCalled();
     });
 
     it.each(['TRANSFER', 'CARD', 'QR'] as const)(
-        'liquida por %s contra Bancos sin tocar wallet',
+        'liquida por %s contra Bancos sin tocar la gaveta ni la billetera',
         async (method) => {
             const { tx, events, mocks } = fakeTransaction();
             recordSupplierPaymentMock.mockImplementation(async () => {
@@ -274,7 +358,8 @@ describe('executeSupplierPayment', () => {
         expect(result.purchase.status).toBe('COMPLETED');
         expect(result.purchase.settledAt).toBe(NOW.toISOString());
         expect(mocks.findFirst).not.toHaveBeenCalled();
-        expect(mocks.walletUpdate).toHaveBeenCalledOnce();
+        expect(mocks.walletUpdate).not.toHaveBeenCalled();
+        expect(mocks.appendCashMovement).toHaveBeenCalledOnce();
     });
 
     it('conserva paidAt histórico y materializa settledAt al liquidar el saldo restante', async () => {
@@ -437,14 +522,43 @@ describe('executeSupplierPayment', () => {
         expect(mocks.walletUpdate).not.toHaveBeenCalled();
     });
 
-    it('falla por caja insuficiente antes del asiento, saldo y auditoría', async () => {
-        const { tx, events, mocks } = fakeTransaction({ walletCount: 0 });
-        await expectServiceError(execute(tx, {
+    it('falla por efectivo insuficiente EN LA GAVETA antes del asiento, saldo y auditoría', async () => {
+        const { tx, events, mocks } = fakeTransaction({ efectivoEnGaveta: '99.99' });
+        const error = await expectCajaError(execute(tx, {
             amount: '100', method: 'CASH', clientEventId: 'event-0001',
-        }), 'INSUFFICIENT_CASH_BALANCE');
-        expect(events).toEqual(['lock', 'payment', 'wallet']);
+        }), 'EFECTIVO_INSUFICIENTE');
+        // El mensaje dice cuánto hay y cuánto falta: el bug reportado era que
+        // mandaba a "recargar la billetera", que no interviene en nada.
+        expect(error.message).toContain('disponible C$ 99.99');
+        expect(error.message).not.toMatch(/billetera/i);
+        expect(events).toEqual(['lock', 'payment', 'lock-turno']);
+        expect(mocks.expenseCreate).not.toHaveBeenCalled();
         expect(recordSupplierPaymentMock).not.toHaveBeenCalled();
         expect(mocks.purchaseUpdate).not.toHaveBeenCalled();
+        expect(mocks.auditCreate).not.toHaveBeenCalled();
+    });
+
+    it('exige caja abierta para un abono en efectivo, sin inventar saldo', async () => {
+        const { tx, events, mocks } = fakeTransaction();
+        const error = await expectServiceError(execute(tx, {
+            amount: '100', method: 'CASH', clientEventId: 'event-0001',
+        }, 'purchase-1', { shiftId: null }), 'NO_OPEN_SHIFT');
+        expect(error.httpStatus).toBe(409);
+        expect(error.message).toContain('Abrí una caja');
+        expect(events).toEqual(['lock', 'payment']);
+        expect(mocks.walletUpdate).not.toHaveBeenCalled();
+        expect(mocks.expenseCreate).not.toHaveBeenCalled();
+        expect(recordSupplierPaymentMock).not.toHaveBeenCalled();
+    });
+
+    it('aborta si el turno se cerró entre el handler y la transacción', async () => {
+        const { tx, events, mocks } = fakeTransaction({ turnoAbierto: false });
+        await expectCajaError(execute(tx, {
+            amount: '100', method: 'CASH', clientEventId: 'event-0001',
+        }), 'SIN_CAJA_ABIERTA');
+        expect(events).toEqual(['lock', 'payment', 'lock-turno']);
+        expect(mocks.expenseCreate).not.toHaveBeenCalled();
+        expect(recordSupplierPaymentMock).not.toHaveBeenCalled();
         expect(mocks.auditCreate).not.toHaveBeenCalled();
     });
 
@@ -457,7 +571,7 @@ describe('executeSupplierPayment', () => {
         await expect(execute(tx, {
             amount: '100', method: 'CASH', clientEventId: 'event-0001',
         })).rejects.toThrow('fallo contable');
-        expect(events).toEqual(['lock', 'payment', 'wallet', 'journal']);
+        expect(events).toEqual(['lock', 'payment', 'lock-turno', 'caja', 'journal']);
         expect(mocks.purchaseUpdate).not.toHaveBeenCalled();
         expect(mocks.auditCreate).not.toHaveBeenCalled();
     });
@@ -471,7 +585,7 @@ describe('executeSupplierPayment', () => {
         await expect(execute(tx, {
             amount: '100', method: 'CASH', clientEventId: 'event-0001',
         })).rejects.toBeInstanceOf(PeriodLockedError);
-        expect(events).toEqual(['lock', 'payment', 'wallet', 'journal']);
+        expect(events).toEqual(['lock', 'payment', 'lock-turno', 'caja', 'journal']);
         expect(mocks.purchaseUpdate).not.toHaveBeenCalled();
         expect(mocks.auditCreate).not.toHaveBeenCalled();
     });

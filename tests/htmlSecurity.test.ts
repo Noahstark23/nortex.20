@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { escapeHtml, fiscalPreviewCsp } from '../backend/lib/htmlSecurity';
 
-const serverSource = readFileSync('backend/server.ts', 'utf8');
+const serverSource = readFileSync('backend/server.ts', 'utf8').replace('registerRetentionCertificate(app);\nregisterFiscalExports(app);', readFileSync('backend/routes/retentionCertificate.ts', 'utf8') + '\n' + readFileSync('backend/routes/fiscalExports.ts', 'utf8'));
 const constanciaStart = serverSource.indexOf("app.get('/api/fiscal/constancia-retencion/:purchaseId'");
 const constanciaEnd = serverSource.indexOf('// 📊 SPRINT A — EXPORTACIONES FISCALES DGI', constanciaStart);
 const constanciaRoute = serverSource.slice(constanciaStart, constanciaEnd);

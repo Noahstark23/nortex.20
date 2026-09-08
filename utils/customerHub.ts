@@ -10,7 +10,6 @@ export interface CustomerHubSignals {
     lastSaleAt?: Date | string | null;
     createdAt?: Date | string | null;
 }
-
 const INACTIVE_DAYS = 60;
 const MS_DAY = 86400000;
 const MANAGUA_CIVIL_DATE_FORMATTER = new Intl.DateTimeFormat('en-CA-u-ca-gregory-nu-latn', {

@@ -1,3 +1,5 @@
+import { registerRetentionCertificate } from './routes/retentionCertificate';
+import { registerFiscalExports } from './routes/fiscalExports';
 // NORTEX INC. - CORE BANCARIO (OPTIMIZADO PRODUCCIÓN)
 import express from 'express';
 import cors from 'cors';
@@ -16,9 +18,11 @@ import {
     CUSTOMER_CREATE_ROLES,
     CUSTOMER_INTERACTION_WRITE_ROLES,
     CUSTOMER_PAYMENT_ROLES,
+    CUSTOMER_HUB_READ_ROLES,
     CUSTOMER_READ_ROLES,
     CUSTOMER_PORTFOLIO_READ_ROLES,
     HR_READ_ROLES,
+    CUSTOMER_UPDATE_ROLES,
     isCustomerCreateAuthorized,
     isCustomerUpdateAuthorized,
     POS_SALE_ROLES,
@@ -45,13 +49,11 @@ import {
     pagarFacturaProveedorEnCaja,
     SupplierPaymentError as SupplierPaymentCajaError,
     MENSAJE_SIN_CAJA_ABIERTA,
+    CATEGORIA_PAGO_PROVEEDOR,
 } from './services/supplierPayment';
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
-import {
-    closeLegacyShift,
-    ShiftCloseError,
-    type ShiftCloseDatabase,
-} from './services/shiftCloseService';
+import { closeShiftWithReport, ShiftCloseError } from './services/shiftCloseService';
+import { voidManualCashMovement, ManualCashMovementVoidError } from './services/manualCashMovementVoidService';
 import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
@@ -61,10 +63,28 @@ import { executeBatchWriteoff, BatchWriteoffError } from './services/batchWriteo
 import { loadBatchWriteoffReplay } from './services/batchWriteoffIdempotency';
 import { executeSupplierPaymentTransaction } from './services/supplierPaymentService';
 import {
+    applyLinkedPurchaseSalePriceIntents,
+    buildPurchaseSalePriceChange,
+    canSetPurchaseSalePrice,
+    createPurchaseSalePriceAudits,
+    hasPurchaseSalePriceIntent,
+    PurchaseSalePriceError,
+    resolvePurchaseSalePriceIntents,
+} from './services/purchaseSalePriceService';
+import {
     applyBatchWarehouseDelta,
     BatchWarehouseLedgerError,
     resolveBatchWarehouseLedgerMode,
 } from './services/productBatchWarehouseLedgerService';
+import {
+    applyProductBatchHoldDelta,
+    ProductBatchHoldError,
+} from './services/productBatchHoldService';
+import {
+    MAX_PHARMACY_AVAILABILITY_PRODUCTS,
+    PharmacyAvailabilityError,
+    resolvePharmacyProductAvailability,
+} from './services/pharmacyAvailabilityService';
 import { calcularPulso, claveDelDiaManagua, inicioDelDiaManagua, MANAGUA_UTC_OFFSET_HOURS } from './services/pulsoPos';
 import {
     BatchRestorationError,
@@ -112,15 +132,31 @@ import serialsRouter from './routes/serials';
 import warehousesRouter from './routes/warehouses';
 import stockTransfersRouter from './routes/stockTransfers';
 import batchWarehouseLedgerRouter from './routes/batchWarehouseLedger';
+import pharmacyInventorySettingsRouter from './routes/pharmacyInventorySettings';
 import syncRoutes from './routes/sync';
 import scaleLabelsRouter, { scaleDevicesRouter } from './routes/scaleLabels';
 import tenantCapabilitiesRouter from './routes/tenantCapabilities';
 import agentBankingRouter from './routes/agentBanking';
 import saleCorrectionsRouter from './routes/saleCorrections';
+import salesReportsRouter from './routes/salesReports.js';
+import {
+    createCompletePasswordResetHandler,
+    createValidatePasswordResetHandler,
+    type PasswordResetPrisma,
+} from './routes/passwordReset';
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
-import { daysSinceManaguaCivilDate, managuaBusinessDate, parseManaguaCivilDateInput } from './lib/managuaBusinessDate';
+import {
+    daysSinceManaguaCivilDate,
+    managuaBusinessDate,
+    managuaCalendarDateFloor,
+    parseManaguaCivilDateInput,
+} from './lib/managuaBusinessDate';
+import {
+    assertProductBatchExpiryIdentity,
+    ProductBatchIdentityError,
+} from './lib/productBatchIdentity';
 import { buildAllowedOrigins, isAllowedOrigin } from './lib/allowedOrigins';
 import {
     QuotationItemError,
@@ -140,14 +176,22 @@ import {
     parseManualBatchCommandClaim,
     type ManualBatchCommandType,
 } from './lib/manualBatchMovements';
+import { normalizeBatchWarehouseLedgerMode } from './lib/batchWarehouseLedger';
+import { CUSTOMER_RETURN_HOLD_REASON_CODE } from './lib/productBatchHold';
+import { buildPharmacyExpiryAlert } from './lib/pharmacyExpiryAlerts';
 import { ProcurementMatchError } from './lib/procurementMatch';
 import {
+    normalizeSupplierPaymentMethod,
     PURCHASE_FISCAL_STATUSES,
     PURCHASE_PAYABLE_STATUSES,
     resolveEffectiveSupplierBalance,
-    SupplierPaymentError,
+    SupplierPaymentError as PayableSupplierPaymentError,
 } from './lib/supplierPayments';
 import { escapeHtml, fiscalPreviewCsp } from './lib/htmlSecurity';
+import {
+    resolveReturnShiftAttribution,
+    ReturnShiftAttributionError,
+} from './lib/returnShiftAttribution';
 import {
     publicOrderItemsForQuotation,
     PublicOrderItemError,
@@ -190,6 +234,7 @@ import {
     RegisterSchema,
     LoginSchema,
     ResetPasswordSchema,
+    AcceptInvitationSchema,
     KardexRecordSchema,
     UpdateFiscalSettingsSchema,
     CreateRetencionSufridaSchema,
@@ -351,6 +396,9 @@ app.use(express.json({ limit: '2mb' }) as any);
 // colgar también el healthcheck).
 const arranqueDelProceso = Date.now();
 app.get('/api/health', async (_req: any, res: any) => {
+    // El commit y la BD son evidencia de la instancia actual. Un CDN/proxy no
+    // puede reutilizar un 200 anterior como prueba de una promoción nueva.
+    res.set('Cache-Control', 'no-store, no-cache, max-age=0, must-revalidate');
     let db: 'up' | 'down' = 'down';
     try {
         await Promise.race([
@@ -452,6 +500,22 @@ const registerLimiter = rateLimit({
 app.use('/api/auth/register', registerLimiter as any);
 
 app.use('/api/sales/offline-evidence', offlineSaleEvidenceRoutes);
+// Aceptar una invitación es público y termina en bcrypt. La llave se ata al
+// token (no sólo a la IP, que en Nicaragua suele compartirse) para que conocer
+// un enlace no permita consumir CPU con reintentos ilimitados desde una botnet.
+// El token es opaco y sólo vive en el MemoryStore; no se registra ni se devuelve
+// por este middleware. Redis sigue siendo necesario antes de escalar procesos.
+const invitationAcceptLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 10,
+    keyGenerator: (req: any) => {
+        const token = typeof req.params?.token === 'string' ? req.params.token : '';
+        return token ? `invite-accept:${token}` : `ip:${req.ip || 'unknown'}`;
+    },
+    message: { error: 'Demasiados intentos para esta invitación. Esperá 15 minutos.' },
+    standardHeaders: true,
+    legacyHeaders: false,
+});
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -463,6 +527,7 @@ app.use('/api/serials', serialsRouter); // Control de series (números de serie 
 app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundación)
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/batch-warehouse-ledger', batchWarehouseLedgerRouter);
+app.use('/api/tenant/pharmacy-inventory-settings', pharmacyInventorySettingsRouter);
 app.use('/api/loans', loanRoutes);
 app.use('/api/sales/sync', syncRoutes);
 app.use('/api/scale-labels', scaleLabelsRouter);
@@ -470,6 +535,7 @@ app.use('/api/scale-devices', scaleDevicesRouter);
 app.use('/api/tenant/capabilities', tenantCapabilitiesRouter);
 app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
 app.use('/api', saleCorrectionsRouter); // Historial, aprobaciones, reembolsos e inspecciones de venta
+app.use('/api/reports', salesReportsRouter); // Ventas integrales y snapshots inmutables de cierre
 
 // Response time header (para monitoreo)
 app.use((req: any, res: any, next: any) => {
@@ -895,9 +961,23 @@ app.get('/api/invite/:token', async (req: any, res: any) => {
             return res.status(400).json({ error: 'Esta invitación ya fue utilizada.' });
         }
 
-        if (new Date() > invitation.expiresAt) {
-            await prisma.invitation.update({
-                where: { id: invitation.id },
+        // Una invitación cancelada o marcada expirada no debe revelar a quien
+        // conserva el link el correo, rol ni negocio que ya no puede unirse.
+        if (invitation.status !== 'PENDING') {
+            return res.status(400).json({ error: 'Esta invitación ya no es válida.' });
+        }
+
+        const now = new Date();
+        if (now >= invitation.expiresAt) {
+            // La lectura pública puede quedar obsoleta mientras aceptar o
+            // cancelar reclama PENDING. Nunca reescribir un estado ganador:
+            // sólo vence la fila que aún está pendiente y sigue vencida ahora.
+            await prisma.invitation.updateMany({
+                where: {
+                    id: invitation.id,
+                    status: 'PENDING',
+                    expiresAt: { lte: now },
+                },
                 data: { status: 'EXPIRED' }
             });
             return res.status(400).json({ error: 'Esta invitación ha expirado. Solicita una nueva.' });
@@ -915,51 +995,104 @@ app.get('/api/invite/:token', async (req: any, res: any) => {
     }
 });
 
+class InvitationTransitionError extends Error {
+    constructor(readonly status: number, message: string) {
+        super(message);
+    }
+}
+
 // POST /api/invite/:token/accept — Aceptar invitación y crear usuario
-app.post('/api/invite/:token/accept', async (req: any, res: any) => {
+app.post('/api/invite/:token/accept', invitationAcceptLimiter as any, validate(AcceptInvitationSchema), async (req: any, res: any) => {
     const { token } = req.params;
     const { name, password } = req.body;
 
     try {
-        if (!name || !password) {
-            return res.status(400).json({ error: 'Nombre y contraseña son requeridos.' });
-        }
-
-        if (password.length < 6) {
-            return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
-        }
-
-        const invitation = await prisma.invitation.findUnique({
+        // Antes de pagar bcrypt, descartar de forma barata un token inexistente,
+        // usado, cancelado o vencido. Esta consulta sólo acelera el rechazo: el
+        // claim serializable más abajo sigue siendo la autoridad ante carreras.
+        const preflight = await prisma.invitation.findUnique({
             where: { token },
-            include: { tenant: true }
+            select: { id: true, status: true, expiresAt: true },
         });
-
-        if (!invitation) {
+        if (!preflight) {
             return res.status(404).json({ error: 'Invitación no encontrada.' });
         }
-
-        if (invitation.status !== 'PENDING') {
+        if (preflight.status !== 'PENDING') {
             return res.status(400).json({ error: 'Esta invitación ya no es válida.' });
         }
-
-        if (new Date() > invitation.expiresAt) {
-            await prisma.invitation.update({
-                where: { id: invitation.id },
-                data: { status: 'EXPIRED' }
+        const now = new Date();
+        if (now >= preflight.expiresAt) {
+            await prisma.invitation.updateMany({
+                where: {
+                    id: preflight.id,
+                    status: 'PENDING',
+                    expiresAt: { lte: now },
+                },
+                data: { status: 'EXPIRED' },
             });
             return res.status(400).json({ error: 'Esta invitación ha expirado.' });
         }
 
-        // Verificar que no exista ya un usuario con ese email
-        const existingUser = await prisma.user.findUnique({ where: { email: invitation.email } });
-        if (existingUser) {
-            return res.status(400).json({ error: 'Ya existe una cuenta con este email.' });
-        }
-
-        // Crear usuario y marcar invitación como aceptada
         const hashedPassword = await bcrypt.hash(password, 10);
 
+        // El claim condicional y la creación viven en una transacción serializable:
+        // dos clicks/reintentos del mismo token no pueden crear dos respuestas
+        // divergentes ni convertir el segundo conflicto único en un 500.
         const result = await prisma.$transaction(async (tx: any) => {
+            const now = new Date();
+            const claimed = await tx.invitation.updateMany({
+                where: {
+                    token,
+                    status: 'PENDING',
+                    expiresAt: { gt: now },
+                },
+                // ACCEPTING solo existe dentro de esta transacción; al commit
+                // termina en ACCEPTED y un rollback conserva PENDING.
+                data: { status: 'ACCEPTING' },
+            });
+
+            if (claimed.count !== 1) {
+                const current = await tx.invitation.findUnique({
+                    where: { token },
+                    select: { id: true, status: true, expiresAt: true },
+                });
+                if (!current) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
+                if (current.status === 'PENDING' && now > current.expiresAt) {
+                    await tx.invitation.updateMany({
+                        where: { id: current.id, status: 'PENDING' },
+                        data: { status: 'EXPIRED' },
+                    });
+                    throw new InvitationTransitionError(400, 'Esta invitación ha expirado.');
+                }
+                throw new InvitationTransitionError(400, 'Esta invitación ya no es válida.');
+            }
+
+            const invitation = await tx.invitation.findUnique({
+                where: { token },
+                select: {
+                    id: true,
+                    tenantId: true,
+                    email: true,
+                    role: true,
+                    invitedBy: true,
+                    tenant: {
+                        select: {
+                            id: true,
+                            businessName: true,
+                        },
+                    },
+                },
+            });
+            if (!invitation) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
+
+            // Esta comprobación sucede tras reservar el token, no antes de la
+            // transacción. El índice único sigue siendo la defensa final para
+            // invitaciones concurrentes del mismo correo en distintos tenants.
+            const existingUser = await tx.user.findUnique({ where: { email: invitation.email } });
+            if (existingUser) {
+                throw new InvitationTransitionError(400, 'Ya existe una cuenta con este email.');
+            }
+
             const user = await tx.user.create({
                 data: {
                     tenantId: invitation.tenantId,
@@ -986,20 +1119,29 @@ app.post('/api/invite/:token/accept', async (req: any, res: any) => {
                 }
             });
 
-            return user;
-        });
+            return { user, tenant: invitation.tenant };
+        }, { isolationLevel: 'Serializable' });
 
         // Generar JWT para auto-login
         const jwtToken = signAuthToken(
-            { userId: result.id, tenantId: result.tenantId, role: result.role, email: result.email }
+            { userId: result.user.id, tenantId: result.user.tenantId, role: result.user.role, email: result.user.email }
         );
 
         res.json({
             token: jwtToken,
-            user: { id: result.id, email: result.email, name: result.name, role: result.role },
-            tenant: invitation.tenant,
+            user: { id: result.user.id, email: result.user.email, name: result.user.name, role: result.user.role },
+            tenant: result.tenant,
         });
     } catch (error) {
+        if (error instanceof InvitationTransitionError) {
+            return res.status(error.status).json({ error: error.message });
+        }
+        if ((error as { code?: unknown })?.code === 'P2002') {
+            return res.status(400).json({ error: 'Ya existe una cuenta con este email.' });
+        }
+        if ((error as { code?: unknown })?.code === 'P2034') {
+            return res.status(409).json({ error: 'La invitación se está procesando. Esperá un momento e intentá de nuevo.' });
+        }
         console.error('Accept invitation error:', error);
         res.status(500).json({ error: 'Error aceptando invitación' });
     }
@@ -1015,22 +1157,28 @@ app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res:
             return res.status(403).json({ error: 'Solo el dueño puede cancelar invitaciones.' });
         }
 
-        const invitation = await prisma.invitation.findFirst({
-            where: { id: invitationId, tenantId: authReq.tenantId }
-        });
-
-        if (!invitation) {
-            return res.status(404).json({ error: 'Invitación no encontrada.' });
-        }
-
-        // Soft-cancel + auditoría, en línea con el endpoint hermano DELETE /api/team/:userId.
-        // La propiedad ya se verificó arriba con findFirst por tenantId. No borrar físicamente:
-        // se pierde la forensia de accesos (quién invitó/revocó a qué email con qué rol).
+        // Claim condicional: cancelar y aceptar compiten por PENDING, nunca por
+        // un estado ya aceptado. Así un owner no recibe un éxito ficticio de
+        // revocación después de que la cuenta ya se creó.
         await prisma.$transaction(async (tx: any) => {
-            await tx.invitation.update({
-                where: { id: invitationId },
+            const cancelled = await tx.invitation.updateMany({
+                where: { id: invitationId, tenantId: authReq.tenantId, status: 'PENDING' },
                 data: { status: 'CANCELLED' }
             });
+            if (cancelled.count !== 1) {
+                const current = await tx.invitation.findFirst({
+                    where: { id: invitationId, tenantId: authReq.tenantId },
+                    select: { id: true },
+                });
+                if (!current) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
+                throw new InvitationTransitionError(409, 'Esta invitación ya no está pendiente.');
+            }
+
+            const invitation = await tx.invitation.findFirst({
+                where: { id: invitationId, tenantId: authReq.tenantId },
+                select: { email: true, role: true },
+            });
+            if (!invitation) throw new InvitationTransitionError(404, 'Invitación no encontrada.');
 
             await tx.auditLog.create({
                 data: {
@@ -1040,10 +1188,16 @@ app.delete('/api/team/invite/:invitationId', authenticate, async (req: any, res:
                     details: `Canceló invitación de ${invitation.email} (${invitation.role})`,
                 }
             });
-        });
+        }, { isolationLevel: 'Serializable' });
 
         res.json({ success: true, message: 'Invitación cancelada.' });
     } catch (error) {
+        if (error instanceof InvitationTransitionError) {
+            return res.status(error.status).json({ error: error.message });
+        }
+        if ((error as { code?: unknown })?.code === 'P2034') {
+            return res.status(409).json({ error: 'La invitación se está procesando. Esperá un momento e intentá de nuevo.' });
+        }
         console.error('Cancel invite error:', error);
         res.status(500).json({ error: 'Error cancelando invitación' });
     }
@@ -1126,115 +1280,24 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
 });
 
 // GET /api/auth/reset-password/:token — Validar token
-app.get('/api/auth/reset-password/:token', async (req: any, res: any) => {
-    const { token } = req.params;
+const passwordResetPrisma = prisma as unknown as PasswordResetPrisma;
 
-    try {
-        const resetRecord = await prisma.passwordReset.findUnique({
-            where: { token },
-            include: { user: { select: { email: true, name: true } } }
-        });
-
-        if (!resetRecord) {
-            return res.status(404).json({ error: 'Link inválido o expirado.' });
-        }
-
-        if (resetRecord.used) {
-            return res.status(400).json({ error: 'Este link ya fue utilizado.' });
-        }
-
-        if (new Date() > resetRecord.expiresAt) {
-            return res.status(400).json({ error: 'Este link ha expirado. Solicita uno nuevo.' });
-        }
-
-        res.json({
-            valid: true,
-            email: resetRecord.user.email,
-            name: resetRecord.user.name,
-        });
-    } catch (error) {
-        console.error('Validate reset token error:', error);
-        res.status(500).json({ error: 'Error validando link.' });
-    }
-});
+app.get('/api/auth/reset-password/:token', createValidatePasswordResetHandler({
+    prisma: passwordResetPrisma,
+}));
 
 // POST /api/auth/reset-password/:token — Cambiar contraseña
 // Limitado: previene fuerza bruta del token de reseteo (= toma de cuenta).
-app.post('/api/auth/reset-password/:token', forgotPasswordLimiter, validate(ResetPasswordSchema), async (req: any, res: any) => {
-    const { token } = req.params;
-    const { password } = req.body;
-
-    try {
-        if (!password || password.length < 6) {
-            return res.status(400).json({ error: 'La contraseña debe tener al menos 6 caracteres.' });
-        }
-
-        const resetRecord = await prisma.passwordReset.findUnique({
-            where: { token },
-            include: { user: true }
-        });
-
-        if (!resetRecord) {
-            return res.status(404).json({ error: 'Link inválido o expirado.' });
-        }
-
-        if (resetRecord.used) {
-            return res.status(400).json({ error: 'Este link ya fue utilizado.' });
-        }
-
-        if (new Date() > resetRecord.expiresAt) {
-            return res.status(400).json({ error: 'Este link ha expirado. Solicita uno nuevo.' });
-        }
-
-        // Hashear nueva contraseña y actualizar
-        const hashedPassword = await bcrypt.hash(password, 10);
-
-        await prisma.$transaction(async (tx: any) => {
-            await tx.user.update({
-                where: { id: resetRecord.userId },
-                data: { password: hashedPassword }
-            });
-
-            // Invalidar este token
-            await tx.passwordReset.update({
-                where: { id: resetRecord.id },
-                data: { used: true }
-            });
-
-            // Invalidar todos los tokens pendientes de este usuario
-            await tx.passwordReset.updateMany({
-                where: {
-                    userId: resetRecord.userId,
-                    used: false,
-                    id: { not: resetRecord.id }
-                },
-                data: { used: true }
-            });
-        });
-
-        // Auto-login
-        const jwtToken = signAuthToken({
-            userId: resetRecord.user.id,
-            tenantId: resetRecord.user.tenantId,
-            role: resetRecord.user.role,
-            email: resetRecord.user.email ?? undefined
-        });
-
-        res.json({
-            message: 'Contraseña actualizada exitosamente.',
-            token: jwtToken,
-            user: {
-                id: resetRecord.user.id,
-                email: resetRecord.user.email,
-                name: resetRecord.user.name,
-                role: resetRecord.user.role
-            }
-        });
-    } catch (error) {
-        console.error('Reset password error:', error);
-        res.status(500).json({ error: 'Error restableciendo contraseña.' });
-    }
-});
+app.post(
+    '/api/auth/reset-password/:token',
+    forgotPasswordLimiter,
+    validate(ResetPasswordSchema),
+    createCompletePasswordResetHandler({
+        prisma: passwordResetPrisma,
+        hashPassword: (password) => bcrypt.hash(password, 10),
+        signToken: signAuthToken,
+    }),
+);
 
 
 // ==========================================
@@ -1503,13 +1566,16 @@ app.get('/api/dashboard/stats', authenticate, async (req: any, res: any) => {
         const todayStart = new Date();
         todayStart.setHours(0, 0, 0, 0);
 
-        const todayExpenses = await prisma.expense.findMany({
+        const todayExpenses = await prisma.expense.aggregate({
             where: {
                 tenantId: tenantId,
-                createdAt: { gte: todayStart }
-            }
+                createdAt: { gte: todayStart },
+                // Cancelar CxP mueve caja y pasivo; no genera otro gasto.
+                category: { not: CATEGORIA_PAGO_PROVEEDOR },
+            },
+            _sum: { amount: true },
         });
-        const totalExpensesToday = todayExpenses.reduce((sum: Decimal, e: any) => sum.plus(new Decimal(e.amount.toString())), new Decimal(0));
+        const totalExpensesToday = new Decimal(todayExpenses._sum.amount?.toString() ?? '0');
 
         // 4. Calculate Today's Sales
         const totalSalesToday = recentSales
@@ -1975,12 +2041,15 @@ function customerHubSegmentWhere(segment: string, asOf: Date = new Date()) {
         return { isWholesale: true, isBlocked: false, currentDebt: 0 };
     }
     if (segment === 'inactive') {
-        const cutoff = new Date(managuaBusinessDate(asOf).getTime() - 60 * 86400000);
+        // Un cliente pasa a inactivo cuando su última actividad quedó en un
+        // día civil <= hoy-60. El primer instante todavía activo es el inicio
+        // de Managua de hace 59 días (p. ej. 29-jun 00:00 para hoy 27-ago).
+        const cutoff = new Date(inicioDelDiaManagua(asOf).getTime() - 59 * 86400000);
         return {
             isBlocked: false,
             isWholesale: false,
             currentDebt: 0,
-            createdAt: { lte: cutoff },
+            createdAt: { lt: cutoff },
             sales: {
                 none: {
                     status: { not: ESTADO_ANULADA },
@@ -2281,7 +2350,23 @@ app.get('/api/customers/hub', authenticate, checkRole(CUSTOMER_PORTFOLIO_READ_RO
         });
 
         const hub = await buildCustomerHubList(tenantId, customers, asOf);
-        const filtered = hub.filter((customer) => {
+        let visibleHub = hub;
+        if (authReq.role === 'VENDEDOR' && hub.length > 0) {
+            // La asignación puede cambiar mientras se agregan las ventas. Antes
+            // de responder, revalidar contra el estado actual y fallar cerrado.
+            const stillAssigned = await prisma.customer.findMany({
+                where: {
+                    tenantId,
+                    sellerId: authReq.userId!,
+                    id: { in: hub.map((customer) => customer.id) },
+                },
+                select: { id: true },
+            });
+            const assignedIds = new Set(stillAssigned.map((customer) => customer.id));
+            visibleHub = hub.filter((customer) => assignedIds.has(customer.id));
+        }
+
+        const filtered = visibleHub.filter((customer) => {
             return matchesCustomerHubSegment(segment, customer.segment, {
                 creditLimit: customer.creditLimit,
                 currentDebt: customer.currentDebt,
@@ -2692,7 +2777,7 @@ app.patch(
     },
 );
 
-app.put('/api/customers/:id', authenticate, validate(UpdateCustomerSchema), async (req: any, res: any) => {
+app.put('/api/customers/:id', authenticate, checkRole(CUSTOMER_UPDATE_ROLES), validate(UpdateCustomerSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
     const { name, taxId, phone, email, address, creditLimit, isBlocked, isWholesale, sellerId } = req.body;
@@ -3755,6 +3840,49 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
         }
 
         const result = await prisma.$transaction(async (tx: any) => {
+            // Orden global de locks para este flujo: Tenant -> Sale -> Product.
+            // La activación farmacéutica también empieza por Tenant y después
+            // inspecciona ventas; conservar el mismo orden evita el ciclo
+            // Tenant -> Sale / Sale -> Tenant durante un cambio de modo.
+            // Además, la creación de cuarentenas queda serializada contra OFF.
+            const inventorySettingsRows: Array<{
+                type: string;
+                batchWarehouseLedgerMode: string;
+                pharmacyInventoryMode: string;
+            }> = await tx.$queryRaw`
+                SELECT type, batchWarehouseLedgerMode, pharmacyInventoryMode
+                FROM \`Tenant\`
+                WHERE id = ${authReq.tenantId}
+                FOR UPDATE`;
+            const inventorySettings = inventorySettingsRows[0];
+            if (!inventorySettings) {
+                throw new ReturnResolutionError(
+                    'RETURN_TENANT_NOT_FOUND',
+                    404,
+                    'El negocio autenticado ya no está disponible',
+                );
+            }
+            const batchWarehouseLedgerMode = normalizeBatchWarehouseLedgerMode(
+                inventorySettings.batchWarehouseLedgerMode,
+            );
+            if (inventorySettings.pharmacyInventoryMode !== 'OFF'
+                && inventorySettings.pharmacyInventoryMode !== 'ENFORCED') {
+                throw new ReturnResolutionError(
+                    'PHARMACY_INVENTORY_CONFIGURATION_INVALID',
+                    500,
+                    'La configuración farmacéutica guardada no es válida',
+                );
+            }
+            const pharmacyQuarantineEnabled = inventorySettings.pharmacyInventoryMode === 'ENFORCED';
+            if (pharmacyQuarantineEnabled
+                && (inventorySettings.type !== 'FARMACIA' || batchWarehouseLedgerMode !== 'ENFORCED')) {
+                throw new ReturnResolutionError(
+                    'PHARMACY_INVENTORY_ENFORCEMENT_REQUIRED',
+                    409,
+                    'La cuarentena farmacéutica exige un tenant FARMACIA y lote-bodega ENFORCED',
+                );
+            }
+
             // Todas las devoluciones de una venta se serializan sobre la misma
             // fila. La segunda solicitud concurrente espera, vuelve a sumar el
             // historial y no puede sobrepasar la cantidad de la línea.
@@ -3766,7 +3894,7 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                 throw new ReturnResolutionError('SALE_NOT_FOUND', 404, 'Venta no encontrada');
             }
 
-            // Releer después del lock de Sale cierra la carrera para retries de
+            // Releer después de Tenant y Sale cierra la carrera para retries de
             // una misma venta. El UNIQUE tenant+clientEventId arbitra requests
             // que intenten reutilizar la clave en ventas distintas; el INSERT
             // ocurre dentro de esta tx y cualquier perdedor revierte completo.
@@ -3925,14 +4053,35 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                 globalDiscount: sale.globalDiscount,
             });
 
+            // ORDEN DE BLOQUEO GLOBAL: Sale → Product → Shift.
+            //
+            // Las compras de contado también bloquean Product antes que Shift.
+            // Prebloqueamos todos los productos de la devolución en un orden
+            // determinista para que `applyStockDelta` reutilice estos locks más
+            // adelante y no pueda ciclar contra una compra concurrente.
+            const returnProductIdsInLockOrder = [
+                ...new Set(resolved.items.map((item) => item.productId)),
+            ].sort();
+            for (const productId of returnProductIdsInLockOrder) {
+                const lockedProductRows: Array<{ id: string }> = await tx.$queryRaw`
+                    SELECT id
+                    FROM \`Product\`
+                    WHERE id = ${productId}
+                      AND \`tenantId\` = ${authReq.tenantId}
+                    FOR UPDATE`;
+                if (lockedProductRows.length !== 1) {
+                    throw new ReturnResolutionError(
+                        'RETURN_PRODUCT_NOT_FOUND',
+                        409,
+                        'Un producto de la venta ya no está disponible para restaurar stock',
+                    );
+                }
+            }
+
             // OFF conserva exactamente el restaurador legacy. SHADOW/ENFORCED
             // leen la evidencia nueva bajo el mismo lock de Sale y solo la
             // PLANEAN acá: ENFORCED debe poder rechazar evidencia incompleta
             // antes de ProductReturn, stock, caja o contabilidad.
-            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(
-                tx,
-                authReq.tenantId!,
-            );
             const allocationsBySaleItem = new Map<string, any[]>();
             if (batchWarehouseLedgerMode !== 'OFF') {
                 const allocationRows = await tx.saleItemBatchAllocation.findMany({
@@ -3977,6 +4126,12 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                     (productLineCounts.get(line.productId) ?? 0) + 1,
                 );
             }
+            const shouldQuarantineReturnItem = (item: { saleItemId: string; productId: string }): boolean =>
+                pharmacyQuarantineEnabled && (
+                    productsById.get(item.productId)?.requiresBatchTracking === true
+                    || productsWithBatchKardex.has(item.productId)
+                    || (allocationsBySaleItem.get(item.saleItemId)?.length ?? 0) > 0
+                );
             const resolvedWithBatches: Array<{
                 item: typeof resolved.items[number];
                 batchRestoration: BatchRestorationResult | ReturnBatchRestorationPlan;
@@ -4023,6 +4178,17 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                         'El desglose por lote no coincide con la cantidad devuelta',
                     );
                 }
+                if (shouldQuarantineReturnItem(item)
+                    && (batchRestoration.aggregateOnlyQuantity.greaterThan(0)
+                        || batchRestoration.batchRestorations.some(
+                            restoration => !('warehouseId' in restoration) || !restoration.warehouseId,
+                        ))) {
+                    throw new ReturnResolutionError(
+                        'PHARMACY_RETURN_EXACT_BATCH_REQUIRED',
+                        409,
+                        'La devolución farmacéutica requiere lote y bodega exactos para entrar en cuarentena',
+                    );
+                }
                 resolvedWithBatches.push({ item, batchRestoration });
             }
 
@@ -4062,12 +4228,109 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                 ...(batchWarehouseLedgerMode === 'OFF'
                     ? {}
                     : { batchWarehouseLedgerMode }),
+                inventoryDisposition: shouldQuarantineReturnItem(item)
+                    ? 'QUARANTINE'
+                    : 'SELLABLE',
             }));
 
+            const balanceStored = new Decimal(sale.balance.toString());
+            const balanceBefore = Decimal.max(balanceStored, 0).toDecimalPlaces(2);
+            let creditReduction = new Decimal(0);
+            let settledRefund = resolved.total;
+            let balanceAfter = balanceBefore;
+
+            if (sale.paymentMethod === 'CREDIT') {
+                creditReduction = Decimal.min(resolved.total, balanceBefore).toDecimalPlaces(2);
+                settledRefund = resolved.total.minus(creditReduction).toDecimalPlaces(2);
+                balanceAfter = balanceBefore.minus(creditReduction).toDecimalPlaces(2);
+            }
+
+            const resolution = correctionRequest.resolution ?? 'REFUND';
+            const storeCreditAppliedAtSale = new Decimal(sale.storeCreditApplied?.toString() ?? 0);
+            let storeCreditRestoration = new Decimal(0);
+            if (resolution === 'REFUND' && storeCreditAppliedAtSale.greaterThan(0)) {
+                const saleTotal = new Decimal(sale.total.toString());
+                const priorReturnedTotal = previousReturns.reduce(
+                    (sum: Decimal, previous: any) => sum.plus(new Decimal(previous.total?.toString() ?? 0)),
+                    new Decimal(0),
+                );
+                const priorRestored = await tx.customerCreditEntry.aggregate({
+                    where: { tenantId: authReq.tenantId!, saleId, type: 'SALE_RETURN_CREDIT' },
+                    _sum: { amount: true },
+                });
+                const restoredBefore = new Decimal(priorRestored._sum.amount?.toString() ?? 0);
+                const targetCumulative = Decimal.min(
+                    storeCreditAppliedAtSale,
+                    priorReturnedTotal.plus(resolved.total).mul(storeCreditAppliedAtSale).div(saleTotal),
+                ).toDecimalPlaces(2);
+                storeCreditRestoration = Decimal.max(targetCumulative.minus(restoredBefore), 0)
+                    .toDecimalPlaces(2);
+                storeCreditRestoration = Decimal.min(storeCreditRestoration, settledRefund);
+                settledRefund = settledRefund.minus(storeCreditRestoration).toDecimalPlaces(2);
+            }
+            const refundMethod = resolution === 'REFUND'
+                ? resolveReturnRefundMethod({
+                    salePaymentMethod: sale.paymentMethod,
+                    payments: sale.payments,
+                    explicitRefundMethod: correctionRequest.refundMethod as any,
+                    settledRefund,
+                })
+                : null;
+            const requiresCashDrawer = settledRefund.greaterThan(0) && refundMethod === 'CASH';
+
+            // ORDEN DE BLOQUEO GLOBAL: Sale → Product → Shift. El cierre Z solo
+            // acepta devoluciones con un turno procesador inequívoco. Una
+            // devolución no efectiva nunca puede caer en el turno de otro
+            // usuario; el fallback del tenant existe únicamente para ubicar el
+            // cajón físico de un reembolso CASH.
+            type ReturnProcessingShift = { id: string; initialCash: any; initialCashUsd: any };
+            const ownProcessingShifts: ReturnProcessingShift[] = await tx.$queryRaw`
+                SELECT id, initialCash, initialCashUsd
+                FROM \`Shift\`
+                WHERE \`tenantId\` = ${authReq.tenantId}
+                  AND \`userId\` = ${authReq.userId}
+                  AND status = 'OPEN'
+                ORDER BY startTime DESC, id ASC
+                LIMIT 2
+                FOR UPDATE`;
+            let tenantProcessingShifts: ReturnProcessingShift[] = [];
+            if (requiresCashDrawer && ownProcessingShifts.length === 0) {
+                tenantProcessingShifts = await tx.$queryRaw`
+                    SELECT id, initialCash, initialCashUsd
+                    FROM \`Shift\`
+                    WHERE \`tenantId\` = ${authReq.tenantId}
+                      AND status = 'OPEN'
+                    ORDER BY startTime DESC, id ASC
+                    LIMIT 2
+                    FOR UPDATE`;
+            }
+
+            const shiftAttribution = (() => {
+                try {
+                    return resolveReturnShiftAttribution({
+                        ownOpenShifts: ownProcessingShifts,
+                        tenantOpenShifts: tenantProcessingShifts,
+                        requiresCashDrawer,
+                    });
+                } catch (error) {
+                    if (error instanceof ReturnShiftAttributionError) {
+                        throw new ReturnResolutionError(error.code, error.httpStatus, error.message);
+                    }
+                    throw error;
+                }
+            })();
+            const processingShift = shiftAttribution.processingShift;
+            const processedShiftId = shiftAttribution.processedShiftId;
+            const refundShiftId = shiftAttribution.refundShiftId;
+
+            // La atribución se resuelve antes del INSERT: toda fila aceptada
+            // participa de exactamente un cierre Z y processedShiftId nunca es
+            // nulo. En CASH coincide además con el cajón que recibe el OUT.
             const productReturn = await tx.productReturn.create({
                 data: {
                     tenantId: authReq.tenantId,
                     saleId,
+                    processedShiftId,
                     total: resolved.total.toFixed(2),
                     reason,
                     items: persistItems,
@@ -4096,6 +4359,142 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                     unitAtReturn: item.unit,
                 })),
             });
+
+            let debtBefore: string | null = null;
+            let debtAfter: string | null = null;
+
+            if (sale.paymentMethod === 'CREDIT') {
+
+                // El lock de Sale serializa devoluciones/pagos de esta factura;
+                // el predicado de balance deja un segundo guard ante escrituras
+                // externas y evita cualquier saldo negativo.
+                const saleUpdated = await tx.sale.updateMany({
+                    where: { id: saleId, tenantId: authReq.tenantId, balance: sale.balance },
+                    data: {
+                        balance: balanceAfter.toFixed(2),
+                        status: balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING',
+                    },
+                });
+                if (saleUpdated.count !== 1) {
+                    throw new ReturnResolutionError(
+                        'RETURN_CREDIT_CONCURRENCY_CONFLICT',
+                        409,
+                        'El saldo de la venta cambió mientras se procesaba la devolución; volvé a intentarlo',
+                    );
+                }
+
+                if (creditReduction.greaterThan(0)) {
+                    if (!sale.customerId) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_CUSTOMER_REQUIRED',
+                            409,
+                            'La venta a crédito no tiene un cliente válido para reducir su deuda',
+                        );
+                    }
+                    const customer = await tx.customer.findFirst({
+                        where: { id: sale.customerId, tenantId: authReq.tenantId },
+                        select: { currentDebt: true },
+                    });
+                    if (!customer) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_CUSTOMER_REQUIRED',
+                            409,
+                            'El cliente de la venta ya no está disponible para reducir su deuda',
+                        );
+                    }
+                    const currentDebt = new Decimal(customer.currentDebt.toString());
+                    debtBefore = currentDebt.toFixed(2);
+                    if (currentDebt.isNegative() || currentDebt.lessThan(creditReduction)) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_DEBT_RECONCILIATION_REQUIRED',
+                            409,
+                            'La deuda del cliente no coincide con el saldo de la venta; requiere conciliación',
+                        );
+                    }
+                    const customerUpdated = await tx.customer.updateMany({
+                        where: {
+                            id: sale.customerId,
+                            tenantId: authReq.tenantId,
+                            currentDebt: customer.currentDebt,
+                        },
+                        data: { currentDebt: { decrement: creditReduction.toFixed(2) } },
+                    });
+                    if (customerUpdated.count !== 1) {
+                        throw new ReturnResolutionError(
+                            'RETURN_CREDIT_CONCURRENCY_CONFLICT',
+                            409,
+                            'La deuda del cliente cambió mientras se procesaba la devolución; volvé a intentarlo',
+                        );
+                    }
+                    debtAfter = currentDebt.minus(creditReduction).toFixed(2);
+                }
+            }
+
+            let cashMovementId: string | null = null;
+            if (requiresCashDrawer) {
+                // La plata sale de la gaveta ABIERTA ahora, no del turno histórico
+                // de la venta. Solo se acepta la caja propia o un único fallback
+                // abierto del tenant; dos cajas abiertas sin dueña propia vuelve
+                // ambigua la atribución del arqueo.
+                const lockedShift = processingShift;
+
+                // Los OUT se serializan por Shift y las filas CashMovement se leen
+                // como lectura corriente. Las ventas solo SUMAN efectivo: no se
+                // bloquean para evitar invertir el orden Sale→Shift entre dos
+                // devoluciones concurrentes; una venta nueva omitida solo vuelve
+                // este guard más conservador, nunca permite sobregirar.
+                const cashSales: Array<{ total: any; storeCreditApplied: any }> = await tx.$queryRaw`
+                    SELECT total, storeCreditApplied FROM \`Sale\`
+                    WHERE \`tenantId\` = ${authReq.tenantId}
+                      AND shiftId = ${lockedShift.id}
+                      AND paymentMethod = 'CASH'`;
+                const cashMovements: Array<{
+                    type: string;
+                    amount: any;
+                    currency: string | null;
+                    category: string | null;
+                    isVoided: boolean;
+                }> = await tx.$queryRaw`
+                    SELECT type, amount, currency, category, isVoided
+                    FROM \`CashMovement\`
+                    WHERE \`tenantId\` = ${authReq.tenantId}
+                      AND shiftId = ${lockedShift.id}
+                    FOR UPDATE`;
+                const availableCash = calcularEfectivoTurno({
+                    initialCash: lockedShift.initialCash,
+                    initialCashUsd: lockedShift.initialCashUsd,
+                    cashSales: cashSales.reduce(
+                        (sum, cashSale) => sum.plus(
+                            new Decimal(cashSale.total.toString()).minus(cashSale.storeCreditApplied?.toString() ?? 0),
+                        ),
+                        new Decimal(0),
+                    ),
+                    movimientos: cashMovements.map((movement) => ({
+                        ...movement,
+                        amount: movement.amount.toString(),
+                    })),
+                }).efectivoNIO;
+                if (settledRefund.greaterThan(availableCash)) {
+                    throw new ReturnResolutionError(
+                        'RETURN_CASH_INSUFFICIENT',
+                        409,
+                        `Efectivo insuficiente en caja: disponible C$${availableCash.toFixed(2)}, reembolso C$${settledRefund.toFixed(2)}`,
+                    );
+                }
+
+                const cashMovement = await appendSignedCashMovement(tx, {
+                    tenantId: authReq.tenantId!,
+                    shiftId: lockedShift.id,
+                    userId: authReq.userId!,
+                    type: 'OUT',
+                    amount: settledRefund.toFixed(2),
+                    currency: 'NIO',
+                    category: 'DEVOLUCION',
+                    description: `Reembolso devolución #${productReturn.id.slice(0, 8)}`,
+                    expenseId: null,
+                });
+                cashMovementId = cashMovement.id;
+            }
 
             // OFF queda byte-a-byte en su semántica anterior: ProductBatch se
             // restauró en el helper legacy y el agregado vuelve a la bodega
@@ -4223,6 +4622,27 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                             sourceKey: `product-return:${productReturn.id}:return-item:${item.saleItemId}:allocation:${restoration.allocationId}:batch:${restoration.batchId}`,
                             allowNegative: false,
                         });
+
+                        // En farmacia ENFORCED la devolución aumenta el stock
+                        // físico, pero no vuelve al pool vendible. La retención
+                        // exacta comparte esta transacción y deja trazabilidad
+                        // append-only por lote+bodega.
+                        if (shouldQuarantineReturnItem(item)) {
+                            await applyProductBatchHoldDelta({
+                                tx,
+                                tenantId: authReq.tenantId!,
+                                productId: item.productId,
+                                batchId: restoration.batchId,
+                                warehouseId: restoration.warehouseId,
+                                quantityDelta: restoration.quantity.toFixed(4),
+                                holdReasonCode: CUSTOMER_RETURN_HOLD_REASON_CODE,
+                                referenceId: productReturn.id,
+                                referenceType: 'PRODUCT_RETURN',
+                                sourceKey: `product-return:${productReturn.id}:quarantine:${restoration.allocationId}`,
+                                userId: authReq.userId!,
+                                notes: `Devolución de cliente: ${reason}`,
+                            });
+                        }
                     }
 
                     const updatedBatch = await tx.productBatch.updateMany({
@@ -4329,215 +4749,6 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                 }
             }
 
-            const balanceStored = new Decimal(sale.balance.toString());
-            const balanceBefore = Decimal.max(balanceStored, 0).toDecimalPlaces(2);
-            let creditReduction = new Decimal(0);
-            let settledRefund = resolved.total;
-            let balanceAfter = balanceBefore;
-            let debtBefore: string | null = null;
-            let debtAfter: string | null = null;
-
-            if (sale.paymentMethod === 'CREDIT') {
-                creditReduction = Decimal.min(resolved.total, balanceBefore).toDecimalPlaces(2);
-                settledRefund = resolved.total.minus(creditReduction).toDecimalPlaces(2);
-                balanceAfter = balanceBefore.minus(creditReduction).toDecimalPlaces(2);
-
-                // El lock de Sale serializa devoluciones/pagos de esta factura;
-                // el predicado de balance deja un segundo guard ante escrituras
-                // externas y evita cualquier saldo negativo.
-                const saleUpdated = await tx.sale.updateMany({
-                    where: { id: saleId, tenantId: authReq.tenantId, balance: sale.balance },
-                    data: {
-                        balance: balanceAfter.toFixed(2),
-                        status: balanceAfter.isZero() ? 'PAID' : 'CREDIT_PENDING',
-                    },
-                });
-                if (saleUpdated.count !== 1) {
-                    throw new ReturnResolutionError(
-                        'RETURN_CREDIT_CONCURRENCY_CONFLICT',
-                        409,
-                        'El saldo de la venta cambió mientras se procesaba la devolución; volvé a intentarlo',
-                    );
-                }
-
-                if (creditReduction.greaterThan(0)) {
-                    if (!sale.customerId) {
-                        throw new ReturnResolutionError(
-                            'RETURN_CREDIT_CUSTOMER_REQUIRED',
-                            409,
-                            'La venta a crédito no tiene un cliente válido para reducir su deuda',
-                        );
-                    }
-                    const customer = await tx.customer.findFirst({
-                        where: { id: sale.customerId, tenantId: authReq.tenantId },
-                        select: { currentDebt: true },
-                    });
-                    if (!customer) {
-                        throw new ReturnResolutionError(
-                            'RETURN_CREDIT_CUSTOMER_REQUIRED',
-                            409,
-                            'El cliente de la venta ya no está disponible para reducir su deuda',
-                        );
-                    }
-                    const currentDebt = new Decimal(customer.currentDebt.toString());
-                    debtBefore = currentDebt.toFixed(2);
-                    if (currentDebt.isNegative() || currentDebt.lessThan(creditReduction)) {
-                        throw new ReturnResolutionError(
-                            'RETURN_CREDIT_DEBT_RECONCILIATION_REQUIRED',
-                            409,
-                            'La deuda del cliente no coincide con el saldo de la venta; requiere conciliación',
-                        );
-                    }
-                    const customerUpdated = await tx.customer.updateMany({
-                        where: {
-                            id: sale.customerId,
-                            tenantId: authReq.tenantId,
-                            currentDebt: customer.currentDebt,
-                        },
-                        data: { currentDebt: { decrement: creditReduction.toFixed(2) } },
-                    });
-                    if (customerUpdated.count !== 1) {
-                        throw new ReturnResolutionError(
-                            'RETURN_CREDIT_CONCURRENCY_CONFLICT',
-                            409,
-                            'La deuda del cliente cambió mientras se procesaba la devolución; volvé a intentarlo',
-                        );
-                    }
-                    debtAfter = currentDebt.minus(creditReduction).toFixed(2);
-                }
-            }
-
-            const resolution = correctionRequest.resolution ?? 'REFUND';
-            const storeCreditAppliedAtSale = new Decimal(sale.storeCreditApplied?.toString() ?? 0);
-            let storeCreditRestoration = new Decimal(0);
-            if (resolution === 'REFUND' && storeCreditAppliedAtSale.greaterThan(0)) {
-                const saleTotal = new Decimal(sale.total.toString());
-                const priorReturnedTotal = previousReturns.reduce(
-                    (sum: Decimal, previous: any) => sum.plus(new Decimal(previous.total?.toString() ?? 0)),
-                    new Decimal(0),
-                );
-                const priorRestored = await tx.customerCreditEntry.aggregate({
-                    where: { tenantId: authReq.tenantId!, saleId, type: 'SALE_RETURN_CREDIT' },
-                    _sum: { amount: true },
-                });
-                const restoredBefore = new Decimal(priorRestored._sum.amount?.toString() ?? 0);
-                const targetCumulative = Decimal.min(
-                    storeCreditAppliedAtSale,
-                    priorReturnedTotal.plus(resolved.total).mul(storeCreditAppliedAtSale).div(saleTotal),
-                ).toDecimalPlaces(2);
-                storeCreditRestoration = Decimal.max(targetCumulative.minus(restoredBefore), 0)
-                    .toDecimalPlaces(2);
-                storeCreditRestoration = Decimal.min(storeCreditRestoration, settledRefund);
-                settledRefund = settledRefund.minus(storeCreditRestoration).toDecimalPlaces(2);
-            }
-            const refundMethod = resolution === 'REFUND'
-                ? resolveReturnRefundMethod({
-                    salePaymentMethod: sale.paymentMethod,
-                    payments: sale.payments,
-                    explicitRefundMethod: correctionRequest.refundMethod as any,
-                    settledRefund,
-                })
-                : null;
-
-            let cashMovementId: string | null = null;
-            let refundShiftId: string | null = null;
-            if (settledRefund.greaterThan(0) && refundMethod === 'CASH') {
-                // La plata sale de la gaveta ABIERTA ahora, no del turno histórico
-                // de la venta (que puede estar cerrado). Preferimos el turno propio
-                // y usamos el abierto del tenant como fallback, igual que el POS.
-                const ownShift = await tx.shift.findFirst({
-                    where: { tenantId: authReq.tenantId, userId: authReq.userId, status: 'OPEN' },
-                    orderBy: { startTime: 'desc' },
-                    select: { id: true },
-                });
-                const candidateShift = ownShift ?? await tx.shift.findFirst({
-                    where: { tenantId: authReq.tenantId, status: 'OPEN' },
-                    orderBy: { startTime: 'desc' },
-                    select: { id: true },
-                });
-                if (!candidateShift) {
-                    throw new ReturnResolutionError(
-                        'RETURN_OPEN_SHIFT_REQUIRED',
-                        409,
-                        'Abrí una caja antes de reembolsar efectivo',
-                    );
-                }
-
-                const lockedShifts: Array<{ id: string; initialCash: any; initialCashUsd: any }> = await tx.$queryRaw`
-                    SELECT id, initialCash, initialCashUsd
-                    FROM \`Shift\`
-                    WHERE id = ${candidateShift.id}
-                      AND \`tenantId\` = ${authReq.tenantId}
-                      AND status = 'OPEN'
-                    FOR UPDATE`;
-                const lockedShift = lockedShifts[0];
-                if (!lockedShift) {
-                    throw new ReturnResolutionError(
-                        'RETURN_OPEN_SHIFT_REQUIRED',
-                        409,
-                        'La caja cambió de estado; volvé a abrir la devolución',
-                    );
-                }
-
-                // Los OUT se serializan por Shift y las filas CashMovement se leen
-                // como lectura corriente. Las ventas solo SUMAN efectivo: no se
-                // bloquean para evitar invertir el orden Sale→Shift entre dos
-                // devoluciones concurrentes; una venta nueva omitida solo vuelve
-                // este guard más conservador, nunca permite sobregirar.
-                const cashSales: Array<{ total: any; storeCreditApplied: any }> = await tx.$queryRaw`
-                    SELECT total, storeCreditApplied FROM \`Sale\`
-                    WHERE \`tenantId\` = ${authReq.tenantId}
-                      AND shiftId = ${lockedShift.id}
-                      AND paymentMethod = 'CASH'`;
-                const cashMovements: Array<{
-                    type: string;
-                    amount: any;
-                    currency: string | null;
-                    category: string | null;
-                    isVoided: boolean;
-                }> = await tx.$queryRaw`
-                    SELECT type, amount, currency, category, isVoided
-                    FROM \`CashMovement\`
-                    WHERE \`tenantId\` = ${authReq.tenantId}
-                      AND shiftId = ${lockedShift.id}
-                    FOR UPDATE`;
-                const availableCash = calcularEfectivoTurno({
-                    initialCash: lockedShift.initialCash,
-                    initialCashUsd: lockedShift.initialCashUsd,
-                    cashSales: cashSales.reduce(
-                        (sum, cashSale) => sum.plus(
-                            new Decimal(cashSale.total.toString()).minus(cashSale.storeCreditApplied?.toString() ?? 0),
-                        ),
-                        new Decimal(0),
-                    ),
-                    movimientos: cashMovements.map((movement) => ({
-                        ...movement,
-                        amount: movement.amount.toString(),
-                    })),
-                }).efectivoNIO;
-                if (settledRefund.greaterThan(availableCash)) {
-                    throw new ReturnResolutionError(
-                        'RETURN_CASH_INSUFFICIENT',
-                        409,
-                        `Efectivo insuficiente en caja: disponible C$${availableCash.toFixed(2)}, reembolso C$${settledRefund.toFixed(2)}`,
-                    );
-                }
-
-                const cashMovement = await appendSignedCashMovement(tx, {
-                    tenantId: authReq.tenantId!,
-                    shiftId: lockedShift.id,
-                    userId: authReq.userId!,
-                    type: 'OUT',
-                    amount: settledRefund.toNumber(),
-                    currency: 'NIO',
-                    category: 'DEVOLUCION',
-                    description: `Reembolso devolución #${productReturn.id.slice(0, 8)}`,
-                    expenseId: null,
-                });
-                cashMovementId = cashMovement.id;
-                refundShiftId = lockedShift.id;
-            }
-
             let customerCreditEntryId: string | null = null;
             const customerCreditToAdd = resolution === 'STORE_CREDIT' || resolution === 'EXCHANGE'
                 ? settledRefund
@@ -4627,6 +4838,8 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                         creditReduction: creditReduction.toFixed(2),
                         settledRefund: settledRefund.toFixed(2),
                         refundMethod,
+                        processedShiftId,
+                        shiftAttributionSource: shiftAttribution.source,
                         debtBefore,
                         debtAfter,
                         cashMovementId,
@@ -4678,6 +4891,9 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error instanceof BatchWarehouseLedgerError) {
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+        }
+        if (error instanceof ProductBatchHoldError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error instanceof ReturnResolutionError) {
@@ -5026,30 +5242,32 @@ app.post('/api/shifts/close', authenticate, validate(CloseShiftSchema), async (r
     }
 
     try {
-        const result = await closeLegacyShift(
-            prisma as unknown as ShiftCloseDatabase,
-            {
-                tenantId: authReq.tenantId,
-                userId: authReq.userId,
-                role: authReq.role,
-            },
-            req.body,
-        );
-
-        // Logging después del commit: nunca alarga ni condiciona la transacción.
-        if (result.warning) {
-            console.warn(
-                `🚨 ${result.warning.alertType}: Diferencia C$${result.warning.difference} `
-                + `(umbral: C$${result.warning.threshold}) - Cajero: ${result.warning.cashierName}`,
-            );
-        }
-        return res.json(result.body);
-    } catch (error: unknown) {
+        const result = await closeShiftWithReport({
+            tenantId: authReq.tenantId!,
+            userId: authReq.userId!,
+            role: authReq.role,
+            shiftId: req.body.shiftId,
+            declaredCash: req.body.declaredCash,
+            declaredCashUsd: req.body.declaredCashUsd,
+            auditNotes: req.body.auditNotes,
+            clientEventId: req.body.clientEventId,
+        });
+        res.json({
+            ...result.shift,
+            closeReport: result.closeReport,
+            manualINs: result.manualINs,
+            manualOUTs: result.manualOUTs,
+            agentINs: result.agentINs,
+            agentOUTs: result.agentOUTs,
+            theftAlert: result.theftAlert,
+            idempotentReplay: result.idempotentReplay,
+        });
+    } catch (error) {
         if (error instanceof ShiftCloseError) {
-            return res.status(error.httpStatus).json({ error: error.message });
+            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         console.error('Error closing shift:', error);
-        return res.status(500).json({ error: 'Error cerrando caja' });
+        res.status(500).json({ error: 'Error cerrando caja' });
     }
 });
 
@@ -5284,11 +5502,20 @@ app.get('/api/audit-logs', authenticate, checkRole(['OWNER', 'ADMIN']), async (r
 // POST /api/cash-movements — Registrar entrada o salida de caja
 app.post('/api/cash-movements', authenticate, validate(CreateCashMovementSchema), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { type, amount, currency, category, description } = req.body;
+    const { type, amount, currency, category, description = '' } = req.body;
     const cashMovementRouteError = (code: string, httpStatus: number, message: string): Error & {
         code: string;
         httpStatus: number;
     } => Object.assign(new Error(message), { code, httpStatus });
+
+    // El mayor de este comando está denominado en NIO. No convertir USD
+    // por omisión: requiere un contrato de tasa y reversión contable propio.
+    if (currency !== 'NIO') {
+        return res.status(409).json({
+            error: 'Los movimientos manuales de caja se registran en córdobas. El movimiento en dólares requiere conversión contable y no se registró.',
+            code: 'CASH_MOVEMENT_USD_UNSUPPORTED',
+        });
+    }
 
     // Los pagos a proveedores pertenecen al subledger de CxP. El atajo
     // histórico de caja no tiene purchaseId, idempotencia ni los guards de
@@ -5708,92 +5935,24 @@ app.get('/api/cash-movements/balance', authenticate, async (req: any, res: any) 
     }
 });
 
-// POST /api/cash-movements/:id/void — Anular movimiento (soft delete)
+// POST /api/cash-movements/:id/void — Anulación atómica de caja, gasto y asiento.
 app.post('/api/cash-movements/:id/void', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { reason } = req.body;
-
     try {
-        if (!reason || reason.trim().length < 3) {
-            return res.status(400).json({ error: 'Razón de anulación requerida (mínimo 3 caracteres).' });
-        }
-
-        // Solo OWNER/ADMIN pueden anular
-        if (!['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'].includes(authReq.role || '')) {
-            return res.status(403).json({ error: 'Solo el dueño o gerente puede anular movimientos.' });
-        }
-
-        const movement = await prisma.cashMovement.findFirst({
-            where: { id, tenantId: authReq.tenantId }
+        const result = await voidManualCashMovement({
+            tenantId: authReq.tenantId!,
+            userId: authReq.userId!,
+            role: authReq.role,
+            movementId: req.params.id,
+            reason: req.body?.reason,
         });
-
-        if (!movement) {
-            return res.status(404).json({ error: 'Movimiento no encontrado.' });
-        }
-
-        if (movement.isVoided) {
-            return res.status(400).json({ error: 'Este movimiento ya fue anulado.' });
-        }
-
-        const result = await prisma.$transaction(async (tx: any) => {
-            // Revertir el Expense auto-creado enlazado: si el movimiento OUT generó
-            // un gasto (expenseId), al anular el movimiento hay que revertir también el
-            // gasto para que no quede contabilizado como gasto fantasma en el P&L.
-            // Verificamos propiedad por tenant antes de tocarlo. Liberamos primero la FK
-            // (expenseId=null) para no depender de la acción onDelete del enlace @unique.
-            let expenseRevertido: { id: string; amount: number; description: string; category: string } | null = null;
-            if (movement.expenseId) {
-                const expense = await tx.expense.findFirst({
-                    where: { id: movement.expenseId, tenantId: authReq.tenantId }
-                });
-                if (expense) {
-                    expenseRevertido = {
-                        id: expense.id,
-                        amount: new Decimal(expense.amount.toString()).toNumber(),
-                        description: expense.description,
-                        category: expense.category,
-                    };
-                }
-            }
-
-            const voided = await tx.cashMovement.update({
-                where: { id },
-                data: {
-                    isVoided: true,
-                    voidReason: reason.trim(),
-                    voidedAt: new Date(),
-                    voidedBy: authReq.userId,
-                    ...(expenseRevertido ? { expenseId: null } : {}),
-                }
-            });
-
-            if (expenseRevertido) {
-                await tx.expense.delete({ where: { id: expenseRevertido.id } });
-            }
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId,
-                    userId: authReq.userId,
-                    action: 'CASH_MOVEMENT_VOIDED',
-                    details: JSON.stringify({
-                        movimientoId: id,
-                        tipoOriginal: movement.type,
-                        montoOriginal: new Decimal(movement.amount.toString()).toNumber(),
-                        razon: reason.trim(),
-                        expenseRevertido,
-                    })
-                }
-            });
-
-            return voided;
-        });
-
         res.json(result);
-    } catch (error: any) {
+    } catch (error) {
+        if (error instanceof ManualCashMovementVoidError) {
+            return res.status(error.httpStatus).json({ code: error.code, error: error.message });
+        }
         console.error('Error voiding cash movement:', error);
-        res.status(500).json({ error: error.message || 'Error anulando movimiento' });
+        res.status(500).json({ error: 'Error anulando movimiento' });
     }
 });
 
@@ -5917,9 +6076,69 @@ const productQuantityErrorResponse = (res: any, error: unknown, productName?: st
  * lo recibido). Ningún cálculo tocado vuelve a leer este surrogate.
  */
 
+/**
+ * Fusiona disponibilidad farmacéutica sin reemplazar `Product.stock`, que
+ * conserva su significado físico. Los listados legacy permanecen byte-compatible
+ * y solo el consumidor que pide `includeSellableStock=true` recibe la proyección
+ * por la misma bodega que usará la venta. Los chunks evitan IN gigantes.
+ */
+const withPharmacySellableStock = async <T extends { id: string; requiresBatchTracking?: boolean }>(
+    products: T[],
+    authReq: AuthRequest,
+): Promise<Array<T & { sellableStock?: number; availabilityWarehouseId?: string }>> => {
+    if (products.length === 0) return products;
+
+    const availabilityByProductId = new Map<string, Decimal>();
+    let enforced = false;
+    let warehouseId: string | null = null;
+    for (let offset = 0; offset < products.length; offset += MAX_PHARMACY_AVAILABILITY_PRODUCTS) {
+        const chunk = products.slice(offset, offset + MAX_PHARMACY_AVAILABILITY_PRODUCTS);
+        const result = await resolvePharmacyProductAvailability(prisma, {
+            tenantId: authReq.tenantId!,
+            userId: authReq.userId!,
+            productIds: chunk.map(product => product.id),
+        });
+        if (offset === 0 && !result.enforced) return products;
+        if (!result.enforced || !result.warehouse) {
+            throw new PharmacyAvailabilityError(
+                'INVALID_CONFIGURATION',
+                'La configuración farmacéutica cambió durante la lectura; reintentá',
+            );
+        }
+        if (warehouseId !== null && warehouseId !== result.warehouse.id) {
+            throw new PharmacyAvailabilityError(
+                'INVALID_CONFIGURATION',
+                'La bodega operativa cambió durante la lectura; reintentá',
+            );
+        }
+        enforced = true;
+        warehouseId = result.warehouse.id;
+        for (const [productId, availability] of result.byProductId) {
+            availabilityByProductId.set(productId, availability.sellableStock);
+        }
+    }
+
+    if (!enforced || !warehouseId) return products;
+    return products.map(product => {
+        const sellableStock = availabilityByProductId.get(product.id);
+        if (sellableStock === undefined) {
+            throw new PharmacyAvailabilityError(
+                'INVALID_CONFIGURATION',
+                `No se pudo calcular la existencia vendible de ${product.id}`,
+            );
+        }
+        return {
+            ...product,
+            sellableStock: sellableStock.toDecimalPlaces(4).toNumber(),
+            availabilityWarehouseId: warehouseId!,
+        };
+    });
+};
+
 // GET /api/products - Lista todos los productos (disponible para todos)
 app.get('/api/products', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
+    const includeSellableStock = req.query.includeSellableStock === 'true';
     const { search, lowStock, category, status, family, mode, sort, dir, page, pageSize } = req.query;
     let refreshIds: string[] | undefined;
     try { refreshIds = parseProductRefreshIds(req.query.ids); }
@@ -5990,9 +6209,12 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
                 prisma.product.findMany({ where: whereClause, orderBy, skip, take, include: { creator: { select: { name: true, email: true } } } }),
                 prisma.product.count({ where: whereClause }),
             ]);
-            const visibleProducts = authReq.role === BODEGUERO_ROLE
-                ? products.map(redactBodegueroProduct)
+            const productsWithAvailability = includeSellableStock
+                ? await withPharmacySellableStock(products, authReq)
                 : products;
+            const visibleProducts = authReq.role === BODEGUERO_ROLE
+                ? productsWithAvailability.map(redactBodegueroProduct)
+                : productsWithAvailability;
             return res.json({ products: visibleProducts, total, page: Math.max(1, parseInt(String(page)) || 1), pageSize: take });
         }
 
@@ -6009,10 +6231,26 @@ app.get('/api/products', authenticate, async (req: any, res: any) => {
             products = products.filter((p: any) => Number(p.stock) <= Number(p.minStock));
         }
 
+        const productsWithAvailability = includeSellableStock
+            ? await withPharmacySellableStock(products, authReq)
+            : products;
         res.json(authReq.role === BODEGUERO_ROLE
-            ? products.map(redactBodegueroProduct)
-            : products);
+            ? productsWithAvailability.map(redactBodegueroProduct)
+            : productsWithAvailability);
     } catch (error) {
+        if (error instanceof PharmacyAvailabilityError) {
+            const httpStatus = error.code === 'AUTHORITY_NOT_FOUND' ? 403
+                : error.code === 'WAREHOUSE_REQUIRED'
+                    || error.code === 'WAREHOUSE_NOT_FOUND'
+                    || error.code === 'BATCH_WAREHOUSE_LEDGER_REQUIRED'
+                    ? 409
+                    : error.code === 'INVALID_AUTHORITY'
+                        || error.code === 'INVALID_PRODUCT_IDS'
+                        || error.code === 'TOO_MANY_PRODUCTS'
+                        ? 400
+                        : 500;
+            return res.status(httpStatus).json({ error: error.message, code: error.code });
+        }
         console.error('Error fetching products:', error);
         res.status(500).json({ error: 'Error obteniendo productos' });
     }
@@ -7216,7 +7454,6 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
         });
     } catch (error: any) {
         if (productQuantityErrorResponse(res, error)) return;
-        if (manualBatchErrorResponse(res, error)) return;
         if (error instanceof StockError) {
             const status =
                 error.code === 'PRODUCT_NOT_FOUND' ? 404
@@ -7224,6 +7461,7 @@ app.post('/api/inventory/adjust', authenticate, checkRole(['OWNER', 'ADMIN', BOD
                         : 400;
             return res.status(status).json({ error: error.message, code: error.code });
         }
+        if (manualBatchErrorResponse(res, error)) return;
         console.error('Error en ajuste de inventario:', error);
         res.status(error.message?.includes('no encontrado') || error.message?.includes('insuficiente') ? 400 : 500)
             .json({ error: error.message || 'Error procesando ajuste de inventario' });
@@ -7281,8 +7519,8 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
     const authReq = req as AuthRequest;
     const { clientEventId, productId, warehouseId: requestedWarehouseId, batchNumber, expiryDate, quantity } = req.body;
 
-    const expiry = new Date(`${expiryDate}T00:00:00.000Z`);
-    if (isNaN(expiry.getTime()) || expiry.toISOString().slice(0, 10) !== expiryDate) {
+    const expiry = parseManaguaCivilDateInput(expiryDate);
+    if (!expiry) {
         return res.status(400).json({ error: 'Fecha de vencimiento inválida.' });
     }
 
@@ -7357,11 +7595,26 @@ app.post('/api/inventory/batches', authenticate, checkRole(['OWNER', 'ADMIN']), 
                 where: { productId, batchNumber, tenantId: authReq.tenantId! },
                 select: { id: true, expiryDate: true },
             });
-            if (existingBatch && existingBatch.expiryDate.toISOString().slice(0, 10) !== expiryDate) {
-                throw new ManualBatchMovementError(
-                    'MANUAL_BATCH_IDEMPOTENCY_CONFLICT', 409,
-                    'Ese número de lote ya existe con otra fecha de vencimiento.',
-                );
+            if (existingBatch) {
+                try {
+                    assertProductBatchExpiryIdentity({
+                        productId,
+                        productName: product.name,
+                        batchNumber,
+                        existingExpiryDate: existingBatch.expiryDate,
+                        incomingExpiryDate: expiry,
+                    });
+                } catch (error) {
+                    if (!(error instanceof ProductBatchIdentityError)) throw error;
+                    // El código histórico de alta manual se conserva para no
+                    // romper clientes; la regla de identidad ya es la misma que
+                    // usa compras directas y recepciones.
+                    throw new ManualBatchMovementError(
+                        'MANUAL_BATCH_IDEMPOTENCY_CONFLICT',
+                        error.httpStatus,
+                        'Ese número de lote ya existe con otra fecha de vencimiento.',
+                    );
+                }
             }
             const batchId = existingBatch?.id ?? buildManualBatchRelatedId(commandId, 'BATCH');
 
@@ -7547,19 +7800,78 @@ app.post('/api/inventory/batches/:batchId/writeoff', authenticate, checkRole(['O
 app.get('/api/inventory/expiring-soon', authenticate, async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { afterLastDay } = batchExpiryWindow(new Date(), 90);
+        const asOf = new Date();
+        const todayFloor = managuaCalendarDateFloor(asOf);
+        // lt del día 91 incluye completo el día civil 90, tanto para fechas
+        // históricas 00Z como para las normalizadas 12Z.
+        const horizonExclusive = new Date(todayFloor.getTime() + 91 * 86_400_000);
+        const [tenantInventory, batches] = await Promise.all([
+            prisma.tenant.findFirst({
+                where: { id: authReq.tenantId! },
+                select: {
+                    pharmacyInventoryMode: true,
+                    batchWarehouseLedgerMode: true,
+                },
+            }),
+            prisma.productBatch.findMany({
+                where: {
+                    tenantId: authReq.tenantId,
+                    stock: { gt: 0 },
+                    expiryDate: { lt: horizonExclusive },
+                },
+                select: {
+                    id: true,
+                    productId: true,
+                    batchNumber: true,
+                    expiryDate: true,
+                    stock: true,
+                    product: { select: { name: true, sku: true } },
+                },
+                orderBy: [{ expiryDate: 'asc' }, { id: 'asc' }],
+                take: 50,
+            }),
+        ]);
+        if (!tenantInventory) return res.status(404).json({ error: 'Negocio no encontrado' });
 
-        const batches = await prisma.productBatch.findMany({
-            where: {
-                tenantId: authReq.tenantId,
-                stock: { gt: 0 },
-                expiryDate: { lt: afterLastDay }
-            },
-            include: { product: { select: { name: true, sku: true } } },
-            orderBy: { expiryDate: 'asc' },
-            take: 50
-        });
-        res.json(batches);
+        const pharmacyEnforced = tenantInventory.pharmacyInventoryMode === 'ENFORCED';
+        if (pharmacyEnforced && tenantInventory.batchWarehouseLedgerMode !== 'ENFORCED') {
+            return res.status(409).json({
+                error: 'La farmacia requiere lote-bodega ENFORCED para calcular vencimientos',
+                code: 'BATCH_WAREHOUSE_LEDGER_REQUIRED',
+            });
+        }
+        if (tenantInventory.pharmacyInventoryMode !== 'OFF' && !pharmacyEnforced) {
+            return res.status(500).json({
+                error: 'La configuración farmacéutica guardada no es válida',
+                code: 'PHARMACY_INVENTORY_CONFIGURATION_INVALID',
+            });
+        }
+
+        const exactByBatchId = new Map<string, { stock: Decimal; heldStock: Decimal }>();
+        if (pharmacyEnforced && batches.length > 0) {
+            const exactBalances = await prisma.productBatchWarehouseStock.groupBy({
+                by: ['batchId'],
+                where: {
+                    tenantId: authReq.tenantId!,
+                    batchId: { in: batches.map(batch => batch.id) },
+                },
+                _sum: { stock: true, heldStock: true },
+            });
+            for (const balance of exactBalances) {
+                exactByBatchId.set(balance.batchId, {
+                    stock: new Decimal(balance._sum.stock?.toString() ?? 0),
+                    heldStock: new Decimal(balance._sum.heldStock?.toString() ?? 0),
+                });
+            }
+        }
+
+        const response = batches.map(batch => buildPharmacyExpiryAlert({
+            batch,
+            exactBalance: exactByBatchId.get(batch.id),
+            pharmacyEnforced,
+            asOf,
+        }));
+        res.json(response);
     } catch (error) {
         console.error('Error fetching expiring batches:', error);
         res.status(500).json({ error: 'Error obteniendo lotes por vencer' });
@@ -8214,137 +8526,6 @@ app.post('/api/kardex/record', authenticate, checkRole(['OWNER', 'ADMIN']), vali
 // 📊 REPORTES EMPRESARIALES (NICARAGUA - IVA 15%)
 // ==========================================
 
-const IVA_RATE = 0.15;
-
-// GET /api/reports/sales - Reporte de ventas con desglose fiscal
-app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { startDate, endDate } = req.query;
-
-    try {
-        const start = startDate ? new Date(String(startDate)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const end = endDate ? new Date(String(endDate)) : new Date();
-        // Set end to end of day
-        end.setHours(23, 59, 59, 999);
-
-        // 1. Fetch all sales in the period with their items
-        const sales = await prisma.sale.findMany({
-            where: {
-                tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end },
-                status: { not: ESTADO_ANULADA },
-            },
-            include: { items: true },
-            orderBy: { createdAt: 'asc' }
-        });
-
-        // 2. Calculate totals
-        let totalVentas = new Decimal(0);   // Total con IVA
-        let totalCOGS   = new Decimal(0);   // Costo de Ventas
-
-        // El IVA se acumula VENTA POR VENTA, leyendo lo que cada venta guardó de
-        // sí misma (`vatCollectedFromSale`), con las mismas reglas que la
-        // declaración mensual.
-        //
-        // Antes acá se hacía `totalVentas / 1.15` sobre el período entero, o sea
-        // se daba por hecho que TODO córdoba vendido trae 15% adentro. Eso le
-        // inventaba al dueño un IVA que nunca cobró en dos casos reales —el
-        // negocio de CUOTA FIJA, que no traslada IVA en ninguna venta, y la venta
-        // exonerada de canasta básica o medicinas— y de paso le recortaba esa
-        // misma plata a la utilidad bruta. Y no era un número escondido: la
-        // pantalla de Reportes lo rotula "IVA RECAUDADO (15%) · Para declarar a
-        // la DGI".
-        let ivaRecaudadoD = new Decimal(0);
-
-        sales.forEach((sale: {
-            total: unknown;
-            exemptTotal: unknown;
-            fiscalRegimeAtSale: unknown;
-            vatAmountAtSale: unknown;
-            items: { costAtSale: unknown; quantity: unknown }[];
-        }) => {
-            const saleTotal = new Decimal(sale.total?.toString() ?? '0');
-            totalVentas = totalVentas.plus(saleTotal);
-            ivaRecaudadoD = ivaRecaudadoD.plus(vatCollectedFromSale({
-                total: saleTotal,
-                exemptTotal: sale.exemptTotal?.toString() ?? 0,
-                fiscalRegimeAtSale: sale.fiscalRegimeAtSale,
-                vatAmountAtSale: sale.vatAmountAtSale?.toString() ?? null,
-            }));
-            sale.items.forEach((item) => {
-                totalCOGS = totalCOGS.plus(
-                    new Decimal(item.costAtSale?.toString() ?? '0').mul(item.quantity?.toString() ?? '0')
-                );
-            });
-        });
-
-        const ivaRecaudado  = ivaRecaudadoD.toDecimalPlaces(4);
-        const ventasNetas   = totalVentas.minus(ivaRecaudado).toDecimalPlaces(4);
-        const utilidadBruta = ventasNetas.minus(totalCOGS).toDecimalPlaces(4);
-
-        // 3. Group sales by day for chart
-        const dailyMap: Record<string, { ventas: number; gastos: number }> = {};
-
-        sales.forEach((sale: { createdAt: unknown; total: unknown }) => {
-            const dateKey = new Date(sale.createdAt as string).toISOString().split('T')[0];
-            if (!dailyMap[dateKey]) dailyMap[dateKey] = { ventas: 0, gastos: 0 };
-            dailyMap[dateKey].ventas = new Decimal(dailyMap[dateKey].ventas).plus(sale.total?.toString() ?? '0').toNumber();
-        });
-
-        // Also fetch expenses in the same period for the chart
-        const expenses = await prisma.expense.findMany({
-            where: {
-                tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end }
-            }
-        });
-
-        expenses.forEach((exp: { createdAt: unknown; amount: unknown }) => {
-            const dateKey = new Date(exp.createdAt as string).toISOString().split('T')[0];
-            if (!dailyMap[dateKey]) dailyMap[dateKey] = { ventas: 0, gastos: 0 };
-            dailyMap[dateKey].gastos = new Decimal(dailyMap[dateKey].gastos).plus(exp.amount?.toString() ?? '0').toNumber();
-        });
-
-        // Convert to sorted array
-        const chartData = Object.entries(dailyMap)
-            .sort(([a], [b]) => a.localeCompare(b))
-            .map(([date, data]) => {
-                const d = new Date(date + 'T12:00:00');
-                const label = d.toLocaleDateString('es-NI', { day: '2-digit', month: 'short' });
-                return {
-                    name: label,
-                    ventas: Math.round(data.ventas * 100) / 100,
-                    gastos: Math.round(data.gastos * 100) / 100,
-                };
-            });
-        const quantityBreakdown = buildSalesQuantityBreakdown(
-            sales.flatMap((sale: any) => sale.items.map((item: any) => ({
-                productId: item.productId,
-                productNameAtSale: item.productNameAtSale ?? item.name,
-                unitAtSale: item.unitAtSale,
-                saleModeAtSale: item.saleModeAtSale,
-                presentationAtSale: item.presentationAtSale,
-                presentationQuantityAtSale: item.presentationQuantityAtSale,
-                quantity: item.quantity,
-            }))),
-        );
-
-        res.json({
-            totalVentas:        new Decimal(totalVentas.toNumber()).toDecimalPlaces(2).toNumber(),
-            ventasNetas:        ventasNetas.toDecimalPlaces(2).toNumber(),
-            ivaRecaudado:       ivaRecaudado.toDecimalPlaces(2).toNumber(),
-            totalCOGS:          totalCOGS.toDecimalPlaces(2).toNumber(),
-            utilidadBruta:      utilidadBruta.toDecimalPlaces(2).toNumber(),
-            totalTransacciones: sales.length,
-            chartData,
-            quantityBreakdown,
-        });
-    } catch (error) {
-        console.error('Error en reporte de ventas:', error);
-        res.status(500).json({ error: 'Error generando reporte de ventas' });
-    }
-});
-
 // GET /api/reports/inventory - Valor de inventario y alertas de stock
 // ── VENDEDORES: cuánto vende y cuánto cobra cada uno ────────────────────────
 // GET /api/reports/sellers?startDate&endDate
@@ -8496,20 +8677,25 @@ app.get('/api/reports/expenses', authenticate, async (req: any, res: any) => {
         const end = endDate ? new Date(String(endDate)) : new Date();
         end.setHours(23, 59, 59, 999);
 
-        const expenses = await prisma.expense.findMany({
+        const expenses = await prisma.expense.groupBy({
+            by: ['category'],
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end }
+                createdAt: { gte: start, lte: end },
+                category: { not: CATEGORIA_PAGO_PROVEEDOR },
             },
-            orderBy: { createdAt: 'desc' }
+            _sum: { amount: true },
+            _count: { _all: true },
         });
 
         // Acumular montos con decimal.js (cero aritmética float sobre dinero).
         let totalExpenses = new Decimal(0);
+        let expenseCount = 0;
         const byCategoryDec: Record<string, Decimal> = {};
-        expenses.forEach((e: any) => {
-            const amount = new Decimal(e.amount.toString());
+        expenses.forEach((e) => {
+            const amount = new Decimal(e._sum.amount?.toString() ?? '0');
             totalExpenses = totalExpenses.plus(amount);
+            expenseCount += e._count._all;
             const cat = e.category || 'OTROS';
             byCategoryDec[cat] = (byCategoryDec[cat] || new Decimal(0)).plus(amount);
         });
@@ -8522,7 +8708,7 @@ app.get('/api/reports/expenses', authenticate, async (req: any, res: any) => {
 
         res.json({
             totalExpenses: totalExpenses.toDecimalPlaces(2).toNumber(),
-            count: expenses.length,
+            count: expenseCount,
             byCategory,
         });
     } catch (error) {
@@ -8598,12 +8784,28 @@ app.post(
             });
             if (!payableAccount) await seedChartOfAccounts(authReq.tenantId!);
 
+            // Abono en EFECTIVO: la plata sale de la gaveta, así que exige caja
+            // abierta. Se resuelve ANTES de la tx (mismo turno que ve la píldora
+            // del POS) y el servicio lo re-lee bajo row-lock. Antes esto debitaba
+            // `Tenant.walletBalance` —la billetera de Nortex Capital— y todo
+            // abono en efectivo moría con "no hay suficiente efectivo".
+            // Misma normalización que usa el servicio (default CASH, mayúsculas):
+            // dos criterios distintos de "es en efectivo" abrirían la ventana de
+            // pagar de la gaveta sin turno, o de exigir turno sin necesitarlo.
+            const metodoDelAbono = normalizeSupplierPaymentMethod(req.body?.method);
+            const { shift: turnoDelAbono } = metodoDelAbono === 'CASH'
+                ? await resolverTurnoAbierto(authReq.tenantId!, authReq.userId!)
+                : { shift: null };
+            // El servicio verifica primero el replay confirmado. Exigir caja
+            // aquí impediría recuperar ese resultado después de cerrar turno.
+
             const result = await executeSupplierPaymentTransaction({
                 db: prisma,
                 tenantId: authReq.tenantId!,
                 userId: authReq.userId!,
                 purchaseId: req.params.id,
                 request: req.body,
+                shiftId: turnoDelAbono?.id ?? null,
             });
 
             return res.json({
@@ -8615,7 +8817,7 @@ app.post(
                         : 'Abono a proveedor registrado.',
             });
         } catch (error: unknown) {
-            if (error instanceof SupplierPaymentError) {
+            if (error instanceof PayableSupplierPaymentError || error instanceof SupplierPaymentCajaError) {
                 return res.status(error.httpStatus).json({ error: error.message, code: error.code });
             }
             if (error instanceof PeriodLockedError) {
@@ -8663,7 +8865,7 @@ app.get('/api/purchases/pending', authenticate, checkRole(PURCHASE_PAYMENT_ROLES
             totalDebtExact: totalDebt.toFixed(4),
         });
     } catch (error) {
-        if (error instanceof SupplierPaymentError) {
+        if (error instanceof PayableSupplierPaymentError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         res.status(500).json({ error: 'Error al obtener cuentas por pagar' });
@@ -9867,6 +10069,82 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
     }
 });
 
+// POST /api/admin/tenants/:id/score — recalcular el Nortex Score de UNA empresa.
+//
+// POR QUÉ EXISTE: el score se persistía únicamente como efecto secundario de
+// que el dueño abriera su Dashboard (`GET /api/fintech/score`). Al sacar Nortex
+// Capital de la interfaz del tenant —no se le promete crédito a nadie— ese
+// disparador desaparece y el panel admin se quedaría mirando números congelados
+// (o `S/D` para siempre en una empresa nueva). Acá el recálculo es explícito y
+// del lado de quien mira el número.
+//
+// De a UNA empresa a propósito: `calculateTenantScore` levanta balance y estado
+// de resultados completos. Un "recalcular todas" en un handler síncrono
+// bloquearía el event loop a medida que crezca el padrón (guardrail #5).
+app.post('/api/admin/tenants/:id/score', authenticate, requireSuperAdmin, async (req: any, res: any) => {
+    const tenantId = String(req.params.id ?? '').trim();
+    if (!tenantId) return res.status(400).json({ error: 'Falta el id de la empresa.' });
+    try {
+        const empresa = await prisma.tenant.findUnique({
+            where: { id: tenantId },
+            select: { id: true, businessName: true, creditScore: true, creditLimit: true },
+        });
+        if (!empresa) return res.status(404).json({ error: 'Empresa no encontrada.' });
+
+        // FUERA de la transacción: el análisis hace muchas lecturas (guardrail #4).
+        const analisis = await calculateTenantScore(tenantId);
+
+        const actualizado = await prisma.$transaction(async (tx) => {
+            const tenant = await tx.tenant.update({
+                where: { id: tenantId },
+                data: { creditScore: analisis.score, creditLimit: analisis.creditLimit },
+                select: { id: true, businessName: true, creditScore: true, creditLimit: true },
+            });
+            // `creditLimit` habilita desembolsos: el cambio lleva before/after
+            // en la MISMA transacción (Capa 3).
+            await tx.auditLog.create({
+                data: {
+                    tenantId,
+                    userId: (req as AuthRequest).userId!,
+                    action: 'ADMIN_SCORE_RECALCULATED',
+                    details: JSON.stringify({
+                        before: {
+                            creditScore: empresa.creditScore,
+                            creditLimit: new Decimal(empresa.creditLimit.toString()).toFixed(4),
+                        },
+                        after: {
+                            creditScore: tenant.creditScore,
+                            creditLimit: new Decimal(tenant.creditLimit.toString()).toFixed(4),
+                        },
+                        rating: analisis.rating,
+                        factors: analisis.factors,
+                    }),
+                },
+            });
+            return tenant;
+        });
+
+        res.json({
+            tenant: {
+                id: actualizado.id,
+                businessName: actualizado.businessName,
+                creditScore: actualizado.creditScore,
+                creditLimit: new Decimal(actualizado.creditLimit.toString()).toFixed(4),
+            },
+            analysis: {
+                score: analisis.score,
+                rating: analisis.rating,
+                creditLimit: analisis.creditLimit,
+                factors: analisis.factors,
+                financialRatios: analisis.financialRatios ?? null,
+            },
+        });
+    } catch (error) {
+        console.error('Admin score recalculation error:', error);
+        res.status(500).json({ error: 'Error al recalcular el score de la empresa.' });
+    }
+});
+
 // GET /api/admin/loan-requests - Solicitudes de crédito pendientes
 app.get('/api/admin/loan-requests', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
     try {
@@ -10716,6 +10994,48 @@ async function registerCreditPayment(req: any, res: any) {
             if (!balanceBefore.greaterThan(0)) throw new Error('PAYMENT_ALREADY_SETTLED');
             if (paymentAmount.greaterThan(balanceBefore)) throw new Error('PAYMENT_EXCEEDS_BALANCE');
 
+            // Un abono CASH entra físicamente en una gaveta y debe quedar en el
+            // mismo libro que consume el cierre Z. El turno nunca viene del
+            // cliente: se resuelve y bloquea dentro de ESTA transacción, después
+            // del lock de Sale (orden global Sale -> Shift -> Customer).
+            //
+            // Preferimos la caja propia. Si el cobrador no tiene una, solo es
+            // seguro atribuir el efectivo cuando existe exactamente una caja
+            // abierta en todo el tenant; con dos, adivinar falsearía el arqueo.
+            let cashShiftId: string | null = null;
+            if (method === 'CASH') {
+                const ownOpenShifts: Array<{ id: string }> = await tx.$queryRaw`
+                    SELECT id
+                    FROM \`Shift\`
+                    WHERE \`tenantId\` = ${authReq.tenantId!}
+                      AND \`userId\` = ${authReq.userId!}
+                      AND status = 'OPEN'
+                    ORDER BY startTime DESC, id ASC
+                    LIMIT 2
+                    FOR UPDATE`;
+                if (ownOpenShifts.length > 1) {
+                    throw new Error('PAYMENT_OPEN_SHIFT_AMBIGUOUS');
+                }
+                cashShiftId = ownOpenShifts[0]?.id ?? null;
+
+                if (!cashShiftId) {
+                    const tenantOpenShifts: Array<{ id: string }> = await tx.$queryRaw`
+                        SELECT id
+                        FROM \`Shift\`
+                        WHERE \`tenantId\` = ${authReq.tenantId!}
+                          AND status = 'OPEN'
+                        ORDER BY startTime DESC, id ASC
+                        LIMIT 2
+                        FOR UPDATE`;
+                    if (tenantOpenShifts.length > 1) {
+                        throw new Error('PAYMENT_OPEN_SHIFT_AMBIGUOUS');
+                    }
+                    cashShiftId = tenantOpenShifts[0]?.id ?? null;
+                }
+
+                if (!cashShiftId) throw new Error('PAYMENT_OPEN_SHIFT_REQUIRED');
+            }
+
             const balanceAfter = balanceBefore.minus(paymentAmount).toDecimalPlaces(2);
             const payment = await tx.payment.create({
                 data: {
@@ -10754,6 +11074,27 @@ async function registerCreditPayment(req: any, res: any) {
                 if (customerUpdated.count !== 1) throw new Error('PAYMENT_CUSTOMER_NOT_FOUND');
             }
 
+            // No se llama recordCashMovement: recordPayment ya postea el asiento
+            // Debe Caja/Bancos -> Haber CxC. Este movimiento solo materializa la
+            // entrada física para gaveta, arqueo y Reporte Z; duplicar el asiento
+            // inflaría contabilidad. Al vivir en la misma tx, si falla el ledger
+            // también revierten Payment, Sale.balance y Customer.currentDebt.
+            let cashMovementId: string | null = null;
+            if (cashShiftId) {
+                const cashMovement = await appendSignedCashMovement(tx, {
+                    tenantId: authReq.tenantId!,
+                    shiftId: cashShiftId,
+                    userId: authReq.userId!,
+                    type: 'IN',
+                    amount: paymentAmount.toFixed(2),
+                    currency: 'NIO',
+                    category: 'COBRO_CREDITO',
+                    description: `Abono en efectivo ${payment.id} de venta ${saleId}`,
+                    expenseId: null,
+                });
+                cashMovementId = cashMovement.id;
+            }
+
             await recordPayment(
                 tx,
                 authReq.tenantId!,
@@ -10778,6 +11119,8 @@ async function registerCreditPayment(req: any, res: any) {
                         debtBefore: debtBefore?.toFixed(2) ?? null,
                         debtAfter: debtAfter?.toFixed(2) ?? null,
                         method,
+                        cashShiftId,
+                        cashMovementId,
                     }),
                 },
             });
@@ -10819,6 +11162,18 @@ async function registerCreditPayment(req: any, res: any) {
         if (error?.message === 'PAYMENT_IDEMPOTENCY_CONFLICT') {
             return res.status(409).json({ error: 'La misma operación ya se usó con datos distintos', code: error.message });
         }
+        if (error?.message === 'PAYMENT_OPEN_SHIFT_REQUIRED') {
+            return res.status(409).json({
+                error: 'Abrí una caja antes de registrar un abono en efectivo',
+                code: error.message,
+            });
+        }
+        if (error?.message === 'PAYMENT_OPEN_SHIFT_AMBIGUOUS') {
+            return res.status(409).json({
+                error: 'Hay varias cajas abiertas. Abrí o tomá tu propia caja antes de registrar el efectivo',
+                code: error.message,
+            });
+        }
         if (error instanceof PeriodLockedError) {
             return res.status(423).json({ error: error.message, code: 'PERIOD_LOCKED' });
         }
@@ -10849,9 +11204,10 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
                 id: string;
                 customerId: string | null;
                 paymentMethod: string;
+                status: string;
                 balance: any;
             }> = await tx.$queryRaw`
-                SELECT id, customerId, paymentMethod, balance
+                SELECT id, customerId, paymentMethod, status, balance
                 FROM \`Sale\`
                 WHERE id = ${saleId} AND tenantId = ${authReq.tenantId!}
                 FOR UPDATE`;
@@ -10860,6 +11216,21 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
             if (sale.paymentMethod !== 'CREDIT') throw new Error('Solo se castigan ventas a crédito.');
             const balance = new Decimal(sale.balance.toString());
             if (balance.lessThanOrEqualTo(0)) throw new Error('Esta venta no tiene saldo pendiente.');
+
+            // Mantener el mismo orden global que abonos y retenciones: Sale →
+            // Customer → asientos. Así dos movimientos de la misma cartera no
+            // invierten locks entre el subledger y las cuentas del mayor.
+            let currentDebt: Decimal | null = null;
+            let newDebt: Decimal | null = null;
+            if (sale.customerId) {
+                const lockedCustomers: Array<{ currentDebt: any }> = await tx.$queryRaw`
+                    SELECT currentDebt FROM \`Customer\`
+                    WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId!}
+                    FOR UPDATE`;
+                if (lockedCustomers.length === 0) throw new Error('Cliente no encontrado');
+                currentDebt = new Decimal(lockedCustomers[0].currentDebt.toString());
+                newDebt = Decimal.max(0, currentDebt.minus(balance)).toDecimalPlaces(2);
+            }
 
             // Asiento de incobrable (assertPeriodOpen vive dentro de createJournalEntry).
             await recordBadDebt(tx, authReq.tenantId!, authReq.userId!, saleId, balance);
@@ -10872,14 +11243,7 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
             if (saleUpdated.count !== 1) throw new Error('Venta no encontrada');
 
             // Bajar la deuda del cliente (clamp a 0 por si el contador venía desfasado).
-            if (sale.customerId) {
-                const lockedCustomers: Array<{ currentDebt: any }> = await tx.$queryRaw`
-                    SELECT currentDebt FROM \`Customer\`
-                    WHERE id = ${sale.customerId} AND tenantId = ${authReq.tenantId!}
-                    FOR UPDATE`;
-                if (lockedCustomers.length === 0) throw new Error('Cliente no encontrado');
-                const currentDebt = new Decimal(lockedCustomers[0].currentDebt.toString());
-                const newDebt = Decimal.max(0, currentDebt.minus(balance)).toDecimalPlaces(2);
+            if (sale.customerId && newDebt) {
                 const customerUpdated = await tx.customer.updateMany({
                     where: { id: sale.customerId, tenantId: authReq.tenantId! },
                     data: { currentDebt: newDebt.toFixed(2) },
@@ -10892,7 +11256,25 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
                     tenantId: authReq.tenantId!,
                     userId: authReq.userId!,
                     action: 'BAD_DEBT_WRITEOFF',
-                    details: JSON.stringify({ saleId, customerId: sale.customerId, amount: balance.toDecimalPlaces(2).toNumber(), reason, timestamp: new Date().toISOString() }),
+                    details: JSON.stringify({
+                        saleId,
+                        customerId: sale.customerId,
+                        amount: balance.toFixed(2),
+                        reason,
+                        before: {
+                            sale: { status: sale.status, balance: balance.toFixed(2) },
+                            customer: sale.customerId
+                                ? { currentDebt: currentDebt?.toFixed(2) ?? null }
+                                : null,
+                        },
+                        after: {
+                            sale: { status: 'UNCOLLECTIBLE', balance: '0.00' },
+                            customer: sale.customerId
+                                ? { currentDebt: newDebt?.toFixed(2) ?? null }
+                                : null,
+                        },
+                        timestamp: new Date().toISOString(),
+                    }),
                 },
             });
 
@@ -10904,7 +11286,8 @@ app.post('/api/credits/:saleId/writeoff', authenticate, checkRole(['OWNER', 'ADM
         console.error('Error castigando incobrable:', error);
         const msg = error?.message || 'Error castigando la venta';
         const code = error instanceof PeriodLockedError ? 423
-            : (msg.includes('no encontrada') || msg.includes('crédito') || msg.includes('saldo')) ? 400 : 500;
+            : (msg.includes('no encontrada') || msg.includes('no encontrado')) ? 404
+            : (msg.includes('crédito') || msg.includes('saldo')) ? 400 : 500;
         res.status(code).json({ error: msg });
     }
 });
@@ -11779,7 +12162,9 @@ app.post('/api/accounting/retenciones-sufridas', authenticate, checkRole(['OWNER
         if (businessErrors[error?.message]) {
             return res.status(400).json({ error: businessErrors[error.message], code: error.message });
         }
-        if (error instanceof PeriodLockedError) return res.status(409).json({ error: error.message });
+        if (error instanceof PeriodLockedError) {
+            return res.status(409).json({ error: error.message, code: 'PERIOD_LOCKED' });
+        }
         console.error('Retención sufrida error:', error);
         res.status(500).json({ error: 'Error al registrar la retención.' });
     }
@@ -12176,7 +12561,7 @@ app.get('/api/accounting/aging', authenticate, checkRole(ACCOUNTING_READ_ROLES),
 
         res.json({ asOf: hoy, cxc, cxp });
     } catch (error) {
-        if (error instanceof SupplierPaymentError) {
+        if (error instanceof PayableSupplierPaymentError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         console.error('Aging error:', error);
@@ -12483,7 +12868,7 @@ app.post(
 // ==========================================
 
 // GET /api/financial-health — Dashboard de salud financiera del tenant
-app.get('/api/financial-health', authenticate, async (req: any, res: any) => {
+app.get('/api/financial-health', authenticate, checkRole(ACCOUNTING_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
         const { getBalanceGeneral, getEstadoResultados, seedChartOfAccounts } = await import('./services/accounting');
@@ -13438,6 +13823,28 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
                 })),
                 productsDB,
             );
+            const productsById = new Map(productsDB.map((product) => [product.id, product]));
+            const confirmationItems = resolvedItems.map((item) => {
+                const product = productsById.get(item.productId);
+                const presentationUnit = item.presentationAtSale === 'PACK'
+                    ? product?.packUnit?.trim()
+                    : item.unit.trim();
+                if (!presentationUnit) {
+                    throw new PublicOrderItemError(
+                        'INVALID_PRODUCT_CONFIGURATION',
+                        `${item.productName} no tiene una unidad de presentación válida`,
+                        409,
+                    );
+                }
+                return {
+                    productId: item.productId,
+                    name: item.productName,
+                    quantity: item.presentationQuantityAtSale.toFixed(),
+                    presentation: item.presentationAtSale,
+                    unit: presentationUnit,
+                    subtotal: item.subtotal.toFixed(2),
+                };
+            });
             const total = resolvedItems.reduce(
                 (sum, item) => sum.plus(item.subtotal),
                 new Decimal(0),
@@ -13464,13 +13871,16 @@ app.post('/api/public/orders', orderLimiter, async (req: any, res: any) => {
                     })),
                 },
             });
-            return { order, total };
+            return { order, total, confirmationItems };
         });
 
         res.json({
             message: '¡Pedido enviado! El negocio lo revisará pronto.',
             orderId: created.order.id,
             total: created.total.toNumber(),
+            // El cliente confirma/manda por WhatsApp exclusivamente este
+            // snapshot ya validado; nunca reusa nombres o precios cacheados.
+            items: created.confirmationItems,
         });
 
     } catch (error) {
@@ -13619,553 +14029,8 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
 
 // GET /api/fiscal/constancia-retencion/:purchaseId
 // Devuelve HTML listo para imprimir como PDF via window.print()
-app.get('/api/fiscal/constancia-retencion/:purchaseId', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { purchaseId } = req.params;
-
-    try {
-        // 1. Obtener la compra + proveedor
-        const purchase = await prisma.purchase.findFirst({
-            where: {
-                ...fiscalPurchaseScope(authReq.tenantId!, purchaseId),
-                documentStatus: 'POSTED',
-            },
-            include: { supplier: true },
-        });
-        if (!purchase) return res.status(404).json({ error: 'Compra no encontrada.' });
-
-        // 2. Obtener el tenant (datos del retenedor)
-        const tenant = await prisma.tenant.findUnique({
-            where: { id: authReq.tenantId! },
-            select: { businessName: true, taxId: true, address: true, phone: true, dgiAuthCode: true },
-        });
-        if (!tenant) return res.status(404).json({ error: 'Tenant no encontrado.' });
-
-        // 3. Obtener retenciones de esta compra
-        const retentions = await prisma.fiscalRetention.findMany({
-            where: fiscalRetentionScope(authReq.tenantId!, purchaseId),
-            orderBy: { type: 'asc' },
-        });
-
-        // Si no hay retenciones registradas, calcularlas al vuelo (documento fiscal
-        // legal → precisión Decimal, sin float ni Math.round sobre montos).
-        const baseAmountD = new Decimal(purchase.subtotal.toString());
-        const baseAmount = baseAmountD.toNumber();
-        const computedRetentions = retentions.length > 0 ? retentions : [
-            { type: 'IR_2PCT',  amount: baseAmountD.mul('0.02').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
-            { type: 'IMI_1PCT', amount: baseAmountD.mul('0.01').toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(), baseAmount },
-            ...(new Decimal(purchase.tax.toString()).greaterThan(0)
-                ? [{
-                    type: 'IVA_RETENIDO',
-                    amount: new Decimal(purchase.tax.toString()).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber(),
-                    baseAmount,
-                }]
-                : []),
-        ];
-
-        const totalRetenido = computedRetentions
-            .reduce((s, r) => s.plus(r.amount.toString()), new Decimal(0))
-            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-        // `Purchase.date` es la fecha de la factura del proveedor. Es un día de
-        // calendario civil de Managua, no el instante en que el usuario digitó
-        // la compra ni la zona horaria accidental del proceso.
-        const fiscalInvoiceDate = fiscalCivilDate(purchase.date);
-        const fecha = fiscalInvoiceDate.longLabel;
-        const numeroConstancia = `RET-${purchase.id.slice(-8).toUpperCase()}`;
-        const period = retentions[0]?.period || fiscalInvoiceDate.period;
-        const printNonce = crypto.randomBytes(18).toString('base64url');
-        const previewCsp = fiscalPreviewCsp(printNonce);
-
-        // Todos estos campos son persistidos y algunos pueden ser capturados por
-        // MANAGER. La constancia se abre como HTML autenticado en un `blob:`;
-        // por eso jamás se interpolan sin codificación, aunque el dato pertenezca
-        // al mismo tenant.
-        const safe = {
-            numeroConstancia: escapeHtml(numeroConstancia),
-            period: escapeHtml(period),
-            fecha: escapeHtml(fecha),
-            tenantBusinessName: escapeHtml(tenant.businessName),
-            tenantTaxId: escapeHtml(tenant.taxId || 'Por configurar'),
-            tenantAddress: escapeHtml(tenant.address || 'Por configurar'),
-            tenantPhone: escapeHtml(tenant.phone || '---'),
-            tenantDgiAuthCode: escapeHtml(tenant.dgiAuthCode || ''),
-            supplierName: escapeHtml(purchase.supplier.name),
-            supplierRuc: escapeHtml((purchase.supplier as any).ruc || 'Por registrar'),
-            supplierPhone: escapeHtml((purchase.supplier as any).phone || '---'),
-            invoiceNumber: escapeHtml(purchase.invoiceNumber),
-        };
-
-        const typeLabel: Record<string, string> = {
-            IR_2PCT: 'Retención IR (Renta) 2%',
-            IMI_1PCT: 'Retención IMI (Municipal) 1%',
-            IVA_RETENIDO: 'IVA Retenido',
-        };
-
-        const retentionRows = computedRetentions.map(r => `
-            <tr>
-                <td>${escapeHtml(typeLabel[r.type] || r.type)}</td>
-                <td class="num">C$ ${escapeHtml(Number(r.baseAmount || baseAmount).toFixed(2))}</td>
-                <td class="num">${escapeHtml(r.type === 'IR_2PCT' ? '2%' : r.type === 'IMI_1PCT' ? '1%' : '15%')}</td>
-                <td class="num bold">C$ ${escapeHtml(Number(r.amount).toFixed(2))}</td>
-            </tr>
-        `).join('');
-
-        const html = `<!DOCTYPE html>
-<html lang="es">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="${escapeHtml(previewCsp)}">
-<title>Constancia de Retención ${safe.numeroConstancia}</title>
-<style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { font-family: Arial, sans-serif; font-size: 11px; color: #1a1a1a; padding: 20mm; }
-  .header { text-align: center; border-bottom: 2px solid #1a1a1a; padding-bottom: 12px; margin-bottom: 16px; }
-  .header h1 { font-size: 16px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px; }
-  .header h2 { font-size: 12px; margin-top: 4px; color: #444; }
-  .numero { font-size: 13px; font-weight: bold; color: #1a56a0; margin-top: 6px; }
-  .section { margin-bottom: 14px; }
-  .section-title { font-size: 10px; font-weight: bold; text-transform: uppercase; color: #666; border-bottom: 1px solid #ddd; padding-bottom: 3px; margin-bottom: 8px; letter-spacing: 0.5px; }
-  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 24px; }
-  .field { display: flex; flex-direction: column; }
-  .field label { font-size: 9px; color: #888; text-transform: uppercase; }
-  .field span { font-weight: bold; }
-  table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-  th { background: #1a56a0; color: white; padding: 6px 8px; text-align: left; font-size: 10px; }
-  td { padding: 5px 8px; border-bottom: 1px solid #eee; }
-  .num { text-align: right; }
-  .bold { font-weight: bold; }
-  .total-row td { background: #f0f4ff; font-weight: bold; border-top: 2px solid #1a56a0; }
-  .footer { margin-top: 32px; display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
-  .firma { border-top: 1px solid #1a1a1a; padding-top: 6px; text-align: center; }
-  .firma p { font-size: 9px; color: #666; margin-top: 2px; }
-  .legal { margin-top: 24px; font-size: 9px; color: #888; border-top: 1px solid #eee; padding-top: 8px; text-align: center; }
-  .badge { display: inline-block; background: #f0f4ff; border: 1px solid #1a56a0; color: #1a56a0; padding: 2px 8px; border-radius: 4px; font-size: 9px; font-weight: bold; margin-top: 4px; }
-  @media print {
-    body { padding: 12mm; }
-    @page { size: letter; margin: 15mm; }
-    .no-print { display: none; }
-  }
-</style>
-</head>
-<body>
-
-<div class="no-print" style="background:#1a56a0;color:white;padding:10px 16px;margin:-20mm -20mm 16px;display:flex;justify-content:space-between;align-items:center;">
-  <span style="font-weight:bold;">Constancia de Retención — Vista Previa</span>
-  <button id="print-document" type="button" style="background:white;color:#1a56a0;border:none;padding:6px 16px;border-radius:4px;font-weight:bold;cursor:pointer;">🖨️ Imprimir / Guardar PDF</button>
-</div>
-
-<div class="header">
-  <h1>Constancia de Retención en la Fuente</h1>
-  <h2>República de Nicaragua — Dirección General de Ingresos (DGI)</h2>
-  <div class="numero">N° ${safe.numeroConstancia}</div>
-  <div class="badge">Período: ${safe.period}</div>
-</div>
-
-<div class="section">
-  <div class="section-title">Agente Retenedor (Quien retiene)</div>
-  <div class="grid">
-    <div class="field"><label>Razón Social</label><span>${safe.tenantBusinessName}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>${safe.tenantTaxId}</span></div>
-    <div class="field"><label>Dirección Fiscal</label><span>${safe.tenantAddress}</span></div>
-    <div class="field"><label>Teléfono</label><span>${safe.tenantPhone}</span></div>
-    ${tenant.dgiAuthCode ? `<div class="field"><label>Código Autorización DGI</label><span>${safe.tenantDgiAuthCode}</span></div>` : ''}
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Sujeto Retenido (Proveedor)</div>
-  <div class="grid">
-    <div class="field"><label>Razón Social / Nombre</label><span>${safe.supplierName}</span></div>
-    <div class="field"><label>RUC / Cédula</label><span>${safe.supplierRuc}</span></div>
-    <div class="field"><label>Teléfono</label><span>${safe.supplierPhone}</span></div>
-    <div class="field"><label>N° Factura del Proveedor</label><span>${safe.invoiceNumber}</span></div>
-  </div>
-</div>
-
-<div class="section">
-  <div class="section-title">Detalle de la Retención</div>
-  <table>
-    <thead>
-      <tr>
-        <th>Concepto</th>
-        <th style="text-align:right">Base Gravable</th>
-        <th style="text-align:right">Tasa</th>
-        <th style="text-align:right">Monto Retenido</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${retentionRows}
-      <tr class="total-row">
-        <td colspan="3">TOTAL RETENIDO</td>
-        <td class="num">C$ ${escapeHtml(totalRetenido.toFixed(2))}</td>
-      </tr>
-    </tbody>
-  </table>
-</div>
-
-<div class="section">
-  <div class="grid">
-    <div class="field"><label>Fecha de Emisión</label><span>${safe.fecha}</span></div>
-    <div class="field"><label>Monto Total Factura</label><span>C$ ${escapeHtml(Number(purchase.total).toFixed(2))}</span></div>
-    <div class="field"><label>Neto a Pagar al Proveedor</label><span style="color:#1a56a0;font-size:13px;">C$ ${escapeHtml(new Decimal(purchase.total.toString()).minus(totalRetenido).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2))}</span></div>
-  </div>
-</div>
-
-<div class="footer">
-  <div class="firma">
-    <p>_________________________________</p>
-    <p><strong>Firma y Sello del Agente Retenedor</strong></p>
-    <p>${safe.tenantBusinessName}</p>
-  </div>
-  <div class="firma">
-    <p>_________________________________</p>
-    <p><strong>Firma de Recibido — Proveedor</strong></p>
-    <p>${safe.supplierName}</p>
-  </div>
-</div>
-
-<div class="legal">
-  Constancia generada por Nortex ERP. Documento válido conforme Arto. 44 LCT y Arto. 73 RLCT de Nicaragua.
-  El agente retenedor está obligado a entregar esta constancia al momento de efectuar el pago.
-</div>
-
-<script nonce="${printNonce}">
-  document.getElementById('print-document').addEventListener('click', function () { window.print(); });
-</script>
-
-</body>
-</html>`;
-
-        res.setHeader('Content-Security-Policy', previewCsp);
-        res.setHeader('X-Content-Type-Options', 'nosniff');
-        res.setHeader('Cache-Control', 'private, no-store, max-age=0');
-        res.setHeader('Content-Type', 'text/html; charset=utf-8');
-        res.setHeader('Pragma', 'no-cache');
-        res.setHeader('Referrer-Policy', 'no-referrer');
-        res.setHeader('X-Frame-Options', 'SAMEORIGIN');
-        res.send(html);
-
-    } catch (error) {
-        console.error('Constancia error:', error);
-        res.status(500).json({ error: 'Error generando constancia.' });
-    }
-});
-
-// ==========================================
-// 📊 SPRINT A — EXPORTACIONES FISCALES DGI
-// ==========================================
-
-// El rango fiscal del mes vive en services/nicaTax.ts (fuente única): los libros,
-// el resumen VET y la declaración mensual TIENEN que recortar las mismas ventas.
-// Antes había una copia acá y otra fórmula distinta en generateMonthlyReport.
-
-const fiscalSaleSnapshotBreakdown = (sale: {
-    total: { toString(): string } | string | number;
-    exemptTotal?: { toString(): string } | string | number | null;
-    fiscalRegimeAtSale?: unknown;
-    vatAmountAtSale?: { toString(): string } | string | number | null;
-}) => {
-    const total = new Decimal(sale.total.toString()).toDecimalPlaces(4);
-    const fiscalRegime = normalizeFiscalRegime(sale.fiscalRegimeAtSale);
-    if (fiscalRegime === FISCAL_REGIME_CUOTA_FIJA) {
-        return {
-            fiscalRegime,
-            exonerado: new Decimal(0),
-            netoGravado: new Decimal(0),
-            iva: new Decimal(0),
-            cuotaFija: total,
-            total,
-        };
-    }
-
-    const legacy = desglosarVentaConExoneracion(
-        total,
-        sale.exemptTotal?.toString() ?? '0',
-    );
-    let iva = legacy.iva;
-    if (sale.vatAmountAtSale != null) {
-        const snapshot = new Decimal(sale.vatAmountAtSale.toString());
-        const maxVat = total.minus(legacy.exonerado);
-        if (snapshot.isFinite() && snapshot.greaterThanOrEqualTo(0) && snapshot.lessThanOrEqualTo(maxVat)) {
-            iva = snapshot.toDecimalPlaces(4);
-        }
-    }
-    return {
-        fiscalRegime,
-        exonerado: legacy.exonerado,
-        netoGravado: total.minus(legacy.exonerado).minus(iva).toDecimalPlaces(4),
-        iva,
-        cuotaFija: new Decimal(0),
-        total,
-    };
-};
-
-// ── A1: LIBRO DE VENTAS (Excel) ─────────────────────────────────────────────
-// GET /api/fiscal/libro-ventas/:month/:year
-app.get('/api/fiscal/libro-ventas/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
-    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
-    const { month, year } = fiscalPeriod;
-
-    try {
-        const { start, end } = fiscalMonthRange(month, year);
-        const XLSX = await import('xlsx');
-
-        const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
-            include: { customer: true },
-            orderBy: { createdAt: 'asc' },
-        });
-
-        // Precisión fiscal: el desglose sale de `desglosarVentaConExoneracion`, la
-        // MISMA función que usan el asiento contable y la declaración mensual.
-        // Antes acá se hacía `total / 1.15` sobre la venta ENTERA, ignorando
-        // `Sale.exemptTotal`: en un negocio que marca productos de canasta básica
-        // como exentos (Inventory.tsx tiene el toggle), este libro declaraba IVA
-        // por ventas exoneradas que nunca se le cobraron al cliente — y no cuadraba
-        // con la declaración del mismo mes, que sí las respetaba.
-        const rows = sales.map((s, i) => {
-            const fiscalSaleDate = fiscalCivilDate(s.createdAt);
-            const d = fiscalSaleSnapshotBreakdown(s);
-            return {
-                'N°':            i + 1,
-                'Fecha':         fiscalSaleDate.shortLabel,
-                'N° Factura':    s.invoiceNumber ? `${s.invoiceSeries || 'A'}-${String(s.invoiceNumber).padStart(6, '0')}` : 'CF',
-                'Cliente':       s.customerName || s.customer?.name || 'Consumidor Final',
-                'RUC/Cédula':    s.customer?.taxId || '---',
-                'Método Pago':   s.paymentMethod,
-                'Régimen':       d.fiscalRegime,
-                'Exento C$':     d.exonerado.toDecimalPlaces(2).toNumber(),
-                'Subtotal C$':   d.netoGravado.toDecimalPlaces(2).toNumber(),
-                'IVA 15% C$':    d.iva.toDecimalPlaces(2).toNumber(),
-                'Cuota Fija C$': d.cuotaFija.toDecimalPlaces(2).toNumber(),
-                'Total C$':      d.total.toDecimalPlaces(2).toNumber(),
-            };
-        });
-
-        // Totales (acumulados con Decimal; se convierten a number solo al escribir la celda)
-        const totals = {
-            'N°': '', 'Fecha': '', 'N° Factura': '', 'Cliente': 'TOTALES',
-            'RUC/Cédula': '', 'Método Pago': '', 'Régimen': '',
-            'Exento C$':   rows.reduce((s, r) => s.plus(r['Exento C$']), new Decimal(0)).toNumber(),
-            'Subtotal C$': rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
-            'IVA 15% C$':  rows.reduce((s, r) => s.plus(r['IVA 15% C$']), new Decimal(0)).toNumber(),
-            'Cuota Fija C$': rows.reduce((s, r) => s.plus(r['Cuota Fija C$']), new Decimal(0)).toNumber(),
-            'Total C$':    rows.reduce((s, r) => s.plus(r['Total C$']), new Decimal(0)).toNumber(),
-        };
-        rows.push(totals as any);
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 14, 28, 16, 12, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, `Ventas ${month}-${year}`);
-
-        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="libro-ventas-${year}-${String(month).padStart(2,'0')}.xlsx"`);
-        res.send(buf);
-
-    } catch (error) {
-        console.error('Libro ventas error:', error);
-        res.status(500).json({ error: 'Error generando Libro de Ventas.' });
-    }
-});
-
-// ── A2: LIBRO DE COMPRAS (Excel) ─────────────────────────────────────────────
-// GET /api/fiscal/libro-compras/:month/:year
-app.get('/api/fiscal/libro-compras/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
-    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
-    const { month, year } = fiscalPeriod;
-
-    try {
-        const { start, end } = fiscalMonthRange(month, year);
-        const XLSX = await import('xlsx');
-
-        // Mismo criterio que generateMonthlyReport (nicaTax.ts): filtrar por `date` y por
-        // estado válido de compra, para que el Libro reconcilie con el crédito fiscal del
-        // reporte mensual y no infle el IVA acreditable con compras no válidas.
-        const purchases = await prisma.purchase.findMany({
-            where: {
-                tenantId: authReq.tenantId!,
-                date: { gte: start, lt: end },
-                documentStatus: 'POSTED',
-                status: { in: [...PURCHASE_FISCAL_STATUSES] },
-            },
-            include: { supplier: true },
-            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        });
-
-        // Retenciones del período para cruzar con compras (acumuladas con Decimal).
-        const retentions = await prisma.fiscalRetention.findMany({
-            where: { tenantId: authReq.tenantId!, period: `${year}-${String(month).padStart(2,'0')}` },
-        });
-        const irByPurchase = new Map<string, Decimal>();
-        const imiByPurchase = new Map<string, Decimal>();
-        retentions.forEach(r => {
-            if (!r.purchaseId) return;
-            if (r.type === 'IR_2PCT')  irByPurchase.set(r.purchaseId,  (irByPurchase.get(r.purchaseId)  || new Decimal(0)).plus(r.amount.toString()));
-            if (r.type === 'IMI_1PCT') imiByPurchase.set(r.purchaseId, (imiByPurchase.get(r.purchaseId) || new Decimal(0)).plus(r.amount.toString()));
-        });
-
-        const rows = purchases.map((p, i) => {
-            const fiscalInvoiceDate = fiscalCivilDate(p.date);
-            const subtotalD = new Decimal(p.subtotal.toString());
-            const ivaFacturadoD = new Decimal(p.tax.toString());
-            const ivaD = new Decimal(p.creditableTax?.toString() ?? p.tax.toString());
-            const ivaNoAcreditableD = Decimal.max(0, ivaFacturadoD.minus(ivaD)).toDecimalPlaces(2);
-            const totalD    = new Decimal(p.total.toString());
-            const irD       = irByPurchase.get(p.id)  || new Decimal(0);
-            const imiD      = imiByPurchase.get(p.id) || new Decimal(0);
-            const netoD     = totalD.minus(irD).minus(imiD).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            return {
-                'N°':              i + 1,
-                'Fecha':           fiscalInvoiceDate.shortLabel,
-                'N° Factura Prov.': p.invoiceNumber,
-                'Proveedor':       p.supplier.name,
-                'RUC Proveedor':   (p.supplier as any).ruc || '---',
-                'Régimen':         normalizeFiscalRegime(p.fiscalRegimeAtPurchase),
-                'Subtotal C$':     subtotalD.toNumber(),
-                'IVA Facturado C$': ivaFacturadoD.toNumber(),
-                'IVA Crédito C$':  ivaD.toNumber(),
-                'IVA no acreditable C$': ivaNoAcreditableD.toNumber(),
-                'IR Ret. 2% C$':   irD.toNumber(),
-                'IMI Ret. 1% C$':  imiD.toNumber(),
-                'Neto Pagado C$':  netoD.toNumber(),
-                'Total Factura C$': totalD.toNumber(),
-            };
-        });
-
-        const totals: any = {
-            'N°': '', 'Fecha': '', 'N° Factura Prov.': '', 'Proveedor': 'TOTALES', 'RUC Proveedor': '', 'Régimen': '',
-            'Subtotal C$':     rows.reduce((s, r) => s.plus(r['Subtotal C$']), new Decimal(0)).toNumber(),
-            'IVA Facturado C$': rows.reduce((s, r) => s.plus(r['IVA Facturado C$']), new Decimal(0)).toNumber(),
-            'IVA Crédito C$':  rows.reduce((s, r) => s.plus(r['IVA Crédito C$']), new Decimal(0)).toNumber(),
-            'IVA no acreditable C$': rows.reduce((s, r) => s.plus(r['IVA no acreditable C$']), new Decimal(0)).toNumber(),
-            'IR Ret. 2% C$':   rows.reduce((s, r) => s.plus(r['IR Ret. 2% C$']), new Decimal(0)).toNumber(),
-            'IMI Ret. 1% C$':  rows.reduce((s, r) => s.plus(r['IMI Ret. 1% C$']), new Decimal(0)).toNumber(),
-            'Neto Pagado C$':  rows.reduce((s, r) => s.plus(r['Neto Pagado C$']), new Decimal(0)).toNumber(),
-            'Total Factura C$': rows.reduce((s, r) => s.plus(r['Total Factura C$']), new Decimal(0)).toNumber(),
-        };
-        rows.push(totals);
-
-        const ws = XLSX.utils.json_to_sheet(rows);
-        ws['!cols'] = [4, 12, 16, 28, 16, 14, 14, 14, 14, 14, 14, 14, 14, 14].map(w => ({ wch: w }));
-        const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, `Compras ${month}-${year}`);
-
-        const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
-        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-        res.setHeader('Content-Disposition', `attachment; filename="libro-compras-${year}-${String(month).padStart(2,'0')}.xlsx"`);
-        res.send(buf);
-
-    } catch (error) {
-        console.error('Libro compras error:', error);
-        res.status(500).json({ error: 'Error generando Libro de Compras.' });
-    }
-});
-
-// ── A3: ARCHIVO VET DGI (.TXT pipe-delimitado) ──────────────────────────────
-// GET /api/fiscal/vet-export/:month/:year
-// Formato: TIPO|FECHA|N_FACTURA|RUC_CLIENTE|NOMBRE|SUBTOTAL|IVA|TOTAL
-app.get('/api/fiscal/vet-export/:month/:year', authenticate, checkRole(FISCAL_REPORT_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const fiscalPeriod = parseFiscalPeriod(req.params.month, req.params.year);
-    if (!fiscalPeriod) return res.status(400).json({ error: 'Mes o año inválido.' });
-    const { month, year } = fiscalPeriod;
-
-    try {
-        const { start, end } = fiscalMonthRange(month, year);
-        const period = `${year}${String(month).padStart(2, '0')}`;
-
-        // Ventas
-        const sales = await prisma.sale.findMany({
-            where: { tenantId: authReq.tenantId!, createdAt: { gte: start, lt: end }, status: { not: ESTADO_ANULADA } },
-            include: { customer: true },
-            orderBy: { createdAt: 'asc' },
-        });
-
-        // Compras — mismo criterio que generateMonthlyReport (nicaTax.ts): `date` + estado válido.
-        const purchases = await prisma.purchase.findMany({
-            where: {
-                tenantId: authReq.tenantId!,
-                date: { gte: start, lt: end },
-                documentStatus: 'POSTED',
-                status: { in: [...PURCHASE_FISCAL_STATUSES] },
-            },
-            include: { supplier: true },
-            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
-        });
-
-        const lines: string[] = [];
-        // OJO: este NO es un archivo cargable en la Ventanilla Electrónica
-        // Tributaria. El formato de abajo es propio de Nortex — no hay en el repo
-        // ninguna referencia a una especificación publicada por la DGI. Sirve para
-        // TRANSCRIBIR los montos a la VET, no para subirlos. Mientras no se
-        // incorpore la spec oficial, el nombre tiene que decir la verdad: prometer
-        // un archivo que la DGI rechaza quema al contador en su primer intento.
-        lines.push(`# RESUMEN PARA TRANSCRIBIR A LA VET | PERIODO: ${period} | GENERADO: ${new Date().toISOString()}`);
-        lines.push(`# NO es un archivo cargable en la VET: formato propio de Nortex, para transcripcion manual.`);
-        lines.push(`# FORMATO: TIPO|FECHA(YYYYMMDD)|N_FACTURA|RUC|NOMBRE|EXENTO|SUBTOTAL|IVA|TOTAL`);
-        lines.push('');
-        lines.push('## LIBRO DE VENTAS');
-
-        for (const s of sales) {
-            // Mismo desglose que el Libro de Ventas y la declaración mensual.
-            const d = fiscalSaleSnapshotBreakdown(s);
-            const exentoD   = d.exonerado.toDecimalPlaces(2);
-            const subtotalD = (d.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA
-                ? d.cuotaFija
-                : d.netoGravado).toDecimalPlaces(2);
-            const ivaD      = d.iva.toDecimalPlaces(2);
-            const totalD    = d.total.toDecimalPlaces(2);
-            const fecha    = fiscalCivilDate(s.createdAt).compact;
-            const factura  = s.invoiceNumber
-                ? `${s.invoiceSeries || 'A'}${String(s.invoiceNumber).padStart(6,'0')}`
-                : 'CF';
-            const nombre   = (s.customerName || s.customer?.name || 'CONSUMIDOR FINAL').toUpperCase().substring(0, 60);
-            const rucV     = s.customer?.taxId || '000-000000-0000X';
-            if (d.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA) {
-                lines.push(`# REGIMEN CUOTA_FIJA | FACTURA ${factura} | IVA TRASLADADO 0.00`);
-            }
-            lines.push(`V|${fecha}|${factura}|${rucV}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
-        }
-
-        lines.push('');
-        lines.push('## LIBRO DE COMPRAS');
-
-        for (const p of purchases) {
-            const totalD    = new Decimal(p.total.toString()).toDecimalPlaces(2);
-            const ivaD      = new Decimal(p.creditableTax?.toString() ?? p.tax.toString()).toDecimalPlaces(2);
-            // El IVA no acreditable se capitaliza; por eso el subtotal contable
-            // de cuota fija es el total completo y el crédito mostrado queda en 0.
-            const subtotalD = totalD.minus(ivaD).toDecimalPlaces(2);
-            // La compra guarda subtotal/IVA/total por separado; lo que no cuadra
-            // contra el total es la parte exenta (proveedor exonerado, canasta
-            // básica). Se acota a ≥0 para que un dato inconsistente no salga en
-            // negativo. Misma columna que las ventas, para que el archivo alinee.
-            const exentoD = Decimal.max(0, totalD.minus(subtotalD).minus(ivaD)).toDecimalPlaces(2);
-            const fecha    = fiscalCivilDate(p.date).compact;
-            const nombre   = p.supplier.name.toUpperCase().substring(0, 60);
-            const rucC     = (p.supplier as any).ruc || '000-000000-0000X';
-            if (normalizeFiscalRegime(p.fiscalRegimeAtPurchase) === FISCAL_REGIME_CUOTA_FIJA) {
-                lines.push(`# COMPRA CUOTA_FIJA | FACTURA ${p.invoiceNumber} | IVA ACREDITABLE 0.00`);
-            }
-            lines.push(`C|${fecha}|${p.invoiceNumber}|${rucC}|${nombre}|${exentoD.toFixed(2)}|${subtotalD.toFixed(2)}|${ivaD.toFixed(2)}|${totalD.toFixed(2)}`);
-        }
-
-        const content = lines.join('\r\n'); // CRLF como exige la VET
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.setHeader('Content-Disposition', `attachment; filename="VET-${period}.txt"`);
-        res.send(content);
-
-    } catch (error) {
-        console.error('VET export error:', error);
-        res.status(500).json({ error: 'Error generando archivo VET.' });
-    }
-});
+registerRetentionCertificate(app);
+registerFiscalExports(app);
 
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION

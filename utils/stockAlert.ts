@@ -174,7 +174,9 @@ export function textoAviso(aviso: AvisoStock): string | null {
 
     if (aviso.estado === 'SIN_EXISTENCIA') {
         // Negativo: el inventario YA está descuadrado, y hay que decirlo así.
-        if (aviso.disponible !== null && aviso.disponible < 0) {
+        // `Number(null)` es 0, por lo que la comparación cubre también un DTO
+        // parcial sin una guarda redundante (`null < 0` ya era false).
+        if (Number(aviso.disponible) < 0) {
             return `El sistema lo tiene en ${n(aviso.disponible)} ${aviso.unidad}: ya se vendió más de lo que había.`;
         }
         return `Sin existencia en el sistema. Estás vendiendo ${n(aviso.pedido)} ${aviso.unidad}.`;

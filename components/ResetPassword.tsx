@@ -2,12 +2,94 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useParams, useNavigate } from 'react-router-dom';
 import { Lock, Loader2, Check, AlertCircle, ArrowLeft, Eye, EyeOff } from 'lucide-react';
+import { homePathFor, resolveUiMode, UI_MODE_KEY } from '../utils/navigation';
+import AuthShell, { persistAuthenticatedTheme, useAuthTheme } from './auth/AuthShell';
 
 const API = import.meta.env.VITE_API_URL || '';
+const PASSWORD_MIN = 8;
 
 interface TokenData {
     email: string;
     name: string;
+}
+
+interface ResetPasswordSuccessPayload {
+    message?: string;
+    error?: string;
+    token?: string;
+    user?: {
+        id?: string;
+        email?: string | null;
+        name?: string | null;
+        role?: string;
+    };
+    tenant?: {
+        id?: string;
+        type?: string | null;
+        businessName?: string | null;
+    };
+}
+
+interface CompleteResetSession {
+    token: string;
+    user: {
+        id: string;
+        email?: string | null;
+        name?: string | null;
+        role: string;
+    };
+    tenant: {
+        id: string;
+        type: string;
+        businessName: string;
+    };
+}
+
+function isCompleteResetSession(data: ResetPasswordSuccessPayload | null): data is CompleteResetSession {
+    return Boolean(
+        data
+        && typeof data.token === 'string'
+        && data.token.trim()
+        && typeof data.user?.id === 'string'
+        && data.user.id.trim()
+        && typeof data.user.role === 'string'
+        && data.user.role.trim()
+        && typeof data.tenant?.id === 'string'
+        && data.tenant.id.trim()
+        && typeof data.tenant.type === 'string'
+        && data.tenant.type.trim()
+        && typeof data.tenant.businessName === 'string'
+        && data.tenant.businessName.trim()
+    );
+}
+
+function persistResetSession(data: CompleteResetSession): boolean {
+    const sessionEntries = [
+        ['nortex_token', data.token],
+        ['nortex_user', JSON.stringify({ ...data.user, tenant: data.tenant })],
+        ['nortex_tenant_id', data.tenant.id],
+        ['nortex_tenant_data', JSON.stringify(data.tenant)],
+    ] as const;
+    const previousValues: Array<readonly [string, string | null]> = [];
+
+    try {
+        sessionEntries.forEach(([key]) => previousValues.push([key, localStorage.getItem(key)]));
+        sessionEntries.forEach(([key, value]) => localStorage.setItem(key, value));
+        return true;
+    } catch {
+        // localStorage no es transaccional. Si una escritura falla, restauramos
+        // el estado previo para no dejar una identidad mezclada o parcial.
+        previousValues.forEach(([key, previous]) => {
+            try {
+                if (previous === null) localStorage.removeItem(key);
+                else localStorage.setItem(key, previous);
+            } catch {
+                // El navegador puede bloquear todo storage; el fallback manual
+                // sigue siendo seguro porque no se navega a una ruta protegida.
+            }
+        });
+        return false;
+    }
 }
 
 const ResetPassword: React.FC = () => {
@@ -22,7 +104,9 @@ const ResetPassword: React.FC = () => {
     const [confirmPassword, setConfirmPassword] = useState('');
     const [showPassword, setShowPassword] = useState(false);
     const [submitting, setSubmitting] = useState(false);
-    const [success, setSuccess] = useState(false);
+    const [completion, setCompletion] = useState<'idle' | 'automatic' | 'manual'>('idle');
+    const { theme, toggleTheme } = useAuthTheme();
+    const redirectTimerRef = React.useRef<number | null>(null);
 
     // Validar token al cargar
     useEffect(() => {
@@ -44,6 +128,12 @@ const ResetPassword: React.FC = () => {
         if (token) validate();
     }, [token]);
 
+    useEffect(() => () => {
+        if (redirectTimerRef.current !== null) {
+            window.clearTimeout(redirectTimerRef.current);
+        }
+    }, []);
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         setError('');
@@ -52,8 +142,8 @@ const ResetPassword: React.FC = () => {
             setError('Las contraseñas no coinciden.');
             return;
         }
-        if (password.length < 6) {
-            setError('La contraseña debe tener al menos 6 caracteres.');
+        if (password.length < PASSWORD_MIN) {
+            setError(`La contraseña debe tener al menos ${PASSWORD_MIN} caracteres.`);
             return;
         }
 
@@ -64,17 +154,38 @@ const ResetPassword: React.FC = () => {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ password })
             });
-            const data = await res.json();
+            const data = await res.json().catch(() => null) as ResetPasswordSuccessPayload | null;
 
             if (res.ok) {
-                // Auto-login — usar las MISMAS claves que Login.tsx/RegisterTenant.tsx,
-                // que son las que lee el guard de rutas (App.tsx) y authFetch (utils/auth.ts).
-                localStorage.setItem('nortex_token', data.token);
-                localStorage.setItem('nortex_user', JSON.stringify(data.user));
-                setSuccess(true);
-                setTimeout(() => navigate('/app'), 2000);
+                if (!isCompleteResetSession(data)) {
+                    setPassword('');
+                    setConfirmPassword('');
+                    setCompletion('manual');
+                    return;
+                }
+
+                if (!persistResetSession(data)) {
+                    setPassword('');
+                    setConfirmPassword('');
+                    setCompletion('manual');
+                    return;
+                }
+
+                persistAuthenticatedTheme(theme);
+                setCompletion('automatic');
+                const nextPath = data.user.role === 'SUPER_ADMIN'
+                    ? '/admin'
+                    : data.tenant.type === 'LENDER'
+                        ? '/app/dashboard'
+                        : homePathFor(
+                            data.user.role,
+                            resolveUiMode(data.tenant.type, localStorage.getItem(UI_MODE_KEY)),
+                        );
+                redirectTimerRef.current = window.setTimeout(() => {
+                    navigate(nextPath, { replace: true });
+                }, 1600);
             } else {
-                setError(data.error || 'Error restableciendo contraseña.');
+                setError(data?.error || 'Error restableciendo contraseña.');
             }
         } catch (err) {
             setError('Error de conexión.');
@@ -86,153 +197,180 @@ const ResetPassword: React.FC = () => {
     // Loading state
     if (validating) {
         return (
-            <div className="min-h-screen bg-nortex-900 flex items-center justify-center">
-                <div className="text-center">
-                    <Loader2 className="animate-spin text-nortex-accent mx-auto mb-4" size={40} />
-                    <p className="text-slate-400">Validando link...</p>
-                </div>
-            </div>
+            <AuthShell
+                title="Validando tu link"
+                subtitle="Esto tomará solo un momento."
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                headingId="reset-validating-title"
+                icon={<Loader2 className="animate-spin" size={28} />}
+                iconTone="neutral"
+            >
+                <p className="nx-auth-state-message" role="status" aria-live="polite">Validando link…</p>
+            </AuthShell>
         );
     }
 
     // Invalid token
     if (error && !tokenData) {
         return (
-            <div className="min-h-screen bg-nortex-900 flex items-center justify-center p-4">
-                <div className="bg-nortex-800 border border-slate-700 rounded-2xl p-8 max-w-md w-full text-center">
-                    <div className="w-16 h-16 bg-red-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <AlertCircle className="text-red-400" size={32} />
-                    </div>
-                    <h1 className="text-xl font-bold text-white mb-2">Link Inválido</h1>
-                    <p className="text-slate-400 mb-6">{error}</p>
-                    <div className="flex flex-col gap-3">
-                        <Link
-                            to="/forgot-password"
-                            className="inline-flex items-center justify-center gap-2 px-6 py-2.5 bg-nortex-accent text-nortex-900 font-bold rounded-lg hover:bg-emerald-400 transition-all"
-                        >
-                            Solicitar Nuevo Link
-                        </Link>
-                        <Link
-                            to="/login"
-                            className="inline-flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-white transition-colors"
-                        >
-                            <ArrowLeft size={16} /> Volver al Login
-                        </Link>
-                    </div>
+            <AuthShell
+                title="Link inválido"
+                subtitle={<span role="alert">{error}</span>}
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                headingId="reset-invalid-title"
+                icon={<AlertCircle size={28} />}
+                iconTone="danger"
+            >
+                <div className="nx-auth-state">
+                    <Link to="/forgot-password" className="nx-auth-primary">Solicitar nuevo link</Link>
+                    <Link to="/login" className="nx-auth-back-link">
+                        <ArrowLeft aria-hidden="true" size={16} /> Volver al login
+                    </Link>
                 </div>
-            </div>
+            </AuthShell>
         );
     }
 
-    // Success
-    if (success) {
+    if (completion === 'manual') {
         return (
-            <div className="min-h-screen bg-nortex-900 flex items-center justify-center p-4">
-                <div className="bg-nortex-800 border border-emerald-500/30 rounded-2xl p-8 max-w-md w-full text-center">
-                    <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <Check className="text-emerald-400" size={32} />
-                    </div>
-                    <h1 className="text-xl font-bold text-white mb-2">¡Contraseña Actualizada!</h1>
-                    <p className="text-slate-400 mb-2">Tu contraseña ha sido restablecida exitosamente.</p>
-                    <p className="text-sm text-slate-500">Redirigiendo al dashboard...</p>
+            <AuthShell
+                title="Contraseña actualizada"
+                subtitle="El cambio se guardó, pero no pudimos iniciar tu sesión automáticamente."
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                headingId="reset-manual-title"
+                icon={<Check size={28} />}
+                iconTone="success"
+            >
+                <div className="nx-auth-state" role="status" aria-live="polite">
+                    <p className="nx-auth-state-message">Entrá con tu correo y la nueva contraseña para continuar.</p>
+                    <Link to="/login" className="nx-auth-primary">Entrar con mi nueva contraseña</Link>
                 </div>
-            </div>
+            </AuthShell>
+        );
+    }
+
+    // Success with a complete, persisted session.
+    if (completion === 'automatic') {
+        return (
+            <AuthShell
+                title="¡Contraseña actualizada!"
+                subtitle="Tu contraseña fue restablecida exitosamente."
+                theme={theme}
+                onToggleTheme={toggleTheme}
+                headingId="reset-success-title"
+                icon={<Check size={28} />}
+                iconTone="success"
+            >
+                <div className="nx-auth-state" role="status" aria-live="polite">
+                    <p className="nx-auth-state-message">Redirigiendo a tu inicio…</p>
+                </div>
+            </AuthShell>
         );
     }
 
     // Reset form
     return (
-        <div className="min-h-screen bg-nortex-900 flex items-center justify-center p-4">
-            <div className="w-full max-w-md">
-                {/* Logo */}
-                <div className="text-center mb-8">
-                    <div className="w-12 h-12 bg-nortex-accent rounded-xl flex items-center justify-center mx-auto mb-3 shadow-lg shadow-nortex-accent/20">
-                        <span className="font-bold text-nortex-900 text-xl">N</span>
-                    </div>
-                    <h1 className="text-2xl font-bold text-white">Nueva Contraseña</h1>
-                    <p className="text-slate-400 text-sm mt-2">
-                        Hola <strong className="text-white">{tokenData?.name}</strong>, crea tu nueva contraseña.
-                    </p>
-                </div>
-
-                <form onSubmit={handleSubmit} className="bg-nortex-800 border border-slate-700 rounded-2xl p-6 shadow-2xl">
-                    {/* Email (readonly) */}
-                    <div className="mb-4">
-                        <label className="text-sm font-medium text-slate-300 block mb-1.5">Email</label>
+        <AuthShell
+            title="Nueva contraseña"
+            subtitle={<>Hola <strong>{tokenData?.name}</strong>, creá tu nueva contraseña.</>}
+            theme={theme}
+            onToggleTheme={toggleTheme}
+            headingId="reset-title"
+            icon={<Lock size={25} />}
+            iconTone="neutral"
+        >
+                <form onSubmit={handleSubmit} className="nx-auth-form" aria-busy={submitting}>
+                    <div className="nx-auth-field-group">
+                        <label htmlFor="reset-email">Correo electrónico</label>
                         <input
+                            id="reset-email"
                             type="email"
+                            name="email"
+                            autoComplete="email"
                             readOnly
                             value={tokenData?.email || ''}
-                            className="w-full bg-slate-900/50 border border-slate-700 rounded-lg px-4 py-2.5 text-slate-400 cursor-not-allowed"
+                            className="nx-auth-control nx-auth-control-readonly"
                         />
                     </div>
 
-                    {/* New Password */}
-                    <div className="mb-4">
-                        <label className="text-sm font-medium text-slate-300 block mb-1.5">Nueva Contraseña</label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                    <div className="nx-auth-field-group">
+                        <label htmlFor="reset-password">Nueva contraseña</label>
+                        <div className="nx-auth-control-wrap">
+                            <Lock aria-hidden="true" className="nx-auth-control-icon" size={18} />
                             <input
+                                id="reset-password"
                                 type={showPassword ? 'text' : 'password'}
+                                name="password"
+                                autoComplete="new-password"
                                 required
+                                minLength={PASSWORD_MIN}
                                 value={password}
                                 onChange={e => setPassword(e.target.value)}
-                                placeholder="Mínimo 6 caracteres"
-                                className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-10 pr-10 py-2.5 text-white placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
+                                placeholder={`Mínimo ${PASSWORD_MIN} caracteres`}
+                                className="nx-auth-control nx-auth-control-with-icon nx-auth-control-with-action"
                             />
                             <button
                                 type="button"
                                 onClick={() => setShowPassword(!showPassword)}
-                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+                                className="nx-auth-control-action"
+                                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                                aria-pressed={showPassword}
                             >
-                                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                                {showPassword ? <EyeOff aria-hidden="true" size={18} /> : <Eye aria-hidden="true" size={18} />}
                             </button>
                         </div>
                     </div>
 
-                    {/* Confirm */}
-                    <div className="mb-5">
-                        <label className="text-sm font-medium text-slate-300 block mb-1.5">Confirmar Contraseña</label>
-                        <div className="relative">
-                            <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                    <div className="nx-auth-field-group">
+                        <label htmlFor="reset-confirm-password">Confirmar contraseña</label>
+                        <div className="nx-auth-control-wrap">
+                            <Lock aria-hidden="true" className="nx-auth-control-icon" size={18} />
                             <input
+                                id="reset-confirm-password"
                                 type={showPassword ? 'text' : 'password'}
+                                name="confirmPassword"
+                                autoComplete="new-password"
                                 required
+                                minLength={PASSWORD_MIN}
                                 value={confirmPassword}
                                 onChange={e => setConfirmPassword(e.target.value)}
-                                placeholder="Repite la contraseña"
-                                className="w-full bg-slate-900 border border-slate-600 rounded-lg pl-10 pr-4 py-2.5 text-white placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
+                                placeholder="Repetí la contraseña"
+                                aria-invalid={Boolean(password && confirmPassword && password !== confirmPassword)}
+                                aria-describedby={password && confirmPassword && password !== confirmPassword ? 'reset-confirm-error' : undefined}
+                                className="nx-auth-control nx-auth-control-with-icon"
                             />
                         </div>
                         {password && confirmPassword && password !== confirmPassword && (
-                            <p className="text-red-400 text-xs mt-1.5">Las contraseñas no coinciden</p>
+                            <p id="reset-confirm-error" className="nx-auth-field-error">Las contraseñas no coinciden</p>
                         )}
                     </div>
 
                     {error && (
-                        <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-400 flex items-center gap-2">
-                            <AlertCircle size={16} /> {error}
+                        <div role="alert" aria-live="assertive" className="nx-auth-alert nx-auth-alert-danger">
+                            <AlertCircle aria-hidden="true" size={16} /> <span>{error}</span>
                         </div>
                     )}
 
                     <button
                         type="submit"
                         disabled={submitting || !password || !confirmPassword}
-                        className="w-full bg-nortex-accent text-nortex-900 font-bold py-3 rounded-lg hover:bg-emerald-400 transition-all flex justify-center items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        className="nx-auth-primary"
                     >
-                        {submitting ? <Loader2 className="animate-spin" size={18} /> : <Lock size={18} />}
-                        {submitting ? 'Actualizando...' : 'Restablecer Contraseña'}
+                        {submitting ? <Loader2 aria-hidden="true" className="animate-spin" size={18} /> : <Lock aria-hidden="true" size={18} />}
+                        {submitting ? 'Actualizando…' : 'Restablecer contraseña'}
                     </button>
 
                     <Link
                         to="/login"
-                        className="w-full mt-3 flex items-center justify-center gap-2 text-sm text-slate-400 hover:text-white transition-colors py-2"
+                        className="nx-auth-back-link"
                     >
-                        <ArrowLeft size={16} /> Volver al Login
+                        <ArrowLeft aria-hidden="true" size={16} /> Volver al login
                     </Link>
                 </form>
-            </div>
-        </div>
+        </AuthShell>
     );
 };
 

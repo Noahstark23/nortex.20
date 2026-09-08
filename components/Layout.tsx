@@ -262,7 +262,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
       <aside className="nx-sidebar nx-shell-border hidden w-[12rem] shrink-0 flex-col justify-between border-r lg:flex xl:w-[12.5rem]">
         <div className="min-h-0">
           <div className="nx-shell-border flex h-[4.5rem] items-center border-b px-4">
-            <div className="hidden min-w-0 items-center gap-2.5 lg:flex">
+            <div className="flex min-w-0 items-center gap-2.5">
               <div className="nx-tone-positive flex h-7 w-7 shrink-0 items-center justify-center rounded-control border border-brand/20 bg-brand-soft">
                 <span className="text-[13px] font-black tracking-[-0.04em]">N</span>
               </div>
@@ -430,7 +430,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
         size="full"
       >
           <div className="nx-mobile-menu-header nx-shell-border flex items-center justify-between border-b p-5">
-            <div className="hidden min-w-0 items-center gap-2.5 lg:flex">
+            <div className="flex min-w-0 items-center gap-2.5">
               <div className="nx-tone-positive flex h-8 w-8 shrink-0 items-center justify-center rounded-control border border-brand/20 bg-brand-soft">
                 <span className="text-sm font-black">N</span>
               </div>

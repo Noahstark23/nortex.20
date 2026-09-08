@@ -1128,6 +1128,13 @@
   color-scheme: light;
   background: var(--nx-canvas);
   color: var(--nx-canvas-text);
+  /* Día parte del canvas claro. Las superficies semánticas y las islas
+     oscuras cambian estas tintas de forma explícita; no se agrega una
+     excepción visual por pantalla. */
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace .nx-dark-context:not(.nx-ticket-surface):not(.nx-ticket-dock) {
@@ -1147,6 +1154,10 @@
   [class~="bg-surface-950/70"]
 ) {
   background-color: var(--nx-canvas);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1158,6 +1169,10 @@
   [class~="bg-surface-900/95"]
 ) {
   background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1168,10 +1183,16 @@
   [class~="bg-surface-700/60"]
 ) {
   background-color: var(--nx-canvas-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 /* Variantes slate heredadas. Un backdrop `fixed` conserva su oscuridad; los
-   paneles contenidos dentro de él sí se convierten a superficie clara. */
+   paneles contenidos dentro de él sí se convierten a superficie clara. Cada
+   superficie traducida publica también sus tintas heredadas para texto e
+   iconos; no se mantiene una segunda lista de selectores. */
 .nx-apple-light-workspace :is(
   [class~="bg-slate-950"],
   [class~="bg-slate-900"],
@@ -1184,6 +1205,10 @@
   [class~="bg-slate-900/95"]
 ):not([class~="fixed"]) {
   background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1200,6 +1225,10 @@
   [class~="bg-slate-700/70"]
 ) {
   background-color: var(--nx-canvas-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(
@@ -1215,6 +1244,89 @@
   [class~="bg-white/[0.12]"]
 ) {
   background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+/* Los rellenos oscuros que pueden vivir dentro de una superficie traducida
+   vuelven a declarar su tinta. Las clases son intencionalmente exactas: no
+   convertir un nombre de Tailwind en una excepción global. */
+.nx-apple-light-workspace :is(
+  .nx-ticket-surface,
+  .nx-ticket-dock,
+  .nx-code-surface,
+  .nx-dark-island,
+  [class~="bg-black"],
+  [class~="bg-gray-700"],
+  [class~="bg-gray-800"],
+  [class~="bg-gray-900"],
+  [class~="bg-gray-950"],
+  [class~="bg-zinc-700"],
+  [class~="bg-zinc-800"],
+  [class~="bg-zinc-900"],
+  [class~="bg-zinc-950"],
+  [class~="bg-neutral-700"],
+  [class~="bg-neutral-800"],
+  [class~="bg-neutral-900"],
+  [class~="bg-neutral-950"],
+  [class~="bg-surface-600"],
+  [class~="bg-slate-600"],
+  [class~="bg-nortex-800"],
+  [class~="bg-nortex-900"],
+  [class~="bg-brand-800"],
+  [class~="bg-brand-900"],
+  [class~="bg-brand-950"],
+  [class~="bg-emerald-800"],
+  [class~="bg-emerald-900"],
+  [class~="bg-green-800"],
+  [class~="bg-green-900"],
+  [class~="bg-blue-800"],
+  [class~="bg-blue-900"],
+  [class~="bg-indigo-800"],
+  [class~="bg-indigo-900"],
+  [class~="bg-purple-800"],
+  [class~="bg-purple-900"],
+  [class~="bg-violet-800"],
+  [class~="bg-violet-900"],
+  [class~="bg-red-600"],
+  [class~="bg-red-600/90"],
+  [class~="bg-red-700"],
+  [class~="bg-red-800"],
+  [class~="bg-red-900"],
+  [class~="bg-rose-700"],
+  [class~="bg-rose-800"],
+  [class~="bg-rose-900"],
+  [class~="bg-orange-700"],
+  [class~="bg-orange-800"],
+  [class~="bg-orange-900"],
+  [class~="bg-amber-700"],
+  [class~="bg-amber-800"],
+  [class~="bg-amber-900"],
+  [class~="bg-sky-700"],
+  [class~="bg-sky-800"],
+  [class~="bg-sky-900"]
+) {
+  --nx-legacy-white-ink: var(--nx-ticket-text);
+  --nx-legacy-white-muted-ink: var(--nx-ticket-muted);
+  --nx-context-ink: var(--nx-ticket-text);
+  --nx-context-muted-ink: var(--nx-ticket-muted);
+  --nx-positive: var(--nx-ticket-positive);
+  --nx-warning: var(--nx-ticket-warning);
+  --nx-info: var(--nx-ticket-info);
+  --nx-danger: var(--nx-ticket-danger);
+}
+
+.nx-apple-light-workspace [class~="text-white"] {
+  color: var(--nx-legacy-white-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-legacy-white-muted-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1223,7 +1335,7 @@
   [class~="text-slate-200"],
   [class~="text-surface-950"]
 ) {
-  color: var(--nx-canvas-text);
+  color: var(--nx-context-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1233,7 +1345,7 @@
   [class~="text-surface-300"],
   [class~="text-surface-400"]
 ) {
-  color: var(--nx-canvas-muted);
+  color: var(--nx-context-muted-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1241,7 +1353,7 @@
   [class~="placeholder:text-slate-400"],
   [class~="placeholder:text-slate-500"]
 ) {
-  color: var(--nx-canvas-faint);
+  color: var(--nx-context-muted-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1249,7 +1361,7 @@
   [class~="placeholder:text-slate-500"]
 )::placeholder,
 .nx-apple-light-workspace .input-premium::placeholder {
-  color: var(--nx-canvas-faint);
+  color: var(--nx-context-muted-ink);
   opacity: 1;
 }
 
@@ -1257,11 +1369,11 @@
   color: var(--nx-canvas-muted);
 }
 
-/* Los títulos heredados usaban `text-white` porque antes vivían sobre un
-   lienzo negro. Solo se traduce jerarquía tipográfica; `text-white` en botones
-   y badges sólidos conserva su contraste. */
+/* Los títulos heredados permanecen explícitos para la jerarquía tipográfica.
+   La tinta de cualquier `text-white` ya se deriva arriba de su superficie, y
+   el contrato de rellenos sólidos al final conserva las acciones semánticas. */
 .nx-apple-light-workspace :is(h1, h2, h3, h4, h5, h6)[class~="text-white"] {
-  color: var(--nx-canvas-text);
+  color: var(--nx-legacy-white-ink);
 }
 
 .nx-apple-light-workspace :is(
@@ -1302,6 +1414,10 @@
   border-color: var(--nx-canvas-border);
   color: var(--nx-canvas-text);
   box-shadow: var(--nx-shadow-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
 }
 
 .nx-apple-light-workspace :is(input, textarea, select, .input-premium) {
@@ -1342,7 +1458,7 @@
   [class~="hover:text-slate-200"],
   [class~="hover:text-slate-300"]
 ):hover {
-  color: var(--nx-canvas-text);
+  color: var(--nx-legacy-white-ink);
 }
 
 /* Bloques oscuros de énfasis que se conservan dentro del workspace (p. ej.
@@ -1384,18 +1500,27 @@
 /* Contraste de estados heredados sobre canvas claro. Los tonos dejan de
    depender de que emerald-300/amber-300 fueran visibles sobre negro. */
 .nx-apple-light-workspace :is(
+  [class~="text-emerald-100"],
+  [class~="text-emerald-200"],
   [class~="text-emerald-300"],
   [class~="text-emerald-400"],
   [class~="text-emerald-500"],
   [class~="text-emerald-600"],
   [class~="text-emerald-700"],
   [class~="text-emerald-800"],
+  [class~="text-emerald-900"],
+  [class~="text-emerald-950"],
+  [class~="text-emerald-100/80"],
+  [class~="text-green-100"],
+  [class~="text-green-200"],
   [class~="text-green-300"],
   [class~="text-green-400"],
   [class~="text-green-500"],
   [class~="text-green-600"],
   [class~="text-green-700"],
-  [class~="text-green-800"]
+  [class~="text-green-800"],
+  [class~="text-green-900"],
+  [class~="text-green-950"]
 ) { color: var(--nx-positive); }
 
 /* `brand` es el relleno del CTA. Como tinta pequena sobre blanco no alcanza
@@ -1409,49 +1534,175 @@
 }
 
 .nx-apple-light-workspace :is(
+  [class~="text-amber-100"],
+  [class~="text-amber-200"],
   [class~="text-amber-300"],
   [class~="text-amber-400"],
   [class~="text-amber-500"],
   [class~="text-amber-600"],
   [class~="text-amber-700"],
   [class~="text-amber-800"],
+  [class~="text-amber-900"],
+  [class~="text-amber-950"],
+  [class~="text-amber-100/80"],
+  [class~="text-amber-200/80"],
+  [class~="text-amber-300/80"],
+  [class~="text-amber-400/80"],
+  [class~="text-amber-400/90"],
+  [class~="text-yellow-100"],
+  [class~="text-yellow-200"],
   [class~="text-yellow-300"],
   [class~="text-yellow-400"],
   [class~="text-yellow-500"],
   [class~="text-yellow-600"],
   [class~="text-yellow-700"],
-  [class~="text-yellow-800"]
+  [class~="text-yellow-800"],
+  [class~="text-yellow-900"],
+  [class~="text-yellow-950"],
+  [class~="text-orange-100"],
+  [class~="text-orange-200"],
+  [class~="text-orange-300"],
+  [class~="text-orange-400"],
+  [class~="text-orange-500"],
+  [class~="text-orange-600"],
+  [class~="text-orange-700"],
+  [class~="text-orange-800"],
+  [class~="text-orange-900"],
+  [class~="text-orange-950"],
+  [class~="text-orange-300/70"]
 ) { color: var(--nx-warning); }
 
 .nx-apple-light-workspace :is(
+  [class~="text-sky-100"],
+  [class~="text-sky-200"],
   [class~="text-sky-300"],
   [class~="text-sky-400"],
   [class~="text-sky-500"],
   [class~="text-sky-600"],
   [class~="text-sky-700"],
   [class~="text-sky-800"],
+  [class~="text-sky-900"],
+  [class~="text-sky-950"],
+  [class~="text-blue-100"],
+  [class~="text-blue-200"],
   [class~="text-blue-300"],
   [class~="text-blue-400"],
   [class~="text-blue-500"],
   [class~="text-blue-600"],
   [class~="text-blue-700"],
   [class~="text-blue-800"],
+  [class~="text-blue-900"],
+  [class~="text-blue-950"],
+  [class~="text-blue-300/80"],
+  [class~="text-cyan-100"],
+  [class~="text-cyan-200"],
   [class~="text-cyan-300"],
   [class~="text-cyan-400"],
   [class~="text-cyan-500"],
   [class~="text-cyan-600"],
   [class~="text-cyan-700"],
-  [class~="text-cyan-800"]
+  [class~="text-cyan-800"],
+  [class~="text-cyan-900"],
+  [class~="text-cyan-950"]
 ) { color: var(--nx-info); }
 
 .nx-apple-light-workspace :is(
+  [class~="text-red-100"],
+  [class~="text-red-200"],
   [class~="text-red-300"],
   [class~="text-red-400"],
   [class~="text-red-500"],
   [class~="text-red-600"],
   [class~="text-red-700"],
-  [class~="text-red-800"]
+  [class~="text-red-800"],
+  [class~="text-red-900"],
+  [class~="text-red-950"],
+  [class~="text-red-100/80"],
+  [class~="text-red-400/70"],
+  [class~="text-red-400/80"],
+  [class~="text-rose-100"],
+  [class~="text-rose-200"],
+  [class~="text-rose-300"],
+  [class~="text-rose-400"],
+  [class~="text-rose-500"],
+  [class~="text-rose-600"],
+  [class~="text-rose-700"],
+  [class~="text-rose-800"],
+  [class~="text-rose-900"],
+  [class~="text-rose-950"]
 ) { color: var(--nx-danger); }
+
+/* Tailwind colapsa estos aliases fríos a la marca. En Día, sus rampas claras
+   no sirven como tinta sobre canvas o materiales suaves: se vuelven positivo
+   accesible. Las islas oscuras ya redefinen --nx-positive a tinta de ticket. */
+.nx-apple-light-workspace :is(
+  [class~="text-brand"],
+  [class~="text-brand-200"],
+  [class~="text-brand-300"],
+  [class~="text-brand-400"],
+  [class~="text-brand-700"],
+  [class~="text-brand-800"],
+  [class~="text-nortex-400"],
+  [class~="text-nortex-500"],
+  [class~="text-nortex-600"],
+  [class~="text-nortex-700"],
+  [class~="text-nortex-accent"],
+  [class~="text-blue-200"],
+  [class~="text-blue-300"],
+  [class~="text-blue-300/80"],
+  [class~="text-blue-400"],
+  [class~="text-blue-500"],
+  [class~="text-blue-600"],
+  [class~="text-blue-700"],
+  [class~="text-blue-800"],
+  [class~="text-indigo-300"],
+  [class~="text-indigo-400"],
+  [class~="text-indigo-500"],
+  [class~="text-cyan-100"],
+  [class~="text-cyan-200"],
+  [class~="text-cyan-300"],
+  [class~="text-cyan-400"],
+  [class~="text-violet-100"],
+  [class~="text-violet-300"],
+  [class~="text-violet-500"],
+  [class~="text-violet-700"],
+  [class~="text-purple-300"],
+  [class~="text-purple-400"],
+  [class~="text-purple-700"]
+) { color: var(--nx-positive); }
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-brand"],
+  [class~="hover:text-brand-200"],
+  [class~="hover:text-brand-800"],
+  [class~="hover:text-blue-300"],
+  [class~="hover:text-blue-600"],
+  [class~="hover:text-nortex-accent"],
+  [class~="hover:text-emerald-300"]
+):hover { color: var(--nx-positive); }
+
+.nx-apple-light-workspace .group:hover :is(
+  [class~="group-hover:text-blue-300"],
+  [class~="group-hover:text-nortex-accent"],
+  [class~="group-hover:text-emerald-700"]
+) { color: var(--nx-positive); }
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-amber-200"],
+  [class~="hover:text-amber-800"],
+  [class~="hover:text-amber-900"],
+  [class~="hover:text-orange-400"]
+):hover,
+.nx-apple-light-workspace .group:hover [class~="group-hover:text-orange-400"] {
+  color: var(--nx-warning);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-red-300"],
+  [class~="hover:text-red-400"],
+  [class~="hover:text-red-500"],
+  [class~="hover:text-red-700"]
+):hover { color: var(--nx-danger); }
 
 /* ==========================================
    CONTRATO VISUAL AUTENTICADO — APPLE/HIG DARK
@@ -1717,148 +1968,1427 @@
 ) { color: var(--nx-danger); }
 
 /* ==========================================
-   TIPOGRAFÍA DEL BLOG (.prose-nortex)
-   El cuerpo de los artículos se renderiza con utils/markdown.ts (HTML único para
-   cliente y prerender). Estos estilos le dan jerarquía sobre fondo claro.
-   (Bloque reconstruido: el merge de #61/#62 interleó dos versiones y dejó CSS
-   malformado —regla sin cerrar + propiedades sin selector— que rompía postcss.)
+   AUTENTICACIÓN PÚBLICA · APPLE LIGHT/DARK
    ========================================== */
-.prose-nortex {
-  color: #475569; /* slate-600 */
-  line-height: 1.75;
-  font-size: 1rem;
-}
-.prose-nortex h2 {
-  color: #0f172a; /* slate-900 */
-  font-size: 1.5rem;
-  font-weight: 700;
-  line-height: 1.3;
-  margin-top: 2rem;
-  margin-bottom: 1rem;
-}
-.prose-nortex h3 {
-  color: #1e293b; /* slate-800 */
-  font-size: 1.25rem;
-  font-weight: 700;
-  margin-top: 1.5rem;
-  margin-bottom: 0.75rem;
-}
-.prose-nortex h4 {
-  color: #1e293b; /* slate-800 */
-  font-size: 1.05rem;
-  font-weight: 700;
-  margin-top: 1.25rem;
-  margin-bottom: 0.5rem;
-}
-.prose-nortex p {
-  margin-bottom: 1rem;
-}
-.prose-nortex strong {
-  color: #1e293b; /* slate-800 */
-  font-weight: 700;
+
+.nx-auth-shell {
+  --nx-auth-accent: var(--nx-info);
+  --nx-auth-on-accent: var(--nx-canvas-raised);
+  min-height: 100dvh;
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+  color-scheme: light;
+  font-family: var(--nx-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
-.prose-nortex a {
-  color: #059669; /* emerald-600 */
-  font-weight: 600;
-  text-decoration: underline;
+.nx-auth-shell[data-nx-theme='dark'] {
+  color-scheme: dark;
 }
-.prose-nortex a.blog-cta {
+
+.nx-auth-skip-link {
+  position: fixed;
+  inset-block-start: var(--nx-3);
+  inset-inline-start: var(--nx-3);
+  z-index: var(--nx-z-modal);
+  min-height: var(--nx-tap-min);
+  padding: var(--nx-3) var(--nx-4);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-canvas-text);
+  color: var(--nx-canvas-raised);
+  font-weight: var(--nx-fw-semi);
+  transform: translateY(calc(-100% - var(--nx-6)));
+  transition: transform var(--nx-t-fast);
+}
+
+.nx-auth-skip-link:focus {
+  transform: translateY(0);
+}
+
+.nx-auth-nav {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--nx-z-sticky);
+  min-height: var(--nx-tap-min);
+  border-bottom: 1px solid var(--nx-canvas-border);
+  background: rgb(var(--nx-canvas-raised-rgb) / .84);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.nx-auth-nav-inner {
+  width: min(100%, 980px);
+  min-height: var(--nx-tap-min);
+  margin-inline: auto;
+  padding-inline: var(--nx-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nx-4);
+}
+
+.nx-auth-wordmark {
+  min-height: var(--nx-tap-min);
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  margin: 1.25rem 0;
-  background: #059669;
-  color: #047857; /* emerald-700 */
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.prose-nortex a:hover {
-  color: #059669;
-}
-.prose-nortex ul,
-.prose-nortex ol {
-  margin: 0 0 1rem 1.5rem;
-}
-.prose-nortex ul { list-style: disc; }
-.prose-nortex ol { list-style: decimal; }
-.prose-nortex li {
-  margin-bottom: 0.375rem;
-}
-.prose-nortex code {
-  background: #f1f5f9; /* slate-100 */
-  color: #0f172a;
-  padding: 0.1rem 0.35rem;
-  border-radius: 0.25rem;
-  font-size: 0.875em;
-  font-family: 'JetBrains Mono', ui-monospace, monospace;
-}
-/* Tablas (renderer GFM): scroll horizontal en móvil, divisores tenues. */
-.prose-nortex .prose-table-wrap {
-  overflow-x: auto;
-  margin: 1.5rem 0;
-  border: 1px solid #e2e8f0; /* slate-200 */
-  border-radius: 0.75rem;
-}
-.prose-nortex table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-.prose-nortex thead {
-  background: #f8fafc; /* slate-50 */
-}
-.prose-nortex th {
-  text-align: left;
-  font-weight: 700;
-  color: #334155; /* slate-700 */
-  padding: 0.75rem 1rem;
-  white-space: nowrap;
-}
-.prose-nortex td {
-  padding: 0.75rem 1rem;
-  border-top: 1px solid #f1f5f9; /* slate-100 */
-}
-/* CTA: una línea que es solo un enlace interno se muestra como botón. */
-.prose-nortex .prose-cta {
-  margin: 1.5rem 0;
-}
-.prose-nortex .prose-cta a {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  background: #059669; /* emerald-600 */
-  color: #fff;
-  font-weight: 700;
-  padding: 0.75rem 1.5rem;
-  border-radius: 0.5rem;
+  gap: var(--nx-2);
+  color: var(--nx-canvas-text);
+  font-family: var(--nx-font-display);
+  font-size: 19px;
+  font-weight: var(--nx-fw-semi);
+  letter-spacing: -.02em;
   text-decoration: none;
 }
-.prose-nortex a.blog-cta:hover {
-  background: #10b981; /* emerald-500 */
+
+.nx-auth-wordmark-mark {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--nx-r-control);
+  background: var(--nx-canvas-text);
+  color: var(--nx-canvas-raised);
+  font-size: var(--nx-fs-sm);
+  line-height: 1;
 }
-.prose-nortex .blog-table {
+
+.nx-auth-theme-toggle {
+  min-width: var(--nx-tap-min);
+  min-height: var(--nx-tap-min);
+  padding-inline: var(--nx-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nx-2);
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-canvas-text-rgb) / .06);
+  font-size: var(--nx-fs-sm);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1;
+  touch-action: manipulation;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-auth-stage {
+  min-height: calc(100dvh - var(--nx-tap-min));
+  padding: clamp(32px, 6vw, 72px) var(--nx-6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-auth-card {
+  width: min(100%, 420px);
+  padding: clamp(24px, 5vw, 36px);
+  border: 1px solid rgb(var(--nx-canvas-text-rgb) / .12);
+  border-radius: var(--nx-r-sheet);
+  background: var(--nx-canvas-raised);
+  box-shadow: var(--nx-shadow-subtle);
+}
+
+.nx-auth-card-regular {
+  width: min(100%, 520px);
+}
+
+.nx-auth-heading {
+  margin-bottom: var(--nx-8);
+  text-align: center;
+}
+
+.nx-auth-heading-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--nx-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-canvas-text);
+  color: var(--nx-canvas-raised);
+  font-family: var(--nx-font-display);
+  font-size: 20px;
+  font-weight: var(--nx-fw-bold);
+}
+
+.nx-auth-heading-icon-neutral {
+  border: 1px solid var(--nx-canvas-border);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-text);
+}
+
+.nx-auth-heading-icon-success {
+  border: 1px solid var(--nx-positive-border);
+  background: var(--nx-positive-bg);
+  color: var(--nx-positive);
+}
+
+.nx-auth-heading-icon-danger {
+  border: 1px solid var(--nx-danger-border);
+  background: var(--nx-danger-bg);
+  color: var(--nx-danger);
+}
+
+.nx-auth-heading h1 {
+  margin: 0;
+  color: var(--nx-canvas-text);
+  font-family: var(--nx-font-display);
+  font-size: clamp(28px, 5vw, 36px);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.nx-auth-heading p {
+  max-width: 36ch;
+  margin: var(--nx-3) auto 0;
+  color: var(--nx-canvas-muted);
+  font-size: 15px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.nx-auth-heading strong,
+.nx-auth-state strong {
+  color: var(--nx-canvas-text);
+  font-weight: var(--nx-fw-semi);
+}
+
+.nx-auth-form {
+  display: grid;
+  gap: 18px;
+}
+
+.nx-auth-field-group {
+  display: grid;
+  gap: var(--nx-2);
+}
+
+.nx-auth-field-group > label {
+  color: var(--nx-canvas-text);
+  font-size: var(--nx-fs-sm);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.3;
+}
+
+.nx-auth-label-optional,
+.nx-auth-field-hint,
+.nx-auth-help {
+  color: var(--nx-canvas-muted);
+  font-weight: var(--nx-fw-regular);
+}
+
+.nx-auth-field-hint,
+.nx-auth-field-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nx-auth-field-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--nx-1);
+}
+
+.nx-auth-field-error {
+  color: var(--nx-danger);
+}
+
+.nx-auth-field-valid {
+  color: var(--nx-positive);
+}
+
+.nx-auth-control-wrap {
+  position: relative;
+}
+
+.nx-auth-control {
+  width: 100%;
+  min-height: 48px;
+  padding: var(--nx-3) var(--nx-4);
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-control);
+  outline: none;
+  background: var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.35;
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast), background-color var(--nx-t-fast);
+}
+
+.nx-auth-control-with-icon {
+  padding-inline-start: 44px;
+}
+
+.nx-auth-control-with-action {
+  padding-inline-end: 52px;
+}
+
+.nx-auth-control-icon {
+  position: absolute;
+  inset-inline-start: var(--nx-4);
+  inset-block-start: 50%;
+  z-index: 1;
+  color: var(--nx-canvas-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.nx-auth-control-action {
+  position: absolute;
+  inset-inline-end: 2px;
+  inset-block-start: 50%;
+  width: var(--nx-tap-min);
+  height: var(--nx-tap-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--nx-r-control);
+  background: transparent;
+  color: var(--nx-canvas-muted);
+  transform: translateY(-50%);
+}
+
+.nx-auth-control::placeholder,
+.nx-auth-shell textarea::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-auth-shell :is(input, textarea, select):-webkit-autofill,
+.nx-auth-shell :is(input, textarea, select):-webkit-autofill:hover,
+.nx-auth-shell :is(input, textarea, select):-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+  box-shadow: 0 0 0 1000px var(--nx-canvas-raised) inset;
+}
+
+.nx-auth-control:focus,
+.nx-auth-control-wrap:focus-within .nx-auth-control {
+  border-color: var(--nx-auth-accent);
+  box-shadow: 0 0 0 3px rgb(var(--nx-canvas-text-rgb) / .12);
+}
+
+.nx-auth-control-wrap:focus-within .nx-auth-control-icon {
+  color: var(--nx-auth-accent);
+}
+
+.nx-auth-control-invalid,
+.nx-auth-control-invalid:focus {
+  border-color: var(--nx-danger);
+}
+
+.nx-auth-control-valid {
+  border-color: var(--nx-positive-border);
+}
+
+.nx-auth-control-readonly {
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-muted);
+  cursor: not-allowed;
+}
+
+.nx-auth-primary,
+.nx-auth-secondary,
+.nx-auth-back-link {
+  min-height: var(--nx-tap-min);
+  padding: 10px 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nx-2);
+  border-radius: var(--nx-r-pill);
+  font-size: 15px;
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  touch-action: manipulation;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast), opacity var(--nx-t-fast);
+}
+
+.nx-auth-primary {
+  width: 100%;
+  border: 1px solid var(--nx-auth-accent);
+  background: var(--nx-auth-accent);
+  color: var(--nx-auth-on-accent);
+  box-shadow: 0 1px 2px rgb(var(--nx-canvas-text-rgb) / .12);
+}
+
+.nx-auth-secondary {
+  width: 100%;
+  border: 1px solid var(--nx-canvas-border);
+  background: var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+}
+
+.nx-auth-back-link {
+  width: 100%;
+  padding-block: var(--nx-2);
+  color: var(--nx-canvas-muted);
+}
+
+.nx-auth-primary:disabled {
+  border-color: var(--nx-canvas-border);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-faint);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.nx-auth-alert {
+  min-height: var(--nx-tap-min);
+  margin-bottom: var(--nx-6);
+  padding: var(--nx-3) var(--nx-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nx-2);
+  border: 1px solid;
+  border-radius: var(--nx-r-control);
+  font-size: var(--nx-fs-sm);
+  line-height: 1.45;
+}
+
+.nx-auth-alert > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.nx-auth-alert-danger {
+  border-color: var(--nx-danger-border);
+  background: var(--nx-danger-bg);
+  color: var(--nx-danger);
+}
+
+.nx-auth-alert-warning {
+  border-color: var(--nx-warning-border);
+  background: var(--nx-warning-bg);
+  color: var(--nx-warning);
+}
+
+.nx-auth-form-link-row {
+  min-height: var(--nx-tap-min);
+  margin-block: calc(var(--nx-2) * -1);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.nx-auth-link {
+  color: var(--nx-auth-accent);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: .2em;
+  transition: color var(--nx-t-fast), text-decoration-color var(--nx-t-fast);
+}
+
+.nx-auth-form-link-row .nx-auth-link,
+.nx-auth-link-prominent {
+  min-height: var(--nx-tap-min);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nx-1);
+}
+
+.nx-auth-footer {
+  margin-top: var(--nx-8);
+  padding-top: var(--nx-6);
+  border-top: 1px solid var(--nx-canvas-border);
+  color: var(--nx-canvas-muted);
+  font-size: var(--nx-fs-sm);
+  text-align: center;
+}
+
+.nx-auth-footer p {
+  margin: 0;
+}
+
+.nx-auth-footer-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nx-2);
+}
+
+.nx-auth-legal {
+  margin: 0;
+  color: var(--nx-canvas-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.nx-auth-details {
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-card);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-text);
+  font-size: var(--nx-fs-sm);
+}
+
+.nx-auth-details summary {
+  min-height: var(--nx-tap-min);
+  padding: var(--nx-3) var(--nx-4);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: var(--nx-fw-semi);
+  user-select: none;
+}
+
+.nx-auth-details fieldset {
+  margin: 0;
+  padding: var(--nx-4);
+  border: 0;
+  border-top: 1px solid var(--nx-canvas-border);
+}
+
+.nx-auth-help {
+  margin: 0 0 var(--nx-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nx-auth-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--nx-2);
+}
+
+.nx-auth-check-row {
+  min-height: var(--nx-tap-min);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nx-2);
+  color: var(--nx-canvas-muted);
+  cursor: pointer;
+  font-size: var(--nx-fs-sm);
+  line-height: 1.4;
+}
+
+.nx-auth-check-row input {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+  accent-color: var(--nx-auth-accent);
+}
+
+.nx-auth-state {
+  display: grid;
+  gap: var(--nx-4);
+  color: var(--nx-canvas-muted);
+  font-size: 15px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.nx-auth-state p,
+.nx-auth-state-message {
+  margin: 0;
+}
+
+.nx-auth-state-message {
+  color: var(--nx-canvas-muted);
+  font-size: 15px;
+  text-align: center;
+}
+
+.nx-auth-note {
+  padding: var(--nx-3) var(--nx-4);
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-control);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-muted);
+  font-size: 12px;
+}
+
+:where(
+  .nx-auth-skip-link,
+  .nx-auth-wordmark,
+  .nx-auth-theme-toggle,
+  .nx-auth-control-action,
+  .nx-auth-primary,
+  .nx-auth-secondary,
+  .nx-auth-back-link,
+  .nx-auth-link,
+  .nx-auth-details summary,
+  .nx-auth-check-row input
+):focus-visible {
+  outline: 3px solid var(--nx-auth-accent);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) {
+  .nx-auth-theme-toggle:hover,
+  .nx-auth-secondary:hover {
+    background: var(--nx-canvas-subtle);
+  }
+
+  .nx-auth-primary:hover {
+    filter: brightness(.94);
+  }
+
+  .nx-auth-back-link:hover,
+  .nx-auth-link:hover {
+    color: var(--nx-canvas-text);
+    text-decoration-color: currentColor;
+  }
+}
+
+@media (max-width: 640px) {
+  .nx-auth-nav-inner {
+    padding-inline: var(--nx-4);
+  }
+
+  .nx-auth-stage {
+    min-height: calc(100dvh - var(--nx-tap-min));
+    padding: var(--nx-6) var(--nx-4) max(var(--nx-6), env(safe-area-inset-bottom));
+    align-items: flex-start;
+  }
+
+  .nx-auth-card {
+    padding: var(--nx-6) var(--nx-4);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-auth-heading {
+    margin-bottom: var(--nx-6);
+  }
+
+  .nx-auth-capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nx-auth-footer-inline {
+    flex-direction: column;
+    gap: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-auth-shell *,
+  .nx-auth-shell *::before,
+  .nx-auth-shell *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ==========================================
+   EXPERIENCIA PÚBLICA · LECTURA EDITORIAL
+   ==========================================
+   El renderer Markdown emite clases semánticas tanto para React como para el
+   HTML SEO. `.prose-nortex` solo declara contexto: nunca selecciona enlaces ni
+   botones descendientes, evitando la regresión de texto verde sobre CTA verde. */
+
+.nx-public-page {
+  min-height: 100dvh;
+  min-height: 100dvh;
+  color-scheme: light;
+  background: var(--nx-public-canvas);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.nx-public-page[data-nx-theme='dark'] {
+  color-scheme: dark;
+}
+
+.nx-public-page::selection,
+.nx-public-reading::selection,
+.prose-nortex::selection {
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-text);
+}
+
+.nx-public-nav {
+  color: var(--nx-public-text);
+  background: rgb(var(--nx-public-surface-rgb) / .9);
+  border-color: rgb(var(--nx-public-text-rgb) / .12);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.nx-public-surface {
+  background: var(--nx-public-surface);
+  color: var(--nx-public-text);
+  border-color: var(--nx-public-border);
+}
+
+.nx-public-card {
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .12);
+  border-radius: var(--nx-r-card);
+  box-shadow: var(--nx-public-shadow);
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-public-reading,
+.prose-nortex {
+  color: var(--nx-public-text-secondary);
+  font-family: var(--nx-font);
+  font-size: clamp(1rem, .98rem + .15vw, 1.0625rem);
+  line-height: 1.76;
+  letter-spacing: -.008em;
+  text-wrap: pretty;
+}
+
+.nx-public-muted {
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-public-subtle {
+  color: var(--nx-public-text-subtle);
+}
+
+.nx-public-link {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-decoration-color: rgb(var(--nx-public-accent-rgb) / .42);
+  text-decoration-thickness: .08em;
+  text-underline-offset: .2em;
+  transition: color var(--nx-t-fast), text-decoration-color var(--nx-t-fast);
+}
+
+.nx-public-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid rgb(var(--nx-public-accent-rgb) / .22);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-accent-text);
+  font-size: var(--nx-fs-label);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+}
+
+.nx-public-primary,
+.nx-public-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--nx-tap-min);
+  padding: 10px 18px;
+  border-radius: var(--nx-r-control);
+  font-family: var(--nx-font);
+  font-size: .9375rem;
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-public-primary {
+  border: 1px solid rgb(var(--nx-public-primary-rgb) / .3);
+  background: var(--nx-public-primary-fill);
+  color: var(--nx-public-on-primary);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .14);
+}
+
+.nx-public-secondary {
+  border: 1px solid var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .05);
+}
+
+/* La calculadora vive dentro de los artículos, por lo que comparte el mismo
+   canvas y evita reintroducir controles blancos con texto gris tenue. */
+.nx-public-calculator {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface);
+  color: var(--nx-public-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .04);
+}
+
+.nx-public-calculator-icon {
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-accent-text);
+}
+
+.nx-public-field {
+  min-height: 48px;
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  caret-color: var(--nx-public-text);
+  font-size: 16px;
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-public-field::placeholder,
+.nx-public-field input::placeholder {
+  color: var(--nx-public-text-subtle);
+  opacity: 1;
+}
+
+.nx-public-field:focus,
+.nx-public-field:focus-within {
+  border-color: var(--nx-public-accent-text);
+  box-shadow: 0 0 0 3px rgb(var(--nx-public-primary-rgb) / .22);
+}
+
+.nx-public-field:-webkit-autofill,
+.nx-public-field:-webkit-autofill:hover,
+.nx-public-field:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--nx-public-text);
+  caret-color: var(--nx-public-text);
+  box-shadow: 0 0 0 1000px var(--nx-public-surface-raised) inset;
+}
+
+.nx-public-calculator-results {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+}
+
+.nx-public-calculator-result + .nx-public-calculator-result {
+  border-top: 1px solid rgb(var(--nx-public-text-rgb) / .1);
+}
+
+.nx-public-calculator-result-strong {
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text);
+}
+
+:where(.nx-public-link, .nx-public-primary, .nx-public-secondary):focus-visible {
+  outline: 3px solid rgb(var(--nx-public-primary-rgb) / .62);
+  outline-offset: 3px;
+}
+
+.nx-public-brand:focus-visible,
+.nx-public-theme-toggle:focus-visible,
+.nx-public-field:focus-visible {
+  outline: 3px solid rgb(var(--nx-public-primary-rgb) / .62);
+  outline-offset: 3px;
+}
+
+.nx-public-card:focus-visible,
+.nx-prose-table-wrap:focus-visible {
+  outline: 3px solid rgb(var(--nx-public-primary-rgb) / .62);
+  outline-offset: 3px;
+}
+
+.nx-public-primary:disabled,
+.nx-public-secondary:disabled {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text-subtle);
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.nx-public-theme-toggle {
+  display: inline-flex;
+  min-height: var(--nx-tap-min);
+  min-width: var(--nx-tap-min);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: 0 .85rem;
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .14);
+  border-radius: var(--nx-r-pill);
+  background: rgb(var(--nx-public-surface-raised-rgb) / .88);
+  color: var(--nx-public-text);
+  box-shadow: var(--nx-public-shadow);
+  cursor: pointer;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.nx-public-theme-toggle-label {
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.nx-public-preview-card {
+  border-color: rgb(var(--nx-public-text-rgb) / .1);
+  background: rgb(var(--nx-public-canvas-rgb) / .62);
+}
+
+.nx-public-preview-header {
+  border-color: rgb(var(--nx-public-text-rgb) / .1);
+}
+
+@media (hover: hover) {
+  .nx-public-card:hover {
+    border-color: rgb(var(--nx-public-accent-rgb) / .28);
+    box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .05), 0 14px 38px rgb(var(--nx-public-accent-rgb) / .08);
+  }
+
+  .nx-public-link:hover {
+    color: var(--nx-public-accent-hover);
+    text-decoration-color: currentColor;
+  }
+
+  .nx-public-primary:hover {
+    background: var(--nx-public-primary-hover);
+    color: var(--nx-public-on-primary);
+  }
+
+  .nx-public-secondary:hover {
+    border-color: rgb(var(--nx-public-text-rgb) / .24);
+    background: var(--nx-public-surface);
+    color: var(--nx-public-text);
+  }
+
+  .nx-public-theme-toggle:hover {
+    border-color: rgb(var(--nx-public-text-rgb) / .24);
+    background: var(--nx-public-surface);
+  }
+}
+
+@media (max-width: 520px) {
+  .nx-public-theme-toggle-label {
+    display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .nx-public-brand-wordmark {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-public-page *,
+  .nx-public-page *::before,
+  .nx-public-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* El fallback lazy y el HTML SEO tienen el mismo canvas que la ruta hidratada;
+   no hay fogonazo blanco ni salto al fondo oscuro durante la navegación. */
+.nx-public-loading,
+.nx-public-prerender {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  background: var(--nx-public-canvas);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font);
+}
+
+.nx-public-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--nx-public-text-secondary);
+  font-weight: var(--nx-fw-medium);
+}
+
+.nx-public-prerender {
+  width: 100%;
+  padding-block: clamp(32px, 7vw, 72px);
+  padding-inline: max(24px, calc((100vw - 820px) / 2));
+  font-size: 1rem;
+  line-height: 1.72;
+}
+
+/* Algunos hubs SEO aún contienen nodos crudos. Solo se seleccionan nodos SIN
+   clase: el renderer Markdown y los CTAs semánticos quedan fuera por contrato. */
+.nx-public-prerender :where(h1:not([class])) {
+  margin: 0 0 24px;
+  color: var(--nx-public-text);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: var(--nx-fw-bold);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.nx-public-prerender :where(h2:not([class])) {
+  margin: 36px 0 14px;
+  color: var(--nx-public-text);
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+
+.nx-public-prerender :where(p:not([class]), li:not([class])) {
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-public-prerender :where(ul:not([class]), ol:not([class])) {
+  margin: 0 0 24px;
+  padding-left: 24px;
+}
+
+.nx-public-prerender :where(li:not([class])) {
+  margin-bottom: 8px;
+}
+
+.nx-public-prerender :where(a:not([class])) {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.nx-public-prerender :where(nav:not([class])) {
+  margin-top: 48px;
+  padding-top: 28px;
+  border-top: 1px solid var(--nx-public-border);
+}
+
+/* Jerarquía única del cuerpo del post, compartida por React y prerender. */
+.nx-prose-heading {
+  scroll-margin-top: 96px;
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-bold);
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+
+.nx-prose-heading-2 {
+  margin: 40px 0 16px;
+  font-size: clamp(1.5rem, 1.35rem + .6vw, 1.8rem);
+  line-height: 1.22;
+}
+
+.nx-prose-heading-3 {
+  margin: 28px 0 12px;
+  font-size: clamp(1.2rem, 1.12rem + .3vw, 1.35rem);
+  line-height: 1.3;
+}
+
+.nx-prose-paragraph {
+  margin: 0 0 18px;
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-prose-strong {
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-bold);
+}
+
+.nx-prose-code {
+  padding: 2px 6px;
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .1);
+  border-radius: 6px;
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font-mono);
+  font-size: .875em;
+}
+
+.nx-prose-list {
+  margin: 0 0 20px;
+  padding-left: 24px;
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-prose-list-unordered {
+  list-style: disc;
+}
+
+.nx-prose-list-ordered {
+  list-style: decimal;
+}
+
+.nx-prose-list-item {
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.nx-prose-list-item::marker {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+}
+
+.nx-prose-quote {
+  margin: 24px 0;
+  padding: 16px 18px;
+  border-inline-start: 4px solid var(--nx-public-accent-text);
+  border-radius: 0 var(--nx-r-control) var(--nx-r-control) 0;
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-text-secondary);
+  font-style: normal;
+}
+
+.nx-prose-table-wrap {
+  max-width: 100%;
+  margin: 24px 0;
+  overflow-x: auto;
+  border: 1px solid var(--nx-public-border);
+  border-radius: var(--nx-r-card);
+  background: var(--nx-public-surface-raised);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .04);
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-prose-table {
   width: 100%;
   border-collapse: collapse;
-  margin: 1.25rem 0;
-  font-size: 0.95rem;
+  font-size: .925rem;
 }
-.prose-nortex .blog-table th,
-.prose-nortex .blog-table td {
-  border: 1px solid #e2e8f0; /* slate-200 */
-  padding: 0.5rem 0.75rem;
+
+.nx-prose-table-head {
+  background: var(--nx-public-surface);
+}
+
+.nx-prose-table-heading {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--nx-public-border);
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-semi);
   text-align: left;
+  white-space: nowrap;
 }
-.prose-nortex .blog-table thead th {
-  background: #f1f5f9; /* slate-100 */
-  color: #0f172a;
-  font-weight: 700;
+
+.nx-prose-table-row-alt {
+  background: rgb(var(--nx-public-canvas-rgb) / .52);
 }
-.prose-nortex .blog-table tbody tr:nth-child(even) {
-  background: #f8fafc; /* slate-50 */
-  transition: background-color 0.15s ease;
+
+.nx-prose-table-cell {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgb(var(--nx-public-text-rgb) / .08);
+  color: var(--nx-public-text-secondary);
+  text-align: left;
+  vertical-align: top;
 }
-.prose-nortex .prose-cta a:hover {
-  background: #10b981; /* emerald-500 */
-  color: #fff;
+
+.nx-prose-table tbody tr:last-child .nx-prose-table-cell {
+  border-bottom: 0;
+}
+
+.nx-prose-cta {
+  margin: 28px 0;
+}
+
+@media (max-width: 640px) {
+  .nx-public-prerender {
+    padding-inline: 20px;
+  }
+
+  .nx-prose-cta .nx-public-primary {
+    width: 100%;
+  }
+
+  .nx-prose-table-heading,
+  .nx-prose-table-cell {
+    min-width: 148px;
+    padding: 10px 12px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nx-public-card,
+  .nx-public-surface,
+  .nx-prose-table-wrap {
+    border-color: var(--nx-public-text-subtle);
+  }
+}
+
+/* ==========================================
+   CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS
+   ==========================================
+   Tailwind conserva nombres heredados, pero varios aliases (`blue`,
+   `emerald`, `orange`, `rose`) se resuelven a las rampas semánticas de
+   Nortex. Blanco sobre sus tonos claros no alcanza AA. Estas reglas usan
+   selectores exactos y sólo para rellenos opacos: no modifican fondos con
+   `/opacidad`, superficies oscuras ni tarjetas. Además producen la tinta que
+   el bridge Día hereda a un icono o texto hijo del mismo control.
+
+   Cuando se agregue una combinación nueva de relleno + `text-white`, medirla
+   y sumarla al contrato o usar desde el componente la tinta semántica
+   correspondiente. La prueba frontendColorSemantics mantiene la matriz. */
+
+/* Útil para iconos hijos de un relleno ámbar cuando el color vive en el SVG
+   y no en el botón/contenedor que recibe `bg-amber-*`. */
+.nx-on-warning-solid {
+  color: var(--nx-on-warning-solid);
+}
+
+/* La variable hace que un SVG o span hijo no vuelva a heredar blanco dentro
+   de un relleno semántico. El color directo sigue protegido abajo con
+   `!important` frente a las utilidades heredadas de Tailwind. */
+.nx-apple-light-workspace :where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-brand);
+  --nx-legacy-white-muted-ink: var(--nx-on-brand);
+  --nx-context-ink: var(--nx-on-brand);
+  --nx-context-muted-ink: var(--nx-on-brand);
+}
+
+.nx-apple-light-workspace :where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-danger-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-danger-solid);
+  --nx-context-ink: var(--nx-on-danger-solid);
+  --nx-context-muted-ink: var(--nx-on-danger-solid);
+}
+
+.nx-apple-light-workspace :where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-warning-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-warning-solid);
+  --nx-context-ink: var(--nx-on-warning-solid);
+  --nx-context-muted-ink: var(--nx-on-warning-solid);
+}
+
+.nx-apple-light-workspace [class~="bg-sky-600"] {
+  --nx-legacy-white-ink: var(--nx-on-info-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-info-solid);
+  --nx-context-ink: var(--nx-on-info-solid);
+  --nx-context-muted-ink: var(--nx-on-info-solid);
+}
+
+/* Marca, aliases verdes y WhatsApp: el 700 todavía requiere tinta oscura. */
+:where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+/* Destructivo: rojo canónico 500 y aliases danger/rose. */
+:where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+/* Atención: amber canónico claro y aliases warning/orange. */
+:where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Info conserva sky separado de blue: sky-600 aún necesita tinta oscura. */
+[class~="bg-sky-600"]:is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-info-solid) !important;
+}
+
+/* El estado hover puede cruzar de un tono seguro a uno claro, o viceversa. */
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-brand);
+  --nx-legacy-white-muted-ink: var(--nx-on-brand);
+  --nx-context-ink: var(--nx-on-brand);
+  --nx-context-muted-ink: var(--nx-on-brand);
+}
+
+:where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-danger-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-danger-solid);
+  --nx-context-ink: var(--nx-on-danger-solid);
+  --nx-context-muted-ink: var(--nx-on-danger-solid);
+}
+
+:where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-warning-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-warning-solid);
+  --nx-context-ink: var(--nx-on-warning-solid);
+  --nx-context-muted-ink: var(--nx-on-warning-solid);
+}
+
+:where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Estos hover pasan a un tono oscuro y recuperan tinta blanca. */
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-ticket-text);
+  --nx-legacy-white-muted-ink: var(--nx-ticket-muted);
+  --nx-context-ink: var(--nx-ticket-text);
+  --nx-context-muted-ink: var(--nx-ticket-muted);
+}
+
+:where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: #FFFFFF !important;
 }

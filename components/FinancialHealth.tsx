@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { formatMoney } from '../utils/money';
 import {
-    TrendingUp, TrendingDown, DollarSign, Shield, Target, BarChart3, PieChart,
-    ArrowUpRight, ArrowDownRight, Loader2, RefreshCw, AlertTriangle, CheckCircle,
+    TrendingUp, DollarSign, Target, BarChart3, PieChart,
+    ArrowUpRight, ArrowDownRight, Loader2, RefreshCw, AlertTriangle,
     Landmark, Scale
 } from 'lucide-react';
 
@@ -14,12 +14,6 @@ interface FinancialData {
         liquidityRatio: number;
         debtToEquity: number;
         netMargin: number;
-    };
-    score: {
-        value: number;
-        rating: string;
-        creditLimit: number;
-        factors: string[];
     };
     balance: {
         assets: { code: string; name: string; balance: number }[];
@@ -74,32 +68,6 @@ const FinancialHealth: React.FC = () => {
     // permitía un tercero y la misma cifra se veía distinta según el monto.
     const formatC = (n: number) => formatMoney(n);
 
-    const getScoreColor = (score: number) => {
-        if (score >= 800) return 'text-emerald-500';
-        if (score >= 670) return 'text-blue-500';
-        if (score >= 500) return 'text-amber-500';
-        return 'text-red-500';
-    };
-
-    const getScoreGradient = (score: number) => {
-        if (score >= 800) return 'from-emerald-500 to-green-600';
-        if (score >= 670) return 'from-blue-500 to-indigo-600';
-        if (score >= 500) return 'from-amber-500 to-orange-600';
-        return 'from-red-500 to-rose-600';
-    };
-
-    const getRatingBadge = (rating: string) => {
-        const colors: Record<string, string> = {
-            'AAA': 'bg-emerald-500/15 text-emerald-400 border-emerald-500/20',
-            'AA': 'bg-blue-500/15 text-blue-400 border-blue-500/20',
-            'A': 'bg-sky-500/15 text-sky-400 border-sky-500/20',
-            'B': 'bg-amber-500/15 text-amber-400 border-amber-500/20',
-            'C': 'bg-orange-500/15 text-orange-400 border-orange-500/20',
-            'D': 'bg-red-500/15 text-red-400 border-red-500/20',
-        };
-        return colors[rating] || 'bg-white/[0.04] text-slate-200';
-    };
-
     if (loading) {
         return (
             <div className="flex items-center justify-center h-full bg-surface-800/40">
@@ -119,8 +87,6 @@ const FinancialHealth: React.FC = () => {
             </div>
         );
     }
-
-    const scorePercent = ((data.score.value - 300) / 550) * 100;
 
     return (
         <div className="h-full overflow-y-auto bg-surface-800/40 p-6 custom-scrollbar">
@@ -167,51 +133,13 @@ const FinancialHealth: React.FC = () => {
                 />
             </div>
 
-            <div className="grid lg:grid-cols-3 gap-6">
-                {/* Nortex Score */}
-                <div className="lg:col-span-1 bg-surface-900 rounded-2xl border border-white/[0.06] p-6 shadow-sm">
-                    <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">
-                        <Shield size={16} /> Nortex Score
-                    </h2>
-                    <div className="text-center mb-4">
-                        <div className={`text-5xl font-black ${getScoreColor(data.score.value)}`}>
-                            {data.score.value}
-                        </div>
-                        <span className={`inline-block mt-2 px-3 py-1 rounded-full text-sm font-bold border ${getRatingBadge(data.score.rating)}`}>
-                            {data.score.rating}
-                        </span>
-                    </div>
-
-                    {/* Score Bar */}
-                    <div className="relative h-3 bg-white/[0.04] rounded-full overflow-hidden mb-4">
-                        <div
-                            className={`absolute left-0 top-0 h-full rounded-full bg-gradient-to-r ${getScoreGradient(data.score.value)} transition-all`}
-                            style={{ width: `${Math.min(scorePercent, 100)}%` }}
-                        />
-                    </div>
-                    <div className="flex justify-between text-xs text-slate-400 mb-4">
-                        <span>300</span><span>550</span><span>700</span><span>850</span>
-                    </div>
-
-                    <div className="text-sm text-slate-300 mb-3">
-                        <span className="font-medium">Línea de crédito: </span>
-                        <span className="font-bold text-emerald-400">{formatC(data.score.creditLimit)}</span>
-                    </div>
-
-                    <div className="space-y-1.5">
-                        {data.score.factors.slice(0, 5).map((f, i) => (
-                            <div key={i} className="text-xs text-slate-500 flex items-start gap-1.5">
-                                {f.includes('RIESGO') ? (
-                                    <AlertTriangle size={12} className="text-amber-500 flex-shrink-0 mt-0.5" />
-                                ) : (
-                                    <CheckCircle size={12} className="text-emerald-500 flex-shrink-0 mt-0.5" />
-                                )}
-                                {f}
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
+            {/* Acá vivía la tarjeta "Nortex Score" con su barra 300–850 y la
+                "Línea de crédito". Nortex no otorga crédito hoy, así que el
+                número no habilitaba nada: solo calificaba al dueño en su propia
+                pantalla. El score se sigue calculando y se consulta desde el
+                panel de SUPER_ADMIN. Lo que queda es lo que sí es suyo y sí
+                puede usar: balance, estado de resultados y los KPIs de arriba. */}
+            <div className="grid lg:grid-cols-2 gap-6">
                 {/* Balance General */}
                 <div className="lg:col-span-1 bg-surface-900 rounded-2xl border border-white/[0.06] p-6 shadow-sm">
                     <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider mb-4 flex items-center gap-2">

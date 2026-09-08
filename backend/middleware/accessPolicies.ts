@@ -74,6 +74,15 @@ export const CUSTOMER_CONTROL_ROLES = [
     'SUPER_ADMIN',
 ];
 
+/** Entrada al PUT; la autorización fina por grupo se aplica después. */
+export const CUSTOMER_UPDATE_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'VENDEDOR',
+];
+
 export type CustomerCreateIntent = {
     financialControls: boolean;
     sellerAssignment: boolean;
@@ -233,8 +242,7 @@ export const PROCUREMENT_MATCH_RESOLVE_ROLES = PURCHASE_PAYMENT_ROLES;
  *
  * Son datos sensibles de todo el negocio (incluyen saldos, deuda y obligaciones),
  * por lo que no heredan la lectura operativa de POS/CRM. SUPER_ADMIN se declara
- * de forma explicita aunque `checkRole` tambien lo verifica con su bypass
- * persistido, para que la politica siga siendo legible y testeable por si sola.
+ * de forma explícita aunque `checkRole` también preserve su bypass.
  */
 export const ACCOUNTING_READ_ROLES = [
     'OWNER',
@@ -301,3 +309,6 @@ export const QUOTATION_WRITE_ROLES = [
 
 /** Reportes y exportaciones fiscales que el contador prepara para DGI. */
 export const FISCAL_DGI_ROLES = ACCOUNTING_READ_ROLES;
+
+/** Alias de compatibilidad: el hub conserva los permisos financieros de cartera. */
+export const CUSTOMER_HUB_READ_ROLES = CUSTOMER_PORTFOLIO_READ_ROLES;

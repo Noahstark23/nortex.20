@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2, Landmark, Undo2 } from 'lucide-react';
+import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2, Landmark, Undo2, FileText } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
+import { openAuthenticatedPreview } from '../utils/authenticatedDownload';
+import { ToastViewport, useToast } from './ui/Toast';
 
 interface LiveShift {
     id: string;
@@ -51,6 +53,36 @@ interface ClosedShift {
     }[];
 }
 
+interface CloseReportReference {
+    id: string;
+    shiftId: string;
+    folio: string;
+    documentUrl: string;
+    generatedAt?: string;
+}
+
+const reportReferenceForShift = (shiftId: string, raw?: unknown): CloseReportReference => {
+    const report = raw && typeof raw === 'object'
+        ? raw as Partial<CloseReportReference>
+        : {};
+    const canonicalUrl = `/api/reports/shifts/${encodeURIComponent(shiftId)}/document`;
+    const safeDocumentUrl = typeof report.documentUrl === 'string'
+        && report.documentUrl.startsWith('/api/reports/shifts/')
+        && !report.documentUrl.includes('://')
+        ? report.documentUrl
+        : canonicalUrl;
+
+    return {
+        id: typeof report.id === 'string' && report.id ? report.id : shiftId,
+        shiftId: typeof report.shiftId === 'string' && report.shiftId ? report.shiftId : shiftId,
+        folio: typeof report.folio === 'string' && report.folio
+            ? report.folio
+            : `Z-${shiftId.slice(-8).toUpperCase()}`,
+        documentUrl: safeDocumentUrl,
+        ...(typeof report.generatedAt === 'string' ? { generatedAt: report.generatedAt } : {}),
+    };
+};
+
 const CashRegisters: React.FC = () => {
     const [activeShifts, setActiveShifts] = useState<LiveShift[]>([]);
     const [closedShifts, setClosedShifts] = useState<ClosedShift[]>([]);
@@ -59,10 +91,14 @@ const CashRegisters: React.FC = () => {
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
     const [selectedShift, setSelectedShift] = useState<ClosedShift | null>(null);
     const [error, setError] = useState<string | null>(null);
+    const [lastCloseReport, setLastCloseReport] = useState<CloseReportReference | null>(null);
+    const [openingReportId, setOpeningReportId] = useState<string | null>(null);
+    const { toast, showToast, dismissToast } = useToast();
 
     // Force Close Modal State
     const [shiftToClose, setShiftToClose] = useState<LiveShift | null>(null);
     const [closing, setClosing] = useState(false);
+    const [forceCloseError, setForceCloseError] = useState<string | null>(null);
     const [auditNotes, setAuditNotes] = useState('');
     const [declaredUsdForce, setDeclaredUsdForce] = useState('');
     const [denominations, setDenominations] = useState({
@@ -80,13 +116,34 @@ const CashRegisters: React.FC = () => {
         setDenominations(prev => ({ ...prev, [value]: Math.max(0, parsed) }));
     };
 
+    const token = localStorage.getItem('nortex_token');
+    const headers = { 'Authorization': `Bearer ${token}` };
+
+    const handleOpenReport = async (report: CloseReportReference) => {
+        setOpeningReportId(report.id);
+        try {
+            await openAuthenticatedPreview(report.documentUrl, { token });
+        } catch (reportError) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo abrir el reporte Z',
+                message: reportError instanceof Error
+                    ? reportError.message
+                    : 'Intentá nuevamente en unos segundos.',
+            });
+        } finally {
+            setOpeningReportId(null);
+        }
+    };
+
     const handleForceClose = async () => {
         if (!shiftToClose) return;
         setClosing(true);
+        setForceCloseError(null);
         const finalCashDeclared = calculateTotalDeclared();
 
         try {
-            const res = await fetch(`/api/shifts/close`, {
+            const res = await fetch('/api/shifts/close', {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
@@ -99,26 +156,42 @@ const CashRegisters: React.FC = () => {
                     auditNotes
                 })
             });
-
-            if (res.ok) {
-                setShiftToClose(null);
-                setDenominations({ 1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 });
-                setAuditNotes('');
-                setDeclaredUsdForce('');
-                fetchMonitor();
-            } else {
-                const data = await res.json();
-                alert(data.error || 'Error al cerrar la caja');
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) {
+                throw new Error(typeof data.error === 'string' ? data.error : 'Error al cerrar la caja');
             }
-        } catch (err) {
-            alert('Error de conexión al cerrar la caja');
+
+            const closeReport = reportReferenceForShift(shiftToClose.id, data.closeReport);
+            setLastCloseReport(closeReport);
+            setShiftToClose(null);
+            setDenominations({ 1000: 0, 500: 0, 200: 0, 100: 0, 50: 0, 20: 0, 10: 0, 5: 0, 1: 0 });
+            setAuditNotes('');
+            setDeclaredUsdForce('');
+            showToast({
+                tone: 'success',
+                title: 'Caja cerrada y reporte Z listo',
+                message: `Folio ${closeReport.folio}. Podés abrirlo ahora o desde el historial.`,
+                durationMs: 10_000,
+                action: {
+                    label: 'Ver / imprimir reporte Z',
+                    onClick: () => { void handleOpenReport(closeReport); },
+                },
+            });
+            void fetchMonitor();
+        } catch (closeError) {
+            const message = closeError instanceof Error
+                ? closeError.message
+                : 'Error de conexión al cerrar la caja';
+            setForceCloseError(message);
+            showToast({
+                tone: 'error',
+                title: 'No se pudo cerrar la caja',
+                message,
+            });
         } finally {
             setClosing(false);
         }
     };
-
-    const token = localStorage.getItem('nortex_token');
-    const headers = { 'Authorization': `Bearer ${token}` };
 
     // ── 🏦 Agente Bancario — conciliación (Fase B) ──
     const [agentAgreements, setAgentAgreements] = useState<any[]>([]);
@@ -371,6 +444,36 @@ const CashRegisters: React.FC = () => {
 
             <div className="mx-auto w-full max-w-[1600px] space-y-8 p-4 sm:p-6 lg:p-8">
 
+                {lastCloseReport && (
+                    <section
+                        aria-label="Último reporte Z generado"
+                        className="flex flex-col gap-4 rounded-card border border-emerald-200 bg-emerald-50 p-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                        <div className="flex min-w-0 items-start gap-3">
+                            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-emerald-100 text-emerald-700">
+                                <CheckCircle size={21} aria-hidden="true" />
+                            </div>
+                            <div className="min-w-0">
+                                <p className="font-bold text-emerald-900">Último cierre completado</p>
+                                <p className="text-sm text-emerald-800">
+                                    Reporte Z <span className="font-mono font-semibold">{lastCloseReport.folio}</span> listo para revisión o impresión.
+                                </p>
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => { void handleOpenReport(lastCloseReport); }}
+                            disabled={openingReportId === lastCloseReport.id}
+                            className="nx-fluid-press inline-flex min-h-tap items-center justify-center gap-2 rounded-control bg-emerald-600 px-4 py-2 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
+                        >
+                            {openingReportId === lastCloseReport.id
+                                ? <Loader2 className="animate-spin" size={17} aria-hidden="true" />
+                                : <Printer size={17} aria-hidden="true" />}
+                            Ver / imprimir reporte Z
+                        </button>
+                    </section>
+                )}
+
                 {/* ====== ZONA 1: CAJAS ACTIVAS (LIVE MONITOR) ====== */}
                 <section>
                     <div className="flex items-center gap-2 mb-4">
@@ -490,7 +593,11 @@ const CashRegisters: React.FC = () => {
                                             <span>{shift.lastSaleAt ? `Última venta: ${timeAgo(shift.lastSaleAt)}` : 'Sin ventas'}</span>
                                         </div>
                                         <button
-                                            onClick={() => setShiftToClose(shift)}
+                                            type="button"
+                                            onClick={() => {
+                                                setForceCloseError(null);
+                                                setShiftToClose(shift);
+                                            }}
                                             className="nx-fluid-press flex min-h-tap items-center gap-1.5 rounded-control border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-bold text-red-700 transition-colors hover:bg-red-100"
                                         >
                                             <Lock size={14} /> Forzar Cierre
@@ -734,14 +841,14 @@ const CashRegisters: React.FC = () => {
                                             <th className="px-4 py-3 text-right text-xs font-bold uppercase text-slate-600">Declarado</th>
                                             <th className="px-4 py-3 text-right text-xs font-bold uppercase text-slate-600">Diferencia</th>
                                             <th className="px-4 py-3 text-center text-xs font-bold uppercase text-slate-600">Estado</th>
+                                            <th className="px-4 py-3 text-right text-xs font-bold uppercase text-slate-600">Acciones</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-slate-200">
                                         {closedShifts.map(shift => (
                                             <tr
                                                 key={shift.id}
-                                                onClick={() => setSelectedShift(shift)}
-                                                className="cursor-pointer transition-colors hover:bg-slate-50"
+                                                className="transition-colors hover:bg-slate-50"
                                             >
                                                 <td className="px-4 py-3">
                                                     <p className="font-medium text-slate-800">{formatDate(shift.endTime)}</p>
@@ -770,6 +877,30 @@ const CashRegisters: React.FC = () => {
                                                     {shift.status === 'WARNING' && <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-800"><AlertTriangle size={10} /> Rev</span>}
                                                     {shift.status === 'ALERT' && <span className="inline-flex animate-pulse items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-bold text-red-800"><AlertTriangle size={10} /> </span>}
                                                 </td>
+                                                <td className="px-4 py-3">
+                                                    <div className="flex justify-end gap-2">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setSelectedShift(shift)}
+                                                            className="nx-fluid-press inline-flex min-h-tap items-center gap-1.5 rounded-control border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 transition-colors hover:bg-slate-100"
+                                                            aria-label={`Ver detalle del cierre de ${shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : shift.user.name}`}
+                                                        >
+                                                            <FileText size={14} aria-hidden="true" /> Detalle
+                                                        </button>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => { void handleOpenReport(reportReferenceForShift(shift.id)); }}
+                                                            disabled={openingReportId === shift.id}
+                                                            className="nx-fluid-press inline-flex min-h-tap items-center gap-1.5 rounded-control border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-bold text-emerald-800 transition-colors hover:bg-emerald-100 disabled:cursor-wait disabled:opacity-60"
+                                                            aria-label={`Ver o imprimir reporte Z del cierre de ${shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : shift.user.name}`}
+                                                        >
+                                                            {openingReportId === shift.id
+                                                                ? <Loader2 className="animate-spin" size={14} aria-hidden="true" />
+                                                                : <Printer size={14} aria-hidden="true" />}
+                                                            Reporte Z
+                                                        </button>
+                                                    </div>
+                                                </td>
                                             </tr>
                                         ))}
                                     </tbody>
@@ -783,12 +914,18 @@ const CashRegisters: React.FC = () => {
             {/* ====== DETAIL SLIDE-OUT ====== */}
             {selectedShift && (
                 <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex justify-end" onClick={() => setSelectedShift(null)}>
-                    <div className="nx-light-context nx-workspace h-full w-full max-w-md overflow-y-auto bg-slate-50 shadow-2xl" onClick={e => e.stopPropagation()}>
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="cash-register-detail-title"
+                        className="nx-light-context nx-workspace h-full w-full max-w-md overflow-y-auto bg-slate-50 shadow-2xl"
+                        onClick={e => e.stopPropagation()}
+                    >
                         {/* Detail Header */}
                         <div className="sticky top-0 border-b border-slate-200 bg-white/95 p-6 backdrop-blur-xl">
                             <div className="flex items-center justify-between mb-4">
-                                <h3 className="text-lg font-bold text-slate-950">Detalle de Cierre</h3>
-                                <button onClick={() => setSelectedShift(null)} className="nx-fluid-press inline-flex min-h-tap min-w-tap items-center justify-center rounded-full p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-950">
+                                <h3 id="cash-register-detail-title" className="text-lg font-bold text-slate-950">Detalle de Cierre</h3>
+                                <button type="button" onClick={() => setSelectedShift(null)} className="nx-fluid-press inline-flex min-h-tap min-w-tap items-center justify-center rounded-full p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Cerrar detalle del cierre">
                                     <X size={20} />
                                 </button>
                             </div>
@@ -805,6 +942,18 @@ const CashRegisters: React.FC = () => {
 
                         {/* Detail Body */}
                         <div className="p-6 space-y-6">
+                            <button
+                                type="button"
+                                onClick={() => { void handleOpenReport(reportReferenceForShift(selectedShift.id)); }}
+                                disabled={openingReportId === selectedShift.id}
+                                className="nx-fluid-press inline-flex min-h-tap w-full items-center justify-center gap-2 rounded-control bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white transition-colors hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                {openingReportId === selectedShift.id
+                                    ? <Loader2 className="animate-spin" size={18} aria-hidden="true" />
+                                    : <Printer size={18} aria-hidden="true" />}
+                                Ver / imprimir reporte Z completo
+                            </button>
+
                             {/* Difference Card */}
                             <div className={`rounded-card border p-4 text-center ${selectedShift.status === 'PERFECT' ? 'border-emerald-200 bg-emerald-50' :
                                 selectedShift.status === 'WARNING' ? 'border-amber-200 bg-amber-50' : 'border-red-200 bg-red-50'
@@ -913,7 +1062,12 @@ const CashRegisters: React.FC = () => {
             {/* ====== MODAL: FORZAR CIERRE DE CAJA (Calculadora de Denominaciones) ====== */}
             {shiftToClose && (
                 <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="nx-light-context flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-card border border-slate-200 bg-white shadow-2xl">
+                    <div
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="force-close-title"
+                        className="nx-light-context flex max-h-[90dvh] w-full max-w-2xl flex-col overflow-hidden rounded-card border border-slate-200 bg-white shadow-2xl"
+                    >
                         {/* Modal Header */}
                         <div className="flex items-center justify-between border-b border-slate-200 bg-white px-6 py-4">
                             <div className="flex items-center gap-3">
@@ -921,13 +1075,22 @@ const CashRegisters: React.FC = () => {
                                     <Lock size={20} />
                                 </div>
                                 <div>
-                                    <h3 className="text-lg font-bold text-slate-950">Forzar Cierre de Caja</h3>
+                                    <h3 id="force-close-title" className="text-lg font-bold text-slate-950">Forzar Cierre de Caja</h3>
                                     <p className="text-xs text-slate-500 flex items-center gap-1">
                                         <User size={12} /> Cajero: {shiftToClose.employee ? `${shiftToClose.employee.firstName} ${shiftToClose.employee.lastName}` : shiftToClose.user.name}
                                     </p>
                                 </div>
                             </div>
-                            <button onClick={() => setShiftToClose(null)} className="nx-fluid-press inline-flex min-h-tap min-w-tap items-center justify-center rounded-full bg-white p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950">
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setForceCloseError(null);
+                                    setShiftToClose(null);
+                                }}
+                                disabled={closing}
+                                className="nx-fluid-press inline-flex min-h-tap min-w-tap items-center justify-center rounded-full bg-white p-2 text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50"
+                                aria-label="Cancelar cierre forzado"
+                            >
                                 <X size={20} />
                             </button>
                         </div>
@@ -1004,17 +1167,30 @@ const CashRegisters: React.FC = () => {
                                     </div>
                                 </div>
                             </div>
+
+                            {forceCloseError && (
+                                <div role="alert" className="mt-5 flex items-start gap-2 rounded-control border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                                    <AlertTriangle className="mt-0.5 shrink-0" size={17} aria-hidden="true" />
+                                    <span>{forceCloseError}</span>
+                                </div>
+                            )}
                         </div>
 
                         {/* Modal Footer */}
                         <div className="flex justify-end gap-3 border-t border-slate-200 bg-white p-4">
                             <button
-                                onClick={() => setShiftToClose(null)}
-                                className="nx-fluid-press min-h-tap rounded-control border border-slate-300 bg-white px-6 py-2.5 font-bold text-slate-700 transition-colors hover:bg-slate-50"
+                                type="button"
+                                onClick={() => {
+                                    setForceCloseError(null);
+                                    setShiftToClose(null);
+                                }}
+                                disabled={closing}
+                                className="nx-fluid-press min-h-tap rounded-control border border-slate-300 bg-white px-6 py-2.5 font-bold text-slate-700 transition-colors hover:bg-slate-50 disabled:opacity-50"
                             >
                                 Cancelar
                             </button>
                             <button
+                                type="button"
                                 onClick={handleForceClose}
                                 disabled={closing}
                                 className="nx-fluid-press min-h-tap px-6 py-2.5 rounded-xl font-bold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-200 transition-colors flex items-center justify-center gap-2 min-w-[160px] disabled:opacity-75"
@@ -1026,6 +1202,8 @@ const CashRegisters: React.FC = () => {
                     </div>
                 </div>
             )}
+
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
         </div>
     );
 };

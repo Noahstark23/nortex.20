@@ -16,8 +16,8 @@ deja anotado si requiere migración/decisión del CEO.
    Campo por campo (el bug `totalAmount` vs `total` → `$NaN` fue de esta clase).
    Prueba decisiva cuando hay Decimal: `JSON.stringify(new Prisma.Decimal('1.5'))`
    → serializa **string**.
-2. **Dinero/precisión** — replicar la función de cálculo en un `.cjs` en `/tmp`
-   (con `require('/ruta/absoluta/node_modules/decimal.js')`) y correr casos:
+2. **Dinero/precisión** — importar la función real del producto en una prueba
+   ejecutable; no replicar la fórmula en un script separado. Correr casos:
    bordes exactos (11.99 vs 12), negativos sub-centavo (−0.001 → "−$0.00"?),
    ida-y-vuelta, redondeos ROUND_HALF_UP, prueba de no-float (0.1+0.2).
 3. **Aislamiento multi-tenant** — grep de toda query nueva/tocada:
@@ -30,12 +30,17 @@ deja anotado si requiere migración/decisión del CEO.
 5. **Integración/estado React** — refs colgantes a identificadores eliminados
    (`grep` de los nombres viejos), flujos secundarios: carritos en espera,
    quick-create, restore, offline-sync, scanner.
-6. **Build/regresión/entorno** — `npx tsc --noEmit` (comparar contra la línea base
-   de errores preexistentes, no exigir 0 global) · `npm run build` · servicios core
-   intactos (`git status backend/services/`) · `npm install` hecho (prisma 6.4.1,
-   no 7) · defaults preservan comportamiento.
+6. **Build/regresión/entorno** — `mise exec -- npx --no-install tsc --noEmit`
+   (registrar errores preexistentes sin contarlos como aprobación del gate) ·
+   `mise exec -- npm run build` · servicios core intactos
+   (`git status backend/services/`) · dependencias sincronizadas solo en un
+   worktree autorizado con `mise exec -- npm ci` (Prisma 6.4.1, no 7; sin mutar
+   `package-lock.json`) · defaults preservan comportamiento.
 
 ## Reporte final
 Tabla ronda → resultado (PASS / defecto encontrado → corregido), con los defectos
-descritos como: qué entrada produce qué salida incorrecta. Los fixes van en commit
-propio (`fix(<área>): QA — <qué>`) con el detalle de las rondas en el cuerpo.
+descritos como: qué entrada produce qué salida incorrecta. Separar evidencia local,
+integración HTTP/MySQL descartable, CI, staging y producción. Un total verde no
+acredita los casos omitidos ni sustituye la prueba transaccional.
+Conservar parche y evidencia en una ubicación persistente. Commit, push o promoción
+requieren el alcance autorizado; esta skill no los autoriza por sí misma.

@@ -170,21 +170,47 @@ export function parseMarkdown(md: string): Block[] {
 
 const h = React.createElement;
 
+/**
+ * Contrato visual compartido por React y el prerender. Mantener los nombres en
+ * un solo registro evita que el HTML indexable vuelva a divergir del artículo
+ * hidratado o que una utilidad de color saltee los tokens públicos.
+ */
+const MARKDOWN_CLASSES = {
+    strong: 'nx-prose-strong',
+    code: 'nx-prose-code',
+    link: 'nx-public-link',
+    heading2: 'nx-prose-heading nx-prose-heading-2',
+    heading3: 'nx-prose-heading nx-prose-heading-3',
+    paragraph: 'nx-prose-paragraph',
+    quote: 'nx-prose-quote',
+    listOrdered: 'nx-prose-list nx-prose-list-ordered',
+    listUnordered: 'nx-prose-list nx-prose-list-unordered',
+    listItem: 'nx-prose-list-item',
+    tableWrap: 'nx-prose-table-wrap',
+    table: 'nx-prose-table',
+    tableHead: 'nx-prose-table-head',
+    tableHeading: 'nx-prose-table-heading',
+    tableRowAlt: 'nx-prose-table-row-alt',
+    tableCell: 'nx-prose-table-cell',
+    ctaWrap: 'nx-prose-cta',
+    cta: 'nx-public-primary',
+} as const;
+
 function renderInlineReact(tokens: InlineToken[], keyPrefix: string): React.ReactNode[] {
     return tokens.map((t, idx) => {
         const key = `${keyPrefix}-${idx}`;
         switch (t.type) {
             case 'bold':
-                return h('strong', { key, className: 'font-semibold text-slate-900' }, t.value);
+                return h('strong', { key, className: MARKDOWN_CLASSES.strong }, t.value);
             case 'code':
-                return h('code', { key, className: 'px-1.5 py-0.5 rounded bg-slate-100 text-slate-800 text-[0.9em] font-mono' }, t.value);
+                return h('code', { key, className: MARKDOWN_CLASSES.code }, t.value);
             case 'link': {
                 const isInternal = t.href.startsWith('/');
                 return h('a', {
                     key,
                     href: t.href,
                     ...(isInternal ? {} : { target: '_blank', rel: 'noopener noreferrer' }),
-                    className: 'text-emerald-700 font-medium underline decoration-emerald-300 underline-offset-2 hover:text-emerald-600',
+                    className: MARKDOWN_CLASSES.link,
                 }, t.text);
             }
             default:
@@ -211,40 +237,46 @@ export function renderMarkdown(
         switch (block.type) {
             case 'heading':
                 return block.level === 2
-                    ? h('h2', { key, className: 'text-2xl font-bold text-slate-900 mt-10 mb-4 scroll-mt-24' }, renderInlineReact(block.tokens, key))
-                    : h('h3', { key, className: 'text-xl font-bold text-slate-800 mt-7 mb-3' }, renderInlineReact(block.tokens, key));
+                    ? h('h2', { key, className: MARKDOWN_CLASSES.heading2 }, renderInlineReact(block.tokens, key))
+                    : h('h3', { key, className: MARKDOWN_CLASSES.heading3 }, renderInlineReact(block.tokens, key));
 
             case 'paragraph':
-                return h('p', { key, className: 'text-slate-600 mb-4 leading-relaxed' }, renderInlineReact(block.tokens, key));
+                return h('p', { key, className: MARKDOWN_CLASSES.paragraph }, renderInlineReact(block.tokens, key));
 
             case 'quote':
-                return h('blockquote', { key, className: 'border-l-4 border-emerald-400 bg-emerald-50/60 pl-4 py-2 my-6 text-slate-700 italic rounded-r-lg' }, renderInlineReact(block.tokens, key));
+                return h('blockquote', { key, className: MARKDOWN_CLASSES.quote }, renderInlineReact(block.tokens, key));
 
             case 'list': {
                 const tag = block.ordered ? 'ol' : 'ul';
-                const cls = block.ordered ? 'list-decimal' : 'list-disc';
-                return h(tag, { key, className: `${cls} pl-6 mb-5 space-y-1.5 text-slate-600 marker:text-emerald-500` },
-                    block.items.map((item, ii) => h('li', { key: `${key}-${ii}`, className: 'leading-relaxed' }, renderInlineReact(item, `${key}-${ii}`))));
+                const cls = block.ordered ? MARKDOWN_CLASSES.listOrdered : MARKDOWN_CLASSES.listUnordered;
+                return h(tag, { key, className: cls },
+                    block.items.map((item, ii) => h('li', { key: `${key}-${ii}`, className: MARKDOWN_CLASSES.listItem }, renderInlineReact(item, `${key}-${ii}`))));
             }
 
             case 'table':
-                return h('div', { key, className: 'my-6 overflow-x-auto rounded-xl border border-slate-200' },
-                    h('table', { className: 'w-full text-sm border-collapse' },
-                        h('thead', { className: 'bg-slate-50' },
+                return h('div', {
+                    key,
+                    className: MARKDOWN_CLASSES.tableWrap,
+                    role: 'region',
+                    'aria-label': 'Tabla del artículo',
+                    tabIndex: 0,
+                },
+                    h('table', { className: MARKDOWN_CLASSES.table },
+                        h('thead', { className: MARKDOWN_CLASSES.tableHead },
                             h('tr', null, block.header.map((cell, ci) =>
-                                h('th', { key: `${key}-h-${ci}`, className: 'text-left font-semibold text-slate-700 px-4 py-2.5 border-b border-slate-200' }, renderInlineReact(cell, `${key}-h-${ci}`))))),
+                                h('th', { key: `${key}-h-${ci}`, scope: 'col', className: MARKDOWN_CLASSES.tableHeading }, renderInlineReact(cell, `${key}-h-${ci}`))))),
                         h('tbody', null, block.rows.map((row, ri) =>
-                            h('tr', { key: `${key}-r-${ri}`, className: ri % 2 ? 'bg-slate-50/50' : 'bg-white' },
+                            h('tr', { key: `${key}-r-${ri}`, className: ri % 2 ? MARKDOWN_CLASSES.tableRowAlt : undefined },
                                 row.map((cell, ci) =>
-                                    h('td', { key: `${key}-r-${ri}-${ci}`, className: 'px-4 py-2.5 border-b border-slate-100 text-slate-600 align-top' }, renderInlineReact(cell, `${key}-r-${ri}-${ci}`))))))));
+                                    h('td', { key: `${key}-r-${ri}-${ci}`, className: MARKDOWN_CLASSES.tableCell }, renderInlineReact(cell, `${key}-r-${ri}-${ci}`))))))));
 
             case 'cta': {
-                const cls = 'inline-flex items-center gap-2 bg-emerald-600 text-white font-bold px-6 py-3 rounded-lg hover:bg-emerald-500 transition-colors no-underline';
+                const cls = MARKDOWN_CLASSES.cta;
                 const inner = `${block.text} →`;
                 const node = linkComponent && block.href.startsWith('/')
                     ? h(linkComponent, { to: block.href, className: cls }, inner)
                     : h('a', { href: block.href, className: cls }, inner);
-                return h('div', { key, className: 'my-7' }, node);
+                return h('div', { key, className: MARKDOWN_CLASSES.ctaWrap }, node);
             }
         }
     });
@@ -258,11 +290,11 @@ const escHtml = (s: string): string =>
 function inlineToHtml(tokens: InlineToken[]): string {
     return tokens.map(t => {
         switch (t.type) {
-            case 'bold': return `<strong>${escHtml(t.value)}</strong>`;
-            case 'code': return `<code>${escHtml(t.value)}</code>`;
+            case 'bold': return `<strong class="${MARKDOWN_CLASSES.strong}">${escHtml(t.value)}</strong>`;
+            case 'code': return `<code class="${MARKDOWN_CLASSES.code}">${escHtml(t.value)}</code>`;
             case 'link': {
                 const ext = t.href.startsWith('/') ? '' : ' target="_blank" rel="noopener noreferrer"';
-                return `<a href="${escHtml(t.href)}"${ext}>${escHtml(t.text)}</a>`;
+                return `<a href="${escHtml(t.href)}"${ext} class="${MARKDOWN_CLASSES.link}">${escHtml(t.text)}</a>`;
             }
             default: return escHtml(t.value);
         }
@@ -277,27 +309,28 @@ export function markdownToHtml(md: string): string {
     for (const block of blocks) {
         switch (block.type) {
             case 'heading':
-                out.push(`<h${block.level}>${inlineToHtml(block.tokens)}</h${block.level}>`);
+                out.push(`<h${block.level} class="${block.level === 2 ? MARKDOWN_CLASSES.heading2 : MARKDOWN_CLASSES.heading3}">${inlineToHtml(block.tokens)}</h${block.level}>`);
                 break;
             case 'paragraph':
-                out.push(`<p>${inlineToHtml(block.tokens)}</p>`);
+                out.push(`<p class="${MARKDOWN_CLASSES.paragraph}">${inlineToHtml(block.tokens)}</p>`);
                 break;
             case 'quote':
-                out.push(`<blockquote>${inlineToHtml(block.tokens)}</blockquote>`);
+                out.push(`<blockquote class="${MARKDOWN_CLASSES.quote}">${inlineToHtml(block.tokens)}</blockquote>`);
                 break;
             case 'list': {
                 const tag = block.ordered ? 'ol' : 'ul';
-                out.push(`<${tag}>${block.items.map(it => `<li>${inlineToHtml(it)}</li>`).join('')}</${tag}>`);
+                const cls = block.ordered ? MARKDOWN_CLASSES.listOrdered : MARKDOWN_CLASSES.listUnordered;
+                out.push(`<${tag} class="${cls}">${block.items.map(it => `<li class="${MARKDOWN_CLASSES.listItem}">${inlineToHtml(it)}</li>`).join('')}</${tag}>`);
                 break;
             }
             case 'table': {
-                const head = `<thead><tr>${block.header.map(c => `<th>${inlineToHtml(c)}</th>`).join('')}</tr></thead>`;
-                const body = `<tbody>${block.rows.map(r => `<tr>${r.map(c => `<td>${inlineToHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
-                out.push(`<table>${head}${body}</table>`);
+                const head = `<thead class="${MARKDOWN_CLASSES.tableHead}"><tr>${block.header.map(c => `<th scope="col" class="${MARKDOWN_CLASSES.tableHeading}">${inlineToHtml(c)}</th>`).join('')}</tr></thead>`;
+                const body = `<tbody>${block.rows.map((r, ri) => `<tr${ri % 2 ? ` class="${MARKDOWN_CLASSES.tableRowAlt}"` : ''}>${r.map(c => `<td class="${MARKDOWN_CLASSES.tableCell}">${inlineToHtml(c)}</td>`).join('')}</tr>`).join('')}</tbody>`;
+                out.push(`<div class="${MARKDOWN_CLASSES.tableWrap}" role="region" aria-label="Tabla del artículo" tabindex="0"><table class="${MARKDOWN_CLASSES.table}">${head}${body}</table></div>`);
                 break;
             }
             case 'cta':
-                out.push(`<p><a href="${escHtml(block.href)}">${escHtml(block.text)} →</a></p>`);
+                out.push(`<div class="${MARKDOWN_CLASSES.ctaWrap}"><a href="${escHtml(block.href)}" class="${MARKDOWN_CLASSES.cta}">${escHtml(block.text)} →</a></div>`);
                 break;
         }
     }

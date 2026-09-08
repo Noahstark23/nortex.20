@@ -1,5 +1,11 @@
 # Release de activación y retención — 2026-08-25
 
+> **Registro histórico — no ejecutar como receta de release.** Este documento
+> conserva el contexto de 2026-08-25 y puede describir controles ya sustituidos.
+> Para toda promoción nueva, usá el [runbook canónico de
+> promoción](../runbooks/release-promotion.md): CI/staging no autorizan producción
+> y solo `release-production.yml` puede solicitarla manualmente.
+
 ## Resultado ejecutivo
 
 Esta release reduce la fuga entre visita orgánica, demo, registro y primera venta.

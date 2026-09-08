@@ -57,6 +57,10 @@ model Tenant {
   // La activación se hará explícitamente por tenant, nunca desde una migración.
   batchWarehouseLedgerMode        String    @default("OFF") @db.VarChar(16)
   batchWarehouseLedgerActivatedAt DateTime?
+  // Seguridad de inventario farmacéutico: OFF preserva a todos los tenants
+  // existentes. ENFORCED solo se activa tras comprobar el ledger lote+bodega.
+  pharmacyInventoryMode        String    @default("OFF") @db.VarChar(16)
+  pharmacyInventoryActivatedAt DateTime?
   // Campos Fiscales DGI
   // GENERAL preserva el cálculo y desglose fiscal de todos los tenants
   // existentes; la versión permite congelar qué configuración usó cada documento.
@@ -87,6 +91,7 @@ model Tenant {
   quotations                Quotation[]
   invitations               Invitation[]
   cashMovements             CashMovement[]
+  shiftCloseReports         ShiftCloseReport[]
   productReturns            ProductReturn[]
   serialNumbers             SerialNumber[]
   warehouses                Warehouse[]
@@ -117,6 +122,7 @@ model Tenant {
   procurementPolicy         ProcurementPolicy?
   productBatchWarehouseStocks ProductBatchWarehouseStock[]
   productBatchLedgerEntries   ProductBatchLedgerEntry[]
+  productBatchHolds           ProductBatchHold[]
   purchaseOrderCloseShorts    PurchaseOrderCloseShort[]
   purchaseOrderCloseShortItems PurchaseOrderCloseShortItem[]
   supplierReturns              SupplierReturn[]
@@ -216,6 +222,7 @@ model User {
   purchaseMatchExceptionsResolved  PurchaseMatchException[]     @relation("PurchaseMatchExceptionResolver")
   procurementPoliciesUpdated       ProcurementPolicy[]          @relation("ProcurementPolicyUpdater")
   productBatchLedgerEntriesCreated ProductBatchLedgerEntry[]     @relation("ProductBatchLedgerEntryCreator")
+  productBatchHoldsCreated         ProductBatchHold[]             @relation("ProductBatchHoldCreator")
   purchaseOrderCloseShortsCreated  PurchaseOrderCloseShort[]     @relation("PurchaseOrderCloseShortCreator")
   supplierReturnsCreated            SupplierReturn[]              @relation("SupplierReturnCreator")
   supplierCreditNotesCreated        SupplierCreditNote[]          @relation("SupplierCreditNoteCreator")
@@ -696,7 +703,7 @@ model Invitation {
   email     String
   role      String // MANAGER, CASHIER, VIEWER
   token     String   @unique
-  status    String   @default("PENDING") // PENDING, ACCEPTED, EXPIRED
+  status    String   @default("PENDING") // PENDING, ACCEPTED, EXPIRED, CANCELLED
   invitedBy String // userId del que invitó
   createdAt DateTime @default(now())
   expiresAt DateTime // 48 horas después de creación
@@ -1743,6 +1750,10 @@ model Sale {
   // a recorrer la tabla de ventas entera — el guardrail 3 pide el índice en el
   // MISMO cambio que la query.
   @@index([tenantId, status])
+  // Reporte íntegro por período y cierre por turno: el filtro siempre combina
+  // tenant + estado vigente con fecha o shift, no índices aislados.
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, shiftId, status])
   // Reportes/libros por régimen y período, siempre aislados por tenant.
   @@index([tenantId, fiscalRegimeAtSale, createdAt])
 }
@@ -2002,12 +2013,37 @@ model Shift {
   employee      Employee?      @relation(fields: [employeeId], references: [id])
   sales         Sale[]
   cashMovements CashMovement[]
+  closeReport   ShiftCloseReport?
+  processedReturns ProductReturn[] @relation("ProcessedShiftReturns")
   RouteExpense  RouteExpense[]
 
   @@index([tenantId])
+  @@index([tenantId, status, startTime])
   @@index([userId])
   @@index([employeeId])
   @@unique([tenantId, closeEventId])
+}
+
+// Snapshot Z inmutable generado atómicamente al cerrar una caja. `report`
+// conserva los totales y desgloses exactos de la versión que fue emitida.
+model ShiftCloseReport {
+  id           String   @id @default(cuid())
+  tenantId     String
+  shiftId      String   @unique
+  folio        String
+  businessDate String   @db.VarChar(10)
+  version      Int      @default(1)
+  report       Json
+  contentHash  String   @db.VarChar(64)
+  createdBy    String
+  createdAt    DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  shift  Shift  @relation(fields: [shiftId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, folio])
+  @@index([tenantId, businessDate])
+  @@index([tenantId, createdAt])
 }
 
 model Expense {
@@ -2065,6 +2101,7 @@ model CashMovement {
   @@index([tenantId])
   @@index([shiftId])
   @@index([createdAt])
+  @@index([tenantId, shiftId, isVoided])
 }
 
 // Cabeza de la cadena del libro por tenant. El UPDATE con increment toma
@@ -2332,6 +2369,7 @@ model Product {
   scaleProductMappings ScaleProductMapping[]
   batchWarehouseStocks ProductBatchWarehouseStock[]
   batchLedgerEntries   ProductBatchLedgerEntry[]
+  batchHolds           ProductBatchHold[]
   supplierReturnItems  SupplierReturnItem[]
   returnInspections    ReturnInspection[]
   productReturnItems   ProductReturnItem[]
@@ -2340,6 +2378,8 @@ model Product {
   @@unique([tenantId, sku])
   @@index([defaultSupplierId])
   @@index([tenantId])
+  @@index([tenantId, isPublished, name])
+  @@index([tenantId, isPublished, category, name])
   @@index([category])
   @@fulltext([name, category])
   @@index([tenantId, name])
@@ -2446,6 +2486,7 @@ model Warehouse {
   goodsReceipts   GoodsReceipt[]
   batchWarehouseStocks ProductBatchWarehouseStock[]
   batchLedgerEntries ProductBatchLedgerEntry[]
+  batchHolds ProductBatchHold[]
   saleItemBatchAllocations SaleItemBatchAllocation[]
   purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryWarehouse")
   supplierReturnItems SupplierReturnItem[]
@@ -2525,6 +2566,7 @@ model ProductBatch {
   goodsReceiptItems   GoodsReceiptItem[]
   warehouseStocks     ProductBatchWarehouseStock[]
   ledgerEntries       ProductBatchLedgerEntry[]
+  holds               ProductBatchHold[]
   purchaseItemsWithInventoryEvidence PurchaseItem[] @relation("PurchaseItemInventoryBatch")
   supplierReturnItems SupplierReturnItem[]
 
@@ -2544,6 +2586,9 @@ model ProductBatchWarehouseStock {
   batchId     String
   warehouseId String
   stock       Decimal  @default(0) @db.Decimal(18, 4)
+  // Proyección exacta de existencias físicamente presentes pero no vendibles
+  // (por ejemplo, una devolución de medicamento puesta en cuarentena).
+  heldStock   Decimal  @default(0) @db.Decimal(18, 4)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -2556,6 +2601,44 @@ model ProductBatchWarehouseStock {
   @@index([tenantId, batchId])
   @@index([tenantId, productId, warehouseId])
   @@index([tenantId, warehouseId, productId])
+}
+
+/// Libro append-only de retenciones y liberaciones de lote por bodega.
+/// quantityDelta actualiza heldStock; los snapshots prueban el efecto sobre
+/// stock físico y vendible sin reinterpretar movimientos históricos.
+model ProductBatchHold {
+  id                    String   @id @default(cuid())
+  tenantId              String
+  productId             String
+  batchId               String
+  warehouseId           String
+  quantityDelta         Decimal  @db.Decimal(18, 4)
+  heldBefore            Decimal  @db.Decimal(18, 4)
+  heldAfter             Decimal  @db.Decimal(18, 4)
+  physicalStockSnapshot Decimal  @db.Decimal(18, 4)
+  sellableBefore        Decimal  @db.Decimal(18, 4)
+  sellableAfter         Decimal  @db.Decimal(18, 4)
+  holdReasonCode        String   @db.VarChar(32)
+  referenceId           String?
+  referenceType         String?  @db.VarChar(64)
+  sourceKey             String   @db.VarChar(191)
+  payloadHash           String   @db.VarChar(64)
+  notes                 String?  @db.Text
+  userId                String
+  createdAt             DateTime @default(now())
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product      @relation(fields: [productId], references: [id], onDelete: Restrict)
+  batch     ProductBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  warehouse Warehouse    @relation(fields: [warehouseId], references: [id], onDelete: Restrict)
+  creator   User         @relation("ProductBatchHoldCreator", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, sourceKey])
+  @@index([tenantId, createdAt])
+  @@index([tenantId, batchId, warehouseId, createdAt])
+  @@index([tenantId, productId, warehouseId, createdAt])
+  @@index([tenantId, referenceType, referenceId])
+  @@index([userId])
 }
 
 /// Libro inmutable del stock de lote por bodega. sourceKey y payloadHash hacen
@@ -2747,6 +2830,7 @@ model ProductReturn {
   id            String   @id @default(cuid())
   tenantId      String
   saleId        String
+  processedShiftId String?
   total         Decimal  @db.Decimal(10, 2) // Total del reembolso
   reason        String   @db.Text
   items         Json // [{productId, name, quantity, price}]
@@ -2764,6 +2848,7 @@ model ProductReturn {
 
   tenant            Tenant                 @relation(fields: [tenantId], references: [id])
   sale              Sale                   @relation(fields: [saleId], references: [id])
+  processedShift    Shift?                 @relation("ProcessedShiftReturns", fields: [processedShiftId], references: [id])
   correctionRequest SaleCorrectionRequest? @relation(fields: [correctionRequestId], references: [id], onDelete: Restrict)
   normalizedItems   ProductReturnItem[]
   refunds           ReturnRefund[]
@@ -2774,6 +2859,7 @@ model ProductReturn {
   @@index([saleId])
   @@unique([tenantId, returnNumber])
   @@index([tenantId, createdAt])
+  @@index([tenantId, processedShiftId, createdAt])
 }
 
 /// Solicitud aprobable que precede cualquier movimiento de dinero o inventario.

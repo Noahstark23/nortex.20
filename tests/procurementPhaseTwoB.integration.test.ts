@@ -29,6 +29,7 @@ let productAId = '';
 let productBId = '';
 let batchAId = '';
 let batchBId = '';
+let riderAId = '';
 let correctionApprover: { email: string; password: string };
 
 async function api<T = any>(
@@ -201,6 +202,14 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     expectStatus(accepted, 200);
     viewerToken = accepted.body.token;
     correctionApprover = await inviteQaMember(post, 'MANAGER');
+    const rider = await post('/api/v1/motorizados', {
+      nombre: 'Repartidor QA Procurement',
+      telefono: `8${Date.now()}`,
+      zonaCobertura: 'Managua QA',
+      pin: '1234',
+    });
+    expectStatus(rider, 201);
+    riderAId = rider.body.motorizado.id;
   }, 180_000);
 
   afterAll(async () => {
@@ -833,6 +842,15 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
       batchId: batchAId,
     });
 
+    const invalidJump = await patch(`/api/v1/pedidos/${exactPedidoId}/estado`, {
+      estado: 'entregado',
+    });
+    expectStatus(invalidJump, 409);
+    expect(invalidJump.body.code).toBe('PEDIDO_INVALID_STATE_TRANSITION');
+    expect(await inventorySnapshot({ tenantId: tenantAId, productId: productAId, batchId: batchAId }))
+      .toEqual(reservedSnapshot);
+    expectStatus(await patch(`/api/v1/pedidos/${exactPedidoId}/motorizado`, { motorizadoId: riderAId }), 200);
+    expectStatus(await patch(`/api/v1/pedidos/${exactPedidoId}/estado`, { estado: 'en_camino' }), 200);
     const delivered = await patch(`/api/v1/pedidos/${exactPedidoId}/estado`, {
       estado: 'entregado',
     });
@@ -928,6 +946,8 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
       });
     });
 
+    expectStatus(await patch(`/api/v1/pedidos/${legacyPedidoId}/motorizado`, { motorizadoId: riderAId }), 200);
+    expectStatus(await patch(`/api/v1/pedidos/${legacyPedidoId}/estado`, { estado: 'en_camino' }), 200);
     const legacyBefore = {
       inventory: await inventorySnapshot({ tenantId: tenantAId, productId: productAId, batchId: batchAId }),
       sales: await prisma.sale.count({ where: { tenantId: tenantAId } }),
@@ -952,7 +972,7 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     expect(await prisma.pedido.findFirst({
       where: { id: legacyPedidoId, tenantId: tenantAId },
       select: { estado: true, facturaId: true },
-    })).toEqual({ estado: 'preparando', facturaId: null });
+    })).toEqual({ estado: 'en_camino', facturaId: null });
 
     const readiness = await api('/api/batch-warehouse-ledger/readiness', tenantAToken);
     expectStatus(readiness, 200);

@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import Decimal from 'decimal.js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
+import { seedChartOfAccounts } from '../backend/services/accounting';
 import { approveQaCorrection, inviteQaMember } from './helpers/saleCorrectionQa';
 
 /** HTTP real + MySQL descartable. No importa el servidor ni simula sus servicios. */
@@ -30,7 +31,7 @@ function status(response: Response, expected: number) {
     expect(response.status, diagnostic).toBe(expected);
 }
 
-async function fixture(label: string): Promise<Fixture> {
+async function fixture(label: string, initialCashUsd?: string): Promise<Fixture> {
     const id = randomUUID();
     const email = `qa-pos-${id}@example.invalid`;
     const password = `Qa-${randomUUID()}-Seguro!`;
@@ -40,7 +41,7 @@ async function fixture(label: string): Promise<Fixture> {
     status(registration, 200);
     const f = { tenantId: registration.body.tenant.id, userId: registration.body.user.id,
         token: registration.body.token, email, password, shiftId: '' };
-    const opened = await api(f.token, '/api/shifts/open', { initialCash: 500 });
+    const opened = await api(f.token, '/api/shifts/open', { initialCash: 500, initialCashUsd });
     status(opened, 200);
     f.shiftId = opened.body.id;
     return f;
@@ -120,6 +121,139 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
         expect(database.pathname).toMatch(/^\/nortex_(qa|quality|test)(_[a-z0-9_]+)?$/);
     });
     afterAll(async () => { await prisma.$disconnect(); });
+
+    it('caja legacy rechaza fracciones sin efectos y conserva venta entera idempotente', async () => {
+        const f = await fixture('cajas enteras');
+        await seedChartOfAccounts(f.tenantId);
+        const id = await product(f, 5);
+        await prisma.product.updateMany({ where: { id, tenantId: f.tenantId }, data: {
+            unit: 'caja', saleMode: null, quantityStep: null,
+        } });
+        const before = await snapshot(f);
+        const rejectedId = randomUUID();
+        const quotationsBefore = await prisma.quotation.count({ where: { tenantId: f.tenantId } });
+        status(await api(f.token, '/api/quotations', {
+            customerName: 'Cliente QA', items: [{ id, quantity: '1.5' }],
+        }), 400);
+        expect(await prisma.quotation.count({ where: { tenantId: f.tenantId } })).toBe(quotationsBefore);
+        expect(await snapshot(f)).toBe(before);
+        for (const quantity of [0.5, 1.5, 1.0001, 1.5]) {
+            status(await api(f.token, '/api/sales', salePayload(id, 'CASH', quantity, rejectedId)), 400);
+            expect(await snapshot(f)).toBe(before);
+        }
+        const accepted = salePayload(id, 'CASH', 1);
+        status(await api(f.token, '/api/sales', accepted), 200);
+        expect(fixed(await stock(f, id))).toBe('4.0000');
+        const after = await snapshot(f);
+        status(await api(f.token, '/api/sales', accepted), 200);
+        expect(await snapshot(f)).toBe(after);
+        await assertBalanced(f);
+    }, 60_000);
+
+    it('empaque fraccionado se rechaza sin efectos aunque sus piezas sean enteras', async () => {
+        const f = await fixture('empaques completos');
+        await seedChartOfAccounts(f.tenantId);
+        const id = await product(f, 36);
+        await prisma.product.updateMany({ where: { id, tenantId: f.tenantId }, data: {
+            packUnit: 'caja', packSize: 12, packPrice: 600,
+        } });
+        const before = await snapshot(f);
+        status(await api(f.token, '/api/sales', {
+            ...salePayload(id), items: [{ id, quantity: '18', presentation: { quantity: '1.5', unit: 'caja' } }],
+        }), 400);
+        expect(await snapshot(f)).toBe(before);
+        status(await api(f.token, '/api/sales', salePayload(id, 'CASH', 18)), 200);
+        expect(fixed(await stock(f, id))).toBe('18.0000');
+        await assertBalanced(f);
+    }, 60_000);
+
+    it('movimiento manual rechaza USD y moneda inválida sin efectos en gaveta o contabilidad', async () => {
+        const f = await fixture('moneda manual', '20.00');
+        const state = async () => JSON.stringify({
+            snapshot: await snapshot(f),
+            expenses: await prisma.expense.findMany({ where: { tenantId: f.tenantId }, orderBy: { id: 'asc' }, take: 20 }),
+            ledgerHead: await prisma.ledgerHead.findUnique({ where: { tenantId: f.tenantId } }),
+        });
+        const before = await state();
+        for (const type of ['IN', 'OUT']) {
+            const rejected = await api(f.token, '/api/cash-movements', {
+                type, amount: '10.00', currency: 'USD',
+                category: type === 'OUT' ? 'GASTO_OPERATIVO' : 'INYECCION_CAPITAL',
+                description: 'No convertir USD a NIO silenciosamente',
+            });
+            status(rejected, 409);
+            expect(rejected.body.code).toBe('CASH_MOVEMENT_USD_UNSUPPORTED');
+            expect(await state()).toBe(before);
+        }
+        for (const currency of ['EUR', '', null]) {
+            const rejected = await api(f.token, '/api/cash-movements', {
+                type: 'OUT', amount: '10.00', currency, category: 'GASTO_OPERATIVO',
+                description: 'Moneda inválida rechazada',
+            });
+            status(rejected, 400);
+            expect(rejected.body.details.currency).toBeInstanceOf(Array);
+            expect(await state()).toBe(before);
+        }
+    }, 60_000);
+
+    it('movimientos NIO explícito y legado mantienen centavos exactos en gaveta, gasto y asiento', async () => {
+        const f = await fixture('NIO manual');
+        for (const [amount, currency] of [['1.20', undefined], ['2.30', 'NIO']] as const) {
+            const saved = await api(f.token, '/api/cash-movements', {
+                type: 'OUT', amount, ...(currency === undefined ? {} : { currency }),
+                category: 'GASTO_OPERATIVO', description: 'Gasto operativo sintético exacto',
+            });
+            status(saved, 200);
+            const movement = await prisma.cashMovement.findFirstOrThrow({ where: { id: saved.body.id, tenantId: f.tenantId } });
+            expect(movement.currency).toBe('NIO');
+            expect(movement.amount.toFixed(2)).toBe(amount);
+            expect(movement.shiftId).toBe(f.shiftId);
+            const expense = await prisma.expense.findFirstOrThrow({ where: { id: movement.expenseId!, tenantId: f.tenantId } });
+            expect(expense.amount.toFixed(2)).toBe(amount);
+            const journal = await prisma.journalEntry.findFirstOrThrow({
+                where: { referenceId: movement.id, tenantId: f.tenantId, referenceType: 'CASH_OUT' },
+                include: { lines: { include: { account: true } } },
+            });
+            expect(journal.lines.map(line => ({ account: line.account.code, debit: line.debit.toFixed(2), credit: line.credit.toFixed(2) }))
+                .sort((a, b) => a.account.localeCompare(b.account))).toEqual([
+                { account: '1.1.1', debit: '0.00', credit: amount },
+                { account: '5.2.1', debit: amount, credit: '0.00' },
+            ]);
+        }
+        expect((await balances(f))['1.1.1']).toBe('-3.5000');
+        expect((await balances(f))['5.2.1']).toBe('3.5000');
+        expect(await prisma.cashMovement.count({ where: { tenantId: f.tenantId } })).toBe(2);
+        expect(await prisma.expense.count({ where: { tenantId: f.tenantId } })).toBe(2);
+        expect(await prisma.auditLog.count({ where: { tenantId: f.tenantId, action: 'CASH_OUT' } })).toBe(2);
+        await assertBalanced(f);
+    }, 60_000);
+
+    it('movimiento NIO limita Decimal(10,2): rechaza fracciones y exceso, conserva el máximo exacto', async () => {
+        const f = await fixture('límite moneda manual');
+        const before = await snapshot(f);
+        const expenseCount = await prisma.expense.count({ where: { tenantId: f.tenantId } });
+        for (const amount of ['0.001', '10.001', '99999999.999', '100000000.00']) {
+            const rejected = await api(f.token, '/api/cash-movements', {
+                type: 'IN', amount, currency: 'NIO', category: 'INYECCION_CAPITAL',
+                description: 'Importe no persistible',
+            });
+            status(rejected, 400);
+            expect(rejected.body.details.amount).toBeInstanceOf(Array);
+            expect(await snapshot(f)).toBe(before);
+            expect(await prisma.expense.count({ where: { tenantId: f.tenantId } })).toBe(expenseCount);
+        }
+        const saved = await api(f.token, '/api/cash-movements', {
+            type: 'IN', amount: '99999999.99', currency: 'NIO', category: 'INYECCION_CAPITAL',
+            description: 'Máximo permitido sintético',
+        });
+        status(saved, 200);
+        const movement = await prisma.cashMovement.findFirstOrThrow({ where: { id: saved.body.id, tenantId: f.tenantId } });
+        expect(movement.currency).toBe('NIO');
+        expect(movement.amount.toFixed(2)).toBe('99999999.99');
+        expect((await balances(f))['1.1.1']).toBe('99999999.9900');
+        expect(await prisma.expense.count({ where: { tenantId: f.tenantId } })).toBe(expenseCount);
+        await assertBalanced(f);
+    }, 60_000);
 
     it.each<Method>(['CASH', 'CARD', 'TRANSFER', 'QR'])('%s: venta → aprobación → devolución → reembolso conserva saldos y stock', async method => {
         const f = await fixture(method);
@@ -257,6 +391,59 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
         expect(await prisma.sale.count({ where: { tenantId: f.tenantId } })).toBe(1);
         expect(await prisma.auditLog.count({ where: { tenantId: f.tenantId, action: 'SALE_CREATED' } })).toBe(1);
         expect((await balances(f))['1.1.1']).toBe('50.0000');
+    }, 60_000);
+
+    it('cierre con reporte conserva USD4 y repite solo la identidad y el contenido originales', async () => {
+        const f = await fixture('reporte idempotente USD', '20.1234');
+        const productId = await product(f);
+        status(await api(f.token, '/api/sales', salePayload(productId)), 200);
+        const payload = {
+            shiftId: f.shiftId, clientEventId: randomUUID(),
+            declaredCash: '550.00', declaredCashUsd: '20.1235', auditNotes: 'Arqueo QA exacto',
+        };
+        const closed = await api(f.token, '/api/shifts/close', payload);
+        status(closed, 200);
+        expect(closed.body.idempotentReplay).toBe(false);
+        expect(closed.body.closeReport.report.cash).toMatchObject({
+            expectedNio: '550.00', countedNio: '550.00', differenceNio: '0.00',
+            openingUsd: '20.1234', expectedUsd: '20.1234', countedUsd: '20.1235', differenceUsd: '0.0001',
+        });
+        const persistedShift = await prisma.shift.findFirstOrThrow({ where: { id: f.shiftId, tenantId: f.tenantId } });
+        expect(fixed(persistedShift.finalCashDeclaredUsd!)).toBe('20.1235');
+        expect(fixed(persistedShift.systemExpectedUsd!)).toBe('20.1234');
+        expect(fixed(persistedShift.differenceUsd!)).toBe('0.0001');
+        expect(persistedShift.closeEventId).toBe(payload.clientEventId);
+        expect(persistedShift.closePayloadHash).toMatch(/^[a-f0-9]{64}$/);
+        const persistedReport = await prisma.shiftCloseReport.findFirstOrThrow({ where: { shiftId: f.shiftId, tenantId: f.tenantId } });
+        expect(persistedReport.report).toEqual(closed.body.closeReport.report);
+        expect(persistedReport.contentHash).toBe(closed.body.closeReport.contentHash);
+        const closedAudit = await prisma.auditLog.findFirstOrThrow({ where: { tenantId: f.tenantId, action: 'SHIFT_CLOSED' } });
+        expect(JSON.parse(closedAudit.details)).toMatchObject({
+            closeEventId: payload.clientEventId, closePayloadHash: persistedShift.closePayloadHash,
+            expectedUsd: '20.1234', countedUsd: '20.1235', differenceUsd: '0.0001',
+        });
+        const beforeRetries = await snapshot(f);
+        const replay = await api(f.token, '/api/shifts/close', {
+            ...payload, declaredCash: '550.0', auditNotes: '  Arqueo QA exacto  ',
+        });
+        status(replay, 200);
+        expect(replay.body.idempotentReplay).toBe(true);
+        expect(replay.body.closeReport).toEqual(closed.body.closeReport);
+        for (const change of [
+            { declaredCash: '549.99' }, { declaredCashUsd: '20.1236' },
+            { auditNotes: 'Otra intención' }, { clientEventId: randomUUID() },
+        ]) {
+            status(await api(f.token, '/api/shifts/close', { ...payload, ...change }), 409);
+        }
+        expect(await snapshot(f)).toBe(beforeRetries);
+        expect(await prisma.shiftCloseReport.count({ where: { shiftId: f.shiftId, tenantId: f.tenantId } })).toBe(1);
+        expect(await prisma.auditLog.count({ where: { tenantId: f.tenantId, action: 'SHIFT_CLOSED' } })).toBe(1);
+        const afterReport = await prisma.shiftCloseReport.findFirstOrThrow({ where: { shiftId: f.shiftId, tenantId: f.tenantId } });
+        expect(afterReport).toEqual(persistedReport);
+        const consulted = await api(f.token, `/api/reports/shifts/${f.shiftId}`);
+        status(consulted, 200);
+        expect(consulted.body.contentHash).toBe(persistedReport.contentHash);
+        await assertBalanced(f);
     }, 60_000);
 
     it.each([0, 1, 2])('venta contra cierre, intercalado %i: el cierre incluye toda venta que confirma', async iteration => {

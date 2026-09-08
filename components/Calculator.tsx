@@ -34,35 +34,37 @@ const Calculator: React.FC<{ type: CalculatorType }> = ({ type }) => {
   };
 
   return (
-    <div className="my-8 rounded-2xl border border-slate-200 bg-slate-50 p-5 sm:p-6 not-prose">
-      <div className="flex items-center gap-2 mb-4">
-        <div className="p-2 bg-slate-900 text-white rounded-lg"><CalcIcon size={18} /></div>
-        <h3 className="text-lg font-bold text-slate-900 m-0">{config.titulo}</h3>
+    <section className="nx-public-calculator my-8 rounded-3xl border p-5 sm:p-6 not-prose" aria-labelledby={`calculator-${type}-title`}>
+      <div className="mb-5 flex items-center gap-3">
+        <div className="nx-public-calculator-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-xl" aria-hidden="true">
+          <CalcIcon size={19} />
+        </div>
+        <h3 id={`calculator-${type}-title`} className="m-0 text-lg font-semibold tracking-[-0.015em]">{config.titulo}</h3>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">
         {config.fields.map((f) => (
           <label key={f.key} className="text-sm">
-            <span className="block font-medium text-slate-600 mb-1">{f.label}</span>
-            <div className="flex items-center rounded-lg border border-slate-300 bg-white overflow-hidden focus-within:border-slate-900">
+            <span className="nx-public-muted mb-1.5 block font-medium">{f.label}</span>
+            <div className="nx-public-field flex min-h-[44px] items-center overflow-hidden rounded-xl border">
               <input
                 type="number" inputMode="decimal" min="0" step={f.step ?? '0.01'}
                 value={values[f.key] ?? ''}
                 onChange={(e) => setValues((p) => ({ ...p, [f.key]: e.target.value }))}
-                className="w-full px-3 py-2 outline-none text-slate-900"
+                className="min-h-[44px] w-full bg-transparent px-3 py-2 outline-none"
                 placeholder="0"
               />
-              {f.suffix && <span className="px-3 text-xs text-slate-400 whitespace-nowrap">{f.suffix}</span>}
+              {f.suffix && <span className="nx-public-subtle whitespace-nowrap px-3 text-[13px] font-medium">{f.suffix}</span>}
             </div>
           </label>
         ))}
         {config.select && (
           <label className="text-sm sm:col-span-2">
-            <span className="block font-medium text-slate-600 mb-1">{config.select.label}</span>
+            <span className="nx-public-muted mb-1.5 block font-medium">{config.select.label}</span>
             <select
               value={selects[config.select.key]}
               onChange={(e) => setSelects((p) => ({ ...p, [config.select!.key]: e.target.value }))}
-              className="w-full px-3 py-2 rounded-lg border border-slate-300 bg-white text-slate-900 outline-none focus:border-slate-900"
+              className="nx-public-field min-h-[44px] w-full rounded-xl border px-3 py-2 outline-none"
             >
               {config.select.options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
@@ -71,24 +73,25 @@ const Calculator: React.FC<{ type: CalculatorType }> = ({ type }) => {
       </div>
 
       <button
+        type="button"
         onClick={onCalcular}
-        className="mt-4 w-full sm:w-auto px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg transition-colors"
+        className="nx-public-primary mt-5 w-full px-6 sm:w-auto"
       >
         Calcular
       </button>
 
       {results && (
-        <div className="mt-5 rounded-xl bg-white border border-slate-200 divide-y divide-slate-100">
+        <div className="nx-public-calculator-results mt-5 overflow-hidden rounded-2xl border" aria-live="polite">
           {results.map((r, i) => (
-            <div key={i} className={`flex justify-between items-center px-4 py-3 ${r.strong ? 'bg-slate-50' : ''}`}>
-              <span className={`text-sm ${r.strong ? 'font-bold text-slate-900' : 'text-slate-600'}`}>{r.label}</span>
-              <span className={`font-mono ${r.strong ? 'text-lg font-bold text-slate-900' : 'text-slate-700'}`}>{r.value}</span>
+            <div key={i} className={`nx-public-calculator-result flex items-center justify-between gap-4 px-4 py-3 ${r.strong ? 'nx-public-calculator-result-strong' : ''}`}>
+              <span className={`text-sm ${r.strong ? 'font-semibold' : 'nx-public-muted'}`}>{r.label}</span>
+              <span className={`font-mono text-right ${r.strong ? 'text-lg font-bold' : 'nx-public-muted'}`}>{r.value}</span>
             </div>
           ))}
         </div>
       )}
 
-      <p className="mt-3 text-[11px] leading-relaxed text-slate-400">
+      <p className="nx-public-subtle mt-4 text-[13px] leading-relaxed">
         Cálculo referencial según la legislación nicaragüense (Ley 185 / Ley 539 / DGI).
         {!tasasVerificadas() && ' Verificá las tasas vigentes con INSS/DGI/MITRAB antes de usarlo para un pago real.'}
         {' '}Para nómina, aguinaldo e impuestos automáticos y siempre al día, usá Nortex.
@@ -98,12 +101,12 @@ const Calculator: React.FC<{ type: CalculatorType }> = ({ type }) => {
         <Link
           to="/register"
           onClick={() => trackEvent('cta_click', { location: `calc_${type}` })}
-          className="mt-3 inline-flex items-center gap-2 text-sm font-bold text-slate-900 hover:gap-3 transition-all"
+          className="nx-public-link mt-3 inline-flex min-h-[44px] items-center gap-2 text-sm font-semibold"
         >
-          Automatizá esto con Nortex — probá gratis <ArrowRight size={16} />
+          Automatizá esto con Nortex — probá gratis <ArrowRight size={16} aria-hidden="true" />
         </Link>
       )}
-    </div>
+    </section>
   );
 };
 

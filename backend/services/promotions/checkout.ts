@@ -56,12 +56,13 @@ export async function completeCheckout(tx: Prisma.TransactionClient, checkout: P
 export async function createCheckoutQuote(principal: PromotionPrincipal, raw: { shiftId?: string; sale?: unknown }, db: PrismaClient = prisma): Promise<PromotionCheckoutResponse> {
     await authorizePromotion(db, principal);
     if (!await promotionsEnabled(db, principal.tenantId)) return { enabled: false, quote: null };
-    const { CreateSaleSchema } = await import('../salesService.js');
+    const { CreateSaleSchema, lockSaleProductsInOrder } = await import('../salesService.js');
     const parsed = CreateSaleSchema.safeParse(raw.sale);
     if (!parsed.success || !parsed.data.offlineId || parsed.data.promotionQuote) throw new PromotionError('PROMOTION_INVALID_INPUT', 400, 'La revisión requiere el carrito y su identificador de cobro.');
     return db.$transaction(async tx => {
         const user = await authorizePromotion(tx, principal, false, true);
         if (!await promotionsEnabled(tx, principal.tenantId, true)) throw new PromotionError('PROMOTION_DISABLED', 403, 'Las promociones ya no están habilitadas.');
+        await lockSaleProductsInOrder(tx, principal.tenantId, parsed.data.items.map(item => item.id));
         const [shift] = await tx.$queryRaw<Array<{ id: string; employeeId: string | null }>>`SELECT id, employeeId FROM \`Shift\` WHERE tenantId = ${principal.tenantId} AND userId = ${principal.userId} AND status = 'OPEN' AND id = ${raw.shiftId ?? ''} FOR SHARE`;
         if (!shift) throw new PromotionError('PROMOTION_SHIFT_CHANGED', 409, 'La caja no está abierta en esta sesión.');
         const input = { ...parsed.data, source: 'POS', employeeId: shift.employeeId };

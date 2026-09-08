@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import Decimal from 'decimal.js';
+import { resolveLegacySaleMode } from '../../utils/legacySaleMode.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { SalePromotionSnapshot } from '../../shared/promotions.js';
 import { loadPromotionProducts } from './promotions/authority.js';
@@ -208,10 +209,11 @@ const convertToBaseUnit = (
     }
 };
 
-/** D6: legado nullable conserva fracciones; solo COUNTED explicito exige enteros. */
+/** El legado medido conserva fracciones; cajas/unidades sin configuración son enteras. */
 export const effectiveSaleModeAndStep = (
     saleMode: string | null,
     quantityStep: { toString(): string } | string | null,
+    unit?: string | null,
 ): { saleMode: SaleMode; quantityStep: string } => {
     if (saleMode !== null && saleMode !== 'COUNTED' && saleMode !== 'MEASURED') {
         throw new SaleItemNormalizationError(
@@ -220,7 +222,7 @@ export const effectiveSaleModeAndStep = (
             409,
         );
     }
-    const effectiveMode: SaleMode = saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+    const effectiveMode = resolveLegacySaleMode({ saleMode, quantityStep, unit });
     return {
         saleMode: effectiveMode,
         quantityStep: quantityStep?.toString() ?? (effectiveMode === 'COUNTED' ? '1' : '0.0001'),
@@ -228,7 +230,7 @@ export const effectiveSaleModeAndStep = (
 };
 
 const validatedProductQuantity = (product: ProductAuthority, value: Decimal): Decimal => {
-    const rules = effectiveSaleModeAndStep(product.saleMode, product.quantityStep);
+    const rules = effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit);
     try {
         return validateQuantity(value.toString(), rules);
     } catch (error) {
@@ -356,6 +358,12 @@ const directQuantity = (
     let derived: Decimal;
     let presentationAtSale: 'BASE' | 'PACK' = 'BASE';
     if (product.packUnit && sameUnit(sourceUnit, product.packUnit)) {
+        if (!sourceValue.isInteger()) {
+            throw new SaleItemNormalizationError(
+                'INVALID_QUANTITY',
+                `${product.name}: la presentación ${product.packUnit} requiere empaques completos; vendé las piezas en la unidad base`,
+            );
+        }
         const packSize = product.packSize === null ? null : decimalPositive(product.packSize, 'Product.packSize');
         if (!packSize) {
             throw new SaleItemNormalizationError(
@@ -641,7 +649,7 @@ export async function normalizeSaleItems(
                         409,
                     );
                 }
-                const currentRules = effectiveSaleModeAndStep(product.saleMode, product.quantityStep);
+                const currentRules = effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit);
                 const saleModeAtSale = quotedItem.saleModeAtQuote ?? currentRules.saleMode;
                 const quantityStepAtSale = quotedItem.quantityStepAtQuote?.toString()
                     ?? (quotedItem.saleModeAtQuote === null
@@ -766,8 +774,8 @@ export async function normalizeSaleItems(
                 ivaExento: product.ivaExento === true,
                 productNameAtSale: product.name,
                 unitAtSale: product.unit,
-                saleModeAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep).saleMode,
-                quantityStepAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep).quantityStep,
+                saleModeAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit).saleMode,
+                quantityStepAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit).quantityStep,
                 presentationAtSale: direct.presentationAtSale,
                 presentationQuantityAtSale: direct.presentationQuantityAtSale,
                 requiresBatchTracking: product.requiresBatchTracking,
@@ -873,8 +881,8 @@ export async function normalizeSaleItems(
             ivaExento: product.ivaExento === true,
             productNameAtSale: product.name,
             unitAtSale: product.unit,
-            saleModeAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep).saleMode,
-            quantityStepAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep).quantityStep,
+            saleModeAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit).saleMode,
+            quantityStepAtSale: effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit).quantityStep,
             presentationAtSale: 'BASE',
             presentationQuantityAtSale: baseQuantity,
             requiresBatchTracking: product.requiresBatchTracking,

@@ -22,8 +22,7 @@ function props(products: Product[] = []): PosCatalogPaneProps {
         quickProductsLabel: 'Tus productos', pageSize: 24, permiteStockNegativo: false,
         searchTerm: '', searchRef: createRef<HTMLInputElement>(), setSearchTerm: vi.fn(),
         handleSearchKeyDown: vi.fn(), agregarDesdeGrilla: vi.fn(), avisarProductoAgotado: vi.fn(),
-        fetchProducts: vi.fn(), openQuickCreate: vi.fn(), onFullCreate: vi.fn(),
-        onImport: vi.fn(), onPractice: vi.fn(),
+        fetchProducts: vi.fn(), openQuickCreate: vi.fn(), onPractice: vi.fn(),
     };
 }
 
@@ -138,13 +137,16 @@ describe('panel de catálogo del POS', () => {
 
     it('preserva los accesos de producto y la salida del agotado en modo completo', () => {
         const initial = props([product(1, 'General', 0)]);
-        render(<PosCatalogPane {...initial} guidedSimpleMode={false} searchTerm="SKU-1" />);
+        const onFullCreate = vi.fn();
+        const onImport = vi.fn();
+        render(<PosCatalogPane {...initial} guidedSimpleMode={false} searchTerm="SKU-1"
+            adminTools={<><button onClick={onFullCreate}>Nuevo</button><button onClick={onImport}>Excel</button></>} />);
         fireEvent.click(screen.getByRole('button', { name: 'Rápido' }));
         fireEvent.click(screen.getByRole('button', { name: 'Nuevo' }));
         fireEvent.click(screen.getByRole('button', { name: 'Excel' }));
         expect(initial.openQuickCreate).toHaveBeenCalledOnce();
-        expect(initial.onFullCreate).toHaveBeenCalledOnce();
-        expect(initial.onImport).toHaveBeenCalledOnce();
+        expect(onFullCreate).toHaveBeenCalledOnce();
+        expect(onImport).toHaveBeenCalledOnce();
         const blocked = screen.getByRole('button', { name: /Producto 1.*AGOTADO/ });
         expect(blocked).toHaveAttribute('aria-disabled', 'true');
         expect(blocked).not.toBeDisabled();

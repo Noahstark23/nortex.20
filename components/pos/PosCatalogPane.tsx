@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Check, Keyboard, Package, PackagePlus, PlayCircle, Plus, Search, Upload, X, Zap } from 'lucide-react';
+import { Check, Keyboard, Package, PackagePlus, PlayCircle, Plus, Search, X, Zap } from 'lucide-react';
 import type { Product } from '../../types';
 import { formatMoney } from '../../utils/money';
 import { buscarProductos, type EntradaIndice, type ResultadoBusqueda } from '../../utils/posSearch';
@@ -27,8 +27,7 @@ export interface PosCatalogPaneProps {
     avisarProductoAgotado: (product: Product) => void;
     fetchProducts: () => void;
     openQuickCreate: () => void;
-    onFullCreate: () => void;
-    onImport: () => void;
+    adminTools?: React.ReactNode;
     onPractice: (source: 'first_sale' | 'empty_catalog') => void;
 }
 
@@ -106,7 +105,7 @@ export function PosCatalogPane({
     firstSaleMode, firstSaleStage, quickProductsLabel, pageSize,
     permiteStockNegativo, searchTerm, searchRef, setSearchTerm, handleSearchKeyDown,
     agregarDesdeGrilla, avisarProductoAgotado, fetchProducts, openQuickCreate,
-    onFullCreate, onImport, onPractice,
+    adminTools, onPractice,
 }: PosCatalogPaneProps) {
     const [cajaCategory, setCajaCategory] = useState('Todos');
     const [cajaVisibleLimit, setCajaVisibleLimit] = useState(pageSize);
@@ -248,23 +247,7 @@ export function PosCatalogPane({
                         <Zap size={18} />
                         <span>Rápido</span>
                     </button>}
-                    {/* Full Create */}
-                    {!guidedSimpleMode && <button type="button"
-                        onClick={onFullCreate}
-                        className="nx-fluid-press min-h-tap bg-nortex-500 text-brand-on px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-colors"
-                        title="Crear producto completo"
-                    >
-                        <Plus size={18} /> Nuevo
-                    </button>}
-                    {/* Import */}
-                    {!guidedSimpleMode && <button
-                        type="button"
-                        onClick={onImport}
-                        className="nx-fluid-press min-h-tap bg-brand px-3 text-brand-on rounded-xl flex items-center gap-1.5 font-bold text-sm hover:bg-brand-hover shadow-md transition-colors"
-                        title="Importar desde Excel"
-                    >
-                        <Upload size={18} /> Excel
-                    </button>}
+                    {adminTools}
                 </div>
 
                 {/* ACCESO RÁPIDO A PRODUCTOS

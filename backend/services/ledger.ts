@@ -32,7 +32,7 @@ export interface CashMovementInput {
     shiftId: string;
     userId: string;
     type: string;
-    amount: number;
+    amount: Prisma.Decimal | string | number;
     currency: string;
     category: string;
     description: string;

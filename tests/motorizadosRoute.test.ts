@@ -5,6 +5,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const prismaMock = vi.hoisted(() => ({
     motorizado: {
         create: vi.fn(),
+        findMany: vi.fn(),
         findFirst: vi.fn(),
         updateMany: vi.fn(),
     },
@@ -27,6 +28,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
     prismaMock.motorizado.create.mockReset();
+    prismaMock.motorizado.findMany.mockReset();
     prismaMock.motorizado.findFirst.mockReset();
     prismaMock.motorizado.updateMany.mockReset();
 });
@@ -47,7 +49,7 @@ const response = () => {
     return res;
 };
 
-const routeHandler = (path: string, method: 'post' | 'patch'): any => {
+const routeHandler = (path: string, method: 'get' | 'post' | 'patch'): any => {
     const router = routeModule.buildMotorizadosRouter();
     const layer = router.stack.find((candidate: any) =>
         candidate.route?.path === path && candidate.route.methods?.[method]);
@@ -81,11 +83,13 @@ describe('contrato de flota propia', () => {
             nombre: 'Ana López',
             telefono: '88880000',
             zonaCobertura: 'Managua',
+            pin: '0042',
             tipoFlota: 'PROPIA',
         })).toEqual({
             nombre: 'Ana López',
             telefono: '88880000',
             zonaCobertura: 'Managua',
+            pin: '0042',
             tipoFlota: 'PROPIA',
         });
     });
@@ -95,9 +99,10 @@ describe('contrato de flota propia', () => {
             nombre: 'Ana López',
             telefono: '88880000',
             zonaCobertura: 'Managua',
+            pin: '0042',
         };
 
-        for (const requiredField of ['nombre', 'telefono', 'zonaCobertura'] as const) {
+        for (const requiredField of ['nombre', 'telefono', 'zonaCobertura', 'pin'] as const) {
             const candidate: Partial<typeof valid> = { ...valid };
             delete candidate[requiredField];
             expect(routeModule.FleetRiderCreateSchema.safeParse(candidate).success).toBe(false);
@@ -152,6 +157,7 @@ describe('contrato de flota propia', () => {
                 nombre: 'Ana López',
                 telefono: '88880000',
                 zonaCobertura: 'Managua',
+                pin: '0042',
                 tenantId: 'tenant-atacante-secreto',
             },
         }, extraFieldRes, vi.fn());
@@ -168,7 +174,7 @@ describe('contrato de flota propia', () => {
         expect(missingFieldRes.payload.error).toMatch(/[áéíóúñ]/iu);
     });
 
-    it('rechaza duplicado por teléfono dentro del mismo tenant sin reclamar unicidad global', async () => {
+    it('rechaza duplicado por teléfono dentro del mismo tenant y conserva el control global de identidad', async () => {
         const post = routeHandler('/', 'post');
         const res = response();
         prismaMock.motorizado.findFirst.mockResolvedValueOnce({ id: 'rider-existing' });
@@ -179,6 +185,7 @@ describe('contrato de flota propia', () => {
                 nombre: 'Ana López',
                 telefono: '88880000',
                 zonaCobertura: 'Managua',
+                pin: '0042',
                 tipoFlota: 'PROPIA',
             },
         }, res, vi.fn());
@@ -299,14 +306,24 @@ describe('contrato de flota propia', () => {
         expect(patchBlock).toContain('dataUpdate.pinHash = parsed.data.pin === null');
     });
 
-    it('no devuelve el hash del PIN en contratos operativos', () => {
-        const operationalSelectStart = source.indexOf('const motorizadoOperationalSelect');
-        const operationalSelectEnd = source.indexOf('} as const;', operationalSelectStart);
-        const operationalSelect = source.slice(operationalSelectStart, operationalSelectEnd);
-
-        expect(operationalSelectStart).toBeGreaterThan(-1);
-        expect(operationalSelect).not.toContain('pinHash');
-        expect(source).toContain('select: motorizadoOperationalSelect');
-        expect(source).toContain('take: 250');
+    it('GET devuelve datos operativos sin credenciales ni KYC privado', async () => {
+        const privateRow = { id: 'rider-1', nombre: 'Ana López', telefono: '88880000',
+            tipoFlota: 'PROPIA', zonaCobertura: 'Managua', activo: true, calificacionPromedio: 5,
+            vehiculoPlaca: 'M 123', pinHash: 'private-pin-hash', cedula: 'private-id',
+            walletBalance: '100', fotoCedulaUrl: 'private-photo', tenantId: 'tenant-auth' };
+        prismaMock.motorizado.findMany.mockImplementation(async ({ select }) => [
+            Object.fromEntries(Object.entries(privateRow).filter(([key]) => select[key])),
+        ]);
+        const res = response();
+        await routeHandler('/', 'get')({ tenantId: 'tenant-auth' }, res, vi.fn());
+        expect(prismaMock.motorizado.findMany).toHaveBeenCalledWith({
+            where: { OR: [{ tenantId: 'tenant-auth' }, { tipoFlota: 'NORTEX', kycStatus: 'APROBADO', activo: true }] },
+            orderBy: { tipoFlota: 'asc' }, take: 250,
+            select: { id: true, nombre: true, telefono: true, tipoFlota: true, zonaCobertura: true,
+                activo: true, calificacionPromedio: true, vehiculoPlaca: true },
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.payload).toEqual({ motorizados: [{ id: 'rider-1', nombre: 'Ana López', telefono: '88880000',
+            tipoFlota: 'PROPIA', zonaCobertura: 'Managua', activo: true, calificacionPromedio: 5, vehiculoPlaca: 'M 123' }] });
     });
 });

@@ -4,18 +4,17 @@ import { describe, expect, it } from 'vitest';
 
 const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
 const pos = readFileSync(resolve(process.cwd(), 'components/POS.tsx'), 'utf8');
+const sales = readFileSync(resolve(process.cwd(), 'components/Sales.tsx'), 'utf8');
 
 const between = (source: string, start: string, end: string | RegExp): string => {
     const from = source.indexOf(start);
-    let to: number;
-    if (typeof end === 'string') {
-        to = end
-            ? source.indexOf(end, from + start.length)
-            : source.indexOf("\napp.", from + start.length);
-    } else {
-        const match = source.slice(from + start.length).match(end);
-        to = match ? from + start.length + match.index! : -1;
-    }
+    const searchFrom = from + start.length;
+    const regexMatch = end instanceof RegExp ? source.slice(searchFrom).match(end) : null;
+    const to = end instanceof RegExp
+        ? (regexMatch?.index === undefined ? -1 : searchFrom + regexMatch.index)
+        : end
+            ? source.indexOf(end, searchFrom)
+            : source.indexOf("\napp.", searchFrom);
     if (from < 0 || to < 0) throw new Error(`No se encontró el bloque ${start}`);
     return source.slice(from, to);
 };
@@ -30,30 +29,16 @@ const returnRoute = between(
     "app.post('/api/returns'",
     '',
 );
-const returnSubmitFlow = between(
-    pos,
-    'const returnCreditReduction =',
-    'if (shiftLoading)',
-);
-const returnRefundSelector = between(
-    pos,
-    '{returnRequiresRefundMethod && (',
-    '{/* Confirm */}',
-);
-
 describe('guardas estructurales de devoluciones', () => {
-    it('el POS solo envía refundMethod para crédito con importe ya liquidado', () => {
-        expect(returnSubmitFlow).toContain(
-            "const returnRequiresRefundMethod = returnSaleData?.paymentMethod === 'CREDIT'",
-        );
-        expect(returnSubmitFlow).toContain('&& returnSettledRefund.greaterThan(0)');
-        expect(returnSubmitFlow).toContain(
-            '...(returnRequiresRefundMethod ? { refundMethod: returnRefundMethod } : {})',
-        );
-        expect(returnSubmitFlow.match(/refundMethod:/g)).toHaveLength(1);
-        expect(returnRefundSelector).toContain('id="return-refund-method"');
-        expect(returnRefundSelector).toContain('value={returnRefundMethod}');
-        expect(returnRefundSelector).toContain('returnSaleData.allowedRefundMethods.map');
+    it('el POS dirige las correcciones al expediente aprobado y no conserva atajos mutantes', () => {
+        expect(pos).toContain("navigate('/app/sales')");
+        expect(pos).toContain('Correcciones y aprobaciones');
+        expect(pos).not.toContain("fetch('/api/returns'");
+        expect(pos).not.toContain('/api/sales/${returnSaleData.id}/cancel');
+
+        expect(sales).toContain("fetch('/api/sale-corrections'");
+        expect(sales).toContain('correctionRequestId: request.id');
+        expect(sales).toContain('clientEventId: crypto.randomUUID()');
     });
 
     it('aísla por tenant tanto la búsqueda como la transacción de devolución', () => {
@@ -94,6 +79,7 @@ describe('guardas estructurales de devoluciones', () => {
         const transactionIndex = returnRoute.indexOf('prisma.$transaction');
         const saleLockIndex = returnRoute.indexOf('SELECT id FROM \\`Sale\\`');
         const replayReadIndex = returnRoute.indexOf('const existingReturn = await tx.productReturn.findFirst');
+        const processingShiftIndex = returnRoute.indexOf('const ownProcessingShifts:');
         const stockIndex = returnRoute.indexOf('applyStockDelta(tx');
         const createIndex = returnRoute.indexOf('tx.productReturn.create');
         const createEnd = returnRoute.indexOf('// OFF queda', createIndex);
@@ -106,10 +92,39 @@ describe('guardas estructurales de devoluciones', () => {
         expect(replayReadIndex).toBeGreaterThan(saleLockIndex);
         expect(returnRoute.slice(replayReadIndex, createIndex)).toContain('tenantId: authReq.tenantId');
         expect(returnRoute.slice(replayReadIndex, createIndex)).toContain('clientEventId');
+        expect(processingShiftIndex).toBeGreaterThan(replayReadIndex);
         expect(createIndex).toBeGreaterThan(replayReadIndex);
+        expect(createIndex).toBeGreaterThan(processingShiftIndex);
         expect(returnRoute.slice(createIndex, createEnd)).toContain('clientEventId,');
         expect(returnRoute.slice(createIndex, createEnd)).toContain('payloadHash,');
+        expect(returnRoute.slice(createIndex, createEnd)).toContain('processedShiftId,');
         expect(stockIndex).toBeGreaterThan(createIndex);
+    });
+
+    it('resuelve un processedShiftId no nulo antes de persistir y limita el fallback a CASH', () => {
+        const refundResolutionIndex = returnRoute.indexOf("const refundMethod = resolution === 'REFUND'");
+        const shiftSelectionStart = returnRoute.indexOf('const ownProcessingShifts:');
+        const attributionIndex = returnRoute.indexOf('resolveReturnShiftAttribution({', shiftSelectionStart);
+        const processedShiftIndex = returnRoute.indexOf(
+            'const processedShiftId = shiftAttribution.processedShiftId;',
+            attributionIndex,
+        );
+        const createIndex = returnRoute.indexOf('tx.productReturn.create', processedShiftIndex);
+        const shiftSelectionBlock = returnRoute.slice(shiftSelectionStart, createIndex);
+
+        expect(refundResolutionIndex).toBeGreaterThan(-1);
+        expect(shiftSelectionStart).toBeGreaterThan(refundResolutionIndex);
+        expect(shiftSelectionBlock).toContain('AND \\`userId\\` = ${authReq.userId}');
+        expect(shiftSelectionBlock.match(/LIMIT 2/g)).toHaveLength(2);
+        expect(shiftSelectionBlock.match(/FOR UPDATE/g)).toHaveLength(2);
+        expect(shiftSelectionBlock).toContain(
+            'if (requiresCashDrawer && ownProcessingShifts.length === 0)',
+        );
+        expect(shiftSelectionBlock).toContain('tenantOpenShifts: tenantProcessingShifts');
+        expect(shiftSelectionBlock).toContain('requiresCashDrawer,');
+        expect(processedShiftIndex).toBeGreaterThan(attributionIndex);
+        expect(createIndex).toBeGreaterThan(processedShiftIndex);
+        expect(shiftSelectionBlock).not.toContain('processedShiftId = processingShift?.id ?? null');
     });
 
     it('un replay idéntico retorna la fila existente y una reutilización distinta da 409', () => {
@@ -129,13 +144,12 @@ describe('guardas estructurales de devoluciones', () => {
         expect(returnRoute).toContain('idempotentReplay: result.idempotentReplay');
     });
 
-    it('el POS conserva la UUID para retries y la rota al cambiar el payload material', () => {
-        expect(pos).toContain("const returnRequestRef = useRef<{ signature: string; clientEventId: string } | null>(null)");
-        expect(returnSubmitFlow).toContain('const signature = JSON.stringify(materialPayload)');
-        expect(returnSubmitFlow).toContain('returnRequestRef.current.signature !== signature');
-        expect(returnSubmitFlow).toContain('clientEventId: generateOfflineId()');
-        expect(returnSubmitFlow).toContain('clientEventId: returnRequestRef.current.clientEventId');
-        expect(pos).toContain('returnRequestRef.current = null;');
+    it('la ejecución aprobada conserva el ID de corrección en ambos caminos', () => {
+        const executeRequest = between(sales, 'const executeRequest = async', '\n\n    return <div');
+
+        expect(executeRequest).toContain("? { correctionRequestId: request.id, motivo: request.reason }");
+        expect(executeRequest).toContain('correctionRequestId: request.id,');
+        expect(executeRequest).toContain("request.kind === 'VOID' ? `/api/sales/${request.saleId}/cancel` : '/api/returns'");
     });
 
     it('restituye existencias en la ubicación original de la venta cuando es inequívoca', () => {
@@ -152,23 +166,25 @@ describe('guardas estructurales de devoluciones', () => {
     });
 
     it('bloquea la caja actual, revalida efectivo y registra un único movimiento firmado', () => {
-        const cashBlockStart = returnRoute.indexOf(
-            "if (settledRefund.greaterThan(0) && refundMethod === 'CASH')",
+        const cashBlockStart = returnRoute.indexOf('if (requiresCashDrawer)');
+        const shiftSelectionIndex = returnRoute.indexOf('const ownProcessingShifts:');
+        const refundShiftIndex = returnRoute.indexOf(
+            'const refundShiftId = shiftAttribution.refundShiftId;',
+            shiftSelectionIndex,
         );
-        const shiftLockIndex = returnRoute.indexOf('FROM \\`Shift\\`', cashBlockStart);
-        const shiftForUpdateIndex = returnRoute.indexOf('FOR UPDATE', shiftLockIndex);
-        const balanceIndex = returnRoute.indexOf('calcularEfectivoTurno', shiftForUpdateIndex);
+        const balanceIndex = returnRoute.indexOf('calcularEfectivoTurno', cashBlockStart);
         const movementIndex = returnRoute.indexOf('appendSignedCashMovement', balanceIndex);
 
         expect(cashBlockStart).toBeGreaterThan(-1);
-        expect(returnRoute.slice(cashBlockStart, shiftLockIndex)).toContain("status: 'OPEN'");
-        expect(shiftLockIndex).toBeGreaterThan(cashBlockStart);
-        expect(returnRoute.slice(shiftLockIndex, shiftForUpdateIndex)).toContain('AND \\`tenantId\\` = ${authReq.tenantId}');
-        expect(shiftForUpdateIndex).toBeGreaterThan(shiftLockIndex);
-        expect(balanceIndex).toBeGreaterThan(shiftForUpdateIndex);
+        expect(shiftSelectionIndex).toBeGreaterThan(-1);
+        expect(refundShiftIndex).toBeGreaterThan(shiftSelectionIndex);
+        expect(cashBlockStart).toBeGreaterThan(refundShiftIndex);
+        expect(balanceIndex).toBeGreaterThan(shiftSelectionIndex);
         expect(returnRoute).toContain("'RETURN_CASH_INSUFFICIENT'");
         expect(movementIndex).toBeGreaterThan(balanceIndex);
         expect(returnRoute.slice(movementIndex)).toContain("category: 'DEVOLUCION'");
+        expect(returnRoute.slice(movementIndex)).toContain('amount: settledRefund.toFixed(2)');
+        expect(returnRoute.slice(movementIndex)).not.toContain('amount: settledRefund.toNumber()');
         expect(returnRoute.match(/appendSignedCashMovement/g)).toHaveLength(1);
         expect(returnRoute).not.toContain('recordCashMovement');
     });
@@ -185,6 +201,8 @@ describe('guardas estructurales de devoluciones', () => {
         expect(accountingBlock).toContain("refundMethod: resolution === 'REFUND' ? (refundMethod ?? 'CASH') : 'STORE_CREDIT'");
         expect(accountingBlock).toContain("refundPending: resolution === 'REFUND'");
         expect(auditIndex).toBeGreaterThan(accountingIndex);
+        expect(returnRoute.slice(auditIndex)).toContain('processedShiftId,');
+        expect(returnRoute.slice(auditIndex)).toContain('shiftAttributionSource: shiftAttribution.source');
         expect(returnRoute.slice(auditIndex)).toContain('cashMovementId,');
         expect(returnRoute.slice(auditIndex)).toContain('refundShiftId,');
         expect(returnRoute.slice(auditIndex)).toContain('refundMethod,');

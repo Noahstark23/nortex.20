@@ -11,7 +11,11 @@ import Decimal from 'decimal.js';
 export const sanitizeDecimalInput = (raw: string): string => {
     const cleaned = raw.replace(/[^\d.]/g, '');
     const dot = cleaned.indexOf('.');
-    return dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+    // La misma expresión también cubre `dot === -1`: `slice(0, 0)` queda
+    // vacío y el resto conserva todos los dígitos (por definición no hay
+    // puntos). Evitamos así una rama equivalente que no podía discriminar
+    // ningún input.
+    return cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
 };
 
 /**

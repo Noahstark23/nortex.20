@@ -110,6 +110,7 @@ describe('CreatePurchaseSchema — fechas que realmente envían los formularios'
         expect(result.data.purchaseOrderId).toBeUndefined();
         expect(result.data.items[0].batchNumber).toBeUndefined();
         expect(result.data.items[0].expiryDate).toBeUndefined();
+        expect(result.data.items[0].salePrice).toBeUndefined();
     });
 
     it('mantiene válida una compra CASH sin dueDate', () => {
@@ -282,6 +283,54 @@ describe('CreatePurchaseSchema — rechazos que protegen la persistencia', () =>
         expect(linked.success).toBe(true);
         if (linked.success) expect(linked.data.warehouseId).toBe('warehouse-principal');
         expect(empty.success).toBe(false);
+    });
+
+    it('acepta precio de venta explícito como número o texto Decimal-safe', () => {
+        const numeric = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            items: [{ ...basicItem, salePrice: 29.95 }],
+        });
+        const textual = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            items: [{ ...basicItem, salePrice: ' 29.9500 ' }],
+        });
+
+        expect(numeric.success).toBe(true);
+        expect(textual.success).toBe(true);
+        if (numeric.success) expect(numeric.data.items[0].salePrice).toBe('29.95');
+        if (textual.success) expect(textual.data.items[0].salePrice).toBe('29.9500');
+    });
+
+    it('omitir o enviar null en salePrice conserva la intención ausente', () => {
+        const omitted = CreatePurchaseSchema.safeParse(cashPurchase);
+        const historicalNull = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            items: [{ ...basicItem, salePrice: null }],
+        });
+
+        expect(omitted.success).toBe(true);
+        expect(historicalNull.success).toBe(true);
+        if (omitted.success) expect(omitted.data.items[0].salePrice).toBeUndefined();
+        if (historicalNull.success) expect(historicalNull.data.items[0].salePrice).toBeUndefined();
+    });
+
+    it.each([
+        ['cero', 0],
+        ['negativo', -1],
+        ['vacío', ''],
+        ['texto parcial', '12abc'],
+        ['infinito', 'Infinity'],
+        ['overflow numérico', '1e400'],
+        ['underflow que persistiría como cero', '1e-1000'],
+    ])('rechaza salePrice %s', (_label, salePrice) => {
+        const result = CreatePurchaseSchema.safeParse({
+            ...cashPurchase,
+            items: [{ ...basicItem, salePrice }],
+        });
+
+        expect(result.success).toBe(false);
+        if (result.success) return;
+        expect(result.error.issues.some((issue) => issue.path.join('.') === 'items.0.salePrice')).toBe(true);
     });
 
     it('normaliza espacios en identificadores y número de factura', () => {

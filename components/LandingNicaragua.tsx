@@ -1,113 +1,156 @@
 import React, { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
-import { CheckCircle, ArrowRight, Star } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { ArrowRight, CheckCircle2, MapPinned, Shield, Store } from 'lucide-react';
+import { PublicFooter, PublicThemeFrame, PublicTopBar } from './public/PublicChrome';
+
+const REGISTER_SOURCE = 'landing_nicaragua';
+
+const capabilities = [
+  'Facturación Serie A/B y operación diaria dentro de la misma experiencia.',
+  'Inventario, caja, ventas y cobranza con una lectura clara para el equipo.',
+  'Planilla y cálculos laborales reunidos con el resto de la operación.',
+  'Acceso desde computadora, tableta o teléfono con modo día y modo noche.',
+];
 
 const LandingNicaragua: React.FC = () => {
   const [email, setEmail] = useState('');
   const navigate = useNavigate();
 
-  const handleCTA = () => {
-    const params = new URLSearchParams({ source: 'landing_nicaragua' });
+  const handleCTA = (event?: React.FormEvent) => {
+    event?.preventDefault();
+    const params = new URLSearchParams({ source: REGISTER_SOURCE });
     if (email.trim()) params.set('email', email.trim());
     navigate(`/register?${params.toString()}`);
   };
 
   return (
-    <div className="min-h-screen bg-white font-sans text-slate-800">
-      <header className="bg-slate-900 py-4 px-6 text-center">
-        <div className="flex items-center justify-center gap-2">
-          <div className="w-7 h-7 bg-emerald-500 rounded flex items-center justify-center text-white font-bold text-sm">N</div>
-          <span className="font-bold text-white text-lg">NORTEX</span>
-        </div>
-      </header>
-
-      <section className="py-16 px-6 max-w-4xl mx-auto text-center">
-        <div className="inline-flex items-center gap-2 bg-emerald-50 text-emerald-700 text-sm font-medium px-4 py-2 rounded-full mb-6 border border-emerald-200">
-          Sistema POS #1 para PyMES en Nicaragua
-        </div>
-        
-        <h1 className="text-4xl md:text-5xl font-extrabold text-slate-900 mb-6 leading-tight">
-          Factura, controla tu inventario<br />y gestiona tu negocio
-          <span className="text-emerald-600"> desde Nicaragua</span>
-        </h1>
-        
-        <p className="text-xl text-slate-500 mb-10 max-w-2xl mx-auto">
-          El único sistema POS que cumple con DGI Nicaragua, incluye nómina Ley 185 
-          y se configura en menos de 5 minutos.
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-3 max-w-md mx-auto mb-6">
-          <input
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            placeholder="tu@correo.com"
-            className="flex-1 px-4 py-3 border-2 border-slate-200 rounded-xl text-base focus:border-emerald-500 focus:outline-none"
-          />
-          <button
-            onClick={handleCTA}
-            className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-xl transition-colors whitespace-nowrap"
+    <PublicThemeFrame>
+      {({ theme, toggleTheme }) => (
+        <>
+          <a
+            href="#public-main-content"
+            className="nx-public-primary sr-only focus:not-sr-only focus:fixed focus:left-4 focus:top-4 focus:z-modal focus:min-h-[44px] focus:px-5"
           >
-            Empieza gratis <ArrowRight size={18} />
-          </button>
-        </div>
-        <p className="text-sm text-slate-400">30 días gratis · Sin tarjeta · Cancela cuando quieras</p>
-      </section>
+            Saltar al contenido
+          </a>
 
-      <section className="py-8 bg-slate-50 border-y border-slate-100">
-        <div className="max-w-3xl mx-auto px-6">
-          <div className="flex flex-wrap justify-center gap-8 text-center">
-            {[
-              { n: "500+", l: "negocios en Nicaragua" },
-              { n: "4.8", l: "calificación promedio" },
-              { n: "2 min", l: "tiempo de configuración" },
-              { n: "99.5%", l: "disponibilidad del sistema" }
-            ].map((s, i) => (
-              <div key={i}>
-                <div className="text-2xl font-bold text-slate-900">{s.n}</div>
-                <div className="text-sm text-slate-500">{s.l}</div>
+          <PublicTopBar
+            theme={theme}
+            onToggle={toggleTheme}
+            eyebrow="Nicaragua"
+            actions={[
+              { to: '/login', label: 'Entrar', kind: 'link', className: 'hidden md:inline-flex' },
+              { to: '/register?source=landing_nicaragua', label: 'Crear cuenta', mobileLabel: 'Crear', kind: 'primary' },
+            ]}
+          />
+
+          <main id="public-main-content" tabIndex={-1} className="mx-auto flex w-full max-w-[1100px] flex-col gap-12 px-4 py-8 sm:px-6 sm:py-12">
+            <section aria-labelledby="nicaragua-hero-title" className="grid gap-6 lg:grid-cols-[minmax(0,1.05fr)_minmax(340px,.95fr)] lg:items-center">
+              <div className="space-y-5">
+                <span className="nx-public-badge inline-flex min-h-[32px] items-center gap-2 px-3 text-sm font-semibold">
+                  <MapPinned size={14} aria-hidden="true" />
+                  Hecho para PyMES en Nicaragua
+                </span>
+                <div className="space-y-4">
+                  <h1 id="nicaragua-hero-title" className="text-balance text-[clamp(2.45rem,5vw,4.6rem)] font-semibold leading-[1.04] tracking-[-0.045em] text-[color:var(--nx-public-text)]">
+                    Facturá, controlá inventario y gestioná tu negocio con más claridad.
+                  </h1>
+                  <p className="nx-public-reading max-w-[650px] text-[1.04rem]">
+                    Nortex reúne punto de venta, inventario, cobranza y equipo para negocios que necesitan trabajar sin repartir la operación entre libretas, hojas de cálculo y mensajes.
+                  </p>
+                </div>
+
+                <form onSubmit={handleCTA} className="nx-public-card max-w-[620px] p-4 sm:p-5">
+                  <label htmlFor="landing-nicaragua-email" className="block text-sm font-semibold text-[color:var(--nx-public-text)]">
+                    Correo de trabajo <span className="nx-public-subtle font-normal">(opcional)</span>
+                  </label>
+                  <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+                    <input
+                      id="landing-nicaragua-email"
+                      type="email"
+                      inputMode="email"
+                      autoComplete="email"
+                      value={email}
+                      onChange={event => setEmail(event.target.value)}
+                      placeholder="tu@correo.com"
+                      className="nx-public-field min-h-[48px] w-full rounded-xl border px-4 text-[16px] outline-none"
+                    />
+                    <button
+                      type="submit"
+                      className="nx-public-primary nx-fluid-press inline-flex min-h-[48px] items-center justify-center gap-2 px-5 text-base font-semibold sm:min-w-[188px]"
+                    >
+                      Empezá gratis
+                      <ArrowRight size={16} aria-hidden="true" />
+                    </button>
+                  </div>
+                  <p className="nx-public-subtle mt-3 text-sm">30 días gratis · sin tarjeta · cancelás cuando querás</p>
+                </form>
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
-      <section className="py-16 px-6 max-w-3xl mx-auto">
-        <h2 className="text-2xl font-bold text-center text-slate-900 mb-10">
-          Todo lo que necesita tu negocio en Nicaragua
-        </h2>
-        <div className="grid sm:grid-cols-2 gap-4">
-          {[
-            "Facturación compatible con DGI Nicaragua",
-            "Control de inventario en tiempo real",
-            "Punto de Venta (POS) con escáner",
-            "Nómina según Código del Trabajo Ley 185",
-            "Cálculo automático INSS y INATEC",
-            "Reportes de retenciones IR para DGI",
-            "Gestión de clientes y cobranza",
-            "Entregas a domicilio con app para motorizado",
-            "Múltiples usuarios y sucursales",
-            "Acceso desde celular o computadora",
-          ].map((f, i) => (
-            <div key={i} className="flex items-center gap-3">
-              <CheckCircle size={18} className="text-emerald-600 flex-shrink-0" />
-              <span className="text-slate-700">{f}</span>
-            </div>
-          ))}
-        </div>
-      </section>
+              <aside className="nx-public-card p-6 sm:p-7" aria-label="Capacidades de Nortex para Nicaragua">
+                <div className="flex items-center gap-2 text-sm font-semibold text-[color:var(--nx-public-text)]">
+                  <Shield size={16} aria-hidden="true" />
+                  Una sola base operativa
+                </div>
+                <ul className="mt-5 space-y-4">
+                  {capabilities.map(item => (
+                    <li key={item} className="flex items-start gap-3">
+                      <CheckCircle2 size={18} aria-hidden="true" className="mt-0.5 shrink-0 text-[color:var(--nx-public-accent-text)]" />
+                      <span className="nx-public-reading text-base">{item}</span>
+                    </li>
+                  ))}
+                </ul>
+              </aside>
+            </section>
 
-      <section className="py-16 bg-slate-900 text-white text-center px-6">
-        <h2 className="text-3xl font-bold mb-4">Empieza hoy — Es gratis</h2>
-        <p className="text-slate-300 mb-8">Sin contratos. Sin letra pequeña. Sin tarjeta de crédito.</p>
-        <button
-          onClick={handleCTA}
-          className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-12 py-4 rounded-xl text-lg transition-colors"
-        >
-          Crear mi cuenta gratis <ArrowRight size={20} />
-        </button>
-      </section>
-    </div>
+            <section aria-labelledby="nicaragua-operation-title" className="grid gap-4 md:grid-cols-2">
+              <article className="nx-public-card p-6 sm:p-7">
+                <Store size={20} aria-hidden="true" className="text-[color:var(--nx-public-accent-text)]" />
+                <h2 id="nicaragua-operation-title" className="mt-4 text-[1.5rem] font-semibold tracking-[-0.03em] text-[color:var(--nx-public-text)]">
+                  Operación conectada
+                </h2>
+                <p className="nx-public-reading mt-3">
+                  La venta actualiza el trabajo que sigue: caja, inventario, cliente y reportes permanecen dentro del mismo sistema.
+                </p>
+              </article>
+              <article className="nx-public-card p-6 sm:p-7">
+                <Shield size={20} aria-hidden="true" className="text-[color:var(--nx-public-accent-text)]" />
+                <h2 className="mt-4 text-[1.5rem] font-semibold tracking-[-0.03em] text-[color:var(--nx-public-text)]">
+                  Entrada coherente
+                </h2>
+                <p className="nx-public-reading mt-3">
+                  Landing, registro y acceso comparten una interfaz legible para que la persona no sienta que cambió de producto al comenzar.
+                </p>
+              </article>
+            </section>
+
+            <section aria-labelledby="nicaragua-closing-title" className="nx-public-card flex flex-col gap-5 p-6 sm:flex-row sm:items-center sm:justify-between sm:p-7">
+              <div className="max-w-[680px]">
+                <p className="text-sm font-semibold text-[color:var(--nx-public-text)]">Siguiente paso</p>
+                <h2 id="nicaragua-closing-title" className="mt-2 text-balance text-[1.75rem] font-semibold tracking-[-0.03em] text-[color:var(--nx-public-text)]">
+                  Empezá con tus datos y comprobá el flujo real.
+                </h2>
+                <p className="nx-public-reading mt-2">El correo es opcional: podés continuar directo al registro y completar allí la información de tu negocio.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => handleCTA()}
+                className="nx-public-primary nx-fluid-press inline-flex min-h-[48px] items-center justify-center gap-2 px-6 text-base font-semibold sm:min-w-[220px]"
+              >
+                Crear mi cuenta gratis
+                <ArrowRight size={16} aria-hidden="true" />
+              </button>
+            </section>
+          </main>
+
+          <PublicFooter links={[
+            { label: 'Para ferreterías', to: '/ferreterias' },
+            { label: 'Para farmacias', to: '/farmacias' },
+            { label: 'Blog', to: '/blog' },
+          ]} />
+        </>
+      )}
+    </PublicThemeFrame>
   );
 };
 

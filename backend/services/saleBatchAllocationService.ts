@@ -94,6 +94,7 @@ export interface BatchWarehouseConsumptionContext {
 interface WarehouseBatchCandidate {
     batchId: string;
     stock: Decimal.Value;
+    heldStock: Decimal.Value;
     batch: {
         id: string;
         batchNumber: string;
@@ -541,12 +542,16 @@ export const consumeProductBatchesByWarehouseFefo = async (
         select: {
             batchId: true,
             stock: true,
+            heldStock: true,
             batch: { select: { id: true, batchNumber: true } },
         },
     }) as WarehouseBatchCandidate[];
 
     const available = candidates.reduce(
-        (sum, candidate) => sum.plus(candidate.stock.toString()),
+        (sum, candidate) => sum.plus(Decimal.max(
+            new Decimal(candidate.stock.toString()).minus(candidate.heldStock.toString()),
+            0,
+        )),
         new Decimal(0),
     );
     if (available.lessThan(requested)) {
@@ -561,7 +566,11 @@ export const consumeProductBatchesByWarehouseFefo = async (
     const allocations: FefoAllocation[] = [];
     for (const candidate of candidates) {
         if (!remaining.greaterThan(0)) break;
-        const quantity = Decimal.min(new Decimal(candidate.stock.toString()), remaining).toDecimalPlaces(4);
+        const sellableStock = Decimal.max(
+            new Decimal(candidate.stock.toString()).minus(candidate.heldStock.toString()),
+            0,
+        );
+        const quantity = Decimal.min(sellableStock, remaining).toDecimalPlaces(4);
         if (!quantity.greaterThan(0)) continue;
         const allocation: FefoAllocation = {
             batchId: candidate.batchId,

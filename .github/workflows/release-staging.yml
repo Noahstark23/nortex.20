@@ -1,0 +1,223 @@
+# NORTEX — Staging se despliega solo tras una intención manual por SHA exacto.
+# CI comprueba código; nunca invoca este webhook ni puede llegar a staging.
+name: Promote staging candidate
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_sha:
+        description: SHA completo (40 minúsculas) actual en main y con CI terminal
+        required: true
+        type: string
+      confirmation:
+        description: Escribe exactamente STAGE <candidate_sha>
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+# Una promoción manual de staging no se cancela por un push ni por otra corrida
+# accidental. Quien la inició debe cancelar explícitamente antes de reemplazarla.
+concurrency:
+  group: nortex-staging-promotion
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: validate-staging-candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verificar intención, main y SHA del candidato
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          NORTEX_DEPLOY_ENABLED: ${{ vars.NORTEX_DEPLOY_ENABLED }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || { echo "::error::Se requiere un dispatch manual"; exit 1; }
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::El workflow debe iniciarse desde main"; exit 1; }
+          [ "$NORTEX_DEPLOY_ENABLED" = "true" ] || { echo "::error::El deploy de staging está deshabilitado"; exit 1; }
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::Se requiere SHA completo en minúsculas"; exit 1; }
+          [ "$CANDIDATE_SHA" = "$GITHUB_SHA" ] || { echo "::error::El SHA no coincide con el workflow"; exit 1; }
+          [ "$STAGING_CONFIRMATION" = "STAGE $CANDIDATE_SHA" ] || { echo "::error::La confirmación debe ser exacta"; exit 1; }
+          git fetch --no-tags origin main
+          CURRENT_MAIN="$(git rev-parse origin/main)"
+          [ "$CURRENT_MAIN" = "$CANDIDATE_SHA" ] || { echo "::error::main avanzó o no coincide con el candidato"; exit 1; }
+
+      - name: Verificar CI terminal y exitoso del candidato
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const candidate = process.env.CANDIDATE_SHA;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: candidate,
+              branch: 'main',
+              event: 'push',
+              per_page: 100,
+            });
+            const runs = Array.isArray(data.workflow_runs)
+              ? data.workflow_runs.filter((run) =>
+                  run.head_sha === candidate
+                  && run.head_branch === 'main'
+                  && run.event === 'push')
+              : [];
+            const expectedPath = '.github/workflows/ci.yml@';
+            const terminalSuccess = runs.length > 0 && runs.every((run) =>
+              typeof run.path === 'string'
+              && run.path.startsWith(expectedPath)
+              && run.status === 'completed'
+              && run.conclusion === 'success');
+            if (!terminalSuccess) {
+              throw new Error('CI_TERMINAL_SUCCESS_REQUIRED');
+            }
+
+  deploy-staging:
+    name: deploy-staging
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    environment:
+      name: staging
+      url: ${{ vars.STAGING_URL }}
+    steps:
+      # La aprobación del environment puede demorar. El checkout queda fijo al
+      # SHA introducido, no al tip mutable de main.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.candidate_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+      - name: Revalidar candidato después de la aprobación
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          STAGING_CONFIRMATION: ${{ inputs.confirmation }}
+          NORTEX_DEPLOY_ENABLED: ${{ vars.NORTEX_DEPLOY_ENABLED }}
+        run: |
+          set -euo pipefail
+          [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ] || { echo "::error::Se requiere un dispatch manual"; exit 1; }
+          [ "$GITHUB_REF" = "refs/heads/main" ] || { echo "::error::El workflow debe iniciarse desde main"; exit 1; }
+          [ "$NORTEX_DEPLOY_ENABLED" = "true" ] || { echo "::error::El deploy de staging está deshabilitado"; exit 1; }
+          [[ "$CANDIDATE_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo "::error::Se requiere SHA completo en minúsculas"; exit 1; }
+          [ "$CANDIDATE_SHA" = "$GITHUB_SHA" ] || { echo "::error::El SHA no coincide con el workflow"; exit 1; }
+          [ "$STAGING_CONFIRMATION" = "STAGE $CANDIDATE_SHA" ] || { echo "::error::La confirmación debe ser exacta"; exit 1; }
+          git fetch --no-tags origin main
+          CURRENT_MAIN="$(git rev-parse origin/main)"
+          [ "$CURRENT_MAIN" = "$CANDIDATE_SHA" ] || { echo "::error::main avanzó o no coincide con el candidato"; exit 1; }
+
+      - name: Verificar CI terminal y exitoso del candidato
+        uses: actions/github-script@v9
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const candidate = process.env.CANDIDATE_SHA;
+            const { data } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'ci.yml',
+              head_sha: candidate,
+              branch: 'main',
+              event: 'push',
+              per_page: 100,
+            });
+            const runs = Array.isArray(data.workflow_runs)
+              ? data.workflow_runs.filter((run) =>
+                  run.head_sha === candidate
+                  && run.head_branch === 'main'
+                  && run.event === 'push')
+              : [];
+            const expectedPath = '.github/workflows/ci.yml@';
+            const terminalSuccess = runs.length > 0 && runs.every((run) =>
+              typeof run.path === 'string'
+              && run.path.startsWith(expectedPath)
+              && run.status === 'completed'
+              && run.conclusion === 'success');
+            if (!terminalSuccess) {
+              throw new Error('CI_TERMINAL_SUCCESS_REQUIRED');
+            }
+
+      - name: Validar configuración de STAGING
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+          APP_URL: ${{ vars.STAGING_URL }}
+        run: |
+          set -euo pipefail
+          [ -n "$WEBHOOK" ] || { echo "::error::Falta COOLIFY_STAGING_WEBHOOK"; exit 1; }
+          node -e '
+            const value = process.env.APP_URL;
+            const rawAuthority = typeof value === "string"
+              ? /^https?:\/\/([^/?#\\\s]+)\/?$/i.exec(value)?.[1]
+              : null;
+            if (typeof value !== "string"
+              || !value
+              || value.trim() !== value
+              || /[\x00-\x20\x7f]/.test(value)
+              || value.includes("?")
+              || value.includes("#")
+              || !rawAuthority
+              || rawAuthority.includes("@")) {
+              process.exit(1);
+            }
+            try {
+              const url = new URL(value);
+              if (url.protocol !== "https:"
+                || !url.hostname
+                || url.username
+                || url.password
+                || url.search
+                || url.hash
+                || url.pathname !== "/") {
+                process.exit(1);
+              }
+            } catch {
+              process.exit(1);
+            }
+          ' || { echo "::error::STAGING_URL debe ser un origen HTTPS raíz sin credenciales, query, fragmento ni espacios"; exit 1; }
+
+      # Un secret de staging equivocado no puede convertirse en un deploy de otra
+      # app. Después de validar toda la configuración local, la lectura
+      # independiente comprueba UUID, origen de la API, build, Auto Deploy y pin
+      # exacto antes de permitir el webhook.
+      - name: Verificar destino Coolify de staging fijado al candidato
+        env:
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          COOLIFY_STAGING_WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+          COOLIFY_STAGING_API_ORIGIN: ${{ vars.COOLIFY_STAGING_API_ORIGIN }}
+          COOLIFY_STAGING_APPLICATION_UUID: ${{ vars.COOLIFY_STAGING_APPLICATION_UUID }}
+          COOLIFY_STAGING_READ_TOKEN: ${{ secrets.COOLIFY_STAGING_READ_TOKEN }}
+        run: node scripts/verify-coolify-staging-target.mjs
+
+      - name: Desplegar STAGING (webhook de Coolify)
+        env:
+          WEBHOOK: ${{ secrets.COOLIFY_STAGING_WEBHOOK }}
+          TOKEN: ${{ secrets.COOLIFY_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -n "$TOKEN" ]; then
+            curl --fail --silent --max-time 30 --output /dev/null \
+              -H "Authorization: Bearer $TOKEN" "$WEBHOOK"
+          else
+            curl --fail --silent --max-time 30 --output /dev/null "$WEBHOOK"
+          fi
+          echo "🚀 Deploy de staging disparado"
+
+      # Un webhook aceptado no acredita el candidato. Staging tiene que servir
+      # este SHA con API y base sanas antes de que pueda usarse como evidencia.
+      - name: Verificar STAGING sano y en el candidato esperado
+        env:
+          APP_URL: ${{ vars.STAGING_URL }}
+          EXPECTED_COMMIT: ${{ inputs.candidate_sha }}
+        run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"

@@ -108,6 +108,14 @@ const mount = (route = '/app/pos?first_sale=1') => render(
     <MemoryRouter initialEntries={[route]}><POS /><RouteState /></MemoryRouter>,
 );
 
+async function readySearch() {
+    const search = await screen.findByPlaceholderText('Escaneá o buscá un producto');
+    // El input se monta antes de resolver el catálogo. Esperar una identidad
+    // visible evita enviar Enter mientras el índice de productos sigue vacío.
+    if (catalog.length) expect(await screen.findByTitle(catalog[0].name)).toBeVisible();
+    return search;
+}
+
 function useMobileViewport() {
     vi.stubGlobal('innerWidth', 390);
     vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
@@ -149,14 +157,14 @@ describe('primera venta con existencia real', () => {
         catalog = [product, unsold];
         const user = setupUser();
         mount('/app/pos');
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
         await user.type(screen.getByRole('textbox', { name: /Efectivo recibido en córdobas/ }), '25');
         catalog = [{ ...product, stock: 0 }, unsold]; // Estado autoritativo posterior del fixture.
         await user.click(screen.getByRole('button', { name: 'Registrar efectivo y seguir' }));
         await screen.findByRole('dialog', { name: 'Venta lista' });
-        await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === '/api/products?ids=p1')).toBe(true));
-        expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/products')).toHaveLength(1);
+        await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url) === '/api/products?includeSellableStock=true&ids=p1')).toBe(true));
+        expect(vi.mocked(fetch).mock.calls.filter(([url]) => String(url) === '/api/products?includeSellableStock=true')).toHaveLength(1);
         await user.click(screen.getByRole('button', { name: 'Hacer otra venta' }));
         expect(await screen.findByText('Agotado')).toBeVisible();
         await user.type(screen.getByPlaceholderText('Escaneá o buscá un producto'), 'SUERO-1{Enter}');
@@ -169,7 +177,7 @@ describe('primera venta con existencia real', () => {
         catalog = Array.from({ length: count }, (_, i) => ({ ...product, id: `p${i}`, sku: `SKU-${i}`, name: `Producto ${i}` }));
         const user = setupUser();
         mount('/app/pos');
-        const search = await screen.findByPlaceholderText('Escaneá o buscá un producto');
+        const search = await readySearch();
         for (let i = 0; i < count; i++) await user.type(search, `SKU-${i}{Enter}`);
         expect(screen.getAllByRole('textbox', { name: /^Cantidad de Producto/ })).toHaveLength(count);
         await user.click(screen.getByRole('button', { name: `Agregar 1 unidad de Producto ${count - 1}` }));
@@ -187,7 +195,7 @@ describe('primera venta con existencia real', () => {
         render(<MemoryRouter initialEntries={['/app/pos?first_sale=1']}>
             <VentaEnCursoProvider><Layout><POS /></Layout></VentaEnCursoProvider>
         </MemoryRouter>);
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         fireEvent.click(screen.getAllByRole('button', { name: 'Ver menú completo' })[0]);
         expect(await screen.findByRole('button', { name: /Rápido/ })).toBeVisible();
         expect(screen.getByRole('textbox', { name: 'Cantidad de Arroz en unidad' })).toHaveValue('1');
@@ -212,7 +220,7 @@ describe('primera venta con existencia real', () => {
         useMobileViewport();
         const user = setupUser();
         mount('/app/pos');
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
         await user.type(screen.getByRole('textbox', { name: /Efectivo recibido en córdobas/ }), '50');
         localStorage.setItem('nortex_ui_mode', 'full');
@@ -237,7 +245,7 @@ describe('primera venta con existencia real', () => {
         useMobileViewport();
         const user = setupUser();
         mount('/app/pos');
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
         localStorage.setItem('nortex_ui_mode', 'full');
         fireEvent(window, new StorageEvent('storage', { key: 'nortex_ui_mode' }));
@@ -262,7 +270,7 @@ describe('primera venta con existencia real', () => {
         useMobileViewport();
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         expect(screen.queryByRole('dialog', { name: /Venta actual/ })).not.toBeInTheDocument();
 
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
@@ -291,7 +299,7 @@ describe('primera venta con existencia real', () => {
         useMobileViewport();
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /^Cobrar C\$ 25\.00$/ }));
         const ticket = await screen.findByRole('dialog', { name: /Venta actual/ });
         await user.type(within(ticket).getByRole('textbox', { name: /Efectivo recibido en córdobas/ }), '50');
@@ -316,7 +324,7 @@ describe('primera venta con existencia real', () => {
         })));
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /Revisar venta, 1 productos/ }));
         const ticket = await screen.findByRole('dialog', { name: /Venta actual/ });
         await user.click(within(ticket).getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
@@ -397,7 +405,7 @@ describe('primera venta con existencia real', () => {
         catalog = [product];
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
         await user.click(await screen.findByRole('button', { name: /^C\$ 50$/ }));
         await user.click(await screen.findByRole('button', { name: /Registrar efectivo y seguir/ }));
@@ -426,7 +434,7 @@ describe('primera venta con existencia real', () => {
         catalog = [product];
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }));
         await user.click(await screen.findByRole('button', { name: /^C\$ 50$/ }));
         if (transport === 'offline') {
@@ -460,7 +468,7 @@ describe('primera venta con existencia real', () => {
         catalog = [product];
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         const quantity = screen.getByRole('textbox', { name: 'Cantidad de Arroz en unidad' });
         expect(quantity).toHaveValue('1');
         await user.click(screen.getByRole('button', { name: /^Avisos importantes/ }));
@@ -484,7 +492,7 @@ describe('primera venta con existencia real', () => {
         catalog = [product];
         const user = setupUser();
         mount();
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'ARR-1{Enter}');
+        await user.type(await readySearch(), 'ARR-1{Enter}');
         const quantity = screen.getByRole('textbox', { name: 'Cantidad de Arroz en unidad' });
         await user.click(screen.getByRole('button', { name: /^Avisos importantes/ }));
         const notices = await screen.findByRole('dialog', { name: 'Avisos importantes' });

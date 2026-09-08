@@ -22,7 +22,7 @@ it('combina stock autoritativo, elimina solicitados ausentes y conserva el resto
     const { result } = mount();
     await act(async () => { await result.current.fetchProducts(); });
     await act(async () => { await result.current.refreshSoldProducts(['a', 'b']); });
-    expect(fetch).toHaveBeenLastCalledWith('/api/products?ids=a,b', expect.anything());
+    expect(fetch).toHaveBeenLastCalledWith('/api/products?includeSellableStock=true&ids=a,b', expect.anything());
     expect(JSON.parse(JSON.stringify(result.current.products))).toEqual([
         expect.objectContaining({ id: 'a', stock: 0 }), expect.objectContaining({ id: 'c', stock: 20 }),
     ]);
@@ -55,7 +55,7 @@ it.each(['http', 'network', 'malformed', 'incomplete-row', 'ignored-filter'])('r
     const { result } = mount();
     await act(async () => { await result.current.fetchProducts(); });
     await act(async () => { await result.current.refreshSoldProducts(['a']); });
-    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['/api/products', '/api/products?ids=a', '/api/products']);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual(['/api/products?includeSellableStock=true', '/api/products?includeSellableStock=true&ids=a', '/api/products?includeSellableStock=true']);
     expect(result.current.products.map(p => p.stock)).toEqual([5, 9]);
     expect(result.current.productsError).toBe(false);
 });
@@ -111,4 +111,28 @@ it('al desmontar cancela la petición y retira el refresco online', async () => 
     window.dispatchEvent(new Event('online'));
     finish(response([product('a')])); await pending;
     expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it('lee disponibilidad vendible en el catálogo y en el refresco parcial, incluyendo cero', async () => {
+    const fetcher = vi.fn().mockResolvedValueOnce(response([{ ...product('a', 40), sellableStock: '3' }, product('b')]))
+        .mockResolvedValueOnce(response([{ ...product('a', 40), sellableStock: 0 }]));
+    vi.stubGlobal('fetch', fetcher);
+    const { result } = mount();
+    await act(async () => { await result.current.fetchProducts(); });
+    expect(result.current.products.map(p => [p.id, p.stock, p.minStock])).toEqual([['a', 3, 1], ['b', 20, 1]]);
+    await act(async () => { await result.current.refreshSoldProducts(['a']); });
+    expect(result.current.products.map(p => [p.id, p.stock])).toEqual([['a', 0], ['b', 20]]);
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+        '/api/products?includeSellableStock=true', '/api/products?includeSellableStock=true&ids=a',
+    ]);
+});
+
+it.each(['desconocido', '1e309'])('una disponibilidad vendible inválida conserva el catálogo y anuncia error: %s', async sellableStock => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValueOnce(response([product('a', 4)]))
+        .mockResolvedValueOnce(response([{ ...product('a', 40), sellableStock }])));
+    const { result } = mount();
+    await act(async () => { await result.current.fetchProducts(); });
+    await act(async () => { await result.current.fetchProducts(); });
+    expect(result.current.products[0].stock).toBe(4);
+    expect(result.current.productsError).toBe(true);
 });

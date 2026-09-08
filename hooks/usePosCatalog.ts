@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type SetStateAction } from 'react';
 import type { Product } from '../types';
 import { resolverIdentidadPersistencia } from '../utils/cartPersistence';
-import { mapApiProductImage } from '../utils/posProductMapper';
+import { mapApiProductForPos } from '../utils/posProductMapper';
 
 function sessionStamp(): string {
     const identity = resolverIdentidadPersistencia(localStorage.getItem('nortex_tenant_data'), localStorage.getItem('nortex_user'));
@@ -10,20 +10,14 @@ function sessionStamp(): string {
 
 function mapProducts(payload: unknown): Product[] {
     const numeric = (value: unknown) => typeof value === 'number' ? Number.isFinite(value)
-        : typeof value === 'string' && /^[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/u.test(value);
+        : typeof value === 'string' && /^[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?$/u.test(value) && Number.isFinite(Number(value));
     if (!Array.isArray(payload) || payload.some(p => !p || typeof p.id !== 'string' || typeof p.name !== 'string'
-        || typeof p.sku !== 'string' || !numeric(p.stock) || !numeric(p.price))) {
+        || typeof p.sku !== 'string' || !numeric(p.stock) || !numeric(p.price)
+        || (p.sellableStock != null && !numeric(p.sellableStock)))) {
         throw new Error('Catálogo incompleto');
     }
     if (new Set(payload.map(p => p.id)).size !== payload.length) throw new Error('Productos duplicados');
-    return payload.map(p => ({
-        id: p.id, name: p.name, sku: p.sku, price: p.price, costPrice: p.cost,
-        stock: p.stock, minStock: p.minStock, category: p.category || 'General', unit: p.unit || 'unidad',
-        wholesalePrice: p.wholesalePrice ?? null, wholesaleMinQty: p.wholesaleMinQty ?? null,
-        packUnit: p.packUnit ?? null, packSize: p.packSize ?? null, packPrice: p.packPrice ?? null,
-        saleMode: p.saleMode ?? null, quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
-        ivaExento: p.ivaExento === true, productFamily: p.productFamily ?? null, ...mapApiProductImage(p),
-    }));
+    return payload.map(p => ({ ...mapApiProductForPos(p), minStock: p.minStock }));
 }
 
 /** Catálogo en memoria. Refrescos serializados por sesión; nunca resta stock local. */
@@ -51,7 +45,7 @@ export function usePosCatalog(headers: Record<string, string>) {
             const controller = new AbortController();
             lane.controller = controller;
             const read = async (requested?: readonly string[]) => {
-                const query = requested ? `?ids=${requested.map(encodeURIComponent).join(',')}` : '';
+                const query = `?includeSellableStock=true${requested ? `&ids=${requested.map(encodeURIComponent).join(',')}` : ''}`;
                 const response = await fetch(`/api/products${query}`, { headers, signal: controller.signal });
                 if (!response.ok) throw new Error('No se pudo actualizar el catálogo');
                 const products = mapProducts(await response.json());

@@ -531,6 +531,59 @@ type OfflineShiftIdentity = {
 };
 
 /**
+ * Orden global de las mutaciones que comparten inventario y gaveta:
+ * Product -> Shift. El cierre solo toma Shift; una venta que pierda esa carrera
+ * falla al validar OPEN y revierte sus locks de producto sin quedar fuera del Z.
+ */
+export const lockSaleProductsInOrder = async (
+    tx: PrismaTx,
+    tenantId: string,
+    productIds: readonly string[],
+): Promise<void> => {
+    const orderedIds = [...new Set(productIds)].sort();
+    for (const productId of orderedIds) {
+        const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT \`id\`
+              FROM \`Product\`
+             WHERE \`id\` = ${productId}
+               AND \`tenantId\` = ${tenantId}
+             LIMIT 1
+             FOR UPDATE
+        `);
+        if (rows.length !== 1) {
+            throw new SaleError('PRODUCT_NOT_FOUND', 404, 'Producto no encontrado');
+        }
+    }
+};
+
+/**
+ * Serializa venta POS y cierre sobre la misma fila de Shift. Si la venta toma
+ * el lock primero, el cierre incluirá esa factura; si el cierre gana, la venta
+ * verá el turno CLOSED y no podrá aparecer después del Reporte Z.
+ */
+const lockOpenOwnedPosShift = async (
+    tx: PrismaTx,
+    tenantId: string,
+    userId: string,
+    shiftId: string,
+): Promise<OfflineShiftIdentity> => {
+    const rows = await tx.$queryRaw<OfflineShiftIdentity[]>(Prisma.sql`
+        SELECT \`id\`, \`employeeId\`
+          FROM \`Shift\`
+         WHERE \`id\` = ${shiftId}
+           AND \`tenantId\` = ${tenantId}
+           AND \`userId\` = ${userId}
+           AND \`status\` = 'OPEN'
+         LIMIT 1
+         FOR UPDATE
+    `);
+    if (rows.length !== 1) {
+        throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: El turno no está abierto');
+    }
+    return rows[0];
+};
+
+/**
  * Un replay puede llegar después del cierre, por eso no exige status OPEN.
  * Sí exige que el turno exista hoy bajo el mismo tenant y usuario autenticado:
  * Shift.userId puede cambiar mediante el traspaso explícito de caja y no es
@@ -748,6 +801,9 @@ async function executeSaleWithResultInternal(
     let transactionalReplay = false;
     try {
         const sale = await prisma.$transaction(async (tx: PrismaTx) => {
+            if (source !== 'POS' || offlineSync || (!input.promotionQuote && process.env.NORTEX_PROMOTIONS_ENABLED !== 'true')) {
+                await tx.$queryRaw(Prisma.sql`SELECT id FROM \`User\` WHERE id = ${userId} AND tenantId = ${tenantId} FOR SHARE`);
+            }
             const promotionState = source === 'POS' && !offlineSync
                 ? await lockCheckoutForSale(tx, { tenantId, userId }, input as any, shiftId)
                 : { enabled: false, checkout: null, fiscal: null };
@@ -756,17 +812,16 @@ async function executeSaleWithResultInternal(
                 if (!completed) throw new PromotionError('PROMOTION_RECEIPT_UNAVAILABLE', 409, 'El cobro requiere revisar su comprobante.');
                 assertReplayMatches(completed); transactionalReplay = true; return completed;
             }
+            await lockSaleProductsInOrder(
+                tx,
+                tenantId,
+                input.items.map((item) => item.id),
+            );
             if (source === 'POS') {
                 if (!shiftId) {
                     throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: No hay turno abierto');
                 }
-                const shift = await tx.shift.findFirst({
-                    where: { id: shiftId, tenantId, status: 'OPEN' },
-                    select: { id: true },
-                });
-                if (!shift) {
-                    throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: El turno no esta abierto');
-                }
+                await lockOpenOwnedPosShift(tx, tenantId, userId, shiftId);
             } else if (offlineSync) {
                 // Revalidar dentro de la transacción cierra la carrera con
                 // /api/shifts/:id/tomar entre el guard previo y la escritura.
@@ -962,6 +1017,21 @@ async function executeSaleWithResultInternal(
                     : null;
             }
 
+            const sellerWarehouses = await tx.warehouse.findMany({
+                where: { tenantId, sellerId: userId, isActive: true },
+                orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+                take: 2,
+                select: { id: true },
+            });
+            if (sellerWarehouses.length > 1) {
+                throw new SaleError(
+                    'RECONCILIATION_REQUIRED',
+                    409,
+                    'El vendedor tiene más de una carga activa asignada; corregí la asignación antes de vender',
+                );
+            }
+            const sellerWarehouse = sellerWarehouses[0];
+
             const counter = await tx.invoiceSeries.upsert({
                 where: { tenantId_series: { tenantId, series: 'A' } },
                 update: { lastNumber: { increment: 1 } },
@@ -1004,10 +1074,6 @@ async function executeSaleWithResultInternal(
                 },
             });
 
-            const sellerWarehouse = await tx.warehouse.findFirst({
-                where: { tenantId, sellerId: userId, isActive: true },
-                select: { id: true },
-            });
             let costTotal = new Decimal(0);
 
             for (const item of normalizedItems) {

@@ -192,17 +192,21 @@ qaDescribe('QA integración: delivery autenticado aislado', () => {
         expect(assignFirst.body.pedido.motorizadoId).toBe(riderA1Id);
         expect(Object.keys(assignFirst.body.pedido.motorizado).sort()).toEqual([
             'activo',
+            'calificacionPromedio',
             'id',
             'nombre',
             'telefono',
             'tipoFlota',
+            'vehiculoPlaca',
+            'zonaCobertura',
         ]);
 
         const illegalDispatch = await patch(`/api/v1/pedidos/${pedidoId}/estado`, {
             estado: 'en_camino',
         }, tenantA.token);
         expectStatus(illegalDispatch, 409);
-        expect(illegalDispatch.body.error).toContain('desde preparando');
+        expect(illegalDispatch.body.code).toBe('PEDIDO_INVALID_STATE_TRANSITION');
+        expect(illegalDispatch.body.error).toContain('pendiente a en_camino');
 
         const prepared = await patch(`/api/v1/pedidos/${pedidoId}/estado`, {
             estado: 'preparando',
@@ -308,12 +312,14 @@ qaDescribe('QA integración: delivery autenticado aislado', () => {
             'pendiente',
             'preparando',
             'preparando',
+            'preparando',
             'en_camino',
             'cancelado',
         ]);
         expect(tracking[0].nota).toContain('Pedido recibido');
         expect(tracking[1].nota).toBe('Motorizado asignado.');
-        expect(tracking[3].nota).toBe('Motorizado asignado.');
+        expect(tracking[3].nota).toBe('Asignación de motorizado removida.');
+        expect(tracking[4].nota).toBe('Motorizado asignado.');
 
         const audit = await prisma.auditLog.findFirst({
             where: {

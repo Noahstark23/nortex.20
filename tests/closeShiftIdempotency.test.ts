@@ -9,7 +9,7 @@ import {
     ShiftCloseError,
     type ShiftCloseDatabase,
     type ShiftCloseTransaction,
-} from '../backend/services/shiftCloseService';
+} from '../backend/services/legacyShiftCloseService';
 import {
     canonicalizeCloseShiftPayload,
     CloseShiftSchema,
@@ -330,9 +330,9 @@ describe('contrato idempotente del cierre de caja legacy', () => {
 
         const audit = JSON.parse(String(db.audits[0].details));
         expect(audit.usd).toEqual({
-            esperado: '10.1200',
+            esperado: '10.1234',
             declarado: '10.1200',
-            diferencia: '0.0000',
+            diferencia: '-0.0034',
             fondoInicial: '10.1234',
         });
     });
@@ -396,7 +396,7 @@ describe('contrato idempotente del cierre de caja legacy', () => {
 describe('estructura del adaptador HTTP de cierre', () => {
     const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
     const service = readFileSync(
-        resolve(process.cwd(), 'backend/services/shiftCloseService.ts'),
+        resolve(process.cwd(), 'backend/services/legacyShiftCloseService.ts'),
         'utf8',
     );
     const routeStart = server.indexOf("app.post('/api/shifts/close'");
@@ -404,8 +404,7 @@ describe('estructura del adaptador HTTP de cierre', () => {
     const route = server.slice(routeStart, routeEnd);
 
     it('deja server.ts fino y delega el dominio al servicio inyectable', () => {
-        expect(route).toContain('closeLegacyShift(');
-        expect(route).toContain('prisma as unknown as ShiftCloseDatabase');
+        expect(route).toContain('closeShiftWithReport({');
         expect(route).toContain('tenantId: authReq.tenantId');
         expect(route).not.toContain('prisma.$transaction');
         expect(route).not.toContain('auditLog.create');

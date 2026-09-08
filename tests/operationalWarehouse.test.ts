@@ -1,11 +1,62 @@
 import { describe, expect, it, vi } from 'vitest';
-import { resolveOperationalWarehouse } from '../backend/services/stockService';
+import {
+    resolveDefaultWarehouseId,
+    resolveOperationalWarehouse,
+} from '../backend/services/stockService';
 
 const warehouse = (overrides: Partial<{ id: string; name: string; isDefault: boolean }> = {}) => ({
     id: 'wh-principal',
     name: 'Principal',
     isDefault: true,
     ...overrides,
+});
+
+describe('resolveDefaultWarehouseId', () => {
+    it('ignora una default inactiva y promueve la bodega activa más antigua', async () => {
+        const findFirst = vi.fn()
+            .mockResolvedValueOnce(null)
+            .mockResolvedValueOnce({ id: 'wh-activa' });
+        const tx = {
+            warehouse: {
+                findFirst,
+                update: vi.fn().mockResolvedValue({ id: 'wh-activa' }),
+            },
+        } as any;
+
+        await expect(resolveDefaultWarehouseId(tx, 'tenant-1')).resolves.toBe('wh-activa');
+        expect(findFirst).toHaveBeenNthCalledWith(1, {
+            where: { tenantId: 'tenant-1', isDefault: true, isActive: true },
+            select: { id: true },
+        });
+        expect(findFirst).toHaveBeenNthCalledWith(2, {
+            where: { tenantId: 'tenant-1', isActive: true },
+            orderBy: { createdAt: 'asc' },
+            select: { id: true },
+        });
+        expect(tx.warehouse.update).toHaveBeenCalledWith({
+            where: { id: 'wh-activa' },
+            data: { isDefault: true },
+        });
+    });
+
+    it('falla cerrado cuando solo quedan bodegas inactivas', async () => {
+        const tx = {
+            warehouse: {
+                findFirst: vi.fn()
+                    .mockResolvedValueOnce(null)
+                    .mockResolvedValueOnce(null)
+                    .mockResolvedValueOnce({ id: 'wh-inactiva' }),
+                update: vi.fn(),
+                create: vi.fn(),
+            },
+        } as any;
+
+        await expect(resolveDefaultWarehouseId(tx, 'tenant-1')).rejects.toMatchObject({
+            code: 'WAREHOUSE_NOT_FOUND',
+        });
+        expect(tx.warehouse.update).not.toHaveBeenCalled();
+        expect(tx.warehouse.create).not.toHaveBeenCalled();
+    });
 });
 
 describe('resolveOperationalWarehouse', () => {

@@ -221,7 +221,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                 <div className="bg-gradient-to-r from-brand-900/40 to-red-900/20 px-6 py-4 border-b border-surface-700 flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center">
-                            <Zap size={20} className="text-white" />
+                            <Zap size={20} className="text-brand-on" />
                         </div>
                         <div>
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">

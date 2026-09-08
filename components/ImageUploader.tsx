@@ -1,12 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import imageCompression from 'browser-image-compression';
 import { Camera, X, Upload, AlertCircle, CheckCircle, Loader2 } from 'lucide-react';
+import {
+    normalizeAllowedProductImageUrl,
+    PRODUCT_IMAGE_CLOUDINARY_CLOUD_NAME,
+} from '../utils/productImageUrl';
 
 // ── Cloudinary config ──────────────────────────────────────────────────────
-const CLOUDINARY_CLOUD_NAME = 'dex1vy92h';
 const CLOUDINARY_UPLOAD_PRESET = 'nortex_catalog';
 
-const CLOUDINARY_URL = `https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD_NAME}/image/upload`;
+const CLOUDINARY_URL = `https://api.cloudinary.com/v1_1/${PRODUCT_IMAGE_CLOUDINARY_CLOUD_NAME}/image/upload`;
 
 interface ImageUploaderProps {
     value: string;           // URL actual (vacío si no hay imagen)
@@ -17,17 +20,7 @@ interface ImageUploaderProps {
 type UploadState = 'idle' | 'compressing' | 'uploading' | 'done' | 'error';
 
 export const getValidHttpsImageUrl = (value: unknown): string | null => {
-    if (typeof value !== 'string') return null;
-
-    const candidate = value.trim();
-    if (!candidate) return null;
-
-    try {
-        const parsed = new URL(candidate);
-        return parsed.protocol === 'https:' && Boolean(parsed.hostname) ? candidate : null;
-    } catch {
-        return null;
-    }
+    return normalizeAllowedProductImageUrl(value);
 };
 
 const ImageUploader: React.FC<ImageUploaderProps> = ({ value, onChange, disabled = false }) => {
@@ -161,7 +154,9 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ value, onChange, disabled
         setErrorMsg('');
     };
 
-    const displayImage = localPreview || value;
+    const authorizedStoredImage = getValidHttpsImageUrl(value) ?? '';
+    const displayImage = localPreview || authorizedStoredImage;
+    const hasRejectedStoredImage = Boolean(value.trim() && !authorizedStoredImage && !localPreview);
     const previewFailed = Boolean(displayImage && failedPreviewUrl === displayImage);
     const isLoading = uploadState === 'compressing' || uploadState === 'uploading';
 
@@ -175,7 +170,7 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ value, onChange, disabled
     };
 
     const handlePreviewLoad = () => {
-        if (displayImage === value && uploadState === 'done') {
+        if (displayImage === authorizedStoredImage && uploadState === 'done') {
             retryFileRef.current = null;
         }
     };
@@ -247,23 +242,29 @@ const ImageUploader: React.FC<ImageUploaderProps> = ({ value, onChange, disabled
                         </button>
                     )}
                 </div>
-            ) : displayImage && previewFailed ? (
+            ) : (displayImage && previewFailed) || hasRejectedStoredImage ? (
                 <div className="w-full aspect-video rounded-xl border border-red-800/50 bg-slate-900 flex flex-col items-center justify-center gap-3 px-4 text-center">
                     <AlertCircle size={28} className="text-red-400" />
-                    <p className="text-sm font-semibold text-slate-200">La imagen no está disponible</p>
+                    <p className="text-sm font-semibold text-slate-200">
+                        {hasRejectedStoredImage
+                            ? 'La imagen anterior usa un proveedor no autorizado'
+                            : 'La imagen no está disponible'}
+                    </p>
                     <div className="flex items-center gap-2">
-                        <button
-                            type="button"
-                            onClick={() => {
-                                setFailedPreviewUrl('');
-                                setErrorMsg('');
-                                setUploadState('idle');
-                            }}
-                            disabled={disabled}
-                            className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
-                        >
-                            Reintentar imagen
-                        </button>
+                        {!hasRejectedStoredImage && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    setFailedPreviewUrl('');
+                                    setErrorMsg('');
+                                    setUploadState('idle');
+                                }}
+                                disabled={disabled}
+                                className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-600 disabled:opacity-50"
+                            >
+                                Reintentar imagen
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={() => inputRef.current?.click()}
