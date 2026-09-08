@@ -77,7 +77,11 @@ done < <(
         # Algunas rondas HTTP históricas no llevan el sufijo integration. Si
         # dependen de la URL QA, también son obligatorias: así no quedan
         # omitidas por convención de nombre.
-        rg -l 'process\.env\.(NORTEX_QA_BASE_URL|NORTEX_MYSQL_INTEGRATION)' tests --glob '*.test.ts' || true
+        if command -v rg >/dev/null 2>&1; then
+            rg -l 'process\.env\.(NORTEX_QA_BASE_URL|NORTEX_MYSQL_INTEGRATION)' tests --glob '*.test.ts' || true
+        else
+            grep -El 'process\.env\.(NORTEX_QA_BASE_URL|NORTEX_MYSQL_INTEGRATION)' tests/*.test.ts 2>/dev/null || true
+        fi
     } | LC_ALL=C sort -u
 )
 
@@ -188,6 +192,11 @@ qa_stop_backend() {
     qa_server_pid=''
 }
 
+qa_print_backend_failure() {
+    printf '%s\n' 'ERROR integración requerida: log sanitario del backend QA:' >&2
+    tail -n 80 "$qa_tmp_dir/backend.log" >&2 || true
+}
+
 qa_start_backend() {
     qa_api_port="$(node -e "const net=require('node:net'); const server=net.createServer(); server.listen(0, '127.0.0.1', () => { const address=server.address(); process.stdout.write(String(address.port)); server.close(); }); server.on('error', () => process.exit(1));")"
     [ -n "$qa_api_port" ] || qa_die 'no se pudo reservar un puerto loopback para el backend QA.'
@@ -221,9 +230,13 @@ fetch(url)
 ' "$qa_base_url/api/health"; then
             return
         fi
-        kill -0 "$qa_server_pid" >/dev/null 2>&1 || qa_die 'el backend QA se detuvo antes de responder saludable.'
+        if ! kill -0 "$qa_server_pid" >/dev/null 2>&1; then
+            qa_print_backend_failure
+            qa_die 'el backend QA se detuvo antes de responder saludable.'
+        fi
         sleep 1
     done
+    qa_print_backend_failure
     qa_die 'el backend QA no respondió /api/health sano en 60 segundos.'
 }
 
