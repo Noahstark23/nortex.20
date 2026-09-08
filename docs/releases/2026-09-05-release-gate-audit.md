@@ -199,3 +199,16 @@ No se leyeron valores, tokens ni URLs. Configurar esas tres entradas requiere al
 dueño de infraestructura y debe hacerse por environment. La ausencia observada es
 un bloqueo previo al webhook, no una razón para desactivar las comprobaciones ni
 usar una ruta de despliegue alternativa.
+
+## Adenda 2026-09-07 — evidencia visual durable
+
+El recorrido local se repitió y quedó versionado como
+[galería de evidencia](evidence/2026-09-07/README.md). Incluye login con campos
+escritos, landing completa, Inicio, Inventario, POS, Compras, Caja, Equipo y menú
+móvil a 390 × 720, con pares Día/Noche en las superficies críticas. Las capturas
+usan exclusivamente la cuenta, el tenant y el catálogo sintéticos descritos en
+este informe; no hubo una mutación financiera ni de inventario confirmada.
+
+La galería reemplaza la limitación de capturas sólo inline indicada en la adenda
+anterior. Sus límites siguen explícitos: es evidencia local del render observado,
+no un smoke de staging, una prueba de todos los roles/rutas ni validación física.
