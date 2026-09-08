@@ -26,43 +26,43 @@
       "path": ".claude/agents/nortex-clean-code.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "24e7bd7457259c0d049fb7b73369530dab26ca70c749ba5ae459751147acd05b"
+      "sha256": "00f2a6de5a712cce5e419b8709e42d09aaca26976f4c2451933c24392e2a722f"
     },
     {
       "path": ".claude/agents/nortex-finance.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "e219484e30be1c54af8e0603a609af59f5a32baf1edc79524c556f4a0f6b3cbb"
+      "sha256": "aac0d0c370ede998a1e1820525450f3144441c9c20d4cf7711915635d8e763ec"
     },
     {
       "path": ".claude/agents/nortex-integrator.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "367e144543beaa510467d31a40e2c2db143657e988403386fad804a2a32f1154"
+      "sha256": "75a9c593105917a772d0eff27c349111668f8a9b3f09c64cac642f5807c0a73b"
     },
     {
       "path": ".claude/agents/nortex-intelligence.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "f6c21ae2289c40c0cbf95b8ec074d06aa2102b10c693ff1188e1696812fe3aea"
+      "sha256": "738cbfc639895698bb134fee20ea235d18f7d85f3880fd592e1578786d56c215"
     },
     {
       "path": ".claude/agents/nortex-platform.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "2e4a1236d8abe3fe47bf6ff6b47bc49b1d85cfb19e2a32880d86b1853afa7f6b"
+      "sha256": "92e30f853956f849e9f887c14a8ee3859a8d117cb983b4d2046a033882e18f17"
     },
     {
       "path": ".claude/agents/nortex-pos.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "a6bfa1bf0552e966ffb2beccd31f97ae02f6fe90e6724927fd92d055302dbec1"
+      "sha256": "5ef4509e0ab5cd8575a2366b1097cb6471cef5bd0c632abe66366efbbda0eb88"
     },
     {
       "path": ".claude/agents/nortex-qa.md",
       "category": "agent_instructions",
       "review": "reconciled_or_created_this_delivery",
-      "sha256": "124c9e4cc406b9625bc98c49682a9b2ec545aa7301e9234e8fc5e947f5936a96"
+      "sha256": "d297728788732ece676d0664decfb6ff7277a56eed6a06ea2210212b0169e5a9"
     },
     {
       "path": ".claude/skills/frontend-design/SKILL.md",
