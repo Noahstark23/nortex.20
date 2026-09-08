@@ -46,7 +46,7 @@ jobs:
       # Pruebas de MUTACIÓN sobre los módulos de dinero: no basta con que los
       # tests pasen, tienen que MATAR bugs. Stryker introduce fallas (invierte
       # comparaciones, cambia signos, vacía cuerpos) y falla el CI si un mutante
-      # sobrevive por debajo del umbral. Alcance acotado a lógica pura → ~30 s.
+      # sobrevive por debajo del umbral. Alcance de lógica pura; duración variable.
       - name: Mutación (Stryker — módulos de dinero)
         run: npm run test:mutation
 
@@ -61,6 +61,45 @@ jobs:
           retention-days: 7
       - name: Build frontend
         run: npm run build
+
+  integration-required:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: qa-local-only
+          MYSQL_DATABASE: nortex_qa
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -pqa-local-only"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      DATABASE_URL: mysql://root:qa-local-only@127.0.0.1:3306/nortex_qa?connection_limit=8
+      NORTEX_QA_DATABASE_ACK: disposable-database
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate --schema=backend/prisma/schema.prisma
+      - name: Preparar únicamente la base descartable
+        run: npx prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+      - name: HTTP y MySQL reales; cero casos omitidos
+        run: npm run test:integration:required
+      - name: Evidencia de integración
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: quality-integration
+          path: reports/quality-integration/
+          retention-days: 7
 
   deploy-schema-smoke:
     runs-on: ubuntu-latest
@@ -239,7 +278,7 @@ jobs:
       github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
       vars.NORTEX_DEPLOY_ENABLED == 'true'
-    needs: [verify, deploy-schema-smoke, backup-restore-smoke]
+    needs: [verify, integration-required, deploy-schema-smoke, backup-restore-smoke]
     runs-on: ubuntu-latest
     environment:
       name: staging

@@ -1,0 +1,72 @@
+{
+  "recordedAt": "2026-09-05T22:01:04.100Z",
+  "status": "passed",
+  "database": "nortex_qa_assistant_conversation_migration_final",
+  "engine": "MySQL 8",
+  "container": "nortex-gpt-qa-20260905",
+  "dataOrigin": "new_disposable_database_synthetic_sentinel",
+  "baselineSchemaSha256": "bf5e0349b721ee22559b0ffd2cea77be0e7780f3c4a85990e88700ddae758488",
+  "finalSchemaSha256": "f5adc2b306ca883370d379605cb58857963f2160c986ce23f04e1f8e002413ec",
+  "migrationSha256": "9e9e0e52f9e83737c528077fe37381a7f3d04695714fba8179e5209d33c69f0a",
+  "migrationPath": "backend/prisma/migrations/20260905_nortex_assistant_purchase_conversation/migration.sql",
+  "staticAdditiveCheck": {
+    "passed": true,
+    "newTables": 0,
+    "newIndexesOnExistingTables": 0,
+    "addedColumns": 4
+  },
+  "steps": [
+    {
+      "label": "baseline_db_push",
+      "exitCode": 0,
+      "durationMs": 9001
+    },
+    {
+      "label": "exact_migration_sql",
+      "exitCode": 0,
+      "durationMs": 394
+    },
+    {
+      "label": "live_database_vs_final_schema",
+      "exitCode": 0,
+      "durationMs": 411
+    }
+  ],
+  "limitations": [
+    "No valida datos históricos reales ni volumen de producción.",
+    "No ejecutó deploy, staging ni cambios en bases existentes."
+  ],
+  "artifactFinalization": {
+    "previousMigrationSha256": "c7abe91438c541eb75dd401c62a3c11efd1179994efeb612977967a0331b60c3",
+    "finalMigrationSha256": "9e9e0e52f9e83737c528077fe37381a7f3d04695714fba8179e5209d33c69f0a",
+    "trimmedOnlyTrailingBlankLines": true,
+    "removedNewlineBytes": 1,
+    "previousArtifactReconstructedAndHashMatched": true,
+    "finalEndsWithSingleLF": true,
+    "freshDisposableDatabase": true
+  },
+  "migrationOrdering": {
+    "passed": true,
+    "orderedDirectories": [
+      "20260905_nortex_assistant",
+      "20260905_nortex_assistant_purchase_conversation"
+    ]
+  },
+  "schemaDiff": {
+    "empty": true,
+    "summary": "-- This is an empty migration."
+  },
+  "existingTablesPreserved": {
+    "before": 118,
+    "after": 118,
+    "removed": 0,
+    "newTables": 0
+  },
+  "sentinelPreserved": true,
+  "safeDefaults": {
+    "enabled": false,
+    "extractionEnabled": false,
+    "executionEnabled": false,
+    "monthlyBudgetUsd": "10.000000"
+  }
+}

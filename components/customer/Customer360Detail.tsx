@@ -80,8 +80,8 @@ function riskFor(detail: CustomerHubDetail) {
     if (detail.profile.isBlocked) {
         return {
             label: 'Alto',
-            tone: 'text-red-300',
-            dot: 'bg-red-400',
+            tone: 'text-red-700',
+            dot: 'bg-red-500',
             reason: 'Crédito bloqueado. Revisá la deuda y la última gestión antes de habilitar nuevas ventas.',
             maxOverdue,
         };
@@ -89,8 +89,8 @@ function riskFor(detail: CustomerHubDetail) {
     if (detail.profile.segment === 'overlimit' || detail.receivables.totals.overdue > 0) {
         return {
             label: 'Alto',
-            tone: 'text-red-300',
-            dot: 'bg-red-400',
+            tone: 'text-red-700',
+            dot: 'bg-red-500',
             reason: maxOverdue > 0
                 ? `Tiene saldo vencido; la factura más atrasada acumula ${maxOverdue} días.`
                 : 'El saldo supera el límite de crédito disponible.',
@@ -100,16 +100,16 @@ function riskFor(detail: CustomerHubDetail) {
     if (detail.receivables.totals.balance > 0) {
         return {
             label: 'Medio',
-            tone: 'text-amber-300',
-            dot: 'bg-amber-400',
+            tone: 'text-amber-700',
+            dot: 'bg-amber-500',
             reason: 'Mantiene saldo abierto, pero no hay facturas vencidas en este momento.',
             maxOverdue,
         };
     }
     return {
         label: 'Bajo',
-        tone: 'text-emerald-300',
-        dot: 'bg-emerald-400',
+        tone: 'text-emerald-700',
+        dot: 'bg-brand',
         reason: 'No registra saldo pendiente ni señales de riesgo activas.',
         maxOverdue,
     };
@@ -141,16 +141,16 @@ export default function Customer360Detail({
     const openInteractions = detail.interactions.filter((interaction) => interaction.status === 'OPEN');
 
     return (
-        <div className="space-y-4" data-testid="customer-360-detail">
-            <header className="flex flex-col gap-4 border-b border-white/[0.06] pb-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="space-y-4 text-slate-950" data-testid="customer-360-detail">
+            <header className="nx-module-header flex flex-col gap-4 border-b border-slate-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
                 <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="truncate text-2xl font-black text-slate-100 sm:text-3xl">{detail.profile.name}</h2>
-                        <span className="rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-300">
+                        <h2 className="truncate text-2xl font-bold text-slate-950 sm:text-3xl">{detail.profile.name}</h2>
+                        <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700">
                             Cliente
                         </span>
                     </div>
-                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-400">
+                    <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-normal tracking-normal text-slate-500">
                         <span>{detail.profile.taxId || 'Sin RUC/DNI'}</span>
                         <span aria-hidden="true">•</span>
                         <span>{detail.profile.phone || 'Sin teléfono'}</span>
@@ -162,7 +162,7 @@ export default function Customer360Detail({
                     <button
                         type="button"
                         onClick={onSendStatement}
-                        className="inline-flex min-h-11 items-center justify-center gap-2 rounded-control border border-white/[0.10] bg-white/[0.03] px-4 text-sm font-bold text-slate-100 transition-colors hover:bg-white/[0.07]"
+                        className="nx-fluid-press inline-flex h-touch items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                     >
                         <MessageCircle size={17} aria-hidden="true" /> Enviar estado
                     </button>
@@ -170,7 +170,7 @@ export default function Customer360Detail({
                         <button
                             type="button"
                             onClick={onRegisterInteraction}
-                            className="inline-flex min-h-11 items-center justify-center gap-2 rounded-control bg-emerald-500 px-4 text-sm font-black text-slate-950 transition-colors hover:bg-emerald-400"
+                            className="nx-fluid-press inline-flex h-touch items-center justify-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                         >
                             <MessageSquare size={17} aria-hidden="true" /> Registrar gestión
                         </button>
@@ -180,50 +180,50 @@ export default function Customer360Detail({
 
             <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_244px]">
                 <div className="min-w-0 space-y-4">
-                    <section className="grid overflow-hidden rounded-card border border-white/[0.07] bg-surface-900/85 sm:grid-cols-2 lg:grid-cols-4" aria-label="Resumen del cliente">
-                        <div className="border-b border-white/[0.06] p-4 sm:border-r lg:border-b-0">
-                            <div className="text-[11px] font-mono uppercase tracking-wide text-slate-500">Saldo actual</div>
-                            <div className={`mt-2 text-xl font-black ${detail.receivables.totals.balance > 0 ? 'text-red-300' : 'text-emerald-300'}`}>
+                    <section className="nx-list-surface grid overflow-hidden sm:grid-cols-2 lg:grid-cols-4" aria-label="Resumen del cliente">
+                        <div className="border-b border-slate-200 p-4 sm:border-r lg:border-b-0">
+                            <div className="nx-label">Saldo actual</div>
+                            <div className={`nx-num mt-2 text-xl font-bold ${detail.receivables.totals.balance > 0 ? 'text-red-700' : 'text-emerald-700'}`}>
                                 {money(detail.receivables.totals.balance)}
                             </div>
-                            {risk.maxOverdue > 0 && <div className="mt-1 text-xs font-bold text-red-300">Vencida {risk.maxOverdue} días</div>}
+                            {risk.maxOverdue > 0 && <div className="mt-1 text-xs font-semibold text-red-700">Vencida {risk.maxOverdue} días</div>}
                         </div>
-                        <div className="border-b border-white/[0.06] p-4 lg:border-b-0 lg:border-r">
-                            <div className="text-[11px] font-mono uppercase tracking-wide text-slate-500">Facturado</div>
-                            <div className="mt-2 text-xl font-black text-slate-200">{money(detail.receivables.totals.billed)}</div>
+                        <div className="border-b border-slate-200 p-4 lg:border-b-0 lg:border-r">
+                            <div className="nx-label">Facturado</div>
+                            <div className="nx-num mt-2 text-xl font-bold text-slate-950">{money(detail.receivables.totals.billed)}</div>
                         </div>
-                        <div className="border-b border-white/[0.06] p-4 sm:border-r sm:border-b-0">
-                            <div className="text-[11px] font-mono uppercase tracking-wide text-slate-500">Abonado</div>
-                            <div className="mt-2 text-xl font-black text-emerald-300">{money(detail.receivables.totals.paid)}</div>
+                        <div className="border-b border-slate-200 p-4 sm:border-r sm:border-b-0">
+                            <div className="nx-label">Abonado</div>
+                            <div className="nx-num mt-2 text-xl font-bold text-emerald-700">{money(detail.receivables.totals.paid)}</div>
                         </div>
                         <div className="p-4">
-                            <div className="text-[11px] font-mono uppercase tracking-wide text-slate-500">Límite de crédito</div>
-                            <div className="mt-2 text-xl font-black text-slate-200">{money(detail.profile.creditLimit)}</div>
+                            <div className="nx-label">Límite de crédito</div>
+                            <div className="nx-num mt-2 text-xl font-bold text-slate-950">{money(detail.profile.creditLimit)}</div>
                         </div>
                     </section>
 
-                    <section className="rounded-card border border-white/[0.07] bg-surface-900/85 p-4 sm:p-5">
+                    <section className="nx-canvas-card p-4 sm:p-5">
                         <div className="flex items-center justify-between gap-3">
                             <div>
-                                <div className="text-[10px] font-mono uppercase tracking-wide text-emerald-300">Cobranza</div>
-                                <h3 className="mt-1 text-base font-black text-slate-100">Estado de cuenta</h3>
+                                <div className="nx-label text-emerald-700">Cobranza</div>
+                                <h3 className="mt-1 text-base font-bold text-slate-950">Estado de cuenta</h3>
                                 <p className="mt-1 text-xs text-slate-500">Facturas, abonos y saldos vigentes.</p>
                             </div>
                             <button
                                 type="button"
                                 onClick={onOpenReceivables}
-                                className="shrink-0 rounded-control border border-white/[0.08] px-3 py-2 text-xs font-bold text-slate-300 hover:bg-white/[0.05] hover:text-white"
+                                className="nx-fluid-press min-h-tap shrink-0 rounded-control border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                             >
                                 Ver completo
                             </button>
                         </div>
 
                         {detail.receivables.invoices.length === 0 ? (
-                            <div className="mt-4 rounded-control border border-dashed border-white/[0.10] bg-white/[0.02] p-6 text-center text-sm text-slate-500">
+                            <div className="mt-4 rounded-control border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
                                 Este cliente no tiene facturas a crédito abiertas.
                             </div>
                         ) : (
-                            <div className="mt-4 overflow-x-auto rounded-control border border-white/[0.06]">
+                            <div className="mt-4 overflow-x-auto rounded-control border border-slate-200">
                                 <table className="w-full min-w-[612px] table-fixed border-collapse text-left text-xs">
                                     <colgroup>
                                         <col className="w-[132px]" />
@@ -234,7 +234,7 @@ export default function Customer360Detail({
                                         <col className="w-[84px]" />
                                         <col className="w-[80px]" />
                                     </colgroup>
-                                    <thead className="bg-white/[0.025] text-[10px] font-mono uppercase tracking-wide text-slate-500">
+                                    <thead className="bg-slate-50 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
                                         <tr>
                                             <th className="px-2 py-3 font-medium">Documento</th>
                                             <th className="px-2 py-3 font-medium">Emitido</th>
@@ -247,24 +247,24 @@ export default function Customer360Detail({
                                     </thead>
                                     <tbody>
                                         {detail.receivables.invoices.slice(0, 8).map((invoice) => (
-                                            <tr key={invoice.id} className="border-t border-white/[0.06] text-slate-300">
-                                                <td className="truncate px-2 py-3 font-bold text-slate-100" title={invoice.invoiceNumber || invoice.id}>
+                                            <tr key={invoice.id} className="border-t border-slate-200 text-slate-600 hover:bg-slate-50">
+                                                <td className="truncate px-2 py-3 font-semibold text-slate-950" title={invoice.invoiceNumber || invoice.id}>
                                                     {invoice.invoiceNumber ? `Factura #${invoice.invoiceNumber}` : `Venta ${invoice.id.slice(0, 8)}`}
                                                 </td>
                                                 <td className="px-2 py-3 text-[11px] leading-4">{formatCustomerDate(invoice.date)}</td>
-                                                <td className={invoice.status === 'OVERDUE' ? 'px-2 py-3 text-[11px] font-bold leading-4 text-red-300' : 'px-2 py-3 text-[11px] leading-4'}>
+                                                <td className={invoice.status === 'OVERDUE' ? 'px-2 py-3 text-[11px] font-semibold leading-4 text-red-700' : 'px-2 py-3 text-[11px] leading-4'}>
                                                     {formatCustomerDate(invoice.dueDate)}
                                                 </td>
                                                 <td className="whitespace-nowrap px-2 py-3 text-right font-semibold">{money(invoice.total)}</td>
-                                                <td className="whitespace-nowrap px-2 py-3 text-right font-semibold text-emerald-300">{money(invoice.paid)}</td>
-                                                <td className="whitespace-nowrap px-2 py-3 text-right font-black text-red-300">{money(invoice.balance)}</td>
+                                                <td className="nx-num whitespace-nowrap px-2 py-3 text-right font-semibold text-emerald-700">{money(invoice.paid)}</td>
+                                                <td className="nx-num whitespace-nowrap px-2 py-3 text-right font-bold text-red-700">{money(invoice.balance)}</td>
                                                 <td className="px-2 py-3">
                                                     <span className={`whitespace-nowrap rounded-full px-1.5 py-1 text-[9px] font-bold ${
                                                         invoice.status === 'OVERDUE'
-                                                            ? 'bg-red-500/15 text-red-300'
+                                                            ? 'bg-red-50 text-red-700'
                                                             : invoice.status === 'PAID'
-                                                                ? 'bg-emerald-500/15 text-emerald-300'
-                                                                : 'bg-amber-500/15 text-amber-300'
+                                                                ? 'bg-emerald-50 text-emerald-700'
+                                                                : 'bg-amber-50 text-amber-700'
                                                     }`}>
                                                         {invoice.status === 'OVERDUE'
                                                             ? `Vencida ${overdueDays(invoice.dueDate)}d`
@@ -279,40 +279,40 @@ export default function Customer360Detail({
                         )}
                     </section>
 
-                    <section className="rounded-card border border-white/[0.07] bg-surface-900/85 p-4 sm:p-5">
+                    <section className="nx-canvas-card p-4 sm:p-5">
                         <div className="flex flex-wrap items-center justify-between gap-3">
                             <div>
-                                <h3 className="text-base font-black text-slate-100">Actividad reciente</h3>
+                                <h3 className="text-base font-bold text-slate-950">Actividad reciente</h3>
                                 <p className="mt-1 text-xs text-slate-500">Ventas, abonos, gestiones y cambios sensibles.</p>
                             </div>
-                            <span className="rounded-control border border-white/[0.07] bg-white/[0.03] px-3 py-2 text-xs font-bold text-slate-400">Todos</span>
+                            <span className="inline-flex min-h-tap items-center rounded-control border border-slate-200 bg-slate-50 px-3 text-xs font-semibold text-slate-600">Todos</span>
                         </div>
 
                         {detail.timeline.length === 0 ? (
-                            <div className="mt-4 rounded-control border border-dashed border-white/[0.10] bg-white/[0.02] p-6 text-center text-sm text-slate-500">
+                            <div className="mt-4 rounded-control border border-dashed border-slate-300 bg-slate-50 p-6 text-center text-sm text-slate-500">
                                 Todavía no hay actividad relevante para mostrar.
                             </div>
                         ) : (
-                            <ol className="relative mt-5 ml-3 border-l border-white/[0.10]">
+                            <ol className="relative mt-5 ml-3 border-l border-slate-200">
                                 {detail.timeline.slice(0, 10).map((event) => (
-                                    <li key={event.id} className="relative ml-7 border-b border-white/[0.05] pb-4 pt-1 last:border-b-0 last:pb-0">
+                                    <li key={event.id} className="relative ml-7 border-b border-slate-200 pb-4 pt-1 last:border-b-0 last:pb-0">
                                         <span className={`absolute -left-[2.72rem] top-0.5 flex h-8 w-8 items-center justify-center rounded-full border ${
                                             event.type === 'payment'
-                                                ? 'border-emerald-500/25 bg-emerald-500/15 text-emerald-300'
+                                                ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
                                                 : event.type === 'sale'
-                                                    ? 'border-nortex-500/25 bg-nortex-500/15 text-nortex-300'
-                                                    : 'border-amber-500/25 bg-amber-500/15 text-amber-300'
+                                                    ? 'border-emerald-200 bg-brand-soft text-emerald-700'
+                                                    : 'border-amber-200 bg-amber-50 text-amber-700'
                                         }`}>
                                             {eventIcon(event.type)}
                                         </span>
                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                                             <div className="min-w-0">
-                                                <div className="font-bold text-slate-100">{event.title}</div>
-                                                <div className="mt-1 break-words text-sm leading-5 text-slate-400">{event.subtitle}</div>
+                                                <div className="font-semibold text-slate-950">{event.title}</div>
+                                                <div className="mt-1 break-words text-sm leading-5 text-slate-600">{event.subtitle}</div>
                                                 {event.meta && <div className="mt-1 text-xs text-slate-500">{event.meta}</div>}
                                             </div>
                                             <div className="shrink-0 text-left sm:text-right">
-                                                {event.amount !== null && <div className="font-black text-emerald-300">{money(event.amount)}</div>}
+                                                {event.amount !== null && <div className="nx-num font-bold text-emerald-700">{money(event.amount)}</div>}
                                                 <div className="mt-1 text-xs text-slate-500">{formatCustomerDate(event.happenedAt)}</div>
                                             </div>
                                         </div>
@@ -323,30 +323,30 @@ export default function Customer360Detail({
                     </section>
 
                     {openInteractions.length > 0 && (
-                        <section className="rounded-card border border-amber-500/15 bg-amber-500/[0.04] p-4 sm:p-5">
+                        <section className="nx-canvas-card border-amber-200 bg-amber-50/60 p-4 sm:p-5">
                             <div className="flex items-center justify-between gap-3">
                                 <div>
-                                    <h3 className="text-base font-black text-slate-100">Gestiones pendientes</h3>
+                                    <h3 className="text-base font-bold text-slate-950">Gestiones pendientes</h3>
                                     <p className="mt-1 text-xs text-slate-500">Promesas y seguimientos que todavía requieren acción.</p>
                                 </div>
-                                <span className="rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-bold text-amber-200">{openInteractions.length}</span>
+                                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-800">{openInteractions.length}</span>
                             </div>
                             <div className="mt-4 grid gap-3 lg:grid-cols-2">
                                 {openInteractions.slice(0, 4).map((interaction) => (
-                                    <article key={interaction.id} className="rounded-control border border-white/[0.07] bg-surface-900/70 p-4">
-                                        <div className="text-sm font-black text-slate-100">
+                                    <article key={interaction.id} className="rounded-control border border-amber-200 bg-white p-4 shadow-sm">
+                                        <div className="text-sm font-bold text-slate-950">
                                             {interaction.type === 'PROMISE' ? 'Promesa de pago' : 'Seguimiento'}
                                         </div>
-                                        <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-slate-400">{interaction.note}</p>
+                                        <p className="mt-2 line-clamp-3 whitespace-pre-wrap text-sm text-slate-600">{interaction.note}</p>
                                         <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
                                             <span>{formatCustomerDate(interaction.followUpAt || interaction.promisedAt)}</span>
-                                            {interaction.promisedAmount !== null && <span className="font-black text-amber-200">{money(interaction.promisedAmount)}</span>}
+                                            {interaction.promisedAmount !== null && <span className="nx-num font-bold text-amber-800">{money(interaction.promisedAmount)}</span>}
                                         </div>
                                         {canWriteInteraction && (
                                             <button
                                                 type="button"
                                                 onClick={() => onResolveInteraction(interaction.id)}
-                                                className="mt-3 inline-flex items-center gap-2 rounded-control border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-xs font-bold text-emerald-200 hover:bg-emerald-500/15"
+                                                className="nx-fluid-press mt-3 inline-flex min-h-tap items-center gap-2 rounded-control border border-emerald-200 bg-emerald-50 px-3 text-xs font-semibold text-emerald-700 hover:bg-emerald-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                                             >
                                                 <CheckCircle2 size={14} aria-hidden="true" /> Marcar completada
                                             </button>
@@ -359,74 +359,74 @@ export default function Customer360Detail({
                 </div>
 
                 <aside className="space-y-3" aria-label="Resumen operativo del cliente">
-                    <section className="rounded-card border border-white/[0.07] bg-surface-900/85 p-4">
-                        <div className="text-sm font-black text-slate-200">Riesgo</div>
-                        <div className={`mt-3 flex items-center gap-2 text-2xl font-black ${risk.tone}`}>
+                    <section className="nx-canvas-card p-4">
+                        <div className="text-sm font-semibold text-slate-700">Riesgo</div>
+                        <div className={`mt-3 flex items-center gap-2 text-2xl font-bold ${risk.tone}`}>
                             {risk.label} <span className={`h-2.5 w-2.5 rounded-full ${risk.dot}`} aria-hidden="true" />
                         </div>
-                        <p className="mt-3 text-sm leading-5 text-slate-400">{risk.reason}</p>
+                        <p className="mt-3 text-sm leading-5 text-slate-600">{risk.reason}</p>
                     </section>
 
-                    <section className="rounded-card border border-white/[0.07] bg-surface-900/85 p-4">
-                        <div className="flex items-center gap-2 text-sm font-black text-slate-200">
-                            <CalendarClock size={16} className="text-amber-300" aria-hidden="true" /> Próxima acción sugerida
+                    <section className="nx-canvas-card border-amber-200 bg-amber-50/60 p-4">
+                        <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                            <CalendarClock size={16} className="text-amber-700" aria-hidden="true" /> Próxima acción sugerida
                         </div>
-                        <p className="mt-3 text-sm font-semibold leading-6 text-slate-300">{detail.profile.nextAction}</p>
+                        <p className="mt-3 text-sm font-medium leading-6 text-slate-700">{detail.profile.nextAction}</p>
                         {canWriteInteraction && (
                             <button
                                 type="button"
                                 onClick={onRegisterInteraction}
-                                className="mt-4 w-full rounded-control bg-emerald-500 px-3 py-2.5 text-sm font-black text-slate-950 hover:bg-emerald-400"
+                                className="nx-fluid-press mt-4 h-touch w-full rounded-control bg-brand px-3 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                             >
                                 Programar seguimiento
                             </button>
                         )}
                     </section>
 
-                    <section className="rounded-card border border-white/[0.07] bg-surface-900/85 p-4">
-                        <div className="text-sm font-black text-slate-200">Acciones rápidas</div>
+                    <section className="nx-canvas-card p-4">
+                        <div className="text-sm font-semibold text-slate-800">Acciones rápidas</div>
                         <div className="mt-3 grid gap-1">
-                            <button type="button" onClick={onOpenReceivables} className="inline-flex items-center gap-2 rounded-control px-2 py-2 text-left text-sm text-slate-300 hover:bg-white/[0.05] hover:text-white">
-                                <Banknote size={16} className="text-emerald-300" aria-hidden="true" /> Registrar abono
+                            <button type="button" onClick={onOpenReceivables} className="nx-fluid-press inline-flex min-h-tap items-center gap-2 rounded-control px-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring">
+                                <Banknote size={16} className="text-emerald-700" aria-hidden="true" /> Registrar abono
                             </button>
-                            <button type="button" onClick={onSendStatement} className="inline-flex items-center gap-2 rounded-control px-2 py-2 text-left text-sm text-slate-300 hover:bg-white/[0.05] hover:text-white">
-                                <MessageCircle size={16} className="text-emerald-300" aria-hidden="true" /> Enviar estado por WhatsApp
+                            <button type="button" onClick={onSendStatement} className="nx-fluid-press inline-flex min-h-tap items-center gap-2 rounded-control px-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring">
+                                <MessageCircle size={16} className="text-emerald-700" aria-hidden="true" /> Enviar estado por WhatsApp
                             </button>
                             {canEditProfile && (
-                                <button type="button" onClick={onEdit} className="inline-flex items-center gap-2 rounded-control px-2 py-2 text-left text-sm text-slate-300 hover:bg-white/[0.05] hover:text-white">
+                                <button type="button" onClick={onEdit} className="nx-fluid-press inline-flex min-h-tap items-center gap-2 rounded-control px-2 text-left text-sm font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring">
                                     <Pencil size={16} aria-hidden="true" /> Editar ficha
                                 </button>
                             )}
                         </div>
                     </section>
 
-                    <section className="rounded-card border border-white/[0.07] bg-surface-900/85 p-4">
-                        <div className="text-sm font-black text-slate-200">Información del cliente</div>
+                    <section className="nx-canvas-card p-4">
+                        <div className="text-sm font-semibold text-slate-800">Información del cliente</div>
                         <dl className="mt-4 space-y-3 text-sm">
                             <div>
-                                <dt className="text-[11px] font-mono uppercase text-slate-500">Contacto</dt>
-                                <dd className="mt-1 text-slate-300">{detail.profile.name}</dd>
+                                <dt className="nx-label">Contacto</dt>
+                                <dd className="mt-1 text-slate-700">{detail.profile.name}</dd>
                             </div>
                             <div>
-                                <dt className="flex items-center gap-1 text-[11px] font-mono uppercase text-slate-500"><Phone size={12} aria-hidden="true" /> Teléfono</dt>
-                                <dd className="mt-1 break-words text-slate-300">{detail.profile.phone || 'Sin teléfono'}</dd>
+                                <dt className="nx-label flex items-center gap-1"><Phone size={12} aria-hidden="true" /> Teléfono</dt>
+                                <dd className="mt-1 break-words text-slate-700">{detail.profile.phone || 'Sin teléfono'}</dd>
                             </div>
                             <div>
-                                <dt className="flex items-center gap-1 text-[11px] font-mono uppercase text-slate-500"><Mail size={12} aria-hidden="true" /> Correo</dt>
-                                <dd className="mt-1 break-words text-slate-300">{detail.profile.email || 'Sin correo'}</dd>
+                                <dt className="nx-label flex items-center gap-1"><Mail size={12} aria-hidden="true" /> Correo</dt>
+                                <dd className="mt-1 break-words text-slate-700">{detail.profile.email || 'Sin correo'}</dd>
                             </div>
                             <div>
-                                <dt className="flex items-center gap-1 text-[11px] font-mono uppercase text-slate-500"><FileText size={12} aria-hidden="true" /> RUC / DNI</dt>
-                                <dd className="mt-1 break-words text-slate-300">{detail.profile.taxId || 'Sin documento'}</dd>
+                                <dt className="nx-label flex items-center gap-1"><FileText size={12} aria-hidden="true" /> RUC / DNI</dt>
+                                <dd className="mt-1 break-words text-slate-700">{detail.profile.taxId || 'Sin documento'}</dd>
                             </div>
                             <div>
-                                <dt className="flex items-center gap-1 text-[11px] font-mono uppercase text-slate-500"><UserRound size={12} aria-hidden="true" /> Vendedor asignado</dt>
-                                <dd className="mt-1 text-slate-300">{detail.profile.seller?.name || 'Sin asignar'}</dd>
+                                <dt className="nx-label flex items-center gap-1"><UserRound size={12} aria-hidden="true" /> Vendedor asignado</dt>
+                                <dd className="mt-1 text-slate-700">{detail.profile.seller?.name || 'Sin asignar'}</dd>
                             </div>
                             {detail.profile.address && (
                                 <div>
-                                    <dt className="flex items-center gap-1 text-[11px] font-mono uppercase text-slate-500"><MapPin size={12} aria-hidden="true" /> Dirección</dt>
-                                    <dd className="mt-1 break-words leading-5 text-slate-300">{detail.profile.address}</dd>
+                                    <dt className="nx-label flex items-center gap-1"><MapPin size={12} aria-hidden="true" /> Dirección</dt>
+                                    <dd className="mt-1 break-words leading-5 text-slate-700">{detail.profile.address}</dd>
                                 </div>
                             )}
                         </dl>
@@ -436,7 +436,7 @@ export default function Customer360Detail({
                                 aria-label="Vendedor asignado"
                                 value={detail.profile.sellerId || ''}
                                 onChange={(event) => onAssignSeller(detail.profile.id, event.target.value)}
-                                className="mt-4 w-full rounded-control border border-white/[0.08] bg-white/[0.03] px-3 py-2 text-sm text-slate-100 outline-none focus:border-emerald-500"
+                                className="mt-4 h-touch w-full rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                             >
                                 <option value="">Sin vendedor</option>
                                 {sellers.map((seller) => <option key={seller.id} value={seller.id}>{seller.name}</option>)}
@@ -444,14 +444,14 @@ export default function Customer360Detail({
                         )}
 
                         {canManageControls && (
-                            <div className="mt-4 grid gap-2 border-t border-white/[0.06] pt-4">
+                            <div className="mt-4 grid gap-2 border-t border-slate-200 pt-4">
                                 <button
                                     type="button"
                                     onClick={() => onToggleBlock(detail.profile)}
-                                    className={`inline-flex items-center justify-center gap-2 rounded-control px-3 py-2 text-xs font-bold ${
+                                    className={`nx-fluid-press inline-flex min-h-tap items-center justify-center gap-2 rounded-control px-3 text-xs font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
                                         detail.profile.isBlocked
-                                            ? 'bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/15'
-                                            : 'bg-red-500/10 text-red-200 hover:bg-red-500/15'
+                                            ? 'bg-emerald-50 text-emerald-700 hover:bg-emerald-100'
+                                            : 'bg-red-50 text-red-700 hover:bg-red-100'
                                     }`}
                                 >
                                     {detail.profile.isBlocked ? <ShieldCheck size={14} aria-hidden="true" /> : <Ban size={14} aria-hidden="true" />}
@@ -460,7 +460,7 @@ export default function Customer360Detail({
                                 <button
                                     type="button"
                                     onClick={() => onToggleWholesale(detail.profile)}
-                                    className="rounded-control border border-white/[0.08] px-3 py-2 text-xs font-bold text-slate-300 hover:bg-white/[0.05] hover:text-white"
+                                    className="nx-fluid-press min-h-tap rounded-control border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                                 >
                                     {detail.profile.isWholesale ? 'Quitar mayoreo' : 'Activar mayoreo'}
                                 </button>
@@ -472,4 +472,3 @@ export default function Customer360Detail({
         </div>
     );
 }
-

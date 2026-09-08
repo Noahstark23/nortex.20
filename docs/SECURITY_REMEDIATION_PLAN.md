@@ -1,5 +1,14 @@
 # Plan de Remediación — Security & Integrity Loop
 
+> **Revalidación 2026-09-04:** el cuerpo conserva el análisis histórico de su fecha.
+> La evidencia actual está en [AUDITORIA_GENERAL_2026-09-04.md](AUDITORIA_GENERAL_2026-09-04.md)
+> y la prioridad en [PLAN_TRANSFORMACION_TOTAL_2026.md](PLAN_TRANSFORMACION_TOTAL_2026.md).
+> No ejecutar una receta antigua sin contrastarla con código, pruebas y reglas de integridad.
+> Estado local, staging y producción se registran por separado.
+
+> Supplier ya tiene archivado. Revalidar pendientes de auth/roles y efectos antes
+> de repetir cambios históricos. No se ejecutó un escaneo de seguridad exhaustivo.
+
 Plan por fases para llevar Nortex al estándar del **Security & Integrity Loop** (ver
 `CLAUDE.md`). Cada hallazgo `Sx` referencia `docs/SECURITY_AUDIT.md`. Las fases están
 ordenadas por **riesgo/esfuerzo**: primero lo crítico-barato, al final lo grande con migración.
@@ -59,40 +68,45 @@ backup; confirmar `3306` no accesible desde fuera.
 
 ---
 
-## Fase 2 — Precisión financiera (migración) — S15, S16, S17, S18 (1–2 semanas)
+## Fase 2 — Precisión financiera por agregado (revisada 2026-09-04)
 
-> **La raíz es `Product.price`/`Product.cost` como `Float`.** De ahí derivan precio de venta,
-> COGS y valuación. Es el cambio de mayor impacto y el de mayor cuidado.
+Product conserva precios/costos Float; ya hay columnas exactas en otros dominios.
+La transición debe declarar la autoridad y redondeo de cada campo. La receta
+histórica de un sweep global en una sola migración queda sustituida:
 
-**Estrategia:**
-1. **Inventario de columnas:** migrar TODAS las columnas monetarias a `@db.Decimal(18,4)`
-   (precios, costos, totales, IVA, saldos, nómina, wallet, ledger). Las tasas que necesiten
-   más decimales (`interestRate`) → `Decimal(9,4)` o `(18,6)`.
-2. **Migración Prisma** con backfill: `FLOAT → DECIMAL(18,4)` (MySQL convierte; revisar
-   redondeos). Hacerlo en ventana de bajo tráfico, con backup previo (Fase 1b).
-3. **Sweep de código:** tras el cambio, Prisma devuelve `Decimal` (no `number`) para esos
-   campos. Auditar cada lectura: las que ya hacen `new Decimal(x.toString())` o `Number(x)`
-   siguen bien; las que hacían aritmética cruda (los ~16 puntos de **S18**) deben pasar por
-   `decimal.js` y `.toNumber()` solo al persistir.
-4. **Tests** de los motores de cálculo (nómina nicaLabor/nicaTax, originación de préstamos,
-   arqueo de caja, cotizaciones) comparando antes/después con casos conocidos.
+1. Inventariar columnas, consumidores y contratos de ventas, compras, devoluciones,
+   caja, crédito y contabilidad; definir escala necesaria con el dueño del dominio.
+2. Preparar backup restaurable y schema preflight antes de cambios productivos.
+3. Expandir aditivamente un agregado con columnas exactas y compatibilidad explícita.
+4. Backfill idempotente por lotes, comparación y reconciliación; no asumir que
+   convertir Float corrige precisión histórica ya perdida.
+5. Persistir Decimal/string exactos; `toNumber()` solo en límites de presentación
+   justificados, nunca como regla para persistencia monetaria.
+6. Probar historial, replays, redondeo, pagos parciales, devoluciones, stock y
+   asientos con MySQL; exigir igualdad de invariantes y pruebas negativas.
+7. Cambiar autoridad de lectura por agregado cuando la comparación sea aceptada,
+   con rollback compatible. No borrar columnas ni usar --accept-data-loss.
 
-**Riesgo:** alto si se hace a medias (mezclar Float y Decimal). Hacerlo como una sola
-migración + sweep, no por partes.
+La convivencia temporal tiene contrato y métricas explícitos. No mezclar fuentes
+numéricas silenciosamente ni retirar compatibilidad antes de validar consumidores.
 
 ---
 
-## Fase 3 — Soft-deletes — S5, S6, S7 (3–5 días)
+## Fase 3 — Archivado por agregado (revisada 2026-09-04)
 
-1. Agregar `deletedAt DateTime?` a los modelos de negocio/históricos (Product, Supplier,
-   Customer, Sale, Loan, Employee, Invoice, Expense, Holiday…).
-2. **Middleware Prisma** (`$extends`/`$use`) que: en `findMany/findFirst/findUnique` agregue
-   `deletedAt: null` por defecto, y convierta `delete`/`deleteMany` de modelos de negocio en
-   `update({ deletedAt: now })`.
-3. Convertir `product.delete` (S5) y `supplier.delete` (S6) a soft-delete; decidir `holiday` (S7).
-4. Cuidar los `@unique` (p. ej. SKU/email): un registro “borrado” no debe bloquear recrear.
+Supplier ya tiene deletedAt. Priorizar Product y las cascadas históricas con el
+responsable de inventario/ingeniería (T19 del plan maestro). No aplicar un
+middleware global que transforme indiscriminadamente lecturas y borrados.
 
-**Verificación:** borrar y re-listar (no aparece); históricos (SaleItem→Product) siguen resolviendo.
+1. Definir baja comercial, restauración, retención y eliminación excepcional para
+   cada agregado; declarar qué roles pueden ejecutarlas y registrar AuditLog atómico.
+2. Ocultar archivados solo de catálogo operativo; históricos, devoluciones,
+   conciliaciones y replays conservan acceso a sus referencias originales.
+3. Revisar FK/cascadas de Kardex, lotes y conteos y preservar evidencia subordinada.
+4. Definir unicidad de SKU/email según dominio; no liberar identificadores sin
+   estudiar idempotencia, referencias, reactivación y colisiones.
+5. Probar baja, listado, venta rechazada, histórico legible, replay idéntico y
+   restauración con datos sintéticos. Mantener migraciones aditivas y reversión segura.
 
 ---
 

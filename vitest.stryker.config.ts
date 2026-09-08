@@ -33,6 +33,16 @@ import path from 'path';
 const RENDER_LENTOS = [
     // Caracterización de la venta del POS: monta el componente entero.
     '**/tests/posVentaCritica.test.tsx',
+    // El flujo de activación también monta el POS completo; se ejecuta en npm test.
+    '**/tests/posActivationFlow.test.tsx',
+];
+
+const INCOMPATIBLES_CON_INSTRUMENTACION = [
+    // Lee shiftCloseService.ts como texto. Stryker instrumenta ese texto antes
+    // del dry-run y rompe la aserción estructural aunque ningún mutante esté
+    // activo. Su contrato puro vive en cashCloseJournalMutation.test.ts; este
+    // archivo completo sigue ejecutándose en `npm test`.
+    '**/tests/closeShiftIdempotency.test.ts',
 ];
 
 export default defineConfig({
@@ -41,6 +51,7 @@ export default defineConfig({
         alias: { '@': path.resolve(__dirname, '.') },
     },
     test: {
+        setupFiles: ['./tests/setup.ts'],
         exclude: [
             '**/node_modules/**',
             '**/dist/**',
@@ -48,6 +59,7 @@ export default defineConfig({
             // una copia instrumentada de la suite en disco.
             '**/.stryker-tmp/**',
             ...RENDER_LENTOS,
+            ...INCOMPATIBLES_CON_INSTRUMENTACION,
         ],
     },
 });

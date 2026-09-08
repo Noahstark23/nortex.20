@@ -1647,6 +1647,41 @@ const buildStoredResult = (input: {
     },
 });
 
+/**
+ * Revisión sin escrituras: reutiliza las mismas fuentes, cupos y existencias
+ * del registro. El llamador abre una transacción breve para conservar los
+ * locks; no se crean devoluciones, saldos, auditorías ni notas de crédito.
+ */
+export async function prepareSupplierReturnInTransaction(input: ExecuteSupplierReturnInput) {
+    const command = commandFromInput(input);
+    await assertActiveActor(input.tx, command);
+    const batchLedgerMode = await resolveBatchWarehouseLedgerMode(input.tx, command.tenantId);
+    await lockSupplier(input.tx, command);
+    const sourceState = await lockSourceState(input.tx, command);
+    const descriptors = buildSourceDescriptors(command, sourceState);
+    const warehouses = await lockWarehouses(input.tx, command.tenantId, descriptors.map(source => source.warehouseId));
+    const authority = await lockInventoryAuthority(input.tx, {command, state: sourceState, descriptors, batchLedgerMode});
+    return {
+        supplierId: command.supplierId,
+        batchLedgerMode,
+        reasonCode: command.reasonCode,
+        reason: command.reason,
+        supplierReference: command.supplierReference,
+        lines: authority.planned,
+        warehouses: [...warehouses.values()],
+        productStocks: [...authority.productsById.values()].map(product => ({
+            id: product.id, stock: String(product.stock), cost: String(product.cost),
+        })),
+        warehouseStocks: [...authority.productStocksByPair.values()].map(row => ({
+            productId: row.productId, warehouseId: row.warehouseId, stock: String(row.stock),
+        })),
+        batchStocks: [...authority.batchesById.values()].map(row => ({id: row.id, stock: String(row.stock)})),
+        batchWarehouseStocks: [...authority.batchWarehouseStocksByPair.values()].map(row => ({
+            batchId: row.batchId, warehouseId: row.warehouseId, stock: String(row.stock),
+        })),
+    };
+}
+
 /** Ejecuta dentro de una transacción ya abierta; no acepta tenant desde HTTP. */
 export async function executeSupplierReturn(
     input: ExecuteSupplierReturnInput,

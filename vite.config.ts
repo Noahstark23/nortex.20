@@ -5,10 +5,25 @@ import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    const apiProxyTarget = env.NORTEX_DEV_API_TARGET || 'http://127.0.0.1:3210';
+    if (!/^http:\/\/127\.0\.0\.1:\d{2,5}$/u.test(apiProxyTarget)) {
+      throw new Error('NORTEX_DEV_API_TARGET debe apuntar a http://127.0.0.1:<puerto>');
+    }
     return {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        // `nortex frontend` y `nortex backend` corren en puertos separados.
+        // Sin este proxy, fetch('/api/...') recibe el fallback HTML de Vite y
+        // la app parece cargar, pero login/registro y los datos autenticados no
+        // funcionan. El override se usa solo para QA con BD efímera y también
+        // queda limitado explícitamente a loopback para no reenviar JWT fuera.
+        proxy: {
+          '/api': {
+            target: apiProxyTarget,
+            changeOrigin: false,
+          },
+        },
       },
       plugins: [
         react(),
@@ -95,6 +110,7 @@ export default defineConfig(({ mode }) => {
         }
       },
       test: {
+        setupFiles: ['./tests/setup.ts'],
         // Excluir cualquier sandbox de Stryker: además del default
         // `.stryker-tmp/`, las corridas enfocadas pueden dejar variantes como
         // `.stryker-tmp-pos-activation/`. Si Vitest las descubre, ejecuta una

@@ -2,19 +2,19 @@ import React, { useState, useMemo, useEffect, useLayoutEffect, useCallback, useR
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
-import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Keyboard, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, PlayCircle, House } from 'lucide-react';
+import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
-import { EmptyState } from './ui/EmptyState';
 import { IconButton } from './ui/IconButton';
-import { ProductImage } from './ui/ProductImage';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
-import { resolvePosSimple, UI_MODE_KEY } from '../utils/navigation';
+import { useUiMode } from '../hooks/useUiMode';
 import { ToastViewport, useToast } from './ui/Toast';
 import { parseWorkbookRows, importInChunks } from '../utils/importProducts';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
-import { indexarProductos, buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
+import { buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
+import { usePosSearchIndex } from '../hooks/usePosSearchIndex';
+import { usePosCatalog } from '../hooks/usePosCatalog';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
     decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente,
@@ -25,14 +25,30 @@ import {
 } from '../utils/cartPersistence';
 import { useReportarVenta } from './VentaEnCursoContext';
 import { ReceiptTicket } from './ReceiptTicket';
-import { CajaNicaCatalog } from './pos/CajaNicaCatalog';
+import { OperationalNotifications } from './notifications/OperationalNotifications';
+import { PosSaleResultSheet } from './pos/PosSaleResultSheet';
+import { PosSaleHeader } from './pos/PosSaleHeader';
+import { PosMobileCheckoutBar } from './pos/PosMobileCheckoutBar';
+import './pos/posWorkspace.css';
+import { PosCatalogPane } from './pos/PosCatalogPane';
+import { PosCashSheet } from './pos/PosCashSheet';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
+import { PosPaymentSheet } from './pos/PosPaymentSheet';
+import { PosTicketShell } from './pos/PosTicketShell';
+import { NumberDraftInput } from './pos/NumberDraftInput';
+import { StoreCreditPaymentOption } from './pos/StoreCreditPaymentOption';
+import { usePromotionCheckout } from '../hooks/usePromotionCheckout';
+import { persistPromotionCart } from './pos/PromotionCartPersistence';
+import { promotionRecoveredSale } from './pos/PromotionRecoveredSale';
+import { PromotionCheckoutSheet } from './pos/PromotionCheckoutSheet';
+import { buildPromotionSaleIntent } from './pos/PromotionSaleIntent';
+import { resolvePosCartTotals, promotionReceiptCart } from './pos/PromotionTotals';
+import { usePosOfflineQueue } from '../hooks/usePosOfflineQueue';
+import { useStoreCreditCheckout } from '../hooks/useStoreCreditCheckout';
 import { thermalPrinter } from '../utils/thermalPrinter';
 import { buildPostSalePrintOptions } from '../utils/postSalePrintOptions';
 import { buildPostSalePrintCash } from '../utils/postSalePrintCash';
 import {
-    FISCAL_REGIME_CUOTA_FIJA,
-    includedVatFromGross,
     normalizeFiscalRegime,
     resolveSaleFiscalAmounts,
     type FiscalRegime,
@@ -44,7 +60,7 @@ import {
 } from '../utils/fiscalSettingsSnapshot';
 // xlsx (~430 KB) se importa dinámicamente en handleFileUpload — fuera del bundle inicial.
 import {
-    generateOfflineId, saveSaleOffline, getPendingSales, markSalesSynced, recordOfflineSyncResults,
+    generateOfflineId, saveSaleOffline,
     getScaleContext, saveScaleContext,
     normalizeActiveScaleContext,
     OfflineScaleContext,
@@ -70,7 +86,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
-import { suggestNioCashAmounts as denominacionesSugeridas, validateCashReceived } from '../utils/posCash';
+import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
 // ── Utilidades financieras del POS (string controlado + Decimal.js) ──────────
@@ -83,21 +99,6 @@ const effectiveSaleMode = effectivePosSaleMode;
 const effectiveQuantityStep = effectivePosQuantityStep;
 
 const lineKey = (item: CartItem): string => claveLineaCarrito(item as unknown as LineaGuardada);
-
-const PRODUCT_TILE_GRADIENTS = [
-    'from-indigo-500/25 to-cyan-500/15',
-    'from-emerald-500/25 to-teal-500/15',
-    'from-rose-500/25 to-fuchsia-500/15',
-    'from-amber-500/25 to-orange-500/15',
-    'from-sky-500/25 to-blue-500/15',
-];
-
-const productoPaleta = (seed: string): string =>
-    PRODUCT_TILE_GRADIENTS[
-        Math.abs(
-            seed.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0),
-        ) % PRODUCT_TILE_GRADIENTS.length
-    ];
 
 const isQuotationCartLine = (item: Pick<CartItem, 'quotationItemId'>): boolean =>
     typeof item.quotationItemId === 'string' && item.quotationItemId.trim() !== '';
@@ -197,58 +198,6 @@ const MIN_VENTAS_PARA_RANKING = 20;
 export const rotuloProductosRapidos = (esRanking: boolean, ventasRegistradas: number): string =>
     esRanking && ventasRegistradas >= MIN_VENTAS_PARA_RANKING ? 'Más vendidos' : 'Tus productos';
 
-/**
- * Tarjeta de producto de la grilla — MEMOIZADA (P0-2).
- *
- * Sin esto, cada tecla en la búsqueda vuelve a renderizar todas las tarjetas
- * visibles aunque ninguna cambió. Con la grilla ya acotada el costo baja solo,
- * pero el re-render sigue siendo gratis de evitar: las props son primitivas y
- * `onAgregar` es estable.
- */
-const TarjetaProducto = React.memo<{
-    product: Product;
-    bloqueada: boolean;
-    onAgregar: (p: Product) => void;
-}>(({ product, bloqueada, onAgregar }) => (
-    <button
-        onClick={() => onAgregar(product)}
-        aria-disabled={bloqueada || undefined}
-        title={bloqueada ? 'Sin existencia. Tocá para cargar stock.' : undefined}
-        className={`h-32 bg-surface-900 border rounded-card px-3 py-2 transition-colors text-left flex flex-col justify-between text-slate-100 focus:outline-none focus:ring-2 focus:ring-brand/40 ${bloqueada
-            ? 'border-danger/25 opacity-70 hover:border-danger/50 hover:bg-danger-soft cursor-pointer'
-            : 'border-white/[0.06] hover:bg-surface-800 hover:border-brand/50 active:scale-[0.98]'}`}
-    >
-        <div className="min-w-0 flex items-center gap-2">
-            <ProductImage
-                src={product.imageUrl}
-                alt={product.name}
-                loading="lazy"
-                sizes="56px"
-                className={`h-14 w-14 shrink-0 rounded-control border border-white/[0.12] bg-gradient-to-br ${productoPaleta(product.name)}`}
-                fallbackClassName="text-white"
-            />
-            <div className="min-w-0">
-                <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
-                {product.sku ? (
-                    <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 truncate">
-                        SKU: {product.sku}
-                    </p>
-                ) : null}
-            </div>
-        </div>
-        <div className="flex justify-between items-end gap-1">
-            <span className="text-[15px] sm:text-[17px] font-bold text-brand nx-num whitespace-nowrap">{formatMoney(product.price)}</span>
-            {/* El stock negativo se muestra tal cual (−3), no disfrazado de
-                AGOTADO: es la señal de que el inventario ya se descuadró.
-                A 12px y no 11px — a 11px fallaba el contraste AA (P2-1). */}
-            <span className={`text-xs px-1.5 py-0.5 rounded-control shrink-0 ${product.stock <= 0 ? 'bg-danger-soft text-danger font-bold' : product.stock <= 5 ? 'bg-warning-soft text-amber-400' : 'text-slate-400'}`}>
-                {product.stock === 0 ? 'AGOTADO' : product.stock}
-            </span>
-        </div>
-    </button>
-));
-TarjetaProducto.displayName = 'TarjetaProducto';
-
 // Acá vivía PIN_DUENO_POR_DEFECTO = '1234', el PIN que el backend siembra al
 // registrar el negocio: el modal lo IMPRIMÍA en pantalla y además lo precargaba.
 // Un secreto que la propia pantalla revela y rellena no es un control de acceso,
@@ -328,59 +277,13 @@ const validacionEs = (mensaje: string = MENSAJE_REQUERIDO) => ({
     onInput: (e: React.FormEvent<CampoValidable>) => e.currentTarget.setCustomValidity(''),
 });
 
-// Input numérico controlado para estado `number` (cantidad, % descuento por
-// ítem): mantiene un BORRADOR string para que se puedan teclear decimales
-// ("1." no se "come" el punto) y commitea el número parseado. Nunca type="number".
-const NumberDraftInput: React.FC<{
-    value: number;
-    onCommit: (n: number) => void;
-    className?: string;
-    placeholder?: string;
-    ariaLabel?: string;
-    allowZero?: boolean;
-    ariaInvalid?: boolean;
-    describedBy?: string;
-}> = ({ value, onCommit, className, placeholder, ariaLabel, allowZero, ariaInvalid, describedBy }) => {
-    const [draft, setDraft] = useState<string>(value ? String(value) : '');
-    const lastCommitted = useRef<number>(value);
-
-    useEffect(() => {
-        // Resync solo si el valor externo cambió por algo distinto a este input
-        // (botones +/-, reset de carrito) — no pisamos el borrador propio.
-        if (value !== lastCommitted.current) {
-            setDraft(value ? String(value) : '');
-            lastCommitted.current = value;
-        }
-    }, [value]);
-
-    return (
-        <input
-            type="text"
-            inputMode="decimal"
-            placeholder={placeholder}
-            aria-label={ariaLabel}
-            aria-invalid={ariaInvalid || undefined}
-            aria-describedby={describedBy}
-            className={className}
-            value={draft}
-            onChange={(e) => {
-                const s = sanitizeDecimalInput(e.target.value);
-                setDraft(s);
-                if (s === '' && !allowZero) return; // permitir borrar sin forzar 0
-                const n = toDecimal(s).toNumber();
-                lastCommitted.current = n;
-                onCommit(n);
-            }}
-        />
-    );
-};
-
 interface Customer {
     id: string;
     name: string;
     phone?: string;
     creditLimit: number;
     currentDebt: number;
+    storeCreditBalance?: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
 }
@@ -406,6 +309,7 @@ interface ParkingNotice {
 
 // Post-sale state
 interface CompletedSale {
+    syncStatus: 'pending' | 'confirmed';
     items: CartItem[];
     subtotal: number;
     discount: number; // monto rebajado (línea + global) para que el ticket cuadre
@@ -427,6 +331,7 @@ interface CompletedSale {
     // termina el cobro: por eso la pantalla de éxito nunca mostraba el vuelto.
     cashReceived?: string;
     usdReceived?: string;
+    storeCreditApplied?: number;
 }
 
 interface ScalePreviewResponse {
@@ -588,9 +493,6 @@ const POS: React.FC = () => {
     // que no son del tenant) online desaparecían tras fetchProducts, pero OFFLINE
     // persistían y se podían agregar al carrito → venta encolada con IDs mock
     // inexistentes → el sync fallaba. El catálogo real llega de /api/products.
-    const [products, setProducts] = useState<Product[]>([]);
-    // Distingue "no tenés productos" de "no pudimos cargarlos" (auditoría C8).
-    const [productsError, setProductsError] = useState(false);
     // Rótulo del acceso rápido: hoy esa lista sale del catálogo (`products`), no
     // de un endpoint de más-vendidos, así que NO hay ranking ni conteo de ventas
     // que respalde la etiqueta. Quedan explícitos para que el día que exista el
@@ -676,19 +578,9 @@ const POS: React.FC = () => {
     // carrito vacío. En un mostrador, 200 ms bastan para que esto ocurra.
     const parkingLockRef = useRef(false);
 
-    // ── Modo simple (Fase C-2 UX): esconde acciones avanzadas del POS ──
-    // Desacoplado del menú (utils/navigation.ts), pero alineado con su intención:
-    // todo comercio retail empieza con producto → venta → cobro. Las herramientas
-    // avanzadas siguen disponibles al elegir explícitamente el modo completo.
-    const [simpleMode] = useState<boolean>(() => {
-        try {
-            const user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
-            const tenant = JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}');
-            const type = tenant?.type || user?.tenant?.type || '';
-            return firstSaleMode || resolvePosSimple(type, localStorage.getItem(UI_MODE_KEY));
-        } catch { return firstSaleMode; }
-    });
-    const guidedSimpleMode = simpleMode || firstSaleMode;
+    const [uiMode] = useUiMode();
+    const simpleMode = uiMode === 'simple';
+    const guidedSimpleMode = simpleMode;
     const [operatorRole] = useState<string>(() => currentOperatorRole());
     const canApproveScaleLabelTotal = canApproveExceptionalScaleLabel(operatorRole);
     const { toast, showToast, dismissToast } = useToast();
@@ -711,8 +603,6 @@ const POS: React.FC = () => {
     const [payingInUSD, setPayingInUSD] = useState(false);
     const [usdAmount, setUsdAmount] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
-    const [cajaCategory, setCajaCategory] = useState('Todos');
-    const [cajaVisibleLimit, setCajaVisibleLimit] = useState(24);
     const [processing, setProcessing] = useState(false);
 
     // 🖨️ THERMAL PRINTER STATE
@@ -821,7 +711,7 @@ const POS: React.FC = () => {
 
     // QUICK CREATE MODAL STATE
     const [showQuickCreate, setShowQuickCreate] = useState(false);
-    const [quickProduct, setQuickProduct] = useState({ name: '', sku: '', price: '', cost: '', stock: '1' });
+    const [quickProduct, setQuickProduct] = useState({ name: '', sku: '', price: '', cost: '', stock: '' });
     const [quickSaving, setQuickSaving] = useState(false);
     const [quickErrors, setQuickErrors] = useState<QuickProductErrors>({});
     const [quickGeneralError, setQuickGeneralError] = useState('');
@@ -832,18 +722,6 @@ const POS: React.FC = () => {
     const checkoutAttemptRef = useRef<CheckoutAttempt | null>(null);
     const activationStartedAtRef = useRef(Date.now());
 
-    const openQuickCreate = useCallback(() => {
-        quickStartedAtRef.current = Date.now();
-        quickFallbackSkuRef.current = null;
-        setQuickErrors({});
-        setQuickGeneralError('');
-        setShowQuickCreate(true);
-        trackEvent('quick_product_started', {
-            source: firstSaleMode ? 'first_sale' : 'pos',
-            onboarding_step: 'product',
-            has_products: products.length > 0,
-        });
-    }, [firstSaleMode, products.length]);
 
     // EXCEL IMPORT MODAL STATE
     const [showImportModal, setShowImportModal] = useState(false);
@@ -934,16 +812,25 @@ const POS: React.FC = () => {
     // OFFLINE / PWA STATE
     // ==========================================
     const [isOnline, setIsOnline] = useState(navigator.onLine);
-    const [pendingOfflineCount, setPendingOfflineCount] = useState(0);
-    const [reconciliationOfflineCount, setReconciliationOfflineCount] = useState(0);
-    const [syncingOffline, setSyncingOffline] = useState(false);
-
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${token}`
     }), [token]);
+    const promotionCheckout = usePromotionCheckout(
+        token,
+        JSON.stringify([identidad?.tenantId, cart, globalDiscount, selectedCustomer?.id, currentShift?.id, fiscalSettings.fiscalRegimeVersion]),
+        `${identidad?.tenantId ?? ''}:${identidad?.userId ?? ''}`, () => { checkoutAttemptRef.current = null; },
+    );
+    const storeCreditCheckout = useStoreCreditCheckout(token, headers, showToast);
+    const { useStoreCredit, setUseStoreCredit, sourceReturnId: storeCreditSourceReturnId } = storeCreditCheckout;
 
+    useEffect(() => {
+        const customer = storeCreditCheckout.exchangeCustomer;
+        if (!customer) return;
+        setCustomerList((current) => current.some((item) => item.id === customer.id) ? current : [customer, ...current]);
+        setSelectedCustomer(customer); setCustomerSearch(customer.name);
+    }, [storeCreditCheckout.exchangeCustomer]);
     const fetchCustomerSuggestions = useCallback(async (query: string) => {
         if (!token) return;
         try {
@@ -977,105 +864,23 @@ const POS: React.FC = () => {
         }
     }, [headers, identidad?.tenantId, token]);
 
-    // ==========================================
-    // FETCH PRODUCTS FROM DB
-    // ==========================================
-    const fetchProducts = useCallback(async () => {
-        try {
-            const res = await fetch('/api/products', { headers });
-            if (res.ok) {
-                const data = await res.json();
-                // Map backend fields to frontend Product type
-                const mapped: Product[] = data.map((p: any) => ({
-                    id: p.id,
-                    name: p.name,
-                    sku: p.sku,
-                    price: p.price,
-                    costPrice: p.cost,
-                    stock: p.stock,
-                    category: p.category || 'General',
-                    unit: p.unit || 'unidad',
-                    // Mayoreo y empaque: sin estos campos, effectiveUnitPrice
-                    // nunca sale de DETALLE y la regla de precios por cantidad
-                    // (testeada en tests/pricing.test.ts) queda muerta — la
-                    // docena configurada a C$90 se cobraba 12 × detalle.
-                    wholesalePrice: p.wholesalePrice ?? null,
-                    wholesaleMinQty: p.wholesaleMinQty ?? null,
-                    packUnit: p.packUnit ?? null,
-                    packSize: p.packSize ?? null,
-                    packPrice: p.packPrice ?? null,
-                    saleMode: p.saleMode ?? null,
-                    quantityStep: p.quantityStep == null ? null : Number(p.quantityStep),
-                    ivaExento: p.ivaExento === true,
-                    productFamily: p.productFamily ?? null,
-                    ...mapApiProductImage(p),
-                }));
-                setProducts(mapped);
-                setProductsError(false);
-            } else {
-                // Falso empty-state (auditoría C8): un 500/402 mostraba "no tenés
-                // productos" a quien SÍ tiene. Ahora se distingue error de vacío.
-                setProductsError(true);
-            }
-        } catch (e) {
-            console.error('Error fetching products:', e);
-            setProductsError(true);
-        }
-    }, [headers]);
+    const { products, productsError, setProducts, fetchProducts, refreshSoldProducts } = usePosCatalog(headers);
 
-    // ==========================================
-    // OFFLINE SYNC ENGINE
-    // ==========================================
-    const syncOfflineSales = useCallback(async () => {
-        if (!identidad) return;
-        const pending = await getPendingSales(identidad);
-        if (pending.length === 0) return;
-        setSyncingOffline(true);
-        try {
-            const token = localStorage.getItem('nortex_token');
-            const res = await fetch('/api/sales/sync', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
-                body: JSON.stringify({ sales: pending }),
-            });
-            if (res.ok) {
-                const result = await res.json();
-                await recordOfflineSyncResults(result.results ?? []);
-                const syncedIds = result.results
-                    .filter((r: any) => r.status === 'created' || r.status === 'skipped')
-                    .map((r: any) => r.offlineId);
-                const reconciliationCount = result.results
-                    .filter((r: any) => r.status === 'reconciliation_required' || r.code === 'RECONCILIATION_REQUIRED')
-                    .length;
-                await markSalesSynced(syncedIds);
-                const remaining = await getPendingSales(identidad);
-                setPendingOfflineCount(remaining.length);
-                setReconciliationOfflineCount(
-                    remaining.filter((sale) => sale.syncState === 'RECONCILIATION_REQUIRED').length,
-                );
-                if (reconciliationCount > 0) {
-                    setLastScanFeedback({
-                        message: `${reconciliationCount} venta${reconciliationCount === 1 ? '' : 's'} offline requiere${reconciliationCount === 1 ? '' : 'n'} revisión; no se modificó el comprobante`,
-                        type: 'error',
-                    });
-                    window.setTimeout(() => setLastScanFeedback(null), 8000);
-                }
-                await fetchProducts();
-            }
-        } catch (e) {
-            // Se intentará de nuevo cuando vuelva internet
-        } finally {
-            setSyncingOffline(false);
-        }
-    }, [fetchProducts, identidad]);
+    const openQuickCreate = useCallback(() => {
+        quickStartedAtRef.current = Date.now();
+        quickFallbackSkuRef.current = null;
+        setQuickErrors({});
+        setQuickGeneralError('');
+        setShowQuickCreate(true);
+        trackEvent('quick_product_started', {
+            source: firstSaleMode ? 'first_sale' : 'pos',
+            onboarding_step: 'product',
+            has_products: products.length > 0,
+        });
+    }, [firstSaleMode, products.length]);
 
-    const refreshOfflineCount = useCallback(async () => {
-        const pending = identidad ? await getPendingSales(identidad) : [];
-        setPendingOfflineCount(pending.length);
-        setReconciliationOfflineCount(
-            pending.filter((sale) => sale.syncState === 'RECONCILIATION_REQUIRED').length,
-        );
-    }, [identidad]);
+    const { pendingCount: pendingOfflineCount, reconciliationCount: reconciliationOfflineCount,
+        syncing: syncingOffline, sync: syncOfflineSales, refresh: refreshOfflineCount, recovery: offlineRecovery } = usePosOfflineQueue(identidad, fetchProducts);
 
     const refreshScaleContext = useCallback(async () => {
         const tenantId = identidad?.tenantId;
@@ -1374,12 +1179,12 @@ const POS: React.FC = () => {
     }, [firstSaleMode, shiftLoading, showOpenShift]);
 
     useEffect(() => {
-        refreshOfflineCount();
+        void refreshOfflineCount().catch(() => undefined);
         const handleOnline = () => {
             setIsOnline(true);
             void refreshScaleContext();
             void refreshFiscalSettings();
-            void syncOfflineSales();
+            void syncOfflineSales().catch(() => undefined);
         };
         const handleOffline = () => setIsOnline(false);
         window.addEventListener('online', handleOnline);
@@ -2332,6 +2137,11 @@ const POS: React.FC = () => {
     useEffect(() => {
         if (!scannerActive) return;
         const handleScannerKey = (event: KeyboardEvent) => {
+            if (document.querySelector('[data-operational-alerts]')) {
+                scanBufferRef.current = '';
+                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
+                return;
+            }
             const target = event.target as HTMLElement;
             const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
             if (isInput) return;
@@ -2805,6 +2615,13 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
+            if (document.querySelector('[data-operational-alerts]')) return;
+            const paymentSheetShortcut = ['F2', 'F4', 'F7', 'F8', 'F9'].includes(e.key) || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'k' || e.key === 'Enter'));
+            if ((showPaymentOptions || showCashPreModal) && paymentSheetShortcut) {
+                e.preventDefault();
+                return;
+            }
+
             // Alternativas sin Fn para laptops; Ctrl/Cmd+P queda libre para imprimir.
             if (e.ctrlKey || e.metaKey) {
                 const key = e.key.toLowerCase();
@@ -2995,6 +2812,7 @@ const POS: React.FC = () => {
                 phone: body.phone || undefined,
                 creditLimit: Number(body.creditLimit ?? 0),
                 currentDebt: Number(body.currentDebt ?? 0),
+                storeCreditBalance: Number(body.storeCreditBalance ?? 0),
                 isBlocked: Boolean(body.isBlocked),
                 isWholesale: Boolean(body.isWholesale),
             };
@@ -3038,7 +2856,7 @@ const POS: React.FC = () => {
         setQuickGeneralError('');
         if ('errors' in validated) {
             setQuickErrors(validated.errors);
-            if (validated.errors.cost || validated.errors.stock) setShowQuickDetails(true);
+            if (validated.errors.cost || validated.errors.sku) setShowQuickDetails(true);
             return;
         }
 
@@ -3056,7 +2874,7 @@ const POS: React.FC = () => {
             if (!res.ok) {
                 const failure = normalizeApiFailure(res.status, data, 'No pudimos guardar el producto.');
                 setQuickErrors(failure.fields);
-                if (failure.fields.cost || failure.fields.stock) setShowQuickDetails(true);
+                if (failure.fields.cost || failure.fields.sku) setShowQuickDetails(true);
                 setQuickGeneralError(
                     Object.keys(failure.fields).length > 0
                         ? 'Revisá los campos marcados.'
@@ -3074,6 +2892,7 @@ const POS: React.FC = () => {
                 price: data.price,
                 costPrice: data.cost,
                 stock: data.stock,
+                minStock: data.minStock,
                 category: data.category || 'General',
                 ...mapApiProductImage(data),
                 wholesalePrice: data.wholesalePrice ?? null,
@@ -3088,12 +2907,20 @@ const POS: React.FC = () => {
                 quantityStep: data.quantityStep ?? 1,
             };
             setProducts(prev => [newProd, ...prev]);
-            addToCart(newProd);
-            playBeep();
+            if (permiteStockNegativo !== true && newProd.stock <= 0) {
+                showToast({
+                    tone: 'success',
+                    title: 'Producto guardado sin existencia',
+                    message: 'Cargá la existencia real antes de agregarlo a una venta.',
+                });
+            } else {
+                addToCart(newProd);
+                playBeep();
+            }
 
             setShowQuickCreate(false);
             setShowQuickDetails(false);
-            setQuickProduct({ name: '', sku: '', price: '', cost: '', stock: '1' });
+            setQuickProduct({ name: '', sku: '', price: '', cost: '', stock: '' });
             quickFallbackSkuRef.current = null;
             setQuickErrors({});
             setQuickGeneralError('');
@@ -3249,6 +3076,7 @@ const POS: React.FC = () => {
                 price: data.price,
                 costPrice: data.cost,
                 stock: data.stock,
+                minStock: data.minStock,
                 ...mapApiProductImage(data),
                 wholesalePrice: data.wholesalePrice ?? null,
                 wholesaleMinQty: data.wholesaleMinQty ?? null,
@@ -3271,76 +3099,15 @@ const POS: React.FC = () => {
         }
     };
 
-    // 💰 Totales 100% en Decimal.js (sin float). El descuento global es string
-    // controlado; se clampa 0–100 y se parsea aquí. El IVA también en Decimal.
-    const quotationLineCount = cart.filter(isQuotationCartLine).length;
-    const hasQuotationLines = quotationLineCount > 0;
-    const globalDiscountD = hasQuotationLines
-        ? new Decimal(0)
-        : Decimal.min(100, Decimal.max(0, toDecimal(globalDiscount)));
-    const cartTotalsD = cart.reduce((acc, item) => {
-        const lineDiscount = isQuotationCartLine(item)
-            ? new Decimal(0)
-            : toDecimal((item as CartLine).discount ?? 0);
-        const factor = new Decimal(1).minus(lineDiscount.div(100));
-        const quantity = isQuotationCartLine(item) && item.quantityExact
-            ? toDecimal(item.quantityExact)
-            : toDecimal(item.quantity);
-        const lineTotal = toDecimal(item.price).mul(quantity).mul(factor);
-        return {
-            gross: acc.gross.plus(lineTotal),
-            taxableGross: item.ivaExento ? acc.taxableGross : acc.taxableGross.plus(lineTotal),
-        };
-    }, { gross: new Decimal(0), taxableGross: new Decimal(0) });
-    const totalD = cartTotalsD.gross;
-    const discountedTotalD = totalD.mul(new Decimal(1).minus(globalDiscountD.div(100)));
-    // IVA 15% Nicaragua — DESGLOSE, no recargo. El precio de mostrador ya
-    // incluye el IVA (convención nica) y el backend registra exactamente
-    // discountedTotal como Sale.total (executeSale ignora el total del
-    // cliente; nicaTax trata Sale.total como IVA incluido). Antes se sumaba
-    // 15% encima: el cliente pagaba C$115 y la BD guardaba C$100 → sobrante
-    // fantasma en todos los arqueos y fiado registrado 15% por debajo.
-    const grandTotalD = discountedTotalD;
-    // El backend redondea total y exento a centavos antes del desglose. Este
-    // espejo evita que una venta medida offline imprima un IVA distinto por un
-    // centavo cuando finalmente sincronice.
-    const fiscalTotalD = grandTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const exemptGrandTotalD = cartTotalsD.gross.minus(cartTotalsD.taxableGross)
-        .mul(new Decimal(1).minus(globalDiscountD.div(100)))
-        .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-    const taxableGrandTotalD = fiscalTotalD.minus(exemptGrandTotalD);
-    const generalTaxD = includedVatFromGross(taxableGrandTotalD);
-    const fiscalAmounts = resolveSaleFiscalAmounts(
-        fiscalTotalD,
-        generalTaxD,
-        fiscalSettings.fiscalRegime,
-    );
-    const taxD = fiscalAmounts.vatAmount; // informativo (incluido); cero en cuota fija
-    const isFixedQuota = fiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
-
-    // Proyecciones numéricas (2 decimales) para UI y payload; la verdad es Decimal.
-    const total = totalD.toDecimalPlaces(2).toNumber();
-    const discountAmount = totalD.minus(grandTotalD).toDecimalPlaces(2).toNumber();
-    const discountedTotal = discountedTotalD.toDecimalPlaces(2).toNumber();
-    const tax = taxD.toDecimalPlaces(2).toNumber();
-    const grandTotal = grandTotalD.toDecimalPlaces(2).toNumber();
-    const globalDiscountNum = globalDiscountD.toNumber();
-    // ¿El chip de denominación es el que está cargado? Se compara por VALOR con
-    // Decimal, no por string: '500' y '500.00' son el mismo billete, y comparar
-    // texto dejaría el chip apagado según cómo se haya escrito el monto.
-    const chipActivo = (monto: Decimal): boolean =>
-        cashReceived !== '' && toDecimal(cashReceived).equals(monto);
-    const cashPaymentValidation = validateCashReceived(cashReceived, grandTotalD);
-
-    // Teclado táctil del modal de efectivo, con la misma sanitización del input.
-    const teclaEfectivo = (tecla: string) => {
-        setCashReceived(previous => {
-            if (tecla === 'LIMPIAR') return '';
-            if (tecla === 'BORRAR') return previous.slice(0, -1);
-            return sanitizeDecimalInput(previous + tecla);
-        });
-    };
-
+    const { quotationLineCount, hasQuotationLines, globalDiscountD, totalD, grandTotalD,
+        fiscalTotalD, generalTaxD, fiscalAmounts, taxD, isFixedQuota, total, discountAmount,
+        tax, grandTotal, globalDiscountNum } = resolvePosCartTotals(cart, globalDiscount, fiscalSettings.fiscalRegime, promotionCheckout.quoted);
+    const availableStoreCreditD = Decimal.max(0, toDecimal(selectedCustomer?.storeCreditBalance ?? 0));
+    const storeCreditAppliedD = useStoreCredit ? Decimal.min(availableStoreCreditD, grandTotalD).toDecimalPlaces(2) : new Decimal(0);
+    const amountDueD = grandTotalD.minus(storeCreditAppliedD).toDecimalPlaces(2);
+    const cashPaymentValidation = amountDueD.isZero()
+        ? { ok: true as const, received: new Decimal(0), total: amountDueD, change: new Decimal(0) }
+        : validateCashReceived(cashReceived, amountDueD);
     // El menú que rodea al POS necesita saber si hay una venta abierta para
     // avisar antes de navegar. Una venta COBRADA (completedSale) ya no cuenta:
     // el carrito sigue en pantalla hasta "Nueva venta", pero salir ahí no
@@ -3392,16 +3159,13 @@ const POS: React.FC = () => {
         // visual. Este guard ocurre antes del lock, la cola offline y el POST:
         // ningún acceso (botón, Enter o código futuro) puede registrar efectivo
         // vacío o insuficiente saltándose la pantalla de vuelto.
-        if (method === 'CASH') {
-            const cashValidation = validateCashReceived(cashReceived, grandTotalD);
-            if (cashValidation.ok === false) {
-                setShowCashPreModal(true);
-                setShowMobileCart(true);
-                setLastScanFeedback({ message: cashValidation.message, type: 'error' });
-                playErrorBeep();
-                window.setTimeout(() => setLastScanFeedback(null), 3500);
-                return;
-            }
+        if (storeCreditAppliedD.greaterThan(0) && !navigator.onLine) {
+            showToast({
+                tone: 'warning',
+                title: 'El saldo a favor requiere conexión',
+                message: 'Conectate para verificar el balance actual del cliente antes de cobrar.',
+            });
+            return;
         }
         if (hasQuotationLines && quotationLineCount !== cart.length) {
             setLastScanFeedback({ message: 'La cotización debe cobrarse sola; aparcá o quitá las otras líneas.', type: 'error' });
@@ -3451,31 +3215,14 @@ const POS: React.FC = () => {
         checkoutLockRef.current = true;
         setProcessing(true);
         const measuredLines = cart.filter(item => item.saleMode === 'MEASURED' || Boolean(item.measurement)).length;
-        const saleItems = cart.map(c => ({
-            id: c.id,
-            name: c.name,
-            ...(isQuotationCartLine(c) ? { quotationItemId: c.quotationItemId } : {}),
-            quantity: isQuotationCartLine(c) && c.quantityExact
-                ? c.quantityExact
-                : formatQuantityValue(c.quantity),
-            price: c.price,
-            costPrice: c.costPrice,
-            discount: isQuotationCartLine(c) ? 0 : ((c as CartLine).discount || 0),
-            presentation: c.presentation ?? {
-                quantity: formatQuantityValue(c.quantity),
-                unit: c.unit || 'unidad',
-            },
-            ...(c.measurement ? { measurement: c.measurement } : {}),
-        }));
-        const saleIntentSignature = JSON.stringify({
-            shiftId: currentShift.id,
-            paymentMethod: method,
-            customerId: selectedCustomer?.id ?? null,
-            employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
-            globalDiscount: globalDiscountD.toString(),
-            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
-            items: saleItems.map(({ name: _name, ...item }) => item),
+        const intent = buildPromotionSaleIntent({
+            cart, shiftId: currentShift.id, paymentMethod: method,
+            customerId: selectedCustomer?.id, customerName: selectedCustomer?.name ?? 'Cliente General',
+            employeeId: currentShift.employeeId ?? currentShift.employee?.id,
+            globalDiscount: globalDiscountNum, fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
+            storeCreditAmount: storeCreditAppliedD.toFixed(2), storeCreditSourceReturnId, total: grandTotal,
         });
+        const saleItems = intent.items; const saleIntentSignature = intent.signature;
         const attempt = checkoutAttemptFor(
             checkoutAttemptRef.current,
             saleIntentSignature,
@@ -3486,16 +3233,7 @@ const POS: React.FC = () => {
         // Identidad canónica del intento: el POST online y el replay diferido
         // comparten este objeto. Si la respuesta online se pierde, IndexedDB
         // reenvía la misma versión fiscal y conserva la misma huella idempotente.
-        const saleTransportPayload = {
-            offlineId,
-            paymentMethod: method,
-            customerName: selectedCustomer ? selectedCustomer.name : 'Cliente General',
-            customerId: selectedCustomer?.id ?? null,
-            total: grandTotal,
-            globalDiscount: globalDiscountNum,
-            employeeId: currentShift.employeeId ?? currentShift.employee?.id ?? null,
-            fiscalRegimeVersion: fiscalSettings.fiscalRegimeVersion,
-        };
+        const saleTransportPayload = { offlineId, ...intent.transport };
         trackEvent('real_sale_submit_attempted', {
             source: firstSaleMode ? 'first_sale' : 'pos',
             onboarding_step: 'checkout',
@@ -3503,9 +3241,9 @@ const POS: React.FC = () => {
             payment_type: method,
         });
 
-        const trackFirstRealSale = () => {
+        const trackGuidedSaleCompletion = () => {
             if (!firstSaleMode) return;
-            trackEvent('first_real_sale_completed', {
+            trackEvent('first_sale_flow_completed', {
                 source: 'first_sale',
                 onboarding_step: 'completed',
                 has_products: true,
@@ -3531,21 +3269,10 @@ const POS: React.FC = () => {
                 items: saleItems,
                 createdAt: new Date().toISOString(),
             });
-            setPendingOfflineCount(p => p + 1);
-
-            // Sin red, el pulso avanza localmente; el próximo fetch online
-            // vuelve a establecer la cifra autoritativa.
-            setPulso(previous => previous && {
-                ...previous,
-                totalHoy: toDecimal(previous.totalHoy).plus(grandTotal).toFixed(2),
-                ventasHoy: previous.ventasHoy + 1,
-                rachaIncluyeHoy: true,
-                racha: previous.rachaIncluyeHoy ? previous.racha : previous.racha + 1,
-                esRecordHoy: previous.record !== null
-                    && toDecimal(previous.totalHoy).plus(grandTotal).greaterThan(toDecimal(previous.record)),
-            });
+            await refreshOfflineCount().catch(() => undefined);
 
             setCompletedSale({
+                syncStatus: 'pending',
                 items: [...cart],
                 subtotal: total,
                 discount: discountAmount,
@@ -3568,18 +3295,31 @@ const POS: React.FC = () => {
             setShowPaymentOptions(false);
             checkoutAttemptRef.current = null;
             setCashReceived('');
-            trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
-            trackFirstRealSale();
+            trackEvent('sale_queued', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
             if (measuredLines > 0) {
-                trackEvent('measured_sale_completed', { offline: true, measured_lines: measuredLines });
+                trackEvent('measured_sale_queued', { offline: true, measured_lines: measuredLines });
             }
         };
 
         try {
+            const preparedPayload = await promotionCheckout.prepare(saleIntentSignature, { ...saleTransportPayload, items: saleItems.map(({ name: _name, ...item }) => item) }, currentShift.id);
+            if (!preparedPayload) return;
+            if (method === 'CASH' && amountDueD.greaterThan(0)) {
+                const cashValidation = validateCashReceived(cashReceived, amountDueD);
+                if (cashValidation.ok === false) {
+                    setShowCashPreModal(true);
+                    setShowMobileCart(true);
+                    setLastScanFeedback({ message: cashValidation.message, type: 'error' });
+                    playErrorBeep();
+                    window.setTimeout(() => setLastScanFeedback(null), 3500);
+                    return;
+                }
+            }
             const token = localStorage.getItem('nortex_token');
 
             // ── OFFLINE PATH ──────────────────────────────────────────
             if (!navigator.onLine) {
+                if (promotionCheckout.blocksOffline) throw new Error('Conectate para cobrar con el precio revisado. Conservamos el carrito.');
                 await queueSaleOffline();
                 return;
             }
@@ -3588,15 +3328,16 @@ const POS: React.FC = () => {
             // Timeout de 8 s: en lie-fi (wifi "conectado" que no pasa datos)
             // el fetch no resuelve nunca y el cobro quedaba congelado para
             // siempre; al vencer, la venta cae a la cola offline.
-            const res = await fetch('/api/sales', {
+            if (promotionCheckout.blocksOffline) persistPromotionCart(identidad, {
+                shiftId: currentShift.id, lineas: cart.map(aLineaGuardada),
+                clienteId: selectedCustomer?.id ?? null, descuentoGlobal: globalDiscount,
+            });
+            const res = await promotionCheckout.submit(() => fetch('/api/sales', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 signal: AbortSignal.timeout(8000),
-                body: JSON.stringify({
-                    ...saleTransportPayload,
-                    items: saleItems.map(({ name: _name, ...item }) => item),
-                })
-            });
+                body: JSON.stringify(preparedPayload)
+            }));
 
             const data = await res.json().catch(() => ({}));
             if (!res.ok) {
@@ -3645,14 +3386,15 @@ const POS: React.FC = () => {
             setFiscalSettings(authoritativeFiscalSettings);
             cacheFiscalSettingsForTenant(identidad?.tenantId, authoritativeFiscalSettings);
 
-            fetchProducts();
+            void refreshSoldProducts(cart.map(item => item.id));
             fetchPulso();
             // Aviso global (retención R2): el checklist de primeros pasos se
             // refresca en vivo y celebra la primera venta sin esperar un remount.
             window.dispatchEvent(new CustomEvent('nortex:data-changed'));
 
             setCompletedSale({
-                items: [...cart],
+                syncStatus: 'confirmed',
+                items: promotionReceiptCart(cart, promotionCheckout.quoted),
                 subtotal: total,
                 discount: discountAmount,
                 tax: authoritativeVat.toDecimalPlaces(2).toNumber(),
@@ -3669,13 +3411,15 @@ const POS: React.FC = () => {
                 vatAmountAtSale: authoritativeVat.toDecimalPlaces(2).toNumber(),
                 cashReceived: method === 'CASH' ? cashReceived : undefined,
                 usdReceived: method === 'CASH' && payingInUSD ? usdAmount : undefined,
+                storeCreditApplied: storeCreditAppliedD.toNumber(),
             });
             setShowCashPreModal(false);
             setShowPaymentOptions(false);
             checkoutAttemptRef.current = null;
             setCashReceived('');
+            storeCreditCheckout.clear(); promotionCheckout.complete();
             trackEvent('sale_completed', { source: firstSaleMode ? 'first_sale' : 'pos', payment_type: method });
-            trackFirstRealSale();
+            trackGuidedSaleCompletion();
             if (measuredLines > 0) {
                 trackEvent('measured_sale_completed', { offline: false, measured_lines: measuredLines });
             }
@@ -3692,11 +3436,12 @@ const POS: React.FC = () => {
             // misma clave de idempotencia. Un rechazo de NEGOCIO (stock
             // insuficiente, caja cerrada) sí se muestra: reintentarlo a
             // ciegas duplicaría el problema, no lo resolvería.
+            promotionCheckout.onFailure();
             const isNetworkFailure =
                 error?.name === 'TimeoutError' ||
                 error?.name === 'AbortError' ||
                 error instanceof TypeError; // fetch: "Failed to fetch"
-            if (isNetworkFailure) {
+            if (isNetworkFailure && storeCreditAppliedD.isZero() && !promotionCheckout.blocksOffline) {
                 try {
                     await queueSaleOffline();
                     return;
@@ -3735,7 +3480,9 @@ const POS: React.FC = () => {
 
     const vueltoDeLaVenta = useMemo(() => {
         if (!completedSale || !efectivoRecibidoDeLaVenta) return null;
-        const vuelto = efectivoRecibidoDeLaVenta.minus(toDecimal(completedSale.grandTotal));
+        const efectivoCobrado = toDecimal(completedSale.grandTotal)
+            .minus(completedSale.storeCreditApplied ?? 0);
+        const vuelto = efectivoRecibidoDeLaVenta.minus(efectivoCobrado);
         // Pago justo (o insuficiente, p. ej. abono en efectivo): no hay vuelto
         // que mostrar y NO se inventa uno negativo.
         if (vuelto.lessThanOrEqualTo(0)) return null;
@@ -3877,6 +3624,7 @@ const POS: React.FC = () => {
     const handleNewSale = () => {
         resetAfterSale();
         if (firstSaleMode) navigate('/app/pos', { replace: true });
+        window.requestAnimationFrame(() => searchRef.current?.focus());
     };
 
     const handleReturnHome = () => {
@@ -3949,7 +3697,7 @@ const POS: React.FC = () => {
 
     // El índice se arma UNA vez por catálogo. Antes se re-armaba el string
     // `name + sku + category` de cada producto en CADA tecla.
-    const indiceProductos = useMemo(() => indexarProductos(products), [products]);
+    const indiceProductos = usePosSearchIndex(products);
 
     // `useDeferredValue` (React 19) en lugar de un debounce: la grilla puede ir
     // un frame atrás sin bloquear el tipeo. NO toca el camino del escáner —
@@ -3962,49 +3710,6 @@ const POS: React.FC = () => {
         const t = terminoDiferido.trim();
         return buscarProductos(indiceProductos, t, t === '' ? TOPE_SIN_BUSQUEDA : TOPE_BUSCANDO);
     }, [indiceProductos, terminoDiferido]);
-
-    const filteredProducts = resultadoBusqueda.visibles;
-
-    // La caja simple no inventa un ranking de "más vendidos" mientras no haya
-    // datos reales. Presenta un estante corto de productos del negocio y permite
-    // cambiar de categoría sin convertir la pantalla en el módulo Inventario.
-    const cajaCategories = useMemo(() => {
-        const categories = Array.from(new Set(
-            products
-                .map(product => product.category?.trim())
-                .filter((category): category is string => Boolean(category)),
-        ));
-        return ['Todos', ...categories];
-    }, [products]);
-
-    useEffect(() => {
-        setCajaVisibleLimit(TOPE_SIN_BUSQUEDA);
-    }, [cajaCategory, searchTerm]);
-
-    const cajaCatalogResult = useMemo(() => {
-        const term = searchTerm.trim();
-        if (term !== '') return buscarProductos(indiceProductos, term, cajaVisibleLimit);
-
-        const activeCategory = cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos';
-        const byCategory = activeCategory === 'Todos'
-            ? products
-            : products.filter(product => product.category?.trim() === activeCategory);
-        const visibles = byCategory.slice(0, cajaVisibleLimit);
-        return {
-            visibles,
-            total: byCategory.length,
-            ocultos: byCategory.length - visibles.length,
-            coincidenciaExacta: false,
-        };
-    }, [cajaCategories, cajaCategory, cajaVisibleLimit, indiceProductos, products, searchTerm]);
-
-    const cajaProducts = cajaCatalogResult.visibles;
-
-    const cajaBlockedProductIds = useMemo(() => new Set(
-        permiteStockNegativo === true
-            ? []
-            : cajaProducts.filter(product => product.stock <= 0).map(product => product.id),
-    ), [cajaProducts, permiteStockNegativo]);
 
     // Estable, para que `React.memo` de la tarjeta sirva de algo. Mismo criterio
     // que el escáner: si el negocio permite vender sin existencia la tarjeta
@@ -4264,7 +3969,17 @@ const POS: React.FC = () => {
     if (shiftLoading) return <div className="h-full flex items-center justify-center text-slate-500 gap-2"><Loader2 className="animate-spin" /> Cargando Sistema...</div>;
 
     return (
-        <div className="flex h-full bg-surface-950 relative">
+        <div className={`nx-app-shell flex h-full relative ${guidedSimpleMode ? 'nx-pos-workspace' : 'nx-dark-context bg-surface-950'}`}>
+            <PromotionCheckoutSheet
+                controller={promotionCheckout}
+                onRecovered={data => {
+                    setCompletedSale(promotionRecoveredSale(cart, data));
+                    promotionCheckout.complete(); checkoutAttemptRef.current = null;
+                    setShowCashPreModal(false); setShowPaymentOptions(false); setCashReceived('');
+                    void refreshSoldProducts(cart.map(item => item.id)); fetchCashBalance(); fetchCashMovements();
+                }}
+                onContinue={method => { void handleCheckout(method as 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT'); }}
+            />
 
             {manualMeasuredProduct && (
                 <div className="fixed inset-0 z-modal bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="manual-measure-title">
@@ -4385,88 +4100,11 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            {/* HEADER BAR */}
-            <div className={`absolute top-0 right-0 left-0 border-b border-white/[0.06] flex justify-between items-center gap-4 z-10 text-slate-100 ${guidedSimpleMode
-                ? 'h-16 bg-surface-950 px-4 lg:px-6'
-                : 'h-14 bg-surface-900 px-6'}`}>
-                <div className="font-bold text-slate-100 flex items-center gap-3 shrink-0 min-w-0">
-                    {guidedSimpleMode ? (
-                        <>
-                            <span className="text-[15px] font-black tracking-[-0.03em] text-white">
-                                nortex<span className="text-brand">.</span>
-                            </span>
-                            <span className="h-5 w-px bg-white/[0.10]" aria-hidden="true" />
-                            <span className="min-w-0">
-                                <span className="block text-xs font-bold text-slate-100 leading-tight">
-                                    {firstSaleMode ? 'Primera venta' : 'Caja'}
-                                </span>
-                                <span className="block max-w-[210px] truncate text-[11px] font-medium text-slate-500 leading-tight">
-                                    {tenantPrintDetails.tenantName}
-                                </span>
-                            </span>
-                        </>
-                    ) : (
-                        <>
-                            {firstSaleMode ? 'Tu primera venta' : 'Vender'}
-                            {currentShift && (
-                                <span className="text-xs bg-green-500/15 text-green-400 px-2 py-0.5 rounded-full border border-green-500/20 flex items-center gap-1.5">
-                                    <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                                    {currentShift.employee
-                                        ? `${currentShift.employee.firstName} ${currentShift.employee.lastName}`
-                                        : 'CAJA ABIERTA'}
-                                </span>
-                            )}
-                        </>
-                    )}
-                </div>
-
-                <div className="flex items-center gap-2 min-w-0 md:justify-end whitespace-nowrap pl-4 overflow-x-auto">
-                    {/* Estado de conexión: informativo, no es una acción. Ámbar = requiere atención. */}
-                    {!isOnline && (
-                        <div className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-warning-soft text-amber-400 border border-amber-500/20">
-                            <WifiOff size={14} />
-                            <span className="hidden lg:inline">Sin internet</span>
-                            {pendingOfflineCount > 0 && (
-                                <span className="bg-surface-900 text-amber-400 text-[10px] font-black w-4 h-4 rounded-full flex items-center justify-center">{pendingOfflineCount}</span>
-                            )}
-                        </div>
-                    )}
-                    {guidedSimpleMode && isOnline && pendingOfflineCount === 0 && (
-                        <div className="flex h-8 items-center gap-2 px-2 text-xs font-semibold text-slate-400" title="Conexión disponible">
-                            <span className="h-1.5 w-1.5 rounded-full bg-brand" aria-hidden="true" />
-                            <span className="hidden sm:inline">En línea</span>
-                        </div>
-                    )}
-                    {isOnline && pendingOfflineCount > 0 && (
-                        <button
-                            onClick={syncOfflineSales}
-                            disabled={syncingOffline}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-brand-soft text-brand border border-brand/20 hover:bg-brand/15 transition-colors disabled:opacity-60"
-                            title="Sincronizar ventas offline"
-                        >
-                            <RefreshCw size={14} className={syncingOffline ? 'animate-spin' : ''} />
-                            <span className="hidden lg:inline">{syncingOffline ? 'Sincronizando...' : `Sync (${pendingOfflineCount})`}</span>
-                        </button>
-                    )}
-                    {reconciliationOfflineCount > 0 && (
-                        <button
-                            type="button"
-                            onClick={() => showToast({
-                                tone: 'warning',
-                                title: 'Conciliación pendiente',
-                                message: `${reconciliationOfflineCount} venta${reconciliationOfflineCount === 1 ? '' : 's'} permanece${reconciliationOfflineCount === 1 ? '' : 'n'} protegida${reconciliationOfflineCount === 1 ? '' : 's'} en este dispositivo. Un administrador debe conciliarla manualmente con soporte; Nortex no reinterpretará la etiqueta ni borrará la evidencia automáticamente.`,
-                            })}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control bg-red-500/10 text-red-300 border border-red-500/20 hover:bg-red-500/15"
-                            title="Ventas offline que requieren conciliación"
-                        >
-                            <AlertTriangle size={14} />
-                            <span className="hidden lg:inline">Revisión ({reconciliationOfflineCount})</span>
-                        </button>
-                    )}
-
+            <PosSaleHeader simple={guidedSimpleMode} firstSale={firstSaleMode} businessName={tenantPrintDetails.tenantName}>
+                <OperationalNotifications local={{ isOnline, pendingCount: pendingOfflineCount, reconciliationCount: reconciliationOfflineCount, syncing: syncingOffline, onSync: syncOfflineSales, onRefresh: refreshOfflineCount, recovery: offlineRecovery }} />
                     {!guidedSimpleMode && pulso && pulso.ventasHoy > 0 && (
                         <div
-                            className="flex items-center gap-2 text-xs px-3 h-8 rounded-control bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                            className="flex items-center gap-2 text-xs px-3 min-h-tap rounded-control bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
                             title={pulso.metaDiaria ? `Vendido hoy · Meta del día: ${formatMoney(pulso.metaDiaria)}` : 'Vendido hoy'}
                         >
                             {pulso.racha >= 2 && (
@@ -4488,7 +4126,7 @@ const POS: React.FC = () => {
                     {currentShift && !guidedSimpleMode && cashBalance !== null && (
                         <button
                             onClick={() => setShowMovementsList(!showMovementsList)}
-                            className="flex items-center gap-1.5 text-xs px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                            className="flex items-center gap-1.5 text-xs px-3 min-h-tap rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                             title="Efectivo en caja"
                         >
                             <Wallet size={14} />
@@ -4497,7 +4135,7 @@ const POS: React.FC = () => {
                     )}
 
                     {guidedSimpleMode && currentShift && (
-                        <div className="hidden h-8 items-center border-l border-white/[0.08] pl-3 text-xs text-slate-400 md:flex">
+                        <div className="hidden min-h-tap items-center border-l border-white/[0.08] pl-3 text-xs text-slate-400 md:flex">
                             <span className="text-slate-300">Caja abierta</span>
                             <span className="px-1.5 text-slate-600">·</span>
                             <span className="max-w-[150px] truncate">
@@ -4512,7 +4150,7 @@ const POS: React.FC = () => {
                             onClick={() => showHeldCarts ? setShowHeldCarts(false) : openHeldCarts()}
                             aria-label={`${heldCarts.length} ${heldCarts.length === 1 ? 'venta aparcada' : 'ventas aparcadas'}`}
                             aria-expanded={showHeldCarts}
-                            className={`relative flex items-center gap-1.5 text-xs font-semibold px-2.5 h-8 rounded-control border transition-colors ${
+                            className={`relative flex items-center gap-1.5 text-xs font-semibold px-2.5 min-h-tap rounded-control border transition-colors ${
                                 guidedSimpleMode
                                     ? 'bg-sky-500/10 text-sky-300 border-sky-500/20 hover:bg-sky-500/15'
                                     : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'
@@ -4537,7 +4175,7 @@ const POS: React.FC = () => {
                                 onClick={() => setShowCashActions(v => !v)}
                                 aria-haspopup="menu"
                                 aria-expanded={showCashActions}
-                                className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
+                                className="flex items-center gap-1.5 text-xs font-semibold px-3 min-h-tap rounded-control bg-white/[0.04] text-slate-200 border border-white/[0.06] hover:bg-white/[0.06] transition-colors"
                                 title="Acciones de caja"
                             >
                                 {guidedSimpleMode ? <MoreHorizontal size={15} /> : <SlidersHorizontal size={14} />}
@@ -4559,7 +4197,7 @@ const POS: React.FC = () => {
                                         // largo junto a `medirMenuCaja`). El alto máximo es para
                                         // que en un teléfono acostado el menú no se salga por
                                         // abajo sin poder alcanzarse.
-                                        className="fixed w-64 max-h-[calc(100vh-5rem)] overflow-y-auto bg-surface-800 border border-white/[0.08] rounded-card shadow-premium z-checkout animate-fade-in-up"
+                                        className="fixed w-64 max-h-[calc(100dvh-5rem)] overflow-y-auto bg-surface-800 border border-white/[0.08] rounded-card shadow-premium z-checkout animate-fade-in-up"
                                     >
                                         <button
                                             onClick={() => { setShowCashModal('IN'); setCashCategory(''); setShowCashActions(false); }}
@@ -4594,15 +4232,13 @@ const POS: React.FC = () => {
                                                 <span className="ml-auto text-[10px] text-slate-500 font-mono">F4</span>
                                             </button>
                                         )}
-                                        {!guidedSimpleMode && (
-                                            <button
-                                                onClick={() => { setShowReturnModal(true); setShowCashActions(false); }}
-                                                className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
-                                            >
-                                                <RefreshCw size={16} className="text-slate-400 shrink-0" />
-                                                <span>Devolución de producto</span>
-                                            </button>
-                                        )}
+                                        <button
+                                            onClick={() => { setShowCashActions(false); window.location.assign('/app/sales'); }}
+                                            className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
+                                        >
+                                            <RefreshCw size={16} className="text-slate-400 shrink-0" />
+                                            <span>Ventas y devoluciones</span>
+                                        </button>
                                         <button
                                             onClick={() => { openHeldCarts(); setShowCashActions(false); }}
                                             className="w-full flex items-center gap-3 px-4 h-touch text-sm text-slate-200 hover:bg-white/[0.05] transition-colors text-left"
@@ -4678,7 +4314,7 @@ const POS: React.FC = () => {
 
                     {/* Cerrar caja: lo único irreversible del header → único uso del rojo. */}
                     {currentShift && !guidedSimpleMode ? (
-                        <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="text-xs font-semibold text-danger hover:bg-danger-soft px-3 h-8 rounded-control transition-colors flex items-center gap-1.5">
+                        <button onClick={() => { if (cart.length > 0) { setBloqueoCierre(true); return; } setShowCloseShift(true); }} className="nx-fluid-press text-xs font-semibold text-danger hover:bg-danger-soft px-3 min-h-tap rounded-control transition-colors flex items-center gap-1.5">
                             <Lock size={14} /> Cerrar caja
                         </button>
                     ) : !currentShift ? (
@@ -4687,20 +4323,19 @@ const POS: React.FC = () => {
                         // puerta de regreso, no un cartel muerto.
                         <button
                             onClick={() => { setErrorApertura({}); setShowOpenShift(true); }}
-                            className="flex items-center gap-1.5 text-xs font-semibold px-3 h-8 rounded-control bg-white/[0.04] text-slate-300 border border-white/[0.07] hover:bg-white/[0.07] transition-colors"
+                            className="flex items-center gap-1.5 text-xs font-semibold px-3 min-h-tap rounded-control bg-white/[0.04] text-slate-300 border border-white/[0.07] hover:bg-white/[0.07] transition-colors"
                             title="Abrir la caja para poder cobrar"
                         >
                             <Lock size={14} /> Caja cerrada
                         </button>
                     ) : null}
-                </div>
-            </div>
+            </PosSaleHeader>
 
             {/* SCANNER FEEDBACK TOAST */}
             {lastScanFeedback && (
-                <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl font-bold text-sm animate-in fade-in slide-in-from-top duration-200 flex items-center gap-2 ${lastScanFeedback.type === 'success'
-                    ? 'bg-emerald-500 text-white'
-                    : 'bg-red-500 text-white'
+                <div className={`absolute top-16 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-xl shadow-2xl font-bold text-sm flex items-center gap-2 ${lastScanFeedback.type === 'success'
+                    ? 'bg-brand text-brand-on'
+                    : 'bg-red-700 text-white'
                     }`}>
                     <ScanBarcode size={18} />
                     {lastScanFeedback.message}
@@ -4709,7 +4344,7 @@ const POS: React.FC = () => {
             {/* --- CASH MOVEMENT MODAL --- */}
             {showCashModal && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6">
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-3">
                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center ${showCashModal === 'IN' ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'}`}>
@@ -4728,7 +4363,6 @@ const POS: React.FC = () => {
                                 <X size={20} />
                             </button>
                         </div>
-
                         <form onSubmit={handleCashMovement} noValidate className="space-y-4">
                             {/* Category - Quick Select Buttons */}
                             <div>
@@ -4739,7 +4373,7 @@ const POS: React.FC = () => {
                                             key={cat.value}
                                             type="button"
                                             onClick={() => setCashCategory(cat.value)}
-                                            className={`text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-all ${cashCategory === cat.value
+                                            className={`nx-fluid-press min-h-tap text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-colors ${cashCategory === cat.value
                                                 ? showCashModal === 'IN'
                                                     ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 font-bold'
                                                     : 'border-amber-500 bg-amber-500/10 text-amber-400 font-bold'
@@ -4752,7 +4386,6 @@ const POS: React.FC = () => {
                                 </div>
                                 {errorMovimiento.categoria && <p className="text-xs text-danger mt-2">{errorMovimiento.categoria}</p>}
                             </div>
-
                             {/* Amount */}
                             <div>
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Monto (C$)</label>
@@ -4768,7 +4401,6 @@ const POS: React.FC = () => {
                                 />
                                 {errorMovimiento.monto && <p className="text-xs text-danger mt-2">{errorMovimiento.monto}</p>}
                             </div>
-
                             {/* Description */}
                             <div>
                                 <label className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-1 block">Descripción</label>
@@ -4794,7 +4426,7 @@ const POS: React.FC = () => {
                                 // el error en español debajo del campo. Un botón muerto
                                 // no explica qué falta.
                                 disabled={cashMovementLoading}
-                                className={`w-full py-3.5 rounded-xl font-bold text-white transition-all flex items-center justify-center gap-2 ${showCashModal === 'IN'
+                                className={`nx-fluid-press min-h-tap w-full py-3.5 rounded-xl font-bold text-white transition-colors flex items-center justify-center gap-2 ${showCashModal === 'IN'
                                     ? 'bg-emerald-500 hover:bg-emerald-600 disabled:bg-emerald-300'
                                     : 'bg-amber-500 hover:bg-amber-600 disabled:bg-amber-300'
                                     }`}
@@ -4813,7 +4445,7 @@ const POS: React.FC = () => {
             {/* --- 🏦 AGENTE BANCARIO MODAL --- */}
             {showAgentModal && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6 animate-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md p-6 max-h-[90dvh] overflow-y-auto">
                         <div className="flex items-center justify-between mb-5">
                             <div className="flex items-center gap-3">
                                 <div className="w-10 h-10 rounded-full flex items-center justify-center bg-sky-500/15 text-sky-400">
@@ -4851,7 +4483,7 @@ const POS: React.FC = () => {
                                 <button
                                     onClick={handleCreateAgreement}
                                     disabled={agentLoading || !newAgreementName.trim()}
-                                    className="w-full py-3 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-all"
+                                    className="nx-fluid-press min-h-tap w-full py-3 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-colors"
                                 >
                                     {agentLoading ? 'Creando...' : 'Crear convenio'}
                                 </button>
@@ -4885,7 +4517,7 @@ const POS: React.FC = () => {
                                                 key={op.value}
                                                 type="button"
                                                 onClick={() => updateAgentData({ operation: op.value })}
-                                                className={`text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-all ${agentData.operation === op.value
+                                                className={`nx-fluid-press min-h-tap text-left text-sm px-3 py-2.5 rounded-lg border-2 transition-colors ${agentData.operation === op.value
                                                     ? op.dir === 'IN'
                                                         ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400 font-bold'
                                                         : 'border-amber-500 bg-amber-500/10 text-amber-400 font-bold'
@@ -4908,14 +4540,14 @@ const POS: React.FC = () => {
                                         <button
                                             type="button"
                                             onClick={() => updateAgentData({ currency: 'NIO' })}
-                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'NIO' ? 'border-sky-500 bg-sky-500/10 text-sky-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
+                                            className={`nx-fluid-press min-h-tap text-sm px-3 py-2 rounded-lg border-2 font-bold transition-colors ${agentData.currency === 'NIO' ? 'border-sky-500 bg-sky-500/10 text-sky-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
                                         >
                                             C$ Córdobas
                                         </button>
                                         <button
                                             type="button"
                                             onClick={() => updateAgentData({ currency: 'USD' })}
-                                            className={`text-sm px-3 py-2 rounded-lg border-2 font-bold transition-all ${agentData.currency === 'USD' ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
+                                            className={`nx-fluid-press min-h-tap text-sm px-3 py-2 rounded-lg border-2 font-bold transition-colors ${agentData.currency === 'USD' ? 'border-emerald-500 bg-emerald-500/10 text-emerald-400' : 'border-white/[0.06] text-slate-300 hover:border-white/10'}`}
                                         >
                                             US$ Dólares
                                         </button>
@@ -4991,7 +4623,7 @@ const POS: React.FC = () => {
                                 <button
                                     type="submit"
                                     disabled={agentLoading || !agentData.agreementId || !agentData.amount}
-                                    className="w-full py-3.5 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-all flex items-center justify-center gap-2"
+                                    className="nx-fluid-press min-h-tap w-full py-3.5 rounded-xl font-bold text-white bg-sky-600 hover:bg-sky-700 disabled:bg-sky-300 transition-colors flex items-center justify-center gap-2"
                                 >
                                     {agentLoading ? (
                                         <><Loader2 className="animate-spin" size={18} /> Registrando...</>
@@ -5007,7 +4639,7 @@ const POS: React.FC = () => {
 
             {/* --- MOVEMENTS LIST DROPDOWN --- */}
             {showMovementsList && currentShift && (
-                <div className="absolute top-14 right-4 z-40 w-80 bg-surface-900 rounded-xl shadow-2xl border border-white/[0.06] max-h-80 overflow-y-auto animate-in slide-in-from-top duration-200">
+                <div className="absolute top-14 right-4 z-40 w-80 bg-surface-900 rounded-xl shadow-2xl border border-white/[0.06] max-h-80 overflow-y-auto">
                     <div className="p-3 border-b border-white/[0.04] flex justify-between items-center sticky top-0 bg-surface-900">
                         <h3 className="text-sm font-bold text-slate-200">Movimientos del Turno</h3>
                         <button onClick={() => setShowMovementsList(false)} className="text-slate-400 hover:text-slate-300"><X size={16} /></button>
@@ -5081,7 +4713,7 @@ const POS: React.FC = () => {
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="held-carts-title"
-                        className="w-full sm:max-w-md max-h-[calc(100dvh-3rem)] sm:max-h-[min(680px,calc(100dvh-2rem))] bg-surface-900 rounded-t-card sm:rounded-card shadow-premium border border-white/[0.08] overflow-hidden flex flex-col animate-in slide-in-from-bottom sm:fade-in duration-200"
+                        className="w-full sm:max-w-md max-h-[calc(100dvh-3rem)] sm:max-h-[min(680px,calc(100dvh-2rem))] bg-surface-900 rounded-t-card sm:rounded-card shadow-premium border border-white/[0.08] overflow-hidden flex flex-col"
                         onClick={e => e.stopPropagation()}
                     >
                     <div className="px-5 py-4 border-b border-white/[0.06] flex justify-between items-start gap-3 bg-surface-900">
@@ -5347,7 +4979,7 @@ const POS: React.FC = () => {
 
             {showCloseShift && (
                 <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur flex items-center justify-center p-4">
-                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in duration-200">
+                    <div className="bg-surface-900 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
                         {!shiftReport ? (
                             <div className="p-8">
                                 <h2 className="text-xl font-bold text-slate-100 mb-1">Cierre de Caja (Ciego)</h2>
@@ -5500,7 +5132,7 @@ const POS: React.FC = () => {
                                     <PackagePlus size={19} className="text-brand" /> Agregar producto
                                 </h3>
                                 <p id="quick-product-description" className="text-xs text-slate-500 mt-1">
-                                    Nombre y precio. Lo demás es opcional.
+                                    Nombre, precio y existencia real. Código y costo son opcionales.
                                 </p>
                             </div>
                             <button type="button" onClick={() => setShowQuickCreate(false)} disabled={quickSaving} className="w-10 h-10 rounded-control text-slate-400 hover:text-white hover:bg-white/[0.05] flex items-center justify-center disabled:opacity-40" aria-label="Cerrar">
@@ -5549,6 +5181,24 @@ const POS: React.FC = () => {
                                 {quickErrors.price && <p id="quick-product-price-error" className="mt-1.5 text-xs text-red-300">{quickErrors.price}</p>}
                             </div>
 
+                            <div>
+                                <label htmlFor="quick-product-stock" className="block text-xs font-semibold text-slate-400 mb-1.5">Existencia</label>
+                                <input
+                                    id="quick-product-stock"
+                                    required type="text" inputMode="numeric" placeholder="Ej. 12"
+                                    value={quickProduct.stock}
+                                    aria-invalid={Boolean(quickErrors.stock)}
+                                    aria-describedby={quickErrors.stock ? 'quick-product-stock-help quick-product-stock-error' : 'quick-product-stock-help'}
+                                    onChange={e => {
+                                        setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) });
+                                        setQuickErrors(previous => ({ ...previous, stock: undefined }));
+                                    }}
+                                    className={`w-full h-touch px-3 border rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 outline-none tabular-nums ${quickErrors.stock ? 'border-red-500/70' : 'border-white/10'}`}
+                                />
+                                <p id="quick-product-stock-help" className="mt-1 text-[11px] text-slate-500">Unidades que tenés ahora. Escribí 0 si no hay existencia.</p>
+                                {quickErrors.stock && <p role="alert" id="quick-product-stock-error" className="mt-1 text-xs text-red-300">{quickErrors.stock}</p>}
+                            </div>
+
                             {simpleMode && (
                                 <button
                                     type="button"
@@ -5581,7 +5231,7 @@ const POS: React.FC = () => {
                                         />
                                         {quickErrors.sku && <p id="quick-product-sku-error" className="mt-1.5 text-xs text-red-300">{quickErrors.sku}</p>}
                                     </div>
-                                    <div className="grid grid-cols-2 gap-3">
+                                    <div>
                                         <div>
                                             <label htmlFor="quick-product-cost" className="block text-xs font-semibold text-slate-400 mb-1.5">Costo</label>
                                             <input
@@ -5599,22 +5249,6 @@ const POS: React.FC = () => {
                                             <p id="quick-product-cost-help" className="mt-1 text-[11px] text-slate-500">Vacío se guarda como C$0; nunca estimamos tu costo.</p>
                                             {quickErrors.cost && <p id="quick-product-cost-error" className="mt-1 text-xs text-red-300">{quickErrors.cost}</p>}
                                         </div>
-                                        <div>
-                                            <label htmlFor="quick-product-stock" className="block text-xs font-semibold text-slate-400 mb-1.5">Existencia</label>
-                                            <input
-                                                id="quick-product-stock"
-                                                type="text" inputMode="numeric"
-                                                value={quickProduct.stock}
-                                                aria-invalid={Boolean(quickErrors.stock)}
-                                                aria-describedby={quickErrors.stock ? 'quick-product-stock-error' : undefined}
-                                                onChange={e => {
-                                                    setQuickProduct({ ...quickProduct, stock: sanitizeDecimalInput(e.target.value) });
-                                                    setQuickErrors(previous => ({ ...previous, stock: undefined }));
-                                                }}
-                                                className={`w-full h-touch px-3 border rounded-control bg-surface-800/40 text-slate-100 focus:ring-2 focus:ring-brand/40 outline-none tabular-nums ${quickErrors.stock ? 'border-red-500/70' : 'border-white/10'}`}
-                                            />
-                                            {quickErrors.stock && <p id="quick-product-stock-error" className="mt-1 text-xs text-red-300">{quickErrors.stock}</p>}
-                                        </div>
                                     </div>
                                 </div>
                             )}
@@ -5631,7 +5265,7 @@ const POS: React.FC = () => {
                                 className="w-full h-pay rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
                             >
                                 {quickSaving ? <Loader2 size={18} className="animate-spin" /> : <Plus size={18} />}
-                                {quickSaving ? 'Guardando producto…' : 'Guardar y agregar'}
+                                {quickSaving ? 'Guardando producto…' : quickProduct.stock.trim() !== '' && Number(quickProduct.stock) === 0 && permiteStockNegativo !== true ? 'Guardar producto' : 'Guardar y agregar'}
                             </button>
                         </form>
                     </div>
@@ -5681,7 +5315,7 @@ const POS: React.FC = () => {
                                     </div>
                                     <div className="w-full bg-white/[0.06] rounded-full h-2.5 overflow-hidden">
                                         <div
-                                            className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-all duration-500"
+                                            className="bg-gradient-to-r from-blue-500 to-indigo-500 h-full rounded-full transition-[width] duration-500"
                                             style={{ width: `${importProgress.pct}%` }}
                                         />
                                     </div>
@@ -5773,305 +5407,41 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            {/* LEFT: PRODUCTS */}
-            <div className={`w-full flex-1 flex flex-col overflow-hidden ${guidedSimpleMode
-                ? 'mt-16 p-4 lg:px-6 lg:py-5 mb-0'
-                : 'mt-14 p-4 lg:p-6 mb-16 lg:mb-0'}`}>
-                {firstSaleMode && (
-                    <div className="mb-4 rounded-card border border-brand/25 bg-brand-soft px-4 py-3.5 sm:px-5">
-                        <div className="flex items-start justify-between gap-4">
-                            <div>
-                                <p className="text-sm font-bold text-slate-100">Primera venta real</p>
-                                <p className="text-xs text-slate-400 mt-0.5">Al terminar se actualizan caja e inventario.</p>
-                            </div>
-                            <button
-                                type="button"
-                                onClick={() => navigate('/demo?source=first_sale')}
-                                className="hidden sm:inline-flex min-h-tap px-3 rounded-control text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] items-center gap-2 shrink-0"
-                            >
-                                <PlayCircle size={16} /> Practicar
-                            </button>
-                        </div>
-                        <ol className="mt-4 grid grid-cols-3" aria-label="Progreso de tu primera venta">
-                            {[
-                                { step: 1, label: 'Producto' },
-                                { step: 2, label: 'Cobro' },
-                                { step: 3, label: 'Venta lista' },
-                            ].map((item, index, steps) => {
-                                const done = firstSaleStage > item.step || (firstSaleStage === 3 && item.step === 3);
-                                const current = firstSaleStage === item.step && !done;
-                                return (
-                                    <li key={item.step} className="relative flex flex-col items-center text-center">
-                                        {index < steps.length - 1 && (
-                                            <span className={`absolute left-1/2 top-3 h-px w-full ${firstSaleStage > item.step ? 'bg-brand' : 'bg-white/[0.10]'}`} aria-hidden="true" />
-                                        )}
-                                        <span className={`relative z-[1] flex h-6 w-6 items-center justify-center rounded-full border text-[11px] font-bold ${done
-                                            ? 'border-brand bg-brand text-brand-on'
-                                            : current
-                                                ? 'border-brand bg-surface-900 text-brand ring-4 ring-brand/10'
-                                                : 'border-white/[0.12] bg-surface-900 text-slate-500'}`}
-                                        >
-                                            {done ? <Check size={13} strokeWidth={3} /> : item.step}
-                                        </span>
-                                        <span className={`mt-2 text-[11px] font-semibold ${done || current ? 'text-slate-200' : 'text-slate-500'}`}>{item.label}</span>
-                                    </li>
-                                );
-                            })}
-                        </ol>
-                        <button
-                            type="button"
-                            onClick={() => navigate('/demo?source=first_sale')}
-                            className="sm:hidden mt-3 min-h-tap w-full rounded-control text-xs font-semibold text-slate-300 hover:text-white hover:bg-white/[0.05] inline-flex items-center justify-center gap-2"
-                        >
-                            <PlayCircle size={16} /> Practicar sin guardar
-                        </button>
-                    </div>
-                )}
-                <div className="mb-4 flex gap-2">
-                    <div className="flex-1">
-                        <div className="relative">
-                            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                            {/* 56px + foco automático al montar: es el primer control de la
-                                pantalla donde el cajero pasa el 80% del turno. Antes había
-                                que hacer clic (o saber F2) antes de poder escanear. */}
-                            <input
-                                ref={searchRef}
-                                type="text"
-                                autoFocus
-                                placeholder={guidedSimpleMode ? 'Escaneá o buscá un producto' : 'Buscar o escanear'}
-                                className={`w-full h-pay pl-11 pr-4 rounded-control border focus:outline-none focus:ring-2 focus:ring-brand/40 focus:border-brand/50 text-slate-100 font-medium transition-colors ${guidedSimpleMode
-                                    ? 'bg-surface-950 border-white/[0.10] placeholder:text-slate-500'
-                                    : 'bg-surface-900 border-white/[0.06]'}`}
-                                value={searchTerm}
-                                onChange={(e) => setSearchTerm(e.target.value)}
-                                onKeyDown={handleSearchKeyDown}
-                            />
-                        </div>
-                        {guidedSimpleMode && <p className="mt-2 px-1 text-xs text-slate-500">Código, nombre o SKU</p>}
-                    </div>
-                    {/* Quick Create */}
-                    {!guidedSimpleMode && <button
-                        onClick={openQuickCreate}
-                        className="bg-gradient-to-r from-amber-500 to-orange-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-amber-600 hover:to-orange-600 shadow-md transition-all"
-                        title="Producto Rápido"
-                    >
-                        <Zap size={18} />
-                        <span>Rápido</span>
-                    </button>}
-                    {/* Full Create */}
-                    {!guidedSimpleMode && <button
-                        onClick={() => setShowAddModal(true)}
-                        className="bg-nortex-500 text-white px-3 rounded-xl flex items-center gap-1.5 font-medium text-sm hover:bg-nortex-600 transition-all"
-                        title="Crear producto completo"
-                    >
-                        <Plus size={18} /> Nuevo
-                    </button>}
-                    {/* Import */}
-                    {!guidedSimpleMode && <button
-                        onClick={() => setShowImportModal(true)}
-                        className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white px-3 rounded-xl flex items-center gap-1.5 font-bold text-sm hover:from-blue-700 hover:to-indigo-700 shadow-md transition-all"
-                        title="Importar desde Excel"
-                    >
-                        <Upload size={18} /> Excel
-                    </button>}
-                </div>
+            <PosCatalogPane
+                products={products}
+                quantitiesByProduct={cart.reduce((map, item) => map.set(item.id, (map.get(item.id) ?? 0) + item.quantity), new Map<string, number>())}
+                indiceProductos={indiceProductos}
+                resultadoBusqueda={resultadoBusqueda}
+                productsError={productsError}
+                guidedSimpleMode={guidedSimpleMode}
+                firstSaleMode={firstSaleMode}
+                firstSaleStage={firstSaleStage}
+                quickProductsLabel={rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
+                pageSize={TOPE_SIN_BUSQUEDA}
+                permiteStockNegativo={permiteStockNegativo}
+                searchTerm={searchTerm}
+                searchRef={searchRef}
+                setSearchTerm={setSearchTerm}
+                handleSearchKeyDown={handleSearchKeyDown}
+                agregarDesdeGrilla={agregarDesdeGrilla}
+                avisarProductoAgotado={avisarProductoAgotado}
+                fetchProducts={fetchProducts}
+                openQuickCreate={openQuickCreate}
+                onFullCreate={() => setShowAddModal(true)}
+                onImport={() => setShowImportModal(true)}
+                onPractice={(source) => navigate(`/demo?source=${source}`)}
+            />
 
-                {/* ACCESO RÁPIDO A PRODUCTOS
-                    Esta lista es `filteredProducts.slice(0, 5)`: el catálogo en su
-                    orden natural, NO un ranking de ventas — no existe endpoint de
-                    más-vendidos y no se inventa uno. Por eso el rótulo se calcula
-                    con `rotuloProductosRapidos`, que solo dice "Más vendidos"
-                    cuando hay un ranking real con suficientes ventas detrás. */}
-                {!guidedSimpleMode && searchTerm === '' && (
-                    <div className="mb-4">
-                        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
-                            <Zap size={14} className="text-amber-500" /> {firstSaleMode ? 'Empezá por uno de estos' : rotuloProductosRapidos(rankingDisponible, ventasRegistradas)}
-                        </h3>
-                        <div className="grid grid-cols-3 lg:grid-cols-5 gap-2">
-                            {filteredProducts.slice(0, 5).map(product => (
-                                <button
-                                    key={`top-${product.id}`}
-                                    onClick={() => agregarDesdeGrilla(product)}
-                                    className="bg-slate-800 hover:bg-slate-700 border border-slate-700 hover:border-nortex-500 p-3 rounded-xl text-center active:scale-95 transition-all flex flex-col items-center justify-center gap-1 h-24 shadow-[0_0_15px_rgba(0,0,0,0.1)] group"
-                                >
-                                    <Package size={24} className="text-blue-400 group-hover:text-blue-300 transition-colors mb-1" />
-                                    <span className="text-[10px] font-bold text-slate-300 leading-tight line-clamp-2">{product.name}</span>
-                                    <span className="text-xs font-black text-emerald-400 mt-auto">{formatMoney(product.price)}</span>
-                                </button>
-                            ))}
-                        </div>
-                    </div>
-                )}
+            <PosMobileCheckoutBar count={cart.length} total={grandTotal} directCash={guidedSimpleMode}
+                processing={processing} onReview={() => setShowMobileCart(true)} onCash={openCashCheckout} />
 
-                {guidedSimpleMode ? (
-                    cajaProducts.length === 0 ? (
-                        <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
-                            {searchTerm ? (
-                                <EmptyState
-                                    mode="no-results"
-                                    title="No encontramos ese producto"
-                                    description={`Probá con otro nombre, código o SKU para “${searchTerm}”.`}
-                                    action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
-                                />
-                            ) : productsError ? (
-                                <EmptyState
-                                    mode="error"
-                                    title="No pudimos cargar tus productos"
-                                    description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
-                                    action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
-                                />
-                            ) : (
-                                <EmptyState
-                                    icon={<Package size={32} />}
-                                    title="Agregá el primer producto"
-                                    description="Solo necesitamos un nombre y un precio. Después podés completar el resto."
-                                    action={{ label: 'Agregar producto', icon: <PackagePlus size={18} />, onClick: openQuickCreate }}
-                                    linkAction={{ label: 'Prefiero practicar sin guardar datos', onClick: () => navigate('/demo?source=empty_catalog') }}
-                                />
-                            )}
-                        </div>
-                    ) : (
-                        /* pb-24 debajo de `lg`: la barra de la venta es fija y ahora
-                           está siempre, así que sin colchón taparía la última fila
-                           de productos y la línea que declara el recorte. */
-                        <div className="flex-1 min-h-0 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar">
-                            <CajaNicaCatalog
-                                products={cajaProducts}
-                                totalProducts={cajaCatalogResult.total}
-                                categories={searchTerm.trim() ? [] : cajaCategories}
-                                selectedCategory={cajaCategories.includes(cajaCategory) ? cajaCategory : 'Todos'}
-                                searchTerm={searchTerm}
-                                blockedProductIds={cajaBlockedProductIds}
-                                onCategoryChange={setCajaCategory}
-                                onAdd={agregarDesdeGrilla}
-                                onBlocked={avisarProductoAgotado}
-                                onShowMore={() => setCajaVisibleLimit(limit => limit + TOPE_SIN_BUSQUEDA)}
-                            />
-                        </div>
-                    )
-                ) : filteredProducts.length === 0 ? (
-                    <div className="flex-1 min-h-0 flex items-center justify-center pb-4">
-                        {searchTerm ? (
-                            <EmptyState
-                                mode="no-results"
-                                title="Sin resultados"
-                                description={`Ningún producto coincide con "${searchTerm}".`}
-                                action={{ label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') }}
-                            />
-                        ) : productsError ? (
-                            <EmptyState
-                                mode="error"
-                                title="No pudimos cargar tus productos"
-                                description="Puede ser tu conexión. Tus productos siguen ahí — reintentá."
-                                action={{ label: 'Reintentar', onClick: () => fetchProducts() }}
-                            />
-                        ) : (
-                            <EmptyState
-                                icon={<Package size={32} />}
-                                title="Agregá el primer producto"
-                                description="Solo necesitamos un nombre y un precio. Después podés completar el resto."
-                                action={{ label: 'Agregar producto', icon: <PackagePlus size={18} />, onClick: openQuickCreate }}
-                                linkAction={{ label: 'Prefiero practicar sin guardar datos', onClick: () => navigate('/demo?source=empty_catalog') }}
-                            />
-                        )}
-                    </div>
-                ) : (
-                /* Grilla compacta: la tarjeta era `aspect-square` (≈230px en desktop)
-                   y esperaba una imagen que este componente nunca renderiza — 60%
-                   de vacío y solo ~6 productos visibles. A 96px de alto y hasta 5
-                   columnas entran ~20 sin scrollear, que es lo que hace rápido al
-                   mostrador. */
-                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-2 overflow-y-auto pb-24 lg:pb-4 custom-scrollbar flex-1 min-h-0 content-start">
-                    {filteredProducts.map(product => (
-                        <TarjetaProducto
-                            key={product.id}
-                            product={product}
-                            bloqueada={permiteStockNegativo !== true && product.stock <= 0}
-                            onAgregar={agregarDesdeGrilla}
-                        />
-                    ))}
-                    {/* El recorte se DECLARA. Una lista cortada en silencio se lee
-                        como "esto es todo lo que tengo", y en un inventario eso
-                        hace que el dueño vuelva a comprar algo que ya tiene. */}
-                    {resultadoBusqueda.ocultos > 0 && (
-                        <p className="col-span-full text-center text-xs text-slate-400 py-3">
-                            {searchTerm.trim() === ''
-                                ? `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} productos — escaneá o escribí para buscar el resto.`
-                                : `Mostrando ${resultadoBusqueda.visibles.length} de ${resultadoBusqueda.total} coincidencias — afiná la búsqueda.`}
-                        </p>
-                    )}
-                </div>
-                )}
-
-                {/* ⌨️ HOTKEY CHEAT SHEET */}
-                {!guidedSimpleMode && !firstSaleMode && (
-                    <div className="hidden md:flex items-center gap-3 mt-2 px-2 py-1.5 text-[11px] text-slate-500 select-none flex-shrink-0">
-                        <Keyboard size={13} className="text-slate-500" />
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F2</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+K</span> Buscar
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F4</span> Aparcar
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F7</span> Salida
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F8</span> Entrada
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">F9</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Ctrl+Enter</span> Cobrar
-                        <span className="text-slate-300">·</span>
-                        <span className="bg-white/[0.04] px-1.5 py-0.5 rounded text-slate-500">Esc</span> Cerrar
-                    </div>
-                )}
-            </div>
-
-            {/* RIGHT: CART DRAWER (Responsive) */}
-            {/* Barra de la venta — SIEMPRE visible debajo de `lg`.
-
-                Antes se renderizaba solo con `cart.length > 0`. Medido en el
-                navegador con el carrito vacío: a 768px y a 390px no había NADA en
-                pantalla que hablara de la venta — ni total, ni carrito, ni cobrar;
-                el botón de cobro existía en el DOM pero fuera de la pantalla. Todo
-                lo visible era la grilla de productos. En la tablet del mostrador,
-                que es el aparato más probable en una ferretería, el cajero no tenía
-                cómo saber dónde vive la venta hasta que agregaba algo a ciegas.
-
-                Ahora la barra está siempre: apagada y neutra mientras no hay nada
-                —el total en cero no merece el verde de la acción principal— y en
-                verde con el conteo apenas hay algo que cobrar. En las dos formas
-                abre el panel de la venta, así que el camino existe desde el
-                primer segundo. */}
-            <div className="lg:hidden fixed bottom-4 left-4 right-4 z-40">
-                <button
-                    onClick={() => setShowMobileCart(true)}
-                    aria-label={cart.length > 0
-                        ? `Revisar venta, ${cart.reduce((a, b) => a + b.quantity, 0)} productos, total ${formatMoney(grandTotal)}`
-                        : 'Abrir la venta actual, todavía sin productos'}
-                    className={`w-full h-pay rounded-card flex items-center justify-between px-5 font-bold text-base transition-colors ${cart.length > 0
-                        ? 'bg-brand text-brand-on shadow-premium animate-in slide-in-from-bottom duration-300'
-                        : 'bg-surface-900/95 backdrop-blur-sm border border-white/[0.08] text-slate-400'}`}
-                >
-                    <div className="flex items-center gap-2 min-w-0">
-                        <ShoppingCart size={21} className="shrink-0" />
-                        <span className="truncate">
-                            {cart.length > 0
-                                ? `Revisar venta · ${cart.reduce((a, b) => a + b.quantity, 0)}`
-                                : 'Tu venta está vacía'}
-                        </span>
-                    </div>
-                    <span className={cart.length > 0 ? '' : 'nx-num font-semibold text-slate-500'}>
-                        {formatMoney(grandTotal)}
-                    </span>
-                </button>
-            </div>
-
-            {/* Cart Container - Drawer on Mobile, Sidebar on Desktop */}
-            <div className={`
-          fixed inset-0 z-50 bg-surface-900 lg:static lg:z-auto lg:border-l lg:border-white/[0.06] flex flex-col transition-all duration-300
-          ${guidedSimpleMode ? 'lg:mt-16 lg:w-[38%] lg:min-w-[420px] lg:max-w-[560px]' : 'lg:mt-14 lg:w-96 lg:shadow-xl'}
-          ${showMobileCart ? 'translate-y-0 opacity-100' : 'translate-y-full lg:translate-y-0 opacity-0 pointer-events-none lg:opacity-100 lg:pointer-events-auto'}
-      `}>
-                <div className={`border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
-                    <h2 className="font-bold text-slate-100 flex items-center gap-2">
+            {/* En móvil el efectivo guiado permanece en el ticket; otros pagos usan su propia hoja. */}
+            <PosTicketShell
+                open={(showMobileCart || (guidedSimpleMode && showCashPreModal)) && !showPaymentOptions && ((guidedSimpleMode && !payingInUSD) || !showCashPreModal)} onOpen={() => setShowMobileCart(true)} onClose={() => setShowMobileCart(false)}
+                guidedSimpleMode={guidedSimpleMode} labelledBy="pos-ticket-title"
+            >
+                <div className={`nx-pos-ticket-header border-b border-white/[0.06] text-slate-100 flex items-center justify-between ${guidedSimpleMode ? 'min-h-16 px-5 lg:px-6 bg-surface-900' : 'p-5 bg-surface-800/40'}`}>
+                    <h2 id="pos-ticket-title" className="font-bold text-slate-100 flex items-center gap-2">
                         {!guidedSimpleMode && <ShoppingCart size={20} />}
                         {guidedSimpleMode ? 'Venta actual' : 'Ticket'}
                         {guidedSimpleMode && (
@@ -6092,7 +5462,7 @@ const POS: React.FC = () => {
                             </button>
                         )}
                         {/* Mobile Close Button */}
-                        <button onClick={() => setShowMobileCart(false)} className="lg:hidden p-2 bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
+                        <button type="button" onClick={() => setShowMobileCart(false)} data-fluid-sheet-initial-focus={showCashPreModal && guidedSimpleMode ? undefined : true} className="lg:hidden w-11 h-11 flex items-center justify-center bg-white/[0.06] rounded-full text-slate-300" aria-label="Cerrar resumen de venta">
                             <ArrowDownCircle size={24} />
                         </button>
                     </div>
@@ -6166,7 +5536,7 @@ const POS: React.FC = () => {
                             placeholder="Buscar cliente"
                             className={guidedSimpleMode
                                 ? 'w-full h-touch pl-16 pr-10 text-sm font-semibold border border-white/[0.08] rounded-control outline-none focus:border-brand focus:ring-2 focus:ring-brand/30 bg-surface-800/40 text-slate-100 placeholder:text-slate-500 transition-colors'
-                                : 'w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-brand rounded-xl outline-none focus:border-brand-hover focus:ring-4 focus:ring-brand/20 bg-brand/5 text-slate-100 placeholder:text-slate-500 placeholder:font-medium transition-all shadow-sm'}
+                                : 'w-full pl-16 pr-10 py-4 text-base font-bold border-2 border-brand rounded-xl outline-none focus:border-brand-hover focus:ring-4 focus:ring-brand/20 bg-brand/5 text-slate-100 placeholder:text-slate-500 placeholder:font-medium transition-[border-color,box-shadow,background-color] shadow-sm'}
                             value={selectedCustomer ? selectedCustomer.name : customerSearch}
                             onChange={(e) => {
                                 setCustomerSearch(e.target.value);
@@ -6344,7 +5714,7 @@ const POS: React.FC = () => {
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
                                     <div
-                                        className="bg-blue-500 h-full transition-all"
+                                        className="bg-blue-500 h-full transition-[width]"
                                         style={{ width: `${customerCreditUsagePct(selectedCustomer.creditLimit, selectedCustomer.currentDebt)}%` }}
                                     />
                                 </div>
@@ -6404,9 +5774,9 @@ const POS: React.FC = () => {
                     </div>
                 )}
 
-                <div className={`flex-1 overflow-y-auto custom-scrollbar ${guidedSimpleMode ? 'px-5 lg:px-6' : 'p-4 space-y-3'}`}>
+                <div className={`nx-pos-ticket-lines flex-1 overflow-y-auto custom-scrollbar ${guidedSimpleMode ? 'px-5 lg:px-6' : 'p-4 space-y-3'}`}>
                     {cart.length === 0 ? (
-                        <div className="h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
+                        <div className="nx-pos-ticket-empty h-full flex flex-col items-center justify-center text-slate-400 space-y-4">
                             <div className="w-14 h-14 rounded-pill bg-white/[0.04] flex items-center justify-center"><ShoppingCart size={26} /></div>
                             <p className="text-sm font-semibold text-slate-300">Tu venta está vacía</p>
                             <p className="text-xs text-slate-500 text-center max-w-[220px]">Seleccioná un producto o escaneá su código para empezar.</p>
@@ -6446,7 +5816,7 @@ const POS: React.FC = () => {
                                 <div
                                     key={key}
                                     className={guidedSimpleMode
-                                        ? `py-4 border-b text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-brand/40 bg-brand-soft -mx-2 px-2' : 'border-white/[0.06]'}`
+                                        ? `nx-pos-line py-4 border-b text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-brand/40 bg-brand-soft -mx-2 px-2' : 'border-white/[0.06]'}`
                                         : `bg-surface-800/40 p-3 rounded-lg border text-slate-100 transition-colors duration-300 ${lineaResaltada?.id === item.id ? 'border-emerald-500/60 bg-emerald-500/10' : 'border-white/[0.04]'}`}
                                 >
                                     {/* FILA 1 · El nombre, a ancho completo (P0-3).
@@ -6459,19 +5829,19 @@ const POS: React.FC = () => {
                                         la tercera fila para abajo. */}
                                     <h4
                                         title={item.name}
-                                        className="text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
+                                        className="nx-pos-line-name text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
                                     >
                                         {item.name}
                                     </h4>
 
                                     {/* FILA 2 · precio · cantidad · total · quitar */}
-                                    <div className="flex items-center gap-2 mt-2">
-                                        <div className="flex-1 min-w-0">
+                                    <div className="nx-pos-line-body flex items-center gap-2 mt-2">
+                                        <div className="nx-pos-line-price flex-1 min-w-0">
                                             <div className="text-xs text-slate-400 font-mono tabular-nums flex items-center gap-1.5 flex-wrap">
                                                 <span>
                                                     {packLine
                                                         ? `${formatQuantityValue(item.presentation?.quantity ?? 0)} ${packLabel} (${formatQuantityValue(displayedQuantity)} ${unit}) × ${formatMoney(item.price)} / ${unit}`
-                                                        : `${formatQuantityValue(displayedQuantity)} ${unit} × ${formatMoney(item.price)} / ${unit}`}
+                                                        : guidedSimpleMode ? `${formatMoney(item.price)} / ${unit}` : `${formatQuantityValue(displayedQuantity)} ${unit} × ${formatMoney(item.price)} / ${unit}`}
                                                 </span>
                                                 {isScaleLabel && (
                                                     <span className="px-1.5 py-0.5 bg-cyan-500/15 text-cyan-300 rounded text-[9px] font-bold tracking-wide">ETIQUETA</span>
@@ -6493,7 +5863,7 @@ const POS: React.FC = () => {
                                                     </button>
                                                 )}
                                             </div>
-                                            <div className="text-[15px] font-bold text-white font-mono tabular-nums mt-0.5">{formatMoney(lineTotalD)}</div>
+                                            <div className="nx-pos-line-total text-[15px] font-bold text-white font-mono tabular-nums mt-0.5">{formatMoney(lineTotalD)}</div>
                                         </div>
 
                                         {/* Objetivos táctiles de 44px (P0-4). Antes: −/+ de
@@ -6502,7 +5872,7 @@ const POS: React.FC = () => {
                                             y para cualquier prueba automatizada. */}
                                         {isScaleLabel || isQuotationLine ? (
                                             <div
-                                                className={`min-h-11 px-3 flex flex-col justify-center rounded-control shrink-0 ${isQuotationLine ? 'border border-violet-500/20 bg-violet-500/10 text-violet-100' : 'border border-cyan-500/20 bg-cyan-500/10 text-cyan-100'}`}
+                                                className={`nx-pos-line-quantity min-h-11 px-3 flex flex-col justify-center rounded-control shrink-0 ${isQuotationLine ? 'border border-violet-500/20 bg-violet-500/10 text-violet-100' : 'border border-cyan-500/20 bg-cyan-500/10 text-cyan-100'}`}
                                                 title={isQuotationLine
                                                     ? 'Cantidad y precio fijados por la cotización original'
                                                     : 'El servidor vuelve a derivar esta cantidad desde la etiqueta'}
@@ -6511,7 +5881,7 @@ const POS: React.FC = () => {
                                                 <span className="text-[9px] uppercase tracking-wide">{isQuotationLine ? 'fijado por cotización' : 'fijado por etiqueta'}</span>
                                             </div>
                                         ) : (
-                                            <div className="flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
+                                            <div className="nx-pos-line-quantity flex items-center gap-0.5 bg-surface-900 rounded-control border border-white/[0.06] p-0.5 text-slate-100 shrink-0">
                                                 <button
                                                     onClick={() => updateQuantity(key, -quantityStep)}
                                                     aria-label={`Restar ${formatQuantityValue(quantityStep)} ${unit} de ${item.name}`}
@@ -6540,7 +5910,7 @@ const POS: React.FC = () => {
                                         <button
                                             onClick={() => quitarLinea(key)}
                                             aria-label={`Quitar ${item.name} del ticket`}
-                                            className="w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
+                                            className="nx-pos-line-remove w-11 h-11 flex items-center justify-center rounded-control text-slate-400 hover:text-danger hover:bg-danger-soft transition-colors shrink-0"
                                         >
                                             <Trash2 size={18} />
                                         </button>
@@ -6652,7 +6022,7 @@ const POS: React.FC = () => {
 
                 {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
-                <div className={`sticky bottom-0 z-checkout border-t border-white/[0.06] text-slate-100 ${guidedSimpleMode ? 'bg-surface-950 px-5 py-4 lg:px-6 lg:py-5' : 'bg-surface-800 p-5'}`}>
+                <div data-empty={cart.length === 0} className={`nx-pos-ticket-footer sticky bottom-0 z-checkout border-t border-white/[0.06] text-slate-100 ${guidedSimpleMode ? 'bg-surface-950 px-5 py-4 lg:px-6 lg:py-5' : 'bg-surface-800 p-5'}`}>
                     {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
                     {!guidedSimpleMode && <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
@@ -6708,7 +6078,7 @@ const POS: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => setShowSaleDetails(true)}
-                            className="w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-300 mb-2 py-1"
+                            className="nx-pos-tax-details w-full flex items-center justify-between text-xs text-slate-500 hover:text-slate-300 mb-2 py-1"
                         >
                             <span>Impuestos incluidos</span><ChevronDown size={15} />
                         </button>
@@ -6722,7 +6092,7 @@ const POS: React.FC = () => {
                         cifra que no decide nada y le robaba jerarquía al buscador, que
                         es por donde empieza la venta. En cero baja a tamaño de cuerpo y
                         color apagado; apenas hay algo que cobrar, recupera el display. */}
-                    <div className="flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
+                    <div className="nx-pos-total-row flex justify-between items-baseline mb-4 pt-3 border-t border-white/[0.06]">
                         <span className="nx-label">Total</span>
                         <span className={cart.length === 0 ? 'nx-num text-lg font-semibold text-slate-500' : 'nx-total'}>
                             {formatMoney(grandTotal)}
@@ -6775,7 +6145,7 @@ const POS: React.FC = () => {
                             }}
                             title={!currentShift ? 'Abrí la caja para poder cobrar' : undefined}
                             disabled={processing || cart.length === 0}
-                            className="h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
+                            className="nx-fluid-press h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover text-[17px] flex items-center justify-center gap-2.5 transition-colors disabled:opacity-45 disabled:cursor-not-allowed focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand/40"
                         >
                             <Banknote size={22} strokeWidth={2.5} className="shrink-0" />
                             <span className="flex flex-col items-start leading-tight min-w-0">
@@ -6800,7 +6170,7 @@ const POS: React.FC = () => {
                             }}
                             title={!currentShift ? 'Abrí la caja para poder cobrar' : undefined}
                             disabled={processing}
-                            className={`h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 active:scale-[0.98] transition-colors border ${
+                            className={`nx-fluid-press h-pay font-bold rounded-control text-[17px] flex items-center justify-center gap-2.5 transition-colors border ${
                                 isCreditBlocked
                                     ? 'bg-transparent text-slate-400 border-white/[0.06] hover:bg-white/[0.04]'
                                     : 'bg-transparent text-slate-100 border-slate-700 hover:bg-white/[0.04]'
@@ -6840,19 +6210,19 @@ const POS: React.FC = () => {
                         </div>
                     )}
                 </div>
-            </div>
+            </PosTicketShell>
 
             {/* =============================== */}
             {/* 🔄 RETURNS MODAL                */}
             {/* =============================== */}
             {showReturnModal && (
                 <div
-                    className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200"
+                    className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4"
                     role="dialog"
                     aria-modal="true"
                     aria-labelledby="return-modal-title"
                 >
-                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] max-h-[90vh] flex flex-col">
+                    <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-white/[0.06] max-h-[90dvh] flex flex-col">
                         <div className="bg-gradient-to-r from-amber-500 to-orange-600 px-6 py-4 flex items-center justify-between">
                             <h3 id="return-modal-title" className="text-lg font-bold text-white flex items-center gap-2"><RefreshCw size={20} /> Devolución de Producto</h3>
                             <button onClick={resetReturnFlow} className="text-white/80 hover:text-white" aria-label="Cerrar devolución"><X size={20} /></button>
@@ -7139,7 +6509,7 @@ const POS: React.FC = () => {
             {/* 🔴 CREDIT THERMOMETER PANEL       */}
             {/* =============================== */}
             {showCreditPanel && selectedCustomer && creditInfo && (
-                <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div className="fixed inset-0 z-50 bg-slate-900/80 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-surface-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden border border-white/[0.06]">
                         <div className={`px-6 py-4 text-center ${creditInfo.color === 'red' ? 'bg-gradient-to-r from-red-500 to-rose-600' :
                             creditInfo.color === 'yellow' ? 'bg-gradient-to-r from-amber-400 to-orange-500' :
@@ -7161,7 +6531,7 @@ const POS: React.FC = () => {
                                     <span className="font-bold text-slate-100">{formatMoney(creditInfo.currentDebt)}</span>
                                 </div>
                                 <div className="w-full bg-white/[0.06] h-3 rounded-full overflow-hidden">
-                                    <div className={`h-full rounded-full transition-all duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
+                                    <div className={`h-full rounded-full transition-[width] duration-500 ${creditInfo.color === 'red' ? 'bg-red-500' : creditInfo.color === 'yellow' ? 'bg-amber-400' : 'bg-emerald-500'
                                         }`} style={{ width: `${Math.min(creditInfo.debtPct, 100)}%` }} />
                                 </div>
                                 <div className="flex justify-between text-[10px] mt-1">
@@ -7214,7 +6584,7 @@ const POS: React.FC = () => {
                                     <button
                                         onClick={handleCreditOverride}
                                         disabled={creditOverridePin.length !== 4}
-                                        className="w-full py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-all flex items-center justify-center gap-2 text-sm"
+                                        className="nx-fluid-press min-h-tap w-full py-2.5 bg-red-600 text-white font-bold rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors flex items-center justify-center gap-2 text-sm"
                                     >
                                         <ShieldAlert size={16} /> Autorizar Override
                                     </button>
@@ -7244,23 +6614,31 @@ const POS: React.FC = () => {
             )}
 
             {/* =============================== */}
-            {/* POST-SALE SUCCESS MODAL         */}
+            {/* PAYMENT METHOD SHEET            */}
             {/* =============================== */}
-            {showPaymentOptions && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4" onClick={() => { if (!processing) setShowPaymentOptions(false); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="payment-title" aria-busy={processing} className="bg-surface-900 border border-white/[0.08] rounded-t-card sm:rounded-card shadow-premium w-full max-w-sm overflow-hidden" onClick={e => e.stopPropagation()}>
+            <PosPaymentSheet
+                open={showPaymentOptions} onClose={() => setShowPaymentOptions(false)} labelledBy="payment-title" busy={processing}
+            >
                         <div className="px-5 py-4 border-b border-white/[0.06] flex items-start justify-between gap-3">
                             <div>
-                                <p className="text-xs font-semibold text-slate-500">Total a cobrar</p>
+                                <p className="text-xs font-semibold text-slate-400">Total a cobrar</p>
                                 <h2 id="payment-title" className="text-3xl font-extrabold text-slate-100 mt-1 nx-num">{formatMoney(grandTotal)}</h2>
                             </div>
-                            <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowPaymentOptions(false); }} />
+                            <IconButton icon={<X size={16} />} label="Cerrar" disabled={processing} onClick={() => { if (!processing) setShowPaymentOptions(false); }} />
                         </div>
                         <div className="p-4 space-y-2">
+                            {selectedCustomer && <StoreCreditPaymentOption available={availableStoreCreditD.toNumber()} applied={storeCreditAppliedD.toNumber()}
+                                amountDue={amountDueD.toNumber()} selected={useStoreCredit} disabled={processing} onToggle={() => setUseStoreCredit((current) => !current)} />}
                             <p className="text-sm font-semibold text-slate-300 px-1 pb-1">{guidedSimpleMode ? 'Otros medios de pago' : '¿Cómo pagó?'}</p>
+                            {amountDueD.isZero() && <button
+                                type="button"
+                                onClick={() => handleCheckout('TRANSFER')}
+                                disabled={processing}
+                                className="nx-fluid-press w-full h-pay rounded-control bg-brand px-4 font-black text-brand-on hover:bg-brand-hover disabled:opacity-50"
+                            >Confirmar usando saldo a favor</button>}
                             {!guidedSimpleMode && <button
                                 type="button"
-                                autoFocus
+                                data-fluid-sheet-initial-focus
                                 onClick={openCashCheckout}
                                 disabled={processing}
                                 className="w-full h-pay px-4 rounded-control bg-brand text-brand-on font-bold flex items-center gap-3 hover:bg-brand-hover transition-colors disabled:opacity-50"
@@ -7269,7 +6647,7 @@ const POS: React.FC = () => {
                             </button>}
                             <button
                                 type="button"
-                                autoFocus={guidedSimpleMode}
+                                data-fluid-sheet-initial-focus={guidedSimpleMode || undefined}
                                 onClick={() => handleCheckout('TRANSFER')}
                                 disabled={processing}
                                 className="w-full h-pay px-4 rounded-control border border-white/[0.08] text-slate-100 font-bold flex items-center gap-3 hover:bg-white/[0.05] transition-colors disabled:opacity-50"
@@ -7307,210 +6685,52 @@ const POS: React.FC = () => {
                                 {processing ? <Loader2 size={19} className="animate-spin" /> : <Wallet size={19} />}
                                 {processing ? 'Registrando venta…' : selectedCustomer ? 'Fiado' : 'Fiado · elegir cliente'}
                             </button>
-                            <p className="text-xs text-slate-500 text-center pt-2">
+                            <p className="text-xs text-slate-400 text-center pt-2">
                                 {guidedSimpleMode
                                     ? 'Volvé al ticket para cobrar en efectivo y confirmar el vuelto.'
                                     : 'En efectivo confirmás el monto recibido. Los demás métodos se registran al elegirlos.'}
                             </p>
                         </div>
-                    </div>
-                </div>
-            )}
+            </PosPaymentSheet>
             {/* =============================== */}
             {/* 💵 PRE-SALE CASH MODAL          */}
             {/* =============================== */}
-            {showCashPreModal && !guidedSimpleMode && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 animate-in fade-in duration-200" onClick={() => { if (!processing) setShowCashPreModal(false); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="cash-payment-title" aria-busy={processing} className="bg-surface-900 rounded-t-card sm:rounded-card shadow-premium w-full max-w-sm overflow-hidden border border-white/[0.08]" onClick={e => e.stopPropagation()}>
-                        <div className="p-5 border-b border-white/[0.06] flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-pill bg-brand-soft text-brand flex items-center justify-center"><Banknote size={20} /></div>
-                            <div>
-                                <h2 id="cash-payment-title" className="text-base font-bold text-slate-100">Efectivo</h2>
-                                <p className="text-2xl font-extrabold text-slate-100 mt-0.5 nx-num">{formatMoney(grandTotal)}</p>
-                            </div>
-                            <IconButton icon={<X size={16} />} label="Cerrar" onClick={() => { if (!processing) setShowCashPreModal(false); }} className="ml-auto" />
-                        </div>
-                        <div className="p-5 space-y-4">
-                            {/* USD toggle */}
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs text-slate-500 font-semibold">Efectivo recibido</label>
-                                <button
-                                    onClick={() => { setPayingInUSD(!payingInUSD); setUsdAmount(''); setCashReceived(''); }}
-                                    className={`text-[10px] font-bold px-2 py-1 rounded-full border transition-all ${payingInUSD ? 'bg-blue-500 text-white border-blue-500' : 'bg-white/[0.04] text-slate-500 border-white/[0.06] hover:border-blue-300'}`}
-                                >
-                                    {payingInUSD ? 'USD' : '¿Paga en USD?'}
-                                </button>
-                            </div>
-
-                            {payingInUSD ? (
-                                <div className="space-y-2">
-                                    <div className="relative">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-500 font-bold text-sm">$</span>
-                                        <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            autoFocus
-                                            aria-label="Monto recibido en dólares"
-                                            className="w-full pl-8 pr-4 py-3 border border-blue-300 rounded-lg text-xl font-bold text-slate-100 outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500/30 bg-blue-500/10 font-mono tabular-nums"
-                                            placeholder="0.00"
-                                            value={usdAmount}
-                                            onChange={e => {
-                                                const s = sanitizeDecimalInput(e.target.value);
-                                                setUsdAmount(s);
-                                                setCashReceived(s === '' ? '' : toDecimal(s).mul(exchangeRate).toFixed(2));
-                                            }}
-                                        />
-                                    </div>
-                                    <div className="text-xs text-blue-400 text-center font-medium">Tasa: 1 USD = {formatMoney(exchangeRate)} NIO</div>
-                                    {toDecimal(usdAmount).greaterThan(0) && (
-                                        <div className="bg-blue-500/10 px-3 py-2 rounded-lg border border-blue-500/20 text-sm">
-                                            <div className="flex justify-between"><span className="text-blue-400">Equivalente NIO:</span><span className="font-bold text-blue-300 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate))}</span></div>
-                                            {toDecimal(usdAmount).mul(exchangeRate).greaterThanOrEqualTo(grandTotal) && (
-                                                <>
-                                                    <div className="flex justify-between mt-1 pt-1 border-t border-blue-500/20"><span className="font-bold text-emerald-400">Cambio NIO:</span><span className="font-bold text-emerald-400 font-mono tabular-nums">{formatMoney(toDecimal(usdAmount).mul(exchangeRate).minus(grandTotal))}</span></div>
-                                                    <div className="flex justify-between mt-0.5"><span className="text-emerald-500 text-xs">Cambio USD:</span><span className="font-bold text-brand text-xs nx-num">{formatUSD(toDecimal(usdAmount).minus(toDecimal(grandTotal).div(exchangeRate)))}</span></div>
-                                                </>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            ) : (
-                                <>
-                                    {/* Denominaciones derivadas del total (nunca fijas):
-                                        ver `denominacionesSugeridas` — ninguna puede
-                                        resultar en un pago menor al total. */}
-                                    <div className="flex gap-2 flex-wrap">
-                                        {/* P1-5/P1-2 — El estilo del chip se DERIVA de lo
-                                            que hay escrito. Antes el verde de "Monto exacto"
-                                            estaba hardcodeado: al tocar C$500 el input pasaba
-                                            a 500 y el cambio salía bien, pero "Monto exacto"
-                                            seguía resaltado y C$500 apagado — la pantalla
-                                            mentía sobre lo que estaba seleccionado.
-                                            El activo se distingue por BORDE además de color:
-                                            no se depende solo del color para decir cuál es. */}
-                                        <button
-                                            type="button"
-                                            onClick={() => setCashReceived(grandTotalD.toFixed(2))}
-                                            aria-pressed={chipActivo(grandTotalD)}
-                                            className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(grandTotalD)
-                                                ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
-                                                : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
-                                        >
-                                            Monto exacto
-                                        </button>
-                                        {denominacionesSugeridas(grandTotalD).map(monto => (
-                                            <button
-                                                key={monto.toFixed(2)}
-                                                type="button"
-                                                onClick={() => setCashReceived(monto.toFixed(2))}
-                                                aria-pressed={chipActivo(monto)}
-                                                className={`flex-shrink-0 px-3 py-1.5 font-bold rounded-control text-xs border transition-colors ${chipActivo(monto)
-                                                    ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500 hover:bg-emerald-500/25'
-                                                    : 'bg-white/[0.04] text-slate-200 border-white/[0.06] hover:bg-white/[0.06]'}`}
-                                            >
-                                                {formatMoney(monto, 'NIO', { decimals: 0 })}
-                                            </button>
-                                        ))}
-                                    </div>
-                                    <div className="relative">
-                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 font-bold text-sm">C$</span>
-                                        <input
-                                            type="text"
-                                            inputMode="decimal"
-                                            autoFocus
-                                            aria-label="Efectivo recibido en córdobas"
-                                            className="w-full pl-10 pr-4 py-3 border border-white/10 rounded-lg text-xl font-bold text-slate-100 outline-none focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500/30 font-mono tabular-nums"
-                                            placeholder={grandTotal.toFixed(2)}
-                                            value={cashReceived}
-                                            onChange={e => setCashReceived(sanitizeDecimalInput(e.target.value))}
-                                        />
-                                    </div>
-                                    <div className="grid grid-cols-3 gap-1.5">
-                                        {['7', '8', '9', '4', '5', '6', '1', '2', '3', '.', '0', '00'].map(key => (
-                                            <button
-                                                key={key}
-                                                type="button"
-                                                onClick={() => teclaEfectivo(key)}
-                                                className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-100 text-xl font-bold font-mono tabular-nums transition-colors active:scale-[0.97]"
-                                            >
-                                                {key}
-                                            </button>
-                                        ))}
-                                        <button
-                                            type="button"
-                                            onClick={() => teclaEfectivo('BORRAR')}
-                                            aria-label="Borrar el último dígito"
-                                            className="h-14 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97] flex items-center justify-center"
-                                        >
-                                            <ArrowRight size={20} className="rotate-180" />
-                                        </button>
-                                        <button
-                                            type="button"
-                                            onClick={() => teclaEfectivo('LIMPIAR')}
-                                            className="h-14 col-span-2 rounded-control bg-white/[0.04] hover:bg-white/[0.10] text-slate-300 font-bold transition-colors active:scale-[0.97]"
-                                        >
-                                            Limpiar
-                                        </button>
-                                    </div>
-                                    {cashReceived !== '' && toDecimal(cashReceived).greaterThanOrEqualTo(grandTotal) && (
-                                        <div className="bg-emerald-500/10 px-4 py-3 rounded-control border border-emerald-500/20 text-center">
-                                            <p className="text-xs font-bold text-emerald-400 uppercase tracking-widest">Vuelto</p>
-                                            <p className="text-5xl font-black text-emerald-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(cashReceived).minus(grandTotal))}
-                                            </p>
-                                        </div>
-                                    )}
-                                    {cashReceived !== '' && toDecimal(cashReceived).lessThan(grandTotal) && (
-                                        <div className="bg-red-500/10 px-4 py-3 rounded-control border border-red-500/20 text-center">
-                                            <p className="text-xs font-bold text-red-400 uppercase tracking-widest">Falta</p>
-                                            <p className="text-3xl font-black text-red-400 font-mono tabular-nums leading-none mt-1">
-                                                {formatMoney(toDecimal(grandTotal).minus(toDecimal(cashReceived)))}
-                                            </p>
-                                        </div>
-                                    )}
-                                </>
-                            )}
-
-                            <div className="flex gap-3 pt-1">
-                                <button
-                                    onClick={() => setShowCashPreModal(false)}
-                                    disabled={processing}
-                                    className="flex-1 py-3 rounded-xl border border-white/[0.06] text-slate-300 font-bold hover:bg-surface-800/40 transition-colors disabled:opacity-50"
-                                >
-                                    Cancelar
-                                </button>
-                                <button
-                                    onClick={() => handleCheckout('CASH')}
-                                    disabled={processing || !cashPaymentValidation.ok}
-                                    className="flex-1 h-touch rounded-control bg-brand text-brand-on font-bold hover:bg-brand-hover transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
-                                >
-                                    {processing ? <Loader2 size={18} className="animate-spin" /> : <Check size={18} />}
-                                    {processing ? 'Registrando…' : `Cobrar ${formatMoney(grandTotal)}`}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
+            {showCashPreModal && (!guidedSimpleMode || payingInUSD) && (
+                <PosCashSheet
+                    open={showCashPreModal}
+                    processing={processing}
+                    amountDue={amountDueD}
+                    storeCreditApplied={storeCreditAppliedD}
+                    exchangeRate={toDecimal(exchangeRate)}
+                    payingInUSD={payingInUSD}
+                    usdAmount={usdAmount}
+                    cashReceived={cashReceived}
+                    validation={cashPaymentValidation}
+                    onClose={() => setShowCashPreModal(false)}
+                    onTogglePayingInUSD={() => {
+                        setPayingInUSD(!payingInUSD);
+                        setUsdAmount('');
+                        setCashReceived('');
+                    }}
+                    onUsdAmountChange={(value) => {
+                        setUsdAmount(value);
+                        if (value.trim() === '' || value === '.') {
+                            setCashReceived('');
+                            return;
+                        }
+                        try {
+                            setCashReceived(toDecimal(value).mul(exchangeRate).toFixed(2));
+                        } catch {
+                            setCashReceived('');
+                        }
+                    }}
+                    onCashReceivedChange={setCashReceived}
+                    onConfirm={() => handleCheckout('CASH')}
+                />
             )}
 
             {completedSale && (
-                <div className="fixed inset-0 z-modal bg-black/70 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-                    <div role="dialog" aria-modal="true" aria-labelledby="completed-sale-title" className="bg-surface-900 rounded-card shadow-premium w-full max-w-md overflow-hidden border border-white/[0.08]">
-
-                        {/* Header - Success */}
-                        <div className="p-6 text-center border-b border-white/[0.06]">
-                            <div className="w-14 h-14 bg-brand-soft border border-brand/20 rounded-pill flex items-center justify-center mx-auto mb-3">
-                                <Check size={30} className="text-brand" />
-                            </div>
-                            <h2 id="completed-sale-title" className="text-xl font-bold text-slate-100">
-                                {firstSaleMode ? 'Tu primera venta quedó registrada' : 'Venta lista'}
-                            </h2>
-                            {firstSaleMode && (
-                                <p className="text-sm text-slate-300 mt-1.5">Caja, inventario y ticket quedaron actualizados.</p>
-                            )}
-                            <p className="text-slate-500 text-sm mt-1">{completedSale.date}</p>
-                        </div>
-
+                <PosSaleResultSheet pending={completedSale.syncStatus === 'pending'} firstSale={firstSaleMode} date={completedSale.date} onNewSale={handleNewSale}>
                         {/* Sale Summary */}
                         <div className="p-6">
                             {/* EL VUELTO PRIMERO Y MÁS GRANDE: es el único número que
@@ -7565,7 +6785,7 @@ const POS: React.FC = () => {
                                 )}
                             </div>
 
-                            {pulso && (
+                            {completedSale.syncStatus === 'confirmed' && pulso && (
                                 <div className={`rounded-xl p-4 mb-4 border ${pulso.esRecordHoy ? 'bg-amber-500/10 border-amber-500/25' : 'bg-surface-800/40 border-white/[0.04]'}`}>
                                     <div className="flex items-baseline justify-between">
                                         <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Hoy llevás</span>
@@ -7579,7 +6799,7 @@ const POS: React.FC = () => {
                                             <div className="mt-2">
                                                 <div className="h-2 rounded-full bg-white/10 overflow-hidden">
                                                     <div
-                                                        className={`h-full transition-all duration-700 ${complete ? 'bg-amber-400' : 'bg-emerald-500'}`}
+                                                        className={`h-full transition-[width] duration-700 ${complete ? 'bg-amber-400' : 'bg-emerald-500'}`}
                                                         style={{ width: `${progress}%` }}
                                                     />
                                                 </div>
@@ -7600,30 +6820,8 @@ const POS: React.FC = () => {
                                 </div>
                             )}
 
-                            {firstSaleMode ? (
-                                <div className="space-y-2">
-                                    <button
-                                        onClick={handleReturnHome}
-                                        className="w-full h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover transition-colors flex items-center justify-center gap-2"
-                                    >
-                                        Volver al inicio <ArrowRight size={18} />
-                                    </button>
-                                    <button
-                                        onClick={handleNewSale}
-                                        className="w-full h-touch border border-white/[0.08] text-slate-200 font-semibold rounded-control hover:bg-white/[0.05] transition-colors flex items-center justify-center gap-2"
-                                    >
-                                        <RotateCcw size={17} /> Hacer otra venta
-                                    </button>
-                                </div>
-                            ) : (
-                                <button
-                                    onClick={handleNewSale}
-                                    className="w-full h-pay bg-brand text-brand-on font-bold rounded-control hover:bg-brand-hover transition-colors flex items-center justify-center gap-2"
-                                >
-                                    <RotateCcw size={18} /> Hacer otra venta
-                                </button>
-                            )}
-
+                            {firstSaleMode && <button onClick={handleReturnHome} className="nx-fluid-press w-full min-h-tap rounded-control text-sm font-semibold text-slate-300">Ver mi negocio</button>}
+                            {completedSale.syncStatus === 'confirmed' && <>
                             <div className={`grid gap-2 mt-3 ${postSalePrintOptions.length > 2 ? 'grid-cols-1' : 'grid-cols-2'}`}>
                                 <button
                                     onClick={handleWhatsApp}
@@ -7652,12 +6850,13 @@ const POS: React.FC = () => {
                             >
                                 <FileText size={17} /> Ver factura A4
                             </button>
+                            </>}
+                            {completedSale.syncStatus === 'pending' && <p className="text-sm text-slate-300">El comprobante definitivo estará en Ventas cuando se confirme. Conservá los datos de este dispositivo.</p>}
                         </div>
-                    </div>
-                </div>
+                </PosSaleResultSheet>
             )}
             {/* HIDDEN RECEIPT COMPONENT FOR PRINTING */}
-            <ReceiptTicket data={completedSale ? {
+            <ReceiptTicket data={completedSale?.syncStatus === 'confirmed' ? {
                 tenantName: tenantPrintDetails.tenantName,
                 ruc: tenantPrintDetails.ruc,
                 address: tenantPrintDetails.address,
@@ -7681,7 +6880,7 @@ const POS: React.FC = () => {
 
             {/* SCAN FEEDBACK TOAST */}
             {lastScanFeedback && (
-                <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full font-bold shadow-2xl z-50 animate-in slide-in-from-bottom-5 ${lastScanFeedback.type === 'success' ? 'bg-emerald-500 text-white' : 'bg-red-500 text-white'}`}>
+                <div className={`fixed bottom-24 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full font-bold shadow-2xl z-50 ${lastScanFeedback.type === 'success' ? 'bg-brand text-brand-on' : 'bg-red-700 text-white'}`}>
                     {lastScanFeedback.message}
                 </div>
             )}

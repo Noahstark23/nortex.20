@@ -1,0 +1,216 @@
+{
+  "version": 2,
+  "createdAt": "2026-09-08T21:25:13.793Z",
+  "scope": "launcher_only_synthetic_credential",
+  "providerCalled": false,
+  "isolation": {
+    "controlledEnv": true,
+    "allowedEnvKeys": [
+      "PATH",
+      "HOME",
+      "TMPDIR",
+      "USER",
+      "LOGNAME",
+      "LANG",
+      "LC_ALL",
+      "SHELL",
+      "TERM"
+    ],
+    "inheritedOperatorEnv": false,
+    "repositoryWalk": false,
+    "sensitiveFilesRead": 0
+  },
+  "keychain": "macos",
+  "keychainService": "nortex-qa-anthropic-selftest",
+  "syntheticFingerprint": "0462f6e76fa3",
+  "storageMethod": "stdin",
+  "fatal": null,
+  "passed": true,
+  "checks": [
+    {
+      "id": "aislamiento.sin_credencial_real",
+      "passed": true,
+      "detail": {
+        "operadorTeniaCredencialExportada": false
+      }
+    },
+    {
+      "id": "aislamiento.sin_variables_vite",
+      "passed": true,
+      "detail": {
+        "claves": 5
+      }
+    },
+    {
+      "id": "aislamiento.lista_blanca",
+      "passed": true,
+      "detail": {
+        "permitidas": [
+          "PATH",
+          "HOME",
+          "TMPDIR",
+          "USER",
+          "LOGNAME",
+          "LANG",
+          "LC_ALL",
+          "SHELL",
+          "TERM"
+        ]
+      }
+    },
+    {
+      "id": "propagacion.salida_exitosa",
+      "passed": true,
+      "detail": {
+        "exitCode": 0
+      }
+    },
+    {
+      "id": "propagacion.proceso_respondio",
+      "passed": true,
+      "detail": {
+        "stdoutVacio": false
+      }
+    },
+    {
+      "id": "propagacion.credencial_recibida",
+      "passed": true,
+      "detail": {
+        "present": true
+      }
+    },
+    {
+      "id": "propagacion.huella_coincide",
+      "passed": true,
+      "detail": {
+        "expected": "0462f6e76fa3",
+        "observed": "0462f6e76fa3"
+      }
+    },
+    {
+      "id": "propagacion.longitud_coincide",
+      "passed": true,
+      "detail": {
+        "expected": 67,
+        "observed": 67
+      }
+    },
+    {
+      "id": "propagacion.proceso_ejecutado",
+      "passed": true,
+      "detail": {
+        "marker": true
+      }
+    },
+    {
+      "id": "fuga.no_en_stdout_ni_stderr",
+      "passed": true,
+      "detail": {
+        "revisado": [
+          "stdout",
+          "stderr"
+        ]
+      }
+    },
+    {
+      "id": "fuga.todos_los_objetivos_legibles",
+      "passed": true,
+      "detail": {
+        "ilegibles": []
+      }
+    },
+    {
+      "id": "fuga.no_en_objetivos_permitidos",
+      "passed": true,
+      "detail": {
+        "revisados": [
+          "archivo-del-proceso-de-prueba",
+          "lanzador",
+          "proceso-de-prueba",
+          "script-de-credencial",
+          "modulo-de-credencial",
+          "lanzador-de-evaluacion",
+          "compuerta-de-integracion"
+        ],
+        "recorridoDelRepositorio": false,
+        "archivosSensiblesAbiertos": 0
+      }
+    },
+    {
+      "id": "fuga.probe_no_ve_secreto_en_argv",
+      "passed": true,
+      "detail": {
+        "argvContainsSecret": false
+      }
+    },
+    {
+      "id": "fuga.sin_variables_vite_en_el_hijo",
+      "passed": true,
+      "detail": {
+        "viteVariables": []
+      }
+    },
+    {
+      "id": "fuga.argv_observado_efectivamente",
+      "passed": true,
+      "detail": {
+        "salida": "sleep 4"
+      }
+    },
+    {
+      "id": "fuga.no_en_argumentos_del_proceso",
+      "passed": true,
+      "detail": {
+        "muestra": "sleep 4"
+      }
+    },
+    {
+      "id": "ausencia.credencial_retirada",
+      "passed": true,
+      "detail": {
+        "llavero": "vacío"
+      }
+    },
+    {
+      "id": "ausencia.codigo_de_salida_3",
+      "passed": true,
+      "detail": {
+        "exitCode": 3
+      }
+    },
+    {
+      "id": "ausencia.mensaje_orienta",
+      "passed": true,
+      "detail": {
+        "stderr": [
+          "No hay credencial de QA en el llavero (service=nortex-qa-anthropic-selftest, account=ANTHROPIC_API_KEY).",
+          "Guardala con:  scripts/qa/nortexgpt-credential.sh guardar",
+          "No se ejecutó \"node\": una consulta sin clave produce el respaldo determinista."
+        ]
+      }
+    },
+    {
+      "id": "ausencia.no_ejecuta_el_comando",
+      "passed": true,
+      "detail": {
+        "marker": false
+      }
+    },
+    {
+      "id": "ausencia.sin_salida_estandar",
+      "passed": true,
+      "detail": {
+        "stdout": ""
+      }
+    }
+  ],
+  "residualExposure": {
+    "processEnvironmentReadableBySameUser": false,
+    "note": "El backend espera ANTHROPIC_API_KEY como variable de entorno; en macOS el propio usuario puede leer el entorno de sus procesos. El lanzador evita disco, historial y argumentos, no ese canal. `null` significa que no se pudo observar, no que no exista."
+  },
+  "limitations": [
+    "La credencial es sintética: esta prueba no evalúa Haiku ni acredita una llamada real.",
+    "No se verificó MySQL, el backend de QA ni el presupuesto del servidor.",
+    "La búsqueda de filtraciones cubre la lista explícita de objetivos, no todo el repositorio."
+  ]
+}

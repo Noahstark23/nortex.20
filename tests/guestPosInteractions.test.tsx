@@ -2,6 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import GuestPOS from '../components/GuestPOS';
 
@@ -78,5 +79,23 @@ describe('demo POS como flujo ejecutable', () => {
 
         expect(screen.getByText('Falta C$ 8.00')).toBeTruthy();
         expect((screen.getByRole('button', { name: /Confirmar cobro/i }) as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it('activa densidad y regreso del cobro con teclado nativo', async () => {
+        const user = userEvent.setup();
+        renderDemo();
+
+        const dense = screen.getByRole('button', { name: 'Compacta' });
+        dense.focus();
+        await user.keyboard('{Enter}');
+        expect(dense.className).toContain('bg-brand');
+
+        fireEvent.click(screen.getByRole('button', { name: /Agregar Cemento Holcim a la venta/i }));
+        fireEvent.click(screen.getByRole('button', { name: /^Cobrar$/ }));
+        const back = screen.getByRole('button', { name: 'Volver al carrito' });
+        back.focus();
+        await user.keyboard(' ');
+
+        expect(screen.getByRole('button', { name: /^Cobrar$/ })).toBeTruthy();
     });
 });

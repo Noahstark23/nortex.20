@@ -36,14 +36,13 @@
   --nx-warning-soft:  rgba(245, 165, 36, 0.12);
   --nx-success:       var(--nx-brand);
 
-  /* ---------- Tipografía ---------- */
-  /* Plus Jakarta Sans, auto-hospedada en /fonts (ver public/fonts/fuentes.css).
-     Antes acá decía `Inter`, pero Inter no se descargaba en ningún lado del
-     repo: el único <link> de fuentes pedía Plus Jakarta Sans y JetBrains Mono.
-     O sea que la app entera se pintaba con la fuente del sistema mientras
-     descargaba una familia que ningún estilo suyo usaba. Ahora es una sola
-     familia para el producto y la landing, y llega de verdad. */
-  --nx-font: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* ---------- Tipografía ----------
+     Spatial Counter prioriza la familia del sistema: conserva el ajuste óptico,
+     el hinting y el tamaño configurado por la persona en cada plataforma. La
+     fuente de marca auto-hospedada continúa disponible para marketing, pero la
+     interfaz operativa no depende de descargarla. */
+  --nx-font: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, system-ui, sans-serif;
+  --nx-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", Roboto, system-ui, sans-serif;
   --nx-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, monospace; /* SOLO SKU y códigos */
 
   --nx-fs-display: 40px;  --nx-lh-display: 1.05;  /* TOTAL a cobrar, ganancia del día */
@@ -68,8 +67,9 @@
   --nx-12: 48px;
 
   /* ---------- Radios ---------- */
-  --nx-r-control: 8px;
-  --nx-r-card:    12px;
+  --nx-r-control: 10px;
+  --nx-r-card:    14px;
+  --nx-r-sheet:   28px;
   --nx-r-pill:    999px;
 
   /* ---------- Controles ---------- */
@@ -79,9 +79,82 @@
   --nx-tap-min:   44px;   /* objetivo táctil mínimo */
   --nx-h-module-header: 64px; /* altura única del header de módulo (Fase 5) */
 
-  /* ---------- Movimiento ---------- */
-  --nx-t-fast: 140ms cubic-bezier(0.2, 0, 0, 1);
-  --nx-t-slow: 200ms cubic-bezier(0.2, 0, 0, 1);
+  /* ---------- Movimiento ----------
+     Estos tiempos solo gobiernan color/opacidad. Las transformaciones que
+     siguen un gesto usan el motor rAF interrumpible de `utils/fluidMotion.ts`. */
+  --nx-t-fast: 120ms cubic-bezier(0.2, 0, 0, 1);
+  --nx-t-slow: 180ms cubic-bezier(0.2, 0, 0, 1);
+  --nx-spring-response: 380ms;
+  --nx-press-scale: .985;
+  --nx-gesture-hysteresis: 10px;
+
+  /* ---------- Spatial Counter ----------
+     Opción visual 3: chrome y ticket oscuros, canvas de trabajo claro. Estos
+     tokens son semánticos para que la migración sea gradual y reversible. */
+  --nx-canvas:          #F4F5F7;
+  --nx-canvas-raised:   #FFFFFF;
+  --nx-canvas-subtle:   #E9ECF0;
+  --nx-canvas-border:   #D7DCE3;
+  --nx-canvas-text:     #171A1F;
+  --nx-canvas-muted:    #5F6772;
+  --nx-canvas-faint:    #89919C;
+  --nx-chrome:          #101318;
+  --nx-chrome-raised:   #171B21;
+  --nx-ticket:          #181C22;
+  --nx-ticket-raised:   #22272F;
+  /* Texto y estados de una superficie ticket. Estos valores no dependen del
+     tema del workspace: un recibo oscuro conserva el mismo contraste sobre
+     canvas claro o noche. */
+  --nx-ticket-text:     #F4F6F9;
+  --nx-ticket-muted:    #D3DCE7;
+  --nx-ticket-faint:    #B7C2CF;
+  --nx-ticket-positive: #6CE9A6;
+  --nx-ticket-warning:  #FEC84B;
+  --nx-ticket-info:     #84CAFF;
+  --nx-ticket-danger:   #FDA29B;
+  --nx-glass-light:     rgba(255, 255, 255, .82);
+  --nx-glass-dark:      rgba(16, 19, 24, .88);
+  --nx-shadow-float:    0 18px 48px rgba(15, 18, 23, .18), 0 2px 10px rgba(15, 18, 23, .10);
+  --nx-shadow-subtle:   0 8px 28px rgba(15, 18, 23, .08), 0 1px 3px rgba(15, 18, 23, .06);
+
+  /* ---------- Apariencia autenticada ----------
+     El shell deja de significar "negro": es un material persistente que
+     cambia con la preferencia de la persona. La raiz conserva el aspecto
+     oscuro seguro para superficies funcionales sin selector de tema (POS
+     invitado, ticket); Layout declara light/dark de forma explicita. */
+  --nx-shell:           rgba(17, 21, 26, .84);
+  --nx-shell-solid:     #11151A;
+  --nx-shell-raised:    rgba(28, 34, 42, .92);
+  --nx-shell-hover:     rgba(255, 255, 255, .09);
+  --nx-shell-active:    rgba(22, 199, 132, .18);
+  --nx-shell-border:    rgba(212, 220, 230, .18);
+  --nx-shell-text:      #F7FAFE;
+  --nx-shell-muted:     #D4DCE6;
+  --nx-shell-faint:     #A7B2C0;
+  --nx-shell-item:      rgba(255, 255, 255, .05);
+  --nx-shell-item-border: rgba(255, 255, 255, .08);
+  --nx-shell-shadow:    0 20px 52px rgba(1, 4, 9, .34), 0 1px 0 rgba(255, 255, 255, .05);
+  --nx-shell-highlight: rgba(255, 255, 255, .06);
+  --nx-sheet-backdrop:  rgba(3, 7, 18, .58);
+
+  /* Tonos de estado con contraste de texto, fondo y borde independientes.
+     Verde no es decoracion: positive = operacion correcta/dinero que entra;
+     warning = requiere atencion; info = contexto; danger = accion riesgosa. */
+  --nx-positive:        #6CE9A6;
+  --nx-positive-bg:     rgba(22, 199, 132, .14);
+  --nx-positive-border: rgba(108, 233, 166, .34);
+  --nx-warning:         #FEC84B;
+  --nx-warning-bg:      rgba(254, 200, 75, .14);
+  --nx-warning-border:  rgba(254, 200, 75, .34);
+  --nx-info:            #84CAFF;
+  --nx-info-bg:         rgba(132, 202, 255, .14);
+  --nx-info-border:     rgba(132, 202, 255, .34);
+  --nx-danger:          #FDA29B;
+  --nx-danger-bg:       rgba(253, 162, 155, .14);
+  --nx-danger-border:   rgba(253, 162, 155, .34);
+  --nx-neutral:         #D0D5DD;
+  --nx-neutral-bg:      rgba(208, 213, 221, .10);
+  --nx-neutral-border:  rgba(208, 213, 221, .24);
 
   /* ---------- Capas ----------
      La zona de cobro es intocable: ningún overlay flotante
@@ -128,6 +201,18 @@
   --nx-danger-rgb:        240 72 62;
   --nx-warning-rgb:       245 165 36;
 
+  --nx-canvas-rgb:        244 245 247;
+  --nx-canvas-raised-rgb: 255 255 255;
+  --nx-canvas-subtle-rgb: 233 236 240;
+  --nx-canvas-border-rgb: 215 220 227;
+  --nx-canvas-text-rgb:    23 26 31;
+  --nx-canvas-muted-rgb:   95 103 114;
+  --nx-canvas-faint-rgb:  137 145 156;
+  --nx-chrome-rgb:         16 19 24;
+  --nx-chrome-raised-rgb:  23 27 33;
+  --nx-ticket-rgb:         24 28 34;
+  --nx-ticket-raised-rgb:  34 39 47;
+
   /* ---------- Marcas de TERCEROS ----------
      No son decoración ni parte de la paleta: son la identidad de otra app, y el
      usuario reconoce el botón por ese color (el verde de WhatsApp, el cian de
@@ -168,6 +253,134 @@
   --nx-neutral-950-rgb:  11  13  16;
 }
 
+/* Tema claro Apple: materiales luminosos y translucidos, pero nunca texto
+   gris tenue sobre blanco. Los tres niveles de texto mantienen jerarquia sin
+   caer debajo del contraste util para iconos y etiquetas pequenas. */
+[data-nx-theme='light'] {
+  color-scheme: light;
+  --nx-canvas:          #F4F6F9;
+  --nx-canvas-raised:   #FFFFFF;
+  --nx-canvas-subtle:   #E8EBF0;
+  --nx-canvas-border:   #CCD3DC;
+  --nx-canvas-text:     #171A1F;
+  --nx-canvas-muted:    #3F4B59;
+  --nx-canvas-faint:    #566271;
+  --nx-canvas-rgb:        244 246 249;
+  --nx-canvas-raised-rgb: 255 255 255;
+  --nx-canvas-subtle-rgb: 232 235 240;
+  --nx-canvas-border-rgb: 204 211 220;
+  --nx-canvas-text-rgb:    23 26 31;
+  --nx-canvas-muted-rgb:   63 75 89;
+  --nx-canvas-faint-rgb:   86 98 113;
+
+  --nx-shell:           rgba(248, 250, 252, .74);
+  --nx-shell-solid:     #F6F8FB;
+  --nx-shell-raised:    rgba(255, 255, 255, .84);
+  --nx-shell-hover:     rgba(255, 255, 255, .96);
+  --nx-shell-active:    rgba(22, 199, 132, .18);
+  --nx-shell-border:    rgba(71, 84, 103, .16);
+  --nx-shell-text:      #16181D;
+  --nx-shell-muted:     #243041;
+  --nx-shell-faint:     #485769;
+  --nx-shell-item:      rgba(255, 255, 255, .62);
+  --nx-shell-item-border: rgba(100, 116, 139, .20);
+  --nx-shell-shadow:    0 24px 60px rgba(15, 23, 42, .12), inset 0 1px 0 rgba(255, 255, 255, .80);
+  --nx-shell-highlight: rgba(255, 255, 255, .74);
+  --nx-sheet-backdrop:  rgba(15, 18, 23, .24);
+
+  --nx-positive:        #067647;
+  --nx-positive-bg:     #ECFDF3;
+  --nx-positive-border: #A6F4C5;
+  --nx-warning:         #8A4B00;
+  --nx-warning-bg:      #FFFAEB;
+  --nx-warning-border:  #FEDF89;
+  --nx-info:            #175CD3;
+  --nx-info-bg:         #EFF8FF;
+  --nx-info-border:     #B2DDFF;
+  --nx-danger:          #B42318;
+  --nx-danger-bg:       #FEF3F2;
+  --nx-danger-border:   #FECDCA;
+  --nx-neutral:         #475467;
+  --nx-neutral-bg:      #F2F4F7;
+  --nx-neutral-border:  #D0D5DD;
+
+  /* Alias heredados que aun consumen primitivas nx-*. */
+  --nx-text:            var(--nx-canvas-text);
+  --nx-text-muted:      var(--nx-canvas-muted);
+  --nx-text-faint:      var(--nx-canvas-faint);
+  --nx-success:         var(--nx-positive);
+}
+
+/* Tema noche: conserva profundidad sin negro puro y eleva el contraste del
+   texto secundario. Canvas, tarjetas y estados cambian juntos; no se invierte
+   el DOM ni se aplican filtros que alteren fotos o codigos de producto. */
+[data-nx-theme='dark'] {
+  color-scheme: dark;
+  --nx-canvas:          #161B22;
+  --nx-canvas-raised:   #202732;
+  --nx-canvas-subtle:   #2C3541;
+  --nx-canvas-border:   #4C586A;
+  --nx-canvas-text:     #F4F6F9;
+  --nx-canvas-muted:    #D3DCE7;
+  --nx-canvas-faint:    #B7C2CF;
+  --nx-canvas-rgb:         22 27 34;
+  --nx-canvas-raised-rgb:  32 39 50;
+  --nx-canvas-subtle-rgb:  44 53 65;
+  --nx-canvas-border-rgb:  76 88 106;
+  --nx-canvas-text-rgb:   244 246 249;
+  --nx-canvas-muted-rgb:  211 220 231;
+  --nx-canvas-faint-rgb:  183 194 207;
+
+  --nx-shell:           rgba(48, 57, 70, .76);
+  --nx-shell-solid:     #303946;
+  --nx-shell-raised:    rgba(81, 92, 107, .90);
+  --nx-shell-hover:     rgba(255, 255, 255, .19);
+  --nx-shell-active:    rgba(108, 233, 166, .18);
+  --nx-shell-border:    rgba(198, 208, 219, .22);
+  --nx-shell-text:      #FAFBFD;
+  --nx-shell-muted:     #EDF2F8;
+  --nx-shell-faint:     #C6D0DB;
+  --nx-shell-item:      rgba(255, 255, 255, .10);
+  --nx-shell-item-border: rgba(198, 208, 219, .16);
+  --nx-shell-shadow:    0 24px 58px rgba(3, 7, 18, .18), inset 0 1px 0 rgba(255, 255, 255, .12);
+  --nx-shell-highlight: rgba(255, 255, 255, .16);
+  --nx-sheet-backdrop:  rgba(3, 7, 18, .46);
+
+  --nx-positive:        #6CE9A6;
+  --nx-positive-bg:     rgba(22, 199, 132, .14);
+  --nx-positive-border: rgba(108, 233, 166, .34);
+  --nx-warning:         #FEC84B;
+  --nx-warning-bg:      rgba(254, 200, 75, .14);
+  --nx-warning-border:  rgba(254, 200, 75, .34);
+  --nx-info:            #84CAFF;
+  --nx-info-bg:         rgba(132, 202, 255, .14);
+  --nx-info-border:     rgba(132, 202, 255, .34);
+  --nx-danger:          #FDA29B;
+  --nx-danger-bg:       rgba(253, 162, 155, .14);
+  --nx-danger-border:   rgba(253, 162, 155, .34);
+  --nx-neutral:         #D0D5DD;
+  --nx-neutral-bg:      rgba(208, 213, 221, .10);
+  --nx-neutral-border:  rgba(208, 213, 221, .24);
+
+  --nx-text:            var(--nx-canvas-text);
+  --nx-text-muted:      var(--nx-canvas-muted);
+  --nx-text-faint:      var(--nx-canvas-faint);
+  --nx-success:         var(--nx-positive);
+  --nx-shadow-float:    0 18px 48px rgba(3, 7, 18, .36), 0 2px 10px rgba(3, 7, 18, .24);
+  --nx-shadow-subtle:   0 8px 28px rgba(3, 7, 18, .22), 0 1px 3px rgba(3, 7, 18, .18);
+}
+
+/* El contexto declara la intención de la superficie sin reordenar la escala
+   neutral. Así las clases convencionales (`bg-slate-50`, `text-slate-950`)
+   mantienen su significado y la migración no depende de un tema implícito. */
+.nx-light-context {
+  color-scheme: light;
+}
+
+.nx-dark-context {
+  color-scheme: dark;
+}
+
 /* ============================================================
    Base
    ============================================================ */
@@ -178,6 +391,8 @@ html, body {
   font-size: var(--nx-fs-body);
   line-height: var(--nx-lh-body);
   -webkit-font-smoothing: antialiased;
+  font-optical-sizing: auto;
+  text-rendering: optimizeLegibility;
 }
 
 /* Toda cifra se alinea en columna sin usar monoespaciada */

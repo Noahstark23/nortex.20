@@ -45,7 +45,6 @@ function menu(businessName: string, tools: AgentTool[]): string {
     const opciones: string[] = [];
     if (tools.some((t) => t.name === 'buscar_producto')) opciones.push('🔎 Escribí lo que buscás y te digo precio y disponibilidad.');
     if (tools.some((t) => t.name === 'consultar_deuda')) opciones.push('💳 "saldo" — consultá tu deuda.');
-    if (tools.some((t) => t.name === 'ventas_hoy')) opciones.push('📊 "ventas hoy" — resumen del día.');
     opciones.push('🧑‍💼 "asesor" — hablar con una persona.');
     return `¡Hola! Soy el asistente de ${businessName}.\n${opciones.join('\n')}`;
 }
@@ -64,9 +63,8 @@ export class MenuBotBrain implements AgentBrain {
             return { text: 'Dale, te paso con un asesor de la tienda. En un momento te responden por aquí. 🙌', handoff: true };
         }
 
-        const isB2B = input.ctx.botScope === 'B2B' || input.ctx.botScope === 'BOTH';
-        if (isB2B && VENTAS_RX.test(text) && tools.some((t) => t.name === 'ventas_hoy')) {
-            return { text: await this.runTool(tools, 'ventas_hoy', input.ctx, {}), handoff: false };
+        if (VENTAS_RX.test(text)) {
+            return { text: 'Para consultar las ventas del negocio, entrá al panel de Nortex con tu usuario autorizado. Este chat no verifica permisos de personal.', handoff: false };
         }
         if (DEUDA_RX.test(text) && tools.some((t) => t.name === 'consultar_deuda')) {
             return { text: await this.runTool(tools, 'consultar_deuda', input.ctx, {}), handoff: false };

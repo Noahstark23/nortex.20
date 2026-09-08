@@ -1,0 +1,14 @@
+{
+  "createdAt": "2026-09-08T21:25:00.087Z",
+  "corpusCases": 100,
+  "corpusIntegrity": "passed",
+  "humanReview": "pending",
+  "providerEvaluation": "not_run",
+  "jobsSubmitted": 0,
+  "paidCalls": 0,
+  "results": [],
+  "limitations": [
+    "Datos sintéticos; revisión humana pendiente.",
+    "Integridad del corpus no acredita exactitud del modelo ni mejora operativa."
+  ]
+}

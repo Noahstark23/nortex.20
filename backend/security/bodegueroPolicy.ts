@@ -8,6 +8,28 @@
 export const BODEGUERO_ROLE = 'BODEGUERO';
 
 const ALLOWED_PATTERNS: Array<{ method: string; pattern: RegExp }> = [
+    // Chat privado con autorización por capacidad; jamás habilita documentos financieros.
+    { method: 'GET', pattern: /^\/api\/assistant\/capabilities$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/conversations$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/conversations\/[^/]+$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/conversations\/[^/]+\/messages$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/overview$/ },
+    // Cada servicio vuelve a filtrar por capacidad y propietario. Una propuesta
+    // de bodega sólo admite devolución física; merma/OC/precios conservan sus roles.
+    { method: 'GET', pattern: /^\/api\/assistant\/catalog$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/conversations\/[^/]+\/runs$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/conversations\/[^/]+\/runs$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/runs\/[^/]+$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/runs\/[^/]+\/(cancel|recover)$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/daily-brief$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/daily-brief\/[^/]+\/dismiss$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/action-proposals$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/action-proposals\/[^/]+$/ },
+    { method: 'PATCH', pattern: /^\/api\/assistant\/action-proposals\/[^/]+$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/action-proposals\/[^/]+\/(preview|confirm)$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/private-whatsapp\/(binding|deliveries)$/ },
+    { method: 'POST', pattern: /^\/api\/assistant\/private-whatsapp\/challenge$/ },
+    { method: 'DELETE', pattern: /^\/api\/assistant\/private-whatsapp\/binding$/ },
     // Contexto mínimo no financiero del negocio para el shell autenticado.
     { method: 'GET', pattern: /^\/api\/tenant\/info$/ },
     { method: 'GET', pattern: /^\/api\/products$/ },

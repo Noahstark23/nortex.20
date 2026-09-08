@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import 'fake-indexeddb/auto';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup, within } from '@testing-library/react';
+import { render, screen, cleanup, within, fireEvent, act, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import '@testing-library/jest-dom/vitest';
 import { MemoryRouter } from 'react-router-dom';
 import React from 'react';
 import POS from '../components/POS';
@@ -82,16 +83,25 @@ const respuestasBase = (): Record<string, unknown> => ({
 let respuestas: Record<string, unknown>;
 /** Cuerpos posteados, para aseverar QUÉ se registró y no solo que se llamó. */
 let posteos: Array<{ ruta: string; cuerpo: any }>;
+let pausarRespuestaVenta: boolean;
+let resolverRespuestaVenta: (() => void) | null;
 
 function doblarFetch() {
     vi.stubGlobal('fetch', vi.fn(async (url: any, init?: any) => {
         const ruta = String(url).split('?')[0];
+        if (ruta === '/api/promotions/checkout/quote') return respuestaOk({ enabled: false, quote: null });
         if (init?.method === 'POST') {
             let cuerpo: any = null;
             try { cuerpo = JSON.parse(init.body); } catch { /* sin cuerpo JSON */ }
             posteos.push({ ruta, cuerpo });
             if (ruta === '/api/sales') {
-                return respuestaOk({ id: 'venta-1', total: cuerpo?.total, invoiceNumber: '0001' });
+                const respuesta = respuestaOk({ id: 'venta-1', total: cuerpo?.total, invoiceNumber: '0001' });
+                if (pausarRespuestaVenta) {
+                    return new Promise((resolve) => {
+                        resolverRespuestaVenta = () => resolve(respuesta);
+                    });
+                }
+                return respuesta;
             }
         }
         // OJO con el `??`: varios endpoints devuelven `null` a propósito
@@ -114,6 +124,8 @@ const respuestaOk = (cuerpo: unknown) => ({
 beforeEach(() => {
     respuestas = respuestasBase();
     posteos = [];
+    pausarRespuestaVenta = false;
+    resolverRespuestaVenta = null;
     localStorage.setItem('nortex_tenant_data', JSON.stringify({ id: 't1', businessName: 'Pulpería QA' }));
     localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', name: 'Cajera', role: 'CASHIER' }));
     localStorage.setItem('token', 'tok-qa');
@@ -121,6 +133,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+    resolverRespuestaVenta?.();
     cleanup();
     localStorage.clear();
     vi.unstubAllGlobals();
@@ -129,12 +142,47 @@ afterEach(() => {
 const montarPOS = () => render(<MemoryRouter><POS /></MemoryRouter>);
 
 /** El buscador es el control donde el cajero pasa el turno; tiene autoFocus. */
-const buscador = () => screen.findByPlaceholderText(/Escaneá o buscá un producto/i);
+const buscador = () => screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i);
 
 /** Deja que corran los efectos y las promesas del fetch doblado. */
 const asentar = (ms = 250) => new Promise((r) => setTimeout(r, ms));
 
+const installResponsiveMedia = (initialDesktop = true) => {
+    const desktopQuery = '(min-width: 1024px)';
+    let desktop = initialDesktop;
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+        media: query,
+        onchange: null,
+        get matches() { return query === desktopQuery ? desktop : false; },
+        addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+        removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
+        addListener: (listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+        removeListener: (listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
+        dispatchEvent: () => true,
+    })));
+
+    return {
+        setDesktop(matches: boolean) {
+            desktop = matches;
+            act(() => listeners.forEach(listener => listener({ matches, media: desktopQuery } as MediaQueryListEvent)));
+        },
+    };
+};
+
 describe('POS · escanear y armar la venta', () => {
+    it('mantiene legibles y táctiles las acciones rápidas de producto', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        montarPOS();
+
+        const rapido = await screen.findByRole('button', { name: /Rápido/i });
+        const nuevo = await screen.findByRole('button', { name: /Nuevo/i });
+
+        expect(rapido).toHaveClass('nx-fluid-press', 'min-h-tap', 'bg-amber-400', 'text-slate-950');
+        expect(nuevo).toHaveClass('nx-fluid-press', 'min-h-tap', 'bg-nortex-500', 'text-brand-on');
+    });
+
     it('escanear un SKU exacto mete el producto y el total refleja su precio', async () => {
         const user = userEvent.setup();
         montarPOS();
@@ -144,7 +192,8 @@ describe('POS · escanear y armar la venta', () => {
 
         const cuerpo = document.body.textContent ?? '';
         expect(cuerpo).toContain('Coca Cola 500ml agregado');
-        expect(cuerpo).toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
         // El total y el botón de cobro dicen el MISMO número: es la cifra que el
         // cajero le canta al cliente.
         expect(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i })).toBeTruthy();
@@ -166,8 +215,8 @@ describe('POS · escanear y armar la venta', () => {
         // deja registrado en vez de tapar. Cuando se arregle, hay que cambiar
         // esta línea A PROPÓSITO; lo que no puede pasar es que se arregle o se
         // rompa sin que nadie se entere.
-        expect(cuerpo).toContain('2 unidad × C$ 25.00');
-        expect(cuerpo).not.toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('2');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
         expect(await screen.findByRole('button', { name: /Cobrar C\$ 50\.00 en efectivo/i })).toBeTruthy();
     });
 
@@ -248,6 +297,124 @@ describe('POS · cobrar en efectivo', () => {
     });
 });
 
+describe('POS · efectivo clásico seguro', () => {
+    it('no postea ni cierra el sheet al presionar Enter con efectivo insuficiente', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        installResponsiveMedia();
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /EFECTIVO.*C\$ 25\.00/i }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: 'Efectivo' });
+        const amountInput = within(dialog).getByRole('textbox', { name: 'Efectivo recibido en córdobas' });
+        await user.type(amountInput, '10{Enter}');
+        await asentar(100);
+
+        expect(posteos.find((posteo) => posteo.ruta === '/api/sales')).toBeUndefined();
+        expect(screen.getByRole('dialog', { name: 'Efectivo' })).toBe(dialog);
+        expect(within(dialog).getByRole('status')).toHaveTextContent(/Falta\s*C\$ 15\.00/);
+        expect(amountInput).toHaveAttribute('aria-invalid', 'true');
+        expect(within(dialog).getByRole('button', { name: /Cobrar C\$ 25\.00/i })).toBeDisabled();
+    });
+
+    it('mantiene los atajos operativos detrás del diálogo mientras se captura el pago', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const media = installResponsiveMedia();
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /EFECTIVO.*C\$ 25\.00/i }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: 'Efectivo' });
+        const amountInput = within(dialog).getByRole('textbox', { name: 'Efectivo recibido en córdobas' });
+        expect(document.activeElement).toBe(amountInput);
+
+        fireEvent.keyDown(window, { key: 'F2' });
+        fireEvent.keyDown(window, { key: 'F7' });
+        fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+
+        expect(document.activeElement).toBe(amountInput);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(screen.getByRole('dialog', { name: 'Efectivo' })).toBe(dialog);
+
+        media.setDesktop(false);
+        await asentar(50);
+
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(screen.getByRole('dialog', { name: 'Efectivo' })).toBe(dialog);
+        expect(screen.queryByRole('dialog', { name: 'Ticket' })).toBeNull();
+    });
+});
+
+describe('POS · selector de pago seguro', () => {
+    it('bloquea F2, F7 y Ctrl+K detrás del PosPaymentSheet y conserva un solo diálogo', async () => {
+        installResponsiveMedia();
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: 'Otro pago' }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: /C\$ 25\.00/ });
+        const initialAction = within(dialog).getByRole('button', { name: 'Registrar transferencia' });
+        expect(document.activeElement).toBe(initialAction);
+
+        expect(fireEvent.keyDown(window, { key: 'F2' })).toBe(false);
+        expect(fireEvent.keyDown(window, { key: 'F7' })).toBe(false);
+        expect(fireEvent.keyDown(window, { key: 'k', ctrlKey: true })).toBe(false);
+
+        expect(document.activeElement).toBe(initialAction);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(screen.getByRole('dialog', { name: /C\$ 25\.00/ })).toBe(dialog);
+    });
+
+    it('mantiene Cerrar, Escape y backdrop bloqueados mientras la venta está en processing', async () => {
+        installResponsiveMedia();
+        pausarRespuestaVenta = true;
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: 'Otro pago' }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: /C\$ 25\.00/ });
+        await user.click(within(dialog).getByRole('button', { name: 'Registrar transferencia' }));
+
+        await waitFor(() => expect(resolverRespuestaVenta).toEqual(expect.any(Function)));
+        await waitFor(() => expect(
+            dialog.querySelector('.nx-pos-payment-sheet-content'),
+        ).toHaveAttribute('aria-busy', 'true'));
+        expect(within(dialog).getByRole('button', { name: 'Cerrar' })).toBeDisabled();
+
+        fireEvent.keyDown(document, { key: 'Escape' });
+        const root = dialog.closest<HTMLElement>('[data-fluid-sheet-root]')!;
+        fireEvent.click(root.querySelector<HTMLElement>('[data-fluid-sheet-backdrop]')!);
+
+        expect(screen.getByRole('dialog', { name: /C\$ 25\.00/ })).toBe(dialog);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(document.body.style.overflow).toBe('hidden');
+
+        const resolve = resolverRespuestaVenta;
+        resolverRespuestaVenta = null;
+        await act(async () => {
+            resolve?.();
+            await Promise.resolve();
+        });
+        await asentar(400);
+    });
+});
+
 describe('POS · sin caja abierta', () => {
     it('avisa que la caja está cerrada y no ofrece el saldo de la gaveta', async () => {
         // El backend devuelve `null` PELADO cuando no hay turno abierto
@@ -265,7 +432,8 @@ describe('POS · sin caja abierta', () => {
         expect(cuerpo).not.toContain('Caja abierta');
         // El carrito SÍ se arma: la cajera puede ir marcando mientras se abre
         // la caja. Lo que no puede es cerrar la venta sin turno.
-        expect(cuerpo).toContain('1 unidad × C$ 25.00');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
     });
 
     it('intentar cobrar sin turno no manda la venta al servidor', async () => {

@@ -32,6 +32,7 @@ type PrismaTx = Prisma.TransactionClient;
 export type PedidoFulfillmentCode =
     | 'PEDIDO_NOT_FOUND'
     | 'PEDIDO_ALREADY_PREPARED'
+    | 'PEDIDO_INVALID_TRANSITION'
     | 'PEDIDO_ALREADY_PROCESSED'
     | 'PEDIDO_PRODUCT_NOT_FOUND'
     | 'PEDIDO_RESERVATION_MISMATCH'
@@ -52,6 +53,12 @@ export class PedidoFulfillmentError extends Error {
         this.name = 'PedidoFulfillmentError';
     }
 }
+
+export const PEDIDO_PREPARATION_SOURCE_STATES = [
+    'pendiente',
+    'asignado',
+    'en_tienda',
+] as const;
 
 const PRODUCT_SELECT = {
     id: true,
@@ -551,13 +558,20 @@ export async function reservePedidoInTransaction(
     if (!pedido) {
         throw new PedidoFulfillmentError('PEDIDO_NOT_FOUND', 404, 'Pedido no encontrado.');
     }
+    if (!PEDIDO_PREPARATION_SOURCE_STATES.includes(pedido.estado as typeof PEDIDO_PREPARATION_SOURCE_STATES[number])) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_INVALID_TRANSITION',
+            409,
+            'El pedido solo puede pasar a preparando desde pendiente, asignado o en tienda.',
+        );
+    }
 
     const transition = await tx.pedido.updateMany({
         where: {
             id: params.pedidoId,
             tenantId: params.tenantId,
             facturaId: null,
-            estado: { notIn: ['preparando', 'entregado', 'cancelado'] },
+            estado: { in: [...PEDIDO_PREPARATION_SOURCE_STATES] },
         },
         data: { estado: 'preparando' },
     });
@@ -565,7 +579,7 @@ export async function reservePedidoInTransaction(
         throw new PedidoFulfillmentError(
             'PEDIDO_ALREADY_PREPARED',
             409,
-            'El pedido ya está preparado, entregado o cancelado.',
+            'El pedido ya fue preparado, entregado, cancelado o reclamado por otra operación.',
         );
     }
 

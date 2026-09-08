@@ -24,9 +24,11 @@ const BlogPost = lazy(() => import('./components/BlogPost'));
 const ClusterPage = lazy(() => import('./components/ClusterPage'));
 const GuestPOS = lazy(() => import('./components/GuestPOS'));
 const POS = lazy(() => import('./components/POS'));
+const Sales = lazy(() => import('./components/Sales'));
 const Dashboard = lazy(() => import('./components/Dashboard'));
 const BlueprintViewer = lazy(() => import('./components/BlueprintViewer'));
 const LandingPage = lazy(() => import('./components/LandingPage'));
+const LandingPageApple = lazy(() => import('./components/LandingPage.apple'));
 const AccountsReceivable = lazy(() => import('./components/AccountsReceivable'));
 const B2BMarketplace = lazy(() => import('./components/B2BMarketplace'));
 const Reports = lazy(() => import('./components/Reports'));
@@ -144,6 +146,7 @@ const ProtectedApp = () => {
           element={reencaminarBienvenida ? <Navigate to={`${homePath}?welcome=1`} replace /> : <Dashboard />}
         />
         <Route path="pos" element={<POS />} />
+        <Route path="sales" element={<Sales />} />
         <Route path="clients" element={<Clients />} />
         <Route path="suppliers" element={<Suppliers />} />
         <Route path="hr" element={<HRM />} />
@@ -291,6 +294,7 @@ function App() {
       <Suspense fallback={<div className="min-h-[60vh] flex items-center justify-center text-slate-400">Cargando…</div>}>
         <Routes>
           <Route path="/" element={<PublicLanding />} />
+          <Route path="/apple" element={<LandingPageApple />} />
           <Route path="/register" element={<RegisterTenant />} />
           <Route path="/demo" element={<GuestPOS />} />
           <Route path="/login" element={<Login />} />

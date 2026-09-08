@@ -123,6 +123,7 @@ const dependencies = (overrides: Record<string, unknown> = {}) => ({
         data: [returnDto()],
         pageInfo: { nextCursor: null },
     }),
+    getReturnEligibleLines: vi.fn().mockResolvedValue(null),
     createReturn: vi.fn().mockResolvedValue({ supplierReturn: returnDto(), replay: false }),
     listCreditNotes: vi.fn().mockResolvedValue({
         data: [creditNoteDto()],
@@ -211,7 +212,9 @@ describe('supplier returns and credit notes HTTP contract', () => {
             supplierId: 'supplier-1',
         }, { purchaseOrderId: 'po-1', limit: 25 });
         expect(res.json).toHaveBeenCalledWith(expect.objectContaining({
-            data: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+            data: expect.objectContaining({
+                returns: [expect.objectContaining({ returnNumber: 'DEV-000001' })],
+            }),
         }));
     });
 

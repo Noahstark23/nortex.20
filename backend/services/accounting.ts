@@ -12,6 +12,7 @@ import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
 import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
 import prisma from '../lib/prisma';
+import { settledPaymentAccount } from '../lib/paymentAccounts';
 import {
     FISCAL_REGIME_GENERAL,
     resolveSaleFiscalAmounts,
@@ -62,6 +63,8 @@ const CHART_OF_ACCOUNTS = [
     // Agente bancario: efectivo captado por cuenta del banco (depósitos, pagos
     // de servicios...) — es del banco, NO ingreso del negocio.
     { code: '2.1.12', name: 'Corresponsalía Bancaria por Liquidar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.13', name: 'Reembolsos a Clientes por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.14', name: 'Saldos a Favor de Clientes', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
@@ -89,11 +92,11 @@ const CHART_OF_ACCOUNTS = [
 // SEED: Crear catálogo automáticamente para un tenant
 // ==========================================
 
-export async function seedChartOfAccounts(tenantId: string): Promise<void> {
+export async function seedChartOfAccounts(tenantId: string, client: Pick<Prisma.TransactionClient, 'account'> = prisma): Promise<void> {
     // Idempotente y AUTO-SANABLE: createMany skipDuplicates agrega solo las
     // cuentas faltantes (el @@unique(tenantId,code) las dedupe). Así un tenant
     // ya sembrado recibe cuentas NUEVAS del catálogo (ej. 1.1.6) sin migración.
-    const result = await prisma.account.createMany({
+    const result = await client.account.createMany({
         data: CHART_OF_ACCOUNTS.map(a => ({
             tenantId,
             code: a.code,
@@ -114,14 +117,14 @@ export async function seedChartOfAccounts(tenantId: string): Promise<void> {
 // HELPERS
 // ==========================================
 
-async function getAccount(tenantId: string, code: string) {
-    const account = await prisma.account.findUnique({
+async function getAccount(tx: Pick<Prisma.TransactionClient, 'account'>, tenantId: string, code: string) {
+    const account = await tx.account.findUnique({
         where: { tenantId_code: { tenantId, code } }
     });
     if (!account) {
         // Auto-seed if missing
-        await seedChartOfAccounts(tenantId);
-        return prisma.account.findUnique({
+        await seedChartOfAccounts(tenantId, tx);
+        return tx.account.findUnique({
             where: { tenantId_code: { tenantId, code } }
         });
     }
@@ -212,7 +215,7 @@ export async function createJournalEntry(
     // anterior disparaba esos seeds en paralelo y el asiento moría.
     const accounts: Awaited<ReturnType<typeof getAccount>>[] = [];
     for (const l of lines) {
-        accounts.push(await getAccount(tenantId, l.accountCode));
+        accounts.push(await getAccount(tx, tenantId, l.accountCode));
     }
 
     // A4: si algún código NO existe en el catálogo (ni tras el auto-seed), se
@@ -308,6 +311,7 @@ export function buildSaleJournalLines(
     fiscalSnapshot: {
         fiscalRegime?: FiscalRegime | string | null;
         vatAmount?: Decimal.Value | null;
+        storeCreditApplied?: Decimal.Value | null;
     } = {},
 ): { accountCode: string; debit: number; credit: number }[] {
     const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
@@ -321,9 +325,19 @@ export function buildSaleJournalLines(
     if (!normalizedCost.isFinite() || normalizedCost.isNegative()) {
         throw new Error('El costo de venta debe ser finito y no negativo');
     }
-    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
+    const storeCreditApplied = new Decimal(fiscalSnapshot.storeCreditApplied ?? 0).toDecimalPlaces(4);
+    if (!storeCreditApplied.isFinite() || storeCreditApplied.isNegative() || storeCreditApplied.greaterThan(normalizedTotal)) {
+        throw new Error('El saldo a favor aplicado debe estar entre cero y el total de la venta');
+    }
+    const tenderAmount = normalizedTotal.minus(storeCreditApplied);
+    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : settledPaymentAccount(paymentMethod);
     return [
-        { accountCode: cashAccount, debit: normalizedTotal.toNumber(), credit: 0 },
+        ...(tenderAmount.greaterThan(0)
+            ? [{ accountCode: cashAccount, debit: tenderAmount.toNumber(), credit: 0 }]
+            : []),
+        ...(storeCreditApplied.greaterThan(0)
+            ? [{ accountCode: '2.1.14', debit: storeCreditApplied.toNumber(), credit: 0 }]
+            : []),
         { accountCode: '4.1.1', debit: 0, credit: fiscalAmounts.netRevenue.toNumber() },
         { accountCode: '2.1.2', debit: 0, credit: fiscalAmounts.vatAmount.toNumber() },
         { accountCode: '5.1.1', debit: normalizedCost.toNumber(), credit: 0 },
@@ -342,6 +356,7 @@ export function buildSaleJournalRequest(
         date?: Date;
         fiscalRegime?: FiscalRegime | string | null;
         vatAmount?: Decimal.Value | null;
+        storeCreditApplied?: Decimal.Value | null;
     },
 ) {
     return {
@@ -351,6 +366,7 @@ export function buildSaleJournalRequest(
         lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal, {
             fiscalRegime: opts?.fiscalRegime,
             vatAmount: opts?.vatAmount,
+            storeCreditApplied: opts?.storeCreditApplied,
         }),
         entryOptions: opts?.date ? { date: opts.date } : undefined,
     };
@@ -377,6 +393,7 @@ export async function recordSale(
         date?: Date;
         fiscalRegime?: FiscalRegime | string | null;
         vatAmount?: Decimal.Value | null;
+        storeCreditApplied?: Decimal.Value | null;
     },
 ) {
     // IVA Nicaragua 15% SOLO sobre la parte gravada (misma función pura que usa
@@ -415,7 +432,7 @@ export function buildPaymentJournalLines(amount: Decimal.Value, paymentMethod: C
     if (normalizedAmount.decimalPlaces() > 2 || normalizedAmount.greaterThan('99999999.99')) {
         throw new Error('amount no cabe en el rango monetario permitido');
     }
-    const settlementAccount = paymentMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    const settlementAccount = settledPaymentAccount(paymentMethod);
     return [
         { accountCode: settlementAccount, debit: normalizedAmount.toNumber(), credit: 0 },
         { accountCode: '1.1.3', debit: 0, credit: normalizedAmount.toNumber() },
@@ -918,7 +935,11 @@ export interface ReturnJournalInput {
     creditReduction: Decimal.Value;
     /** Importe ya cobrado que se devuelve por el canal de liquidación. */
     settledRefund: Decimal.Value;
-    refundMethod: 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
+    /** Porción que repone saldo a favor consumido en la venta original. */
+    storeCreditRestoration?: Decimal.Value;
+    refundMethod: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'STORE_CREDIT';
+    /** Un canal externo todavía no comprobado acredita el pasivo, no Bancos. */
+    refundPending?: boolean;
 }
 
 export interface ReturnJournalLine {
@@ -952,12 +973,13 @@ export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJourna
     const exemptTotal = returnMoney(input.exemptTotal ?? 0, 'exemptTotal');
     const creditReduction = returnMoney(input.creditReduction, 'creditReduction');
     const settledRefund = returnMoney(input.settledRefund, 'settledRefund');
+    const storeCreditRestoration = returnMoney(input.storeCreditRestoration ?? 0, 'storeCreditRestoration');
 
     if (exemptTotal.greaterThan(total)) {
         throw new Error('exemptTotal no puede superar el total de la devolución');
     }
-    if (!creditReduction.plus(settledRefund).equals(total)) {
-        throw new Error('creditReduction + settledRefund debe reconstruir exactamente el total de la devolución');
+    if (!creditReduction.plus(settledRefund).plus(storeCreditRestoration).equals(total)) {
+        throw new Error('creditReduction + settledRefund + storeCreditRestoration debe reconstruir exactamente el total de la devolución');
     }
 
     const desglose = desglosarVentaConExoneracion(total, exemptTotal);
@@ -966,13 +988,20 @@ export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJourna
         desglose.iva,
         input.fiscalRegime ?? FISCAL_REGIME_GENERAL,
     );
-    const settlementAccount = input.refundMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    const settlementAccount = input.refundMethod === 'STORE_CREDIT'
+        ? '2.1.14'
+        : input.refundPending
+        ? '2.1.13'
+        : settledPaymentAccount(input.refundMethod);
     return [
         { accountCode: '4.1.2', debit: fiscalAmounts.netRevenue.toNumber(), credit: 0 },
         { accountCode: '2.1.2', debit: fiscalAmounts.vatAmount.toNumber(), credit: 0 },
         { accountCode: '1.1.4', debit: costTotal.toNumber(), credit: 0 },
         { accountCode: '1.1.3', debit: 0, credit: creditReduction.toNumber() },
         { accountCode: settlementAccount, debit: 0, credit: settledRefund.toNumber() },
+        ...(storeCreditRestoration.greaterThan(0)
+            ? [{ accountCode: '2.1.14', debit: 0, credit: storeCreditRestoration.toNumber() }]
+            : []),
         { accountCode: '5.1.1', debit: 0, credit: costTotal.toNumber() },
     ];
 }
@@ -997,7 +1026,9 @@ export async function recordReturn(
         fiscalRegime?: FiscalRegime | string | null;
         creditReduction?: Decimal.Value;
         settledRefund?: Decimal.Value;
-        refundMethod?: 'CASH' | 'CARD' | 'QR' | 'TRANSFER';
+        storeCreditRestoration?: Decimal.Value;
+        refundMethod?: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'STORE_CREDIT';
+        refundPending?: boolean;
         /** @deprecated alias legacy: solo representa CASH. */
         cashRefund?: Decimal.Value;
     } = {},
@@ -1015,7 +1046,9 @@ export async function recordReturn(
         fiscalRegime: options.fiscalRegime,
         creditReduction,
         settledRefund,
+        storeCreditRestoration: options.storeCreditRestoration,
         refundMethod,
+        refundPending: options.refundPending,
     });
 
     await createJournalEntry(

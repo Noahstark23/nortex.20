@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-08T02:26:52.415Z",
+  "reservedQuestions": 60,
+  "status": "not_run",
+  "paidCalls": 0,
+  "humanReview": "pending",
+  "results": [],
+  "maxReservationPerRunUsd": "1.127680",
+  "costAuthority": "AssistantUsage + AssistantBudget del backend; recolección pendiente"
+}

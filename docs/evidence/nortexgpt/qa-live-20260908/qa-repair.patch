@@ -1,0 +1,292 @@
+--- a/scripts/qa/nortexgpt-verify-run.ts
++++ b/scripts/qa/nortexgpt-verify-run.ts
+@@ -7,13 +7,10 @@
+  *
+  * Dos preguntas SEPARADAS, con evidencias distintas:
+  *
+- * 1. ¿Respondió el modelo? `degraded:false` sólo lo produce la rama
+- *    `respond_with_evidence` del orquestador. Pero `degraded:true` NO significa
+- *    "no se llamó al modelo": los cierres parciales (consumo con caché, respuesta
+- *    mal terminada, iteraciones agotadas, plazo vencido) ocurren DESPUÉS de llamadas
+- *    pagadas y ya liquidadas. Sólo el respaldo determinista —sin credencial— no llama.
+- *    Se distinguen por `iterations`: el orquestador lo incrementa dentro del bucle,
+- *    antes de cada llamada; el respaldo nunca lo toca. De ahí tres clases, no dos.
++ * 1. ¿Respondió el modelo? `degraded:false` en SUCCEEDED acredita una respuesta.
++ *    `iterations` se incrementa ANTES de reservar: no acredita una llamada.
++ *    Una respuesta o un requestId explícitamente enlazado acredita contacto;
++ *    con iteraciones sin esa evidencia, el intento queda desconocido.
+  *
+  * 2. ¿Cuánto consumió ESA ejecución? Sólo se afirma con una correlación inequívoca:
+  *    el campo `runId` de la fila de consumo, escrito al CREAR la reserva —antes de
+@@ -39,6 +36,7 @@
+ export const USAGE_RUN_LINK_FIELD = 'runId';
+ export const CLASS_MODEL_ANSWERED = 'respuesta_del_modelo';
+ export const CLASS_INCOMPLETE_WITH_CALLS = 'incompleta_con_llamadas_al_proveedor';
++export const CLASS_CALLS_UNKNOWN = 'llamadas_al_proveedor_no_acreditadas';
+ export const CLASS_FALLBACK_NO_CALLS = 'respaldo_determinista_sin_llamadas';
+ export const COST_ATTRIBUTED = 'consumo_por_ejecucion_acreditado';
+ export const COST_PARTIAL = 'consumo_por_ejecucion_incompleto';
+@@ -77,15 +75,19 @@
+   return [at(-1), at(0), at(1)];
+ }
+ 
+-/** El orquestador incrementa `iterations` dentro del bucle, antes de cada llamada; el respaldo nunca. */
+-export function providerCallAttempted(run: VerifiableRun): boolean {
+-  return (run.iterations ?? 0) > 0;
+-}
+-
+-/** Tres clases, no dos: una ejecución degradada pudo haber pagado hasta cuatro iteraciones. */
+-export function classifyRun(run: VerifiableRun): string {
++/** Una iteración puede detenerse antes de llamar; una reserva tampoco prueba envío. */
++export function providerCallAttempted(run: VerifiableRun, usageRows: VerifiableUsage[] = []): boolean | null {
++  if (runAnsweredByModel(run)) return true;
++  const cost = attributeUsageToRun(run, usageRows);
++  if (cost.attributable && cost.providerRequests.length > 0) return true;
++  if (run.status === 'SUCCEEDED' && run.iterations === 0 && !usageRows.some(row => row?.[USAGE_RUN_LINK_FIELD] === run.id)) return false;
++  return null;
++}
++
++export function classifyRun(run: VerifiableRun, usageRows: VerifiableUsage[] = []): string {
+   if (runAnsweredByModel(run)) return CLASS_MODEL_ANSWERED;
+-  return providerCallAttempted(run) ? CLASS_INCOMPLETE_WITH_CALLS : CLASS_FALLBACK_NO_CALLS;
++  const attempted = providerCallAttempted(run, usageRows);
++  return attempted === true ? CLASS_INCOMPLETE_WITH_CALLS : attempted === false ? CLASS_FALLBACK_NO_CALLS : CLASS_CALLS_UNKNOWN;
+ }
+ 
+ /**
+@@ -105,6 +107,17 @@
+   if (foreign.length) {
+     return { attributable: false, basis: USAGE_RUN_LINK_FIELD, status: COST_NOT_ATTRIBUTED, reason: `El enlace de consumo apunta a ${foreign.length} fila(s) de otro tenant o usuario; la correlación es incoherente y no se acredita.`, rows: [], observedUsd: null, reservedUsd: null, providerRequests: [] };
+   }
++  const invalid = linked.some(row => {
++    try {
++      const reserved = new Decimal(String(row.reservedUsd));
++      if (!reserved.isFinite() || reserved.isNegative()) return true;
++      if (row.status !== 'SETTLED') return false;
++      if (row.actualUsd == null) return true;
++      const actual = new Decimal(String(row.actualUsd));
++      return !actual.isFinite() || actual.isNegative();
++    } catch { return true; }
++  });
++  if (invalid) return { attributable: false, basis: USAGE_RUN_LINK_FIELD, status: COST_NOT_ATTRIBUTED, reason: 'Importes de consumo ausentes o inválidos; no se sustituyen por cero.', rows: [], observedUsd: null, reservedUsd: null, providerRequests: [] };
+   const settled = linked.filter(row => row.status === 'SETTLED');
+   const pending = linked.filter(row => row.status !== 'SETTLED');
+   const sum = (rows: VerifiableUsage[], field: 'actualUsd' | 'reservedUsd') => rows.reduce((total, row) => total.add(new Decimal((row[field] ?? 0)?.toString() ?? '0')), new Decimal(0));
+@@ -123,14 +136,14 @@
+ export function buildRunFinding({ run, usageRows }: { run: VerifiableRun; usageRows: VerifiableUsage[] }) {
+   const result = (run.result ?? {}) as { degraded?: boolean; evidence?: Array<{ id: string; tool: string }>; actionProposalIds?: string[]; text?: string };
+   const modelAnswered = runAnsweredByModel(run);
+-  const attempted = providerCallAttempted(run);
++  const attempted = providerCallAttempted(run, usageRows);
+   const cost = attributeUsageToRun(run, usageRows);
+   return {
+     runId: run.id, tenantId: run.tenantId, month: usageMonthForRun(run),
+     modelAnswered,
+-    verdict: classifyRun(run),
++    verdict: classifyRun(run, usageRows),
+     providerCallAttempted: attempted,
+-    verdictBasis: 'estado de la ejecución, result.degraded e iterations; no depende de las filas de consumo',
++    verdictBasis: 'respuesta validada o requestId enlazado; iterations por sí solo no acredita llamadas',
+     runStatus: run.status, errorCode: run.errorCode ?? null,
+     degraded: result.degraded ?? null, iterations: run.iterations ?? null,
+     // Fuentes: sólo nombre de herramienta e identificador de evidencia, sin contenido.
+@@ -145,9 +158,11 @@
+     providerRequestsForThisRun: cost.providerRequests,
+     note: modelAnswered
+       ? 'La ejecución no quedó degradada: hubo respuesta validada del proveedor. No acredita calidad; la revisión humana sigue pendiente.'
+-      : attempted
+-        ? 'Degradada DESPUÉS de llamar al proveedor: hubo hasta cuatro iteraciones pagadas y ya liquidadas. No es una respuesta del modelo, pero tampoco es gasto cero.'
+-        : 'Respaldo determinista: no se llamó al proveedor y no hubo consumo por esta ejecución.',
++      : attempted === true
++        ? 'Hay evidencia de contacto con el proveedor, pero la respuesta quedó incompleta. El costo se informa por separado y puede seguir incierto.'
++        : attempted === false
++          ? 'Respaldo determinista sin iteraciones del proveedor. La ausencia de filas enlazadas no acredita un importe por consulta.'
++          : 'No se puede acreditar si se llamó al proveedor: las iteraciones incluyen intentos detenidos antes del envío. No se presume gasto cero ni liquidación completa.',
+   };
+ }
+ 
+@@ -206,7 +221,7 @@
+   console.log(JSON.stringify(output, null, 2));
+   const unanswered = output.findings.filter(item => item.verdict !== CLASS_MODEL_ANSWERED);
+   const paidButIncomplete = output.findings.filter(item => item.verdict === CLASS_INCOMPLETE_WITH_CALLS);
+-  if (paidButIncomplete.length) console.error(`AVISO: ${paidButIncomplete.length} ejecución(es) quedaron incompletas DESPUÉS de llamar al proveedor. Hubo consumo; no las cuentes como gasto cero.`);
++  if (paidButIncomplete.length) console.error(`AVISO: ${paidButIncomplete.length} ejecución(es) quedaron incompletas DESPUÉS de llamar al proveedor. El consumo se verifica por separado; puede quedar incompleto.`);
+   const unattributed = output.findings.filter(item => item.costAttribution !== COST_ATTRIBUTED);
+   if (unattributed.length) console.error(`AVISO: ${unattributed.length} ejecución(es) con ${COST_NOT_ATTRIBUTED} o incompleto. No informar un gasto por consulta a partir de estos datos.`);
+   if (unanswered.length) process.exitCode = 1;
+--- a/tests/qaVerifyRunAttribution.test.ts
++++ b/tests/qaVerifyRunAttribution.test.ts
+@@ -1,6 +1,6 @@
+ import { describe, expect, it } from 'vitest';
+ import {
+-  CLASS_FALLBACK_NO_CALLS, CLASS_INCOMPLETE_WITH_CALLS, CLASS_MODEL_ANSWERED,
++  CLASS_CALLS_UNKNOWN, CLASS_FALLBACK_NO_CALLS, CLASS_INCOMPLETE_WITH_CALLS, CLASS_MODEL_ANSWERED,
+   COST_ATTRIBUTED, COST_NOT_ATTRIBUTED, COST_PARTIAL, USAGE_RUN_LINK_FIELD,
+   attributeUsageToRun, buildRunFinding, classifyRun, modelHasField, monthWindowForRun,
+   providerCallAttempted, runAnsweredByModel, usageMonthForRun,
+@@ -28,7 +28,7 @@
+     expect(result.observedUsd).toBeNull();
+     expect(result.reservedUsd).toBeNull();
+     expect(result.rows).toEqual([]);
+-    expect(result.reason).toMatch(/no guarda el identificador de la ejecución/);
++    expect(result.reason).toMatch(/runId ausente o vacío/);
+   });
+ 
+   it('dos consultas del mismo usuario no se atribuyen consumo entre sí', () => {
+@@ -133,18 +133,33 @@
+   });
+ 
+   it('degraded:true no equivale a "no se llamó al modelo"', () => {
+-    // El orquestador incrementa iterations antes de cada llamada; el respaldo nunca.
++    // El contador se incrementa antes de reservar: no demuestra contacto con el proveedor.
+     const paidButIncomplete = run('run-parcial', '2026-09-08T15:00:00Z', fellBack, { iterations: 3 });
+     const neverCalled = run('run-respaldo', '2026-09-08T15:00:00Z', fellBack, { iterations: 0 });
+-    expect(providerCallAttempted(paidButIncomplete)).toBe(true);
++    expect(providerCallAttempted(paidButIncomplete)).toBeNull();
+     expect(providerCallAttempted(neverCalled)).toBe(false);
+-    expect(classifyRun(paidButIncomplete)).toBe(CLASS_INCOMPLETE_WITH_CALLS);
++    expect(classifyRun(paidButIncomplete)).toBe(CLASS_CALLS_UNKNOWN);
+     expect(classifyRun(neverCalled)).toBe(CLASS_FALLBACK_NO_CALLS);
+     expect(classifyRun(run('run-ok', '2026-09-08T15:00:00Z', answered))).toBe(CLASS_MODEL_ANSWERED);
+-    // Y la nota no debe insinuar gasto cero cuando hubo iteraciones pagadas.
++    // La nota no inventa llamadas ni gasto a partir del contador.
+     const finding = buildRunFinding({ run: paidButIncomplete, usageRows: [] });
+-    expect(finding.note).toMatch(/tampoco es gasto cero/);
+-    expect(buildRunFinding({ run: neverCalled, usageRows: [] }).note).toMatch(/no hubo consumo/);
++    expect(finding.note).toMatch(/No se presume gasto cero/);
++    expect(buildRunFinding({ run: neverCalled, usageRows: [] }).note).toMatch(/sin iteraciones del proveedor/);
++  });
++
++  it('una reserva incierta o liberada no acredita envío ni una liquidación sin importe', () => {
++    const target = run('a', '2026-09-08T15:00:00Z', fellBack);
++    for (const status of ['RESERVED', 'UNKNOWN', 'SETTLED']) {
++      const rows = [usage('u', '2026-09-08T15:00:01Z', { runId: 'a', status, actualUsd: status === 'SETTLED' ? '0' : null, providerRequestId: null })];
++      expect(providerCallAttempted(target, rows)).toBeNull();
++      expect(providerCallAttempted({...target,iterations:0}, rows)).toBeNull();
++    }
++    for (const actualUsd of [null, undefined, 'NaN', '-1', 'Infinity']) {
++      const finding = buildRunFinding({ run: target, usageRows: [usage('u', '2026-09-08T15:00:01Z', { runId: 'a', actualUsd })] });
++      expect(finding.costAttribution).toBe(COST_NOT_ATTRIBUTED);
++      expect(finding.observedUsdForThisRun).toBeNull();
++    }
++    expect(providerCallAttempted(target, [usage('u', '2026-09-08T15:00:01Z', { runId: 'a', tenantId: 'foreign' })])).toBeNull();
+   });
+ 
+   it('la ventana de meses cubre el borde: reservar de un lado y liquidar del otro', () => {
+--- a/tests/assistantOperationsOrchestrator.test.ts
++++ b/tests/assistantOperationsOrchestrator.test.ts
+@@ -1,5 +1,6 @@
+ import { describe, expect, it, vi } from 'vitest';
+ import { z } from 'zod';
++import { buildRunFinding } from '../scripts/qa/nortexgpt-verify-run';
+ import { runAssistantOrchestrator } from '../backend/services/assistant/operations/orchestrator';
+ import type { OperationTool,ToolContext } from '../backend/services/assistant/operations/contracts';
+ 
+@@ -89,6 +90,11 @@
+     h.reserve.mockRejectedValue(new Error('Budget exhausted'));
+     const result=await runAssistantOrchestrator({...query,text:'Revisá mi negocio y prepará una acción'},{...h.deps,tools:[{...h.tools[0],name:'audit_business_health',schema:z.object({startDate:z.string(),endDate:z.string()}),execute:read},{...h.tools[0],name:'prepare_order',kind:'PREPARE',execute:prepare}]});
+     expect(result.evidence[0]?.data).toEqual({metrics:[{key:'salesTotal',value:'100',status:'ok'}]});expect(prepare).not.toHaveBeenCalled();expect(h.create).not.toHaveBeenCalled();
++    const checkpoint=h.onCheckpoint.mock.calls.at(-1)?.[0] as unknown as {iterations:number};
++    const finding=buildRunFinding({run:{id:query.runId,tenantId:principal.tenantId,userId:principal.userId,status:'SUCCEEDED',iterations:checkpoint.iterations,result,createdAt:new Date()},usageRows:[]});
++    expect(checkpoint.iterations).toBe(1);
++    expect(finding.providerCallAttempted).toBeNull();
++    expect(finding.note).not.toContain('pagadas y ya liquidadas');
+   });
+   it('revocar durante la reserva impide enviar historial al proveedor y libera el consumo no usado',async()=>{
+     const h=harness();let active=true;
+--- a/tests/assistantRuns.integration.test.ts
++++ b/tests/assistantRuns.integration.test.ts
+@@ -241,4 +241,32 @@
+     const bucket=await prisma.assistantBudget.findFirstOrThrow({where:{scope:`tenant:${f.principal.tenantId}`,month:'2077-06'}});
+     expect(bucket.reservedUsd.toFixed(6)).toBe('0.000000');expect(bucket.spentUsd.toFixed(6)).toBe('0.000000');
+   });
++  it('vincula cada reserva del orquestador real a su run bajo concurrencia y conserva UNKNOWN',async()=>{
++    const f=await fixture();
++    const runs=await Promise.all([createAssistantRun(f.principal,f.conversation.id,input(),deps()),createAssistantRun(f.principal,f.conversation.id,input(),deps())]);
++    const provider=vi.fn(async()=>({id:'qa-linked-response',stop_reason:'end_turn',usage:{input_tokens:100,output_tokens:50},content:[]}));
++    await Promise.all(runs.map((run,index)=>runAssistantOrchestrator({principal:f.principal,conversationId:f.conversation.id,runId:run.id,text:'Consulta QA'}, {
++      db:prisma,tools:[],enabled:()=>true,assertActive:async()=>{},onCheckpoint:async()=>{},
++      create:index===0?provider:async()=>{throw new Error('Respuesta perdida sintética');},
++    })));
++    const rows=await prisma.assistantUsage.findMany({where:{tenantId:f.principal.tenantId},orderBy:{runId:'asc'}});
++    expect(rows).toHaveLength(2);
++    const settled=rows.find(row=>row.runId===runs[0].id)!,unknown=rows.find(row=>row.runId===runs[1].id)!;
++    expect(settled).toMatchObject({status:'SETTLED',userId:f.principal.userId,providerRequestId:'qa-linked-response'});
++    expect(settled.actualUsd?.toFixed(6)).toBe('0.000350');
++    expect(unknown).toMatchObject({status:'UNKNOWN',userId:f.principal.userId,actualUsd:null});
++    await Promise.all([settleAssistantBudget(f.principal,settled.id,{inputTokens:100,outputTokens:50},{db:prisma}),settleAssistantBudget(f.principal,settled.id,{inputTokens:100,outputTokens:50},{db:prisma})]);
++    const bucket=await prisma.assistantBudget.findFirstOrThrow({where:{scope:`tenant:${f.principal.tenantId}`,month:settled.month}});
++    expect(bucket.spentUsd.toFixed(6)).toBe('0.000350');expect(bucket.reservedUsd.toFixed(6)).toBe(unknown.reservedUsd.toFixed(6));
++    expect(await prisma.assistantUsage.count({where:{runId:runs[0].id}})).toBe(1);
++  });
++
++  it('liquidar después del corte mensual conserva el enlace y carga el mes reservado',async()=>{
++    const f=await fixture(),run=await createAssistantRun(f.principal,f.conversation.id,input(),deps());
++    const reservation=await reserveAssistantBudget(f.principal,'0.01',{db:prisma,capability:'help',runId:run.id,now:()=>new Date('2078-02-01T05:59:59Z')});
++    await settleAssistantBudget(f.principal,reservation.id,{inputTokens:100,outputTokens:50,requestId:'qa-boundary'},{db:prisma,now:()=>new Date('2078-02-01T06:00:01Z')});
++    expect(await prisma.assistantUsage.findUniqueOrThrow({where:{id:reservation.id}})).toMatchObject({runId:run.id,month:'2078-01',status:'SETTLED'});
++    expect(await prisma.assistantBudget.count({where:{scope:`tenant:${f.principal.tenantId}`,month:'2078-02'}})).toBe(0);
++  });
++
+ });
+--- a/docs/NORTEXGPT_HAIKU_CONFIGURACION_2026-09-08.md
++++ b/docs/NORTEXGPT_HAIKU_CONFIGURACION_2026-09-08.md
+@@ -184,13 +184,17 @@
+ 
+ ### c) `degraded:true` no significa «no se llamó al modelo»
+ 
+-También era mío este error. Los cierres parciales del orquestador —consumo con caché,
+-respuesta mal terminada, iteraciones agotadas, plazo vencido— ocurren **después** de
+-llamadas pagadas y ya liquidadas. Sólo el respaldo determinista, sin credencial, no
+-llama. Se distinguen por `iterations`, que el orquestador incrementa dentro del bucle
+-antes de cada llamada y el respaldo nunca toca. El verificador ahora clasifica en tres
+-estados y avisa por `stderr` cuando una ejecución quedó incompleta **con** llamadas
+-pagadas, para que no se cuente como gasto cero.
++La QA local reprodujo un error de clasificación: una reserva rechazada por
++presupuesto deja `iterations = 1` y el proveedor sin invocar. El contador aumenta
++antes de reservar; tampoco una reserva liberada tras revocación demuestra envío.
++
++El verificador conserva `respuesta_del_modelo` para `SUCCEEDED/degraded:false`.
++Para una respuesta incompleta exige un `providerRequestId` enlazado al mismo run,
++negocio y usuario. Sin evidencia suficiente informa
++`llamadas_al_proveedor_no_acreditadas` y `providerCallAttempted: null`; no afirma
++llamadas pagadas ni liquidación completa. Los importes ausentes, negativos o no
++finitos no se convierten en cero. La ausencia de vínculo sigue dejando el costo
++por ejecución en `null`.
+ 
+ ### Alcance y lo que falta
+ 
+--- a/docs/runbooks/nortexgpt-evaluacion-haiku.md
++++ b/docs/runbooks/nortexgpt-evaluacion-haiku.md
+@@ -171,20 +171,20 @@
+ 
+ Responde **dos preguntas separadas, con evidencias distintas**:
+ 
+-1. **¿Respondió el modelo?** Tres clases, no dos:
++1. **¿Respondió el modelo?** Separar respuesta, contacto acreditado e incertidumbre:
+ 
+    | Clase | Significado |
+    |---|---|
+-   | `respuesta_del_modelo` | `SUCCEEDED` con `degraded: false`. Respuesta validada. |
+-   | `incompleta_con_llamadas_al_proveedor` | `degraded: true` **con `iterations > 0`**. Hubo llamadas pagadas y liquidadas; la respuesta no llegó a validarse. **No es gasto cero.** |
+-   | `respaldo_determinista_sin_llamadas` | `degraded: true` con `iterations = 0`. No se llamó al proveedor. |
+-
+-   `degraded: true` **no** equivale a «no se llamó al modelo»: consumo con caché,
+-   respuesta mal terminada, iteraciones agotadas y plazo vencido ocurren *después* de
+-   llamadas ya liquidadas. Se distinguen por `iterations`, que el orquestador
+-   incrementa dentro del bucle antes de cada llamada y el respaldo nunca toca.
+-   Nada de esto depende de las filas de consumo, así que un lote de un mes anterior
+-   se evalúa igual.
++   | `respuesta_del_modelo` | `SUCCEEDED` con `degraded: false`: respuesta validada, pendiente de evaluación humana. |
++   | `incompleta_con_llamadas_al_proveedor` | Hay un `providerRequestId` en consumo válido enlazado al mismo run, negocio y usuario; la respuesta no llegó a validarse. No demuestra que todo el consumo esté liquidado. |
++   | `respaldo_determinista_sin_llamadas` | `SUCCEEDED` con `iterations = 0`, sin respuesta ni contacto acreditado. |
++   | `llamadas_al_proveedor_no_acreditadas` | El contador o una reserva no permiten decidir si hubo envío; `providerCallAttempted` queda en `null`. |
++
++   El orquestador incrementa `iterations` **antes de reservar presupuesto**. Un
++   presupuesto agotado, una revocación o un plazo vencido pueden detenerlo antes
++   de enviar. `UNKNOWN` tampoco acredita recepción del proveedor. No inferir
++   llamadas pagadas ni liquidación completa del contador. Se conserva la consulta
++   por `runId` sin ventanas temporales para acreditar consumo.
+ 
+ 2. **¿Cuánto consumió esa ejecución?** Sólo con `AssistantUsage.runId`, escrito al
+    **crear la reserva** —antes de llamar al proveedor—, de modo que también quedan

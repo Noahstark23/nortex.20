@@ -32,11 +32,12 @@ import {
     offlineReplayPayloadHash,
     type OfflineReplaySaleInput,
 } from '../lib/offlineSaleReplay.js';
-import { desglosarVentaConExoneracion } from './nicaTax.js';
+import { calculateSaleTotals } from './promotions/totals.js';
+import { assertCheckoutMatches, completeCheckout, lockCheckoutForSale, promotionReplayHash } from './promotions/checkout.js';
+import { authorizePromotion, PromotionError } from './promotions/authority.js';
 import {
     hasFiscalRegimeVersionConflict,
     normalizeFiscalRegime,
-    resolveSaleFiscalAmounts,
 } from '../../utils/fiscalRegime.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
@@ -62,7 +63,11 @@ export type SaleErrorCode =
     | 'RECONCILIATION_REQUIRED'
     | 'DUPLICATE_MEASUREMENT_EVENT'
     | 'QUOTATION_INVALID'
-    | 'OFFLINE_PAYLOAD_MISMATCH';
+    | 'OFFLINE_PAYLOAD_MISMATCH'
+    | 'STORE_CREDIT_CUSTOMER_REQUIRED'
+    | 'STORE_CREDIT_EXCEEDED'
+    | 'STORE_CREDIT_SOURCE_INVALID'
+    | `PROMOTION_${string}`;
 
 export class SaleError extends Error {
     constructor(
@@ -163,6 +168,7 @@ export const SaleItemInputSchema = z.object({
 
 export const CreateSaleSchema = z.object({
     items: z.array(SaleItemInputSchema).min(1, 'Se requiere al menos 1 producto').max(500),
+    promotionQuote: z.object({ id: z.string().min(1).max(191), version: z.number().int().positive() }).optional(),
     paymentMethod: z.enum(['CASH', 'CARD', 'QR', 'CREDIT', 'TRANSFER']),
     customerId: z.string().min(1).max(191).nullable().optional(),
     customerName: z.string().max(255).optional(),
@@ -174,6 +180,11 @@ export const CreateSaleSchema = z.object({
     // Las ventas online aceptan el campo por compatibilidad, pero nunca deciden
     // su régimen a partir del cliente.
     fiscalRegimeVersion: z.number().int().positive().optional(),
+    storeCreditAmount: finiteDecimalInput.refine(
+        (value) => new Decimal(value).greaterThanOrEqualTo(0),
+        'El saldo a favor aplicado no puede ser negativo',
+    ).optional().default('0'),
+    storeCreditSourceReturnId: z.string().trim().min(1).max(191).optional(),
 });
 
 type CreateSaleInput = z.output<typeof CreateSaleSchema>;
@@ -258,7 +269,7 @@ const safeSaleCreatedAt = (input: string | Date | undefined): Date => {
     return parsed;
 };
 
-const storedOfflineId = (tenantId: string, offlineId: string): string => {
+export const storedOfflineId = (tenantId: string, offlineId: string): string => {
     // Sale.offlineId conserva un unique global legado. Hashear tenant+evento lo
     // vuelve efectivamente tenant-scoped sin exceder el VARCHAR ni cambiar una
     // restriccion existente de forma destructiva.
@@ -403,13 +414,8 @@ const findSaleByMeasurementEvents = async (
     };
 };
 
-const lineNet = (item: NormalizedSaleItem): Decimal => {
-    const factor = new Decimal(1).minus(item.discountPct.dividedBy(100));
-    return item.unitPrice.mul(item.quantity).mul(factor);
-};
-
 const ensureAccountingCatalog = async (tenantId: string): Promise<void> => {
-    const requiredCodes = ['1.1.1', '1.1.3', '1.1.4', '2.1.2', '4.1.1', '5.1.1'];
+    const requiredCodes = ['1.1.1', '1.1.3', '1.1.4', '2.1.2', '2.1.14', '4.1.1', '5.1.1'];
     const rows = await prisma.account.findMany({
         where: { tenantId, code: { in: requiredCodes } },
         select: { code: true },
@@ -586,6 +592,38 @@ const lockOwnedOfflineShift = async (
     return rows[0];
 };
 
+/**
+ * Gate final del POS online contra cierre/traspaso concurrente.
+ *
+ * Mantiene el orden global Product -> Shift: la venta puede leer el turno al
+ * inicio, pero solo confirma el dinero/stock si todavía logra bloquear SU
+ * mismo turno abierto justo antes del asiento contable.
+ */
+const lockOwnedOpenPosShift = async (
+    tx: PrismaTx,
+    tenantId: string,
+    userId: string,
+    shiftId: string,
+): Promise<void> => {
+    const rows = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT \`id\`
+          FROM \`Shift\`
+         WHERE \`id\` = ${shiftId}
+           AND \`tenantId\` = ${tenantId}
+           AND \`userId\` = ${userId}
+           AND \`status\` = 'OPEN'
+         LIMIT 1
+         FOR UPDATE
+    `);
+    if (rows.length !== 1) {
+        throw new SaleError(
+            'NO_SHIFT',
+            409,
+            'CAJA CERRADA: El turno ya fue cerrado o reasignado mientras se procesaba la venta',
+        );
+    }
+};
+
 const assertOfflineEmployeeClaim = (
     claimedEmployeeId: string | null | undefined,
     shiftEmployeeId: string | null,
@@ -601,7 +639,7 @@ const assertOfflineEmployeeClaim = (
     );
 };
 
-export async function executeSaleWithResult(
+async function executeSaleWithResultInternal(
     tenantId: string,
     userId: string,
     shiftId: string | null,
@@ -619,8 +657,16 @@ export async function executeSaleWithResult(
     const submittedInput = parsed.data;
     const offlineSync = options.offlineSync === true;
     const source = offlineSync ? 'OFFLINE_SYNC' : submittedInput.source;
+    if (submittedInput.promotionQuote && (offlineSync || source !== 'POS')) throw new PromotionError('PROMOTION_OFFLINE_FORBIDDEN', 409, 'Una venta promocionada requiere confirmación online en POS.');
     if (!tenantId || !userId) {
         throw new SaleError('INVALID_INPUT', 401, 'Identidad de venta incompleta');
+    }
+    if (offlineSync && new Decimal(submittedInput.storeCreditAmount).greaterThan(0)) {
+        throw new SaleError(
+            'RECONCILIATION_REQUIRED',
+            409,
+            'El saldo a favor requiere conexión para confirmar el balance actual del cliente',
+        );
     }
 
     // Este guard corre ANTES de cualquier early-return idempotente. Una fila
@@ -636,14 +682,14 @@ export async function executeSaleWithResult(
         ? { ...submittedInput, employeeId: offlineShift.employeeId }
         : submittedInput;
 
-    const offlinePayloadHash = input.offlineId
+    const offlinePayloadHash = promotionReplayHash(input.offlineId
         ? offlineReplayPayloadHash({
             tenantId,
             userId,
             shiftId,
             input: input as unknown as OfflineReplaySaleInput,
         })
-        : null;
+        : null, input as any);
     const versionlessOnlineHash = input.offlineId
         && offlineSync
         && input.fiscalRegimeVersion !== undefined
@@ -664,6 +710,7 @@ export async function executeSaleWithResult(
         });
     };
 
+    if (input.promotionQuote) await authorizePromotion(prisma, { tenantId, userId });
     if (input.offlineId) {
         const existing = await findSaleByOfflineId(tenantId, input.offlineId);
         if (existing) {
@@ -695,12 +742,20 @@ export async function executeSaleWithResult(
     await asegurarBodegaPorDefecto(prisma, tenantId);
     await ensureAccountingCatalog(tenantId);
 
-    const saleCreatedAt = safeSaleCreatedAt(options.createdAt);
+    let saleCreatedAt = safeSaleCreatedAt(options.createdAt);
     const globalDiscount = new Decimal(input.globalDiscount);
-    const globalFactor = new Decimal(1).minus(globalDiscount.dividedBy(100));
 
+    let transactionalReplay = false;
     try {
         const sale = await prisma.$transaction(async (tx: PrismaTx) => {
+            const promotionState = source === 'POS' && !offlineSync
+                ? await lockCheckoutForSale(tx, { tenantId, userId }, input as any, shiftId)
+                : { enabled: false, checkout: null, fiscal: null };
+            if (promotionState.checkout?.saleId) {
+                const completed = await tx.sale.findFirst({ where: { id: promotionState.checkout.saleId, tenantId, soldById: userId } });
+                if (!completed) throw new PromotionError('PROMOTION_RECEIPT_UNAVAILABLE', 409, 'El cobro requiere revisar su comprobante.');
+                assertReplayMatches(completed); transactionalReplay = true; return completed;
+            }
             if (source === 'POS') {
                 if (!shiftId) {
                     throw new SaleError('NO_SHIFT', 400, 'CAJA CERRADA: No hay turno abierto');
@@ -732,7 +787,9 @@ export async function executeSaleWithResult(
 
             // Una sola lectura autoritativa dentro de la transacción: el régimen
             // nunca viene del cliente y se congela junto con la venta.
-            const tenantConfig = await tx.tenant.findUnique({
+            const tenantConfig = promotionState.enabled
+                ? (await tx.$queryRaw<Array<{ allowNegativeStock: boolean; fiscalRegime: string; fiscalRegimeVersion: number }>>`SELECT allowNegativeStock, fiscalRegime, fiscalRegimeVersion FROM \`Tenant\` WHERE id = ${tenantId} FOR SHARE`)[0]
+                : await tx.tenant.findUnique({
                 where: { id: tenantId },
                 select: {
                     allowNegativeStock: true,
@@ -753,9 +810,10 @@ export async function executeSaleWithResult(
 
             let customer = null as Awaited<ReturnType<typeof tx.customer.findFirst>>;
             if (input.customerId) {
-                customer = await tx.customer.findFirst({
-                    where: { id: input.customerId, tenantId },
-                });
+                customer = promotionState.enabled
+                    ? (await tx.$queryRaw<any[]>`SELECT * FROM \`Customer\` WHERE id = ${input.customerId} AND tenantId = ${tenantId} FOR UPDATE`)[0] ?? null
+                    : await tx.customer.findFirst({ where: { id: input.customerId, tenantId } });
+                if (customer && promotionState.enabled) customer.isWholesale = Boolean(customer.isWholesale);
                 if (!customer) {
                     throw new SaleError('CUSTOMER_NOT_FOUND', 404, 'Cliente no encontrado');
                 }
@@ -788,6 +846,7 @@ export async function executeSaleWithResult(
                     wholesaleCustomer: customer?.isWholesale === true,
                     allowRevokedScaleVersionForReplay: offlineSync,
                     quotedAt: saleCreatedAt,
+                    ...(promotionState.enabled ? { promotionContext: { ...promotionState.fiscal!, at: new Date(), globalDiscount: input.globalDiscount } } : {}),
                 });
             } catch (error) {
                 if (error instanceof SaleItemNormalizationError) throw mapNormalizationError(error);
@@ -834,25 +893,47 @@ export async function executeSaleWithResult(
                 }
             }
 
-            const itemsSubtotal = normalizedItems.reduce(
-                (sum, item) => sum.plus(lineNet(item)),
-                new Decimal(0),
-            );
-            const finalTotal = itemsSubtotal.mul(globalFactor).toDecimalPlaces(2);
-            if (finalTotal.isNegative()) {
-                throw new SaleError('INVALID_INPUT', 400, 'El total no puede ser negativo');
+            const totals = calculateSaleTotals(normalizedItems, globalDiscount, fiscalRegime);
+            const { finalTotal, exemptTotal, fiscalAmounts } = totals;
+            if (finalTotal.isNegative()) throw new SaleError('INVALID_INPUT', 400, 'El total no puede ser negativo');
+            assertCheckoutMatches(promotionState.checkout, normalizedItems, {
+                fiscalRegime: tenantConfig.fiscalRegime, fiscalRegimeVersion: tenantConfig.fiscalRegimeVersion,
+            }, totals);
+            if (promotionState.enabled) saleCreatedAt = new Date();
+
+            const storeCreditApplied = new Decimal(input.storeCreditAmount).toDecimalPlaces(2);
+            if (storeCreditApplied.greaterThan(finalTotal)) {
+                throw new SaleError('STORE_CREDIT_EXCEEDED', 409, 'El saldo aplicado no puede superar el total de la venta');
             }
-            const exemptSubtotal = normalizedItems.reduce(
-                (sum, item) => item.ivaExento ? sum.plus(lineNet(item)) : sum,
-                new Decimal(0),
-            );
-            const exemptTotal = exemptSubtotal.mul(globalFactor).toDecimalPlaces(2);
-            const generalBreakdown = desglosarVentaConExoneracion(finalTotal, exemptTotal);
-            const fiscalAmounts = resolveSaleFiscalAmounts(
-                finalTotal,
-                generalBreakdown.iva,
-                fiscalRegime,
-            );
+            if (storeCreditApplied.greaterThan(0) && (!input.customerId || !customer)) {
+                throw new SaleError('STORE_CREDIT_CUSTOMER_REQUIRED', 400, 'Elegí el cliente dueño del saldo a favor');
+            }
+            if (storeCreditApplied.greaterThan(0)) {
+                const currentStoreCredit = new Decimal(customer!.storeCreditBalance.toString());
+                if (storeCreditApplied.greaterThan(currentStoreCredit)) {
+                    throw new SaleError('STORE_CREDIT_EXCEEDED', 409, 'El saldo a favor disponible cambió; volvé a revisar el cobro');
+                }
+            }
+            let sourceReturnId: string | null = null;
+            if (input.storeCreditSourceReturnId) {
+                if (!input.customerId || storeCreditApplied.isZero()) {
+                    throw new SaleError('STORE_CREDIT_SOURCE_INVALID', 400, 'El cambio debe aplicar saldo a favor al cliente');
+                }
+                const sourceReturn = await tx.productReturn.findFirst({
+                    where: {
+                        id: input.storeCreditSourceReturnId,
+                        tenantId,
+                        resolution: { in: ['EXCHANGE', 'STORE_CREDIT'] },
+                        sale: { customerId: input.customerId, tenantId },
+                    },
+                    select: { id: true },
+                });
+                if (!sourceReturn) {
+                    throw new SaleError('STORE_CREDIT_SOURCE_INVALID', 409, 'La devolución origen no pertenece a este cliente o no genera saldo');
+                }
+                sourceReturnId = sourceReturn.id;
+            }
+            const tenderTotal = finalTotal.minus(storeCreditApplied).toDecimalPlaces(2);
 
             let finalStatus = 'COMPLETED';
             let creditBalance = new Decimal(0);
@@ -866,7 +947,7 @@ export async function executeSaleWithResult(
                 }
                 const currentDebt = new Decimal(customer.currentDebt.toString());
                 const creditLimit = new Decimal(customer.creditLimit.toString());
-                if (currentDebt.plus(finalTotal).greaterThan(creditLimit)) {
+                if (currentDebt.plus(tenderTotal).greaterThan(creditLimit)) {
                     const available = Decimal.max(creditLimit.minus(currentDebt), 0).toDecimalPlaces(2);
                     throw new SaleError(
                         'CREDIT_LIMIT_EXCEEDED',
@@ -874,9 +955,11 @@ export async function executeSaleWithResult(
                         `Excede limite de credito. Disponible: C$${available.toString()}`,
                     );
                 }
-                finalStatus = 'CREDIT_PENDING';
-                creditBalance = finalTotal;
-                dueDate = new Date(saleCreatedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
+                finalStatus = tenderTotal.greaterThan(0) ? 'CREDIT_PENDING' : 'COMPLETED';
+                creditBalance = tenderTotal;
+                dueDate = tenderTotal.greaterThan(0)
+                    ? new Date(saleCreatedAt.getTime() + 30 * 24 * 60 * 60 * 1000)
+                    : null;
             }
 
             const counter = await tx.invoiceSeries.upsert({
@@ -906,6 +989,7 @@ export async function executeSaleWithResult(
                     customerId: input.customerId ?? null,
                     employeeId: input.employeeId ?? null,
                     balance: creditBalance.toNumber(),
+                    storeCreditApplied: storeCreditApplied.toFixed(4),
                     dueDate,
                     shiftId: shiftId ?? null,
                     soldById: userId,
@@ -937,6 +1021,7 @@ export async function executeSaleWithResult(
                         unitPriceExactAtSale: item.unitPrice.toFixed(4),
                         costAtSale: persistedCost.toFixed(2),
                         discount: item.discountPct.toNumber(),
+                        ...(item.promotionSnapshot ? { promotionSnapshot: JSON.parse(JSON.stringify(item.promotionSnapshot)) } : {}),
                         ivaExento: item.ivaExento,
                         productNameAtSale: item.productNameAtSale,
                         unitAtSale: item.unitAtSale,
@@ -1060,12 +1145,46 @@ export async function executeSaleWithResult(
             }
 
             if (input.paymentMethod === 'CREDIT' && input.customerId) {
-                await reserveCustomerCredit(tx, {
-                    tenantId,
-                    customerId: input.customerId,
-                    creditLimit: customer!.creditLimit.toString(),
-                    amount: finalTotal,
+                if (tenderTotal.greaterThan(0)) {
+                    await reserveCustomerCredit(tx, {
+                        tenantId,
+                        customerId: input.customerId,
+                        creditLimit: customer!.creditLimit.toString(),
+                        amount: tenderTotal,
+                    });
+                }
+            }
+
+            if (storeCreditApplied.greaterThan(0) && input.customerId) {
+                const balanceBefore = new Decimal(customer!.storeCreditBalance.toString());
+                const balanceAfter = balanceBefore.minus(storeCreditApplied).toDecimalPlaces(4);
+                const customerUpdated = await tx.customer.updateMany({
+                    where: {
+                        id: input.customerId,
+                        tenantId,
+                        storeCreditBalance: customer!.storeCreditBalance,
+                    },
+                    data: { storeCreditBalance: balanceAfter.toFixed(4) },
                 });
+                if (customerUpdated.count !== 1) {
+                    throw new SaleError('STORE_CREDIT_EXCEEDED', 409, 'El saldo a favor cambió mientras se cobraba; volvé a intentarlo');
+                }
+                await tx.customerCreditEntry.create({
+                    data: {
+                        tenantId,
+                        customerId: input.customerId,
+                        productReturnId: sourceReturnId,
+                        saleId: created.id,
+                        type: 'EXCHANGE_DEBIT',
+                        amount: storeCreditApplied.negated().toFixed(4),
+                        balanceAfter: balanceAfter.toFixed(4),
+                        createdBy: userId,
+                    },
+                });
+            }
+
+            if (source === 'POS') {
+                await lockOwnedOpenPosShift(tx, tenantId, userId, shiftId!);
             }
 
             // Hard-fail: una venta no confirma sin su asiento en la misma tx.
@@ -1082,6 +1201,7 @@ export async function executeSaleWithResult(
                     date: saleCreatedAt,
                     fiscalRegime,
                     vatAmount: fiscalAmounts.vatAmount,
+                    storeCreditApplied,
                 },
             );
 
@@ -1102,13 +1222,16 @@ export async function executeSaleWithResult(
                         itemCount: normalizedItems.length,
                         measuredCount: normalizedItems.filter((item) => item.measurement !== null).length,
                         paymentMethod: input.paymentMethod,
+                        storeCreditApplied: storeCreditApplied.toFixed(2),
+                        storeCreditSourceReturnId: sourceReturnId,
                     }),
                 },
             });
+            await completeCheckout(tx, promotionState.checkout, created.id);
             return created;
         });
 
-        return { sale, idempotentReplay: false };
+        return { sale, idempotentReplay: transactionalReplay };
     } catch (error) {
         if (error instanceof PeriodLockedError) {
             throw new SaleError(
@@ -1131,6 +1254,14 @@ export async function executeSaleWithResult(
                 return { sale: replay.sale, idempotentReplay: true };
             }
         }
+        throw error;
+    }
+}
+
+export async function executeSaleWithResult(tenantId: string, userId: string, shiftId: string | null, rawInput: unknown, options: ExecuteSaleOptions = {}): Promise<ExecuteSaleResult> {
+    try { return await executeSaleWithResultInternal(tenantId, userId, shiftId, rawInput, options); }
+    catch (error) {
+        if (error instanceof PromotionError) throw new SaleError(error.code as SaleErrorCode, error.httpStatus, error.message);
         throw error;
     }
 }

@@ -30,6 +30,8 @@ export interface EntradaIndice<T> {
     /** name + sku + category, normalizado UNA vez al construir el índice.
      *  Antes esto se rearmaba para cada producto en CADA tecla. */
     texto: string;
+    /** Opcional para consumidores que construyen entradas manualmente. */
+    skuNormalizado?: string;
 }
 
 export interface ResultadoBusqueda<T> {
@@ -71,11 +73,19 @@ export function normalizar(texto: string): string {
 }
 
 /** Índice construido UNA vez por catálogo, no por tecla. */
-export function indexarProductos<T extends ProductoBuscable>(productos: T[]): EntradaIndice<T>[] {
-    return productos.map(p => ({
-        producto: p,
-        texto: normalizar(`${p.name} ${p.sku} ${p.category ?? ''}`),
-    }));
+export function indexarProductos<T extends ProductoBuscable>(productos: T[], anterior: EntradaIndice<T>[] = []): EntradaIndice<T>[] {
+    const anteriores = new Map(anterior.map(entry => [entry.producto.id, entry]));
+    return productos.map(producto => {
+        const previous = anteriores.get(producto.id);
+        const reusable = previous && previous.producto.name === producto.name
+            && previous.producto.sku === producto.sku && previous.producto.category === producto.category;
+        return {
+            // Siempre el producto actual: reutilizar texto nunca conserva stock/precio viejos.
+            producto,
+            texto: reusable ? previous.texto : normalizar(`${producto.name} ${producto.sku} ${producto.category ?? ''}`),
+            skuNormalizado: reusable && previous.skuNormalizado !== undefined ? previous.skuNormalizado : normalizar(producto.sku),
+        };
+    });
 }
 
 /**
@@ -96,22 +106,30 @@ export function buscarProductos<T extends ProductoBuscable>(
     // puede tener un producto con el SKU en blanco, y sin él la búsqueda vacía
     // devolvería ESE producto en vez del catálogo.
     if (limpio !== '') {
-        const exacto = indice.find(e => normalizar(e.producto.sku) === limpio);
+        const exacto = indice.find(e => (e.skuNormalizado ?? normalizar(e.producto.sku)) === limpio);
         if (exacto) {
             return { visibles: [exacto.producto], total: 1, ocultos: 0, coincidenciaExacta: true };
         }
     }
 
+    // Sin término, tomar solo las filas visibles evita recorrer el texto del
+    // catálogo completo al empezar otra venta; los totales salen de su longitud.
+    if (limpio === '') {
+        const visibles = (tope > 0 ? indice.slice(0, tope) : indice).map(entry => entry.producto);
+        return { visibles, total: indice.length, ocultos: indice.length - visibles.length, coincidenciaExacta: false };
+    }
     // Difusa: TODAS las palabras tienen que aparecer, en cualquier orden —
-    // "clavo 2" y "2 clavo" encuentran lo mismo. Sin término, `palabras` queda
-    // vacío y `every` da true para todos: eso ES "mostrame el catálogo", así que
-    // no hace falta una rama aparte para el caso sin búsqueda.
+    // "clavo 2" y "2 clavo" encuentran lo mismo.
     const palabras = limpio.split(' ');
     const encontrados: T[] = [];
+    let total = 0;
     for (const e of indice) {
-        if (palabras.every(t => e.texto.includes(t))) encontrados.push(e.producto);
+        if (palabras.every(t => e.texto.includes(t))) {
+            total += 1;
+            if (tope <= 0 || encontrados.length < tope) encontrados.push(e.producto);
+        }
     }
-    return recortar(encontrados, tope, false);
+    return { visibles: encontrados, total, ocultos: total - encontrados.length, coincidenciaExacta: false };
 }
 
 /**
@@ -131,12 +149,4 @@ export function resolverEnterBusqueda<T extends ProductoBuscable>(
     }
     if (resultado.total === 0) return { kind: 'none' };
     return { kind: 'ambiguous', total: resultado.total };
-}
-
-function recortar<T>(lista: T[], tope: number, exacta: boolean): ResultadoBusqueda<T> {
-    const total = lista.length;
-    const visibles = tope > 0 ? lista.slice(0, tope) : lista;
-    // `ocultos` se deriva de lo que quedó, no se calcula aparte: así no puede
-    // desincronizarse de `visibles` y prometer un recorte que no ocurrió.
-    return { visibles, total, ocultos: total - visibles.length, coincidenciaExacta: exacta };
 }

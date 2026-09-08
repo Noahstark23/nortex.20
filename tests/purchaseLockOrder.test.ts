@@ -2,11 +2,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
-const routeStart = server.indexOf("app.post('/api/purchases'");
-const routeEnd = server.indexOf('// POST /api/purchases/:id/pay', routeStart);
-if (routeStart < 0 || routeEnd < 0) throw new Error('No se encontró POST /api/purchases');
-const purchaseRoute = server.slice(routeStart, routeEnd);
+// La ruta compone este servicio; las invariantes de inventario viven aquí.
+const registrationSource = readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationService.ts'), 'utf8');
+const registrationStart = registrationSource.indexOf('export async function registerPurchase(');
+if (registrationStart < 0) throw new Error('No se encontró registerPurchase');
+const purchaseRoute = registrationSource.slice(registrationStart)
+    + '\n' + readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationPreparation.ts'), 'utf8');
 
 describe('orden global de locks de compra directa', () => {
     it('ordena una copia por producto/lote antes de tocar stock', () => {

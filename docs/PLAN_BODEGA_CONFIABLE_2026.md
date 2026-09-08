@@ -15,16 +15,16 @@ Hoy la jornada está repartida entre `/app/inventory`, `/app/warehouses`,
 consolida esas tareas sin mezclar en la portada la caja, el IVA o las cuentas por
 pagar.
 
-## Corte 2026-08-22
+## Corte 2026-08-30
 
 - Quedó cerrada la fase de exactitud para conteo, recepción de OC, compra
   directa, ajuste manual y transferencia entre ubicaciones.
 - El QA autenticado verificó una cuenta nueva con dos bodegas en escritorio y
   390 × 844. También corrigió dos problemas que la automatización no veía:
   tablas móviles recortadas y avisos nativos que bloqueaban el flujo.
-- El siguiente bloque P0 es la separación de permisos operativos. Nortex aún no
-  tiene un rol Bodeguero y hoy obliga a mezclar tareas de inventario con permisos
-  administrativos o financieros.
+- La separación de permisos operativos ya cuenta con el rol `BODEGUERO`, una
+  allowlist server-side y redacción de datos financieros. El siguiente bloque P0
+  es ampliar capacidades por caso de uso sin debilitar esa frontera.
 
 ## Principios no negociables
 
@@ -144,7 +144,7 @@ conceder permisos de caja.
 | Navegación a Bodegas y Órdenes de compra | Implementada y verificada |
 | Bodegas y Toma Física a 390 × 844 | Implementadas como tarjetas, sin scroll horizontal |
 | Confirmaciones no bloqueantes de ajuste/conteo | Implementadas y verificadas |
-| Matriz de permisos | Auditada; implementación es el siguiente bloque P0 |
+| Matriz de permisos y rol `BODEGUERO` | Implementados; cualquier ampliación requiere revisión de política |
 | Centro operativo Bodega | Especificación; requiere objetivo visual elegido |
 | QA multi-bodega y móvil | Completado con cuenta y datos desechables locales |
 
@@ -169,17 +169,19 @@ conceder permisos de caja.
   aparece en el menú completo. Existencias, estado, diferencia y acciones son
   visibles a 390 px.
 
-### Siguiente bloque P0 — permisos de Bodega
+### Siguiente bloque P0 — evolución segura de permisos de Bodega
 
-La auditoría confirmó que no existe `BODEGUERO`. La implementación debe separar
-capacidades, sin ampliar el poder financiero de `MANAGER`:
+`BODEGUERO` ya existe. Toda capacidad nueva debe agregarse a su política de forma
+explícita y probada, sin ampliar el poder financiero de `MANAGER` ni confiar en
+ocultar controles del frontend:
 
 - **Sí:** ver stock por ubicación, transferir, capturar/cerrar conteos, registrar
   ajustes con auditoría y recibir una OC aprobada.
 - **No:** crear/aprobar/cancelar OC, registrar o pagar facturas de compra, cambiar
   la topología de bodegas, acceder a billetera o contabilidad.
 - La autorización debe vivir en API; ocultar enlaces o botones solo complementa
-  esa regla y nunca la sustituye.
+  esa regla y nunca la sustituye. El plan de captura por cámara y códigos se
+  mantiene en [PLAN_CAMARA_CODIGOS_BODEGA.md](./PLAN_CAMARA_CODIGOS_BODEGA.md).
 
 ## Regla de entrega
 

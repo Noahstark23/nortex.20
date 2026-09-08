@@ -49,6 +49,18 @@ const loginLimiter = rateLimit({
     message: { error: 'Demasiados intentos. Espera unos minutos.' },
 });
 
+const DRIVER_LOGIN_MAX_CANDIDATES = 50;
+
+const DRIVER_LOGIN_CANDIDATE_SELECT = {
+    id: true,
+    nombre: true,
+    tipoFlota: true,
+    zonaCobertura: true,
+    kycStatus: true,
+    activo: true,
+    pinHash: true,
+} as const;
+
 // ── Middleware: sesión de motorizado (Bearer driver-token) ──────────────────
 
 export const authenticateDriver = async (req: any, res: any, next: any) => {
@@ -148,14 +160,30 @@ router.post('/login', loginLimiter, async (req: any, res: any) => {
     const telefono = normalizePhone(parsed.data.telefono);
 
     try {
-        const driver = await prisma.motorizado.findFirst({
+        const candidates = await prisma.motorizado.findMany({
             where: { telefono, pinHash: { not: null } },
+            take: DRIVER_LOGIN_MAX_CANDIDATES + 1,
+            select: DRIVER_LOGIN_CANDIDATE_SELECT,
         });
-
-        // Mensaje genérico: no revelamos si el teléfono existe.
-        if (!driver || !driver.pinHash || !(await bcrypt.compare(parsed.data.pin, driver.pinHash))) {
+        if (candidates.length > DRIVER_LOGIN_MAX_CANDIDATES) {
             return res.status(401).json({ error: 'Teléfono o PIN incorrectos.' });
         }
+        const matches = (await Promise.all(candidates.map(async (driver) => ({
+            driver,
+            matches: !!driver.pinHash && await bcrypt.compare(parsed.data.pin, driver.pinHash),
+        })))).filter((candidate) => candidate.matches);
+
+        // Mensaje genérico: no revelamos si el teléfono existe.
+        if (matches.length === 0) {
+            return res.status(401).json({ error: 'Teléfono o PIN incorrectos.' });
+        }
+        if (matches.length > 1) {
+            return res.status(409).json({
+                error: 'No pudimos identificar una sola cuenta con esas credenciales. Contacta a Nortex.',
+            });
+        }
+
+        const driver = matches[0].driver;
         if (driver.tipoFlota === 'NORTEX' && driver.kycStatus !== 'APROBADO') {
             return res.status(403).json({
                 error: driver.kycStatus === 'RECHAZADO'

@@ -1,5 +1,17 @@
 # Plan de desacople y escalabilidad de Nortex
 
+> **Revalidación 2026-09-04:** el cuerpo conserva el análisis histórico de su fecha.
+> La evidencia actual está en [AUDITORIA_GENERAL_2026-09-04.md](AUDITORIA_GENERAL_2026-09-04.md)
+> y la prioridad en [PLAN_TRANSFORMACION_TOTAL_2026.md](PLAN_TRANSFORMACION_TOTAL_2026.md).
+> No ejecutar una receta antigua sin contrastarla con código, pruebas y reglas de integridad.
+> Estado local, staging y producción se registran por separado.
+
+> Línea base revisada: 15.451 líneas/188 rutas directas en server; 11 construcciones
+> Prisma runtime incl. singleton. getAccount aún consulta por cliente global desde tx.
+> Antes de N instancias: límites/cache compartidos, scheduler único y pruebas con
+> conexiones presupuestadas. La adopción de BullMQ por sí sola no acredita esa capacidad.
+> Inbox/outbox e identidad fuerte se exigen antes del piloto WhatsApp, incluso con una instancia.
+
 **Fecha:** 2026-08-14 · **Verificado contra el código real** (inventario por agentes
 con archivo:línea sobre la rama de trabajo; `server.ts` = 9.704 líneas, 175
 endpoints). Complementa `docs/SCALING_AUDIT.md` (cuyos hallazgos siguen vigentes
@@ -196,18 +208,17 @@ comportamiento idéntico.
 ### B5 — Cola de WhatsApp a BullMQ
 Sustituir `InMemoryQueue` (`whatsapp/queue.ts`) manteniendo la interfaz
 `enqueue(job)` (diseñada para el swap). Hoy los jobs se pierden en cada
-deploy/crash (el archivo lo admite); la idempotencia por `waMessageId @unique`
-evita duplicados, no pérdidas. **→ A partir de acá el sistema soporta N
-instancias.**
+deploy/crash (el archivo lo admite); la unicidad de `waMessageId` no sustituye claims/leases ni evita por sí sola
+duplicados de envío concurrentes o resultados ambiguos. **No declarar N instancias hasta probar también identidad, inbox/outbox,
+límites compartidos, scheduler, conexiones y recuperación.**
 
-### B6 — Acortar la tx de la venta (throughput por tenant)
-`salesService.executeSale` hoy: el `invoiceSeries.upsert` con `increment` es lo
-**PRIMERO** de la tx → el row-lock del correlativo se retiene ~80-120 queries
-hasta el commit → **todas las ventas del tenant se serializan** (POS + WhatsApp +
-catálogo + sync compiten por el mismo lock; N instancias solo agrandan la cola).
-Fix: mover el increment a justo antes del `sale.create`, `createMany` para
-items+kardex, `recordSale` post-commit (ya es fail-soft), `timeout: 15000`
-explícito (hoy default 5s → `P2028` bajo concurrencia).
+### B6 — Acortar la transacción sin perder atomicidad (revisado 2026-09-04)
+
+El correlativo ya no está al inicio de executeSale. Medir p95/p99, queries por
+venta y espera de locks antes de optimizar; consolidar cuentas/ítems por tx cuando
+preserve contratos. `recordSale` es hard-fail en la misma transacción y debe
+seguir así. Rechazada la receta histórica de moverlo post-commit. Fijar timeout
+y maxWait desde carga medida, no usar una cifra arbitraria como solución.
 
 ### B7 — Reportes a agregación en DB
 `groupBy`/`aggregate` en los ~15 sitios de H8, un endpoint por commit, verificando
@@ -220,7 +231,8 @@ H6 + H7 si no cayeron ya en las fases A correspondientes.
 
 **Hallazgo negativo verificado (no perder tiempo ahí):** no hay llamadas externas
 (LLM/email/Stripe) dentro de ninguna `$transaction` — `whatsapp/inbound.ts` llama
-al LLM y al send **antes** de abrir la tx, correcto. Los ~30 `Map`/`Set` del repo
+al LLM y al send **antes** de abrir la tx. La llamada externa fuera de tx es
+correcta, pero el envío requiere outbox previo y conciliación del resultado. Los ~30 `Map`/`Set` del repo
 son scratch por-request, ninguno persiste. El correlativo DGI vive en la tabla
 (`InvoiceSeries`), correcto para multi-instancia.
 

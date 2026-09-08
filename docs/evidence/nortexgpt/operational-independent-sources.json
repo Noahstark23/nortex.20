@@ -1,0 +1,12 @@
+{
+  "verifiedAt": "2026-09-05T23:04:40.339Z",
+  "sources": {
+    "backend/services/assistant/actions/service.ts": "ed35c040e45611efdaca80ef3953d7bdda58aac36852b69312d8518b66597218",
+    "backend/services/assistant/operations/runService.ts": "0b556490489bc0b621aa202079db2465442bd026a9f89c500816b946f15e8757",
+    "backend/services/assistant/operations/orchestrator.ts": "54653c7a74def415887225bfc58db4aea600443ac1b792c1c088dd703c773957",
+    "backend/services/assistant/operations/tools.ts": "573a2f17f60c779170c42df2b1a38acbe329bbe017ea0c10fb4e61513a6b92f1"
+  },
+  "independentRevalidations": 5,
+  "failed": 0,
+  "paidCalls": 0
+}

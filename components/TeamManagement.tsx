@@ -28,68 +28,78 @@ interface Invitation {
     createdAt: string;
 }
 
-const ROLE_CONFIG: Record<string, { label: string; icon: React.ReactNode; color: string; bg: string; description: string }> = {
+type RoleTone = 'positive' | 'warning' | 'info' | 'neutral';
+
+interface RoleVisualConfig {
+    label: string;
+    icon: React.ReactNode;
+    color: `nx-tone-${RoleTone}`;
+    bg: `nx-tone-${RoleTone}-bg`;
+    description: string;
+}
+
+const ROLE_CONFIG: Record<string, RoleVisualConfig> = {
     OWNER: {
         label: 'Dueño',
         icon: <Shield size={14} />,
-        color: 'text-amber-400',
-        bg: 'bg-amber-500/10 border-amber-500/30',
+        color: 'nx-tone-warning',
+        bg: 'nx-tone-warning-bg',
         description: 'Acceso total al sistema'
     },
     ADMIN: {
         label: 'Admin',
         icon: <Shield size={14} />,
-        color: 'text-amber-400',
-        bg: 'bg-amber-500/10 border-amber-500/30',
+        color: 'nx-tone-warning',
+        bg: 'nx-tone-warning-bg',
         description: 'Acceso total al sistema'
     },
     MANAGER: {
         label: 'Gerente',
         icon: <UserCog size={14} />,
-        color: 'text-blue-400',
-        bg: 'bg-blue-500/10 border-blue-500/30',
+        color: 'nx-tone-info',
+        bg: 'nx-tone-info-bg',
         description: 'Dashboard, POS, inventario, clientes, reportes, compras'
     },
     CASHIER: {
         label: 'Cajero',
         icon: <ShoppingCart size={14} />,
-        color: 'text-emerald-400',
-        bg: 'bg-emerald-500/10 border-emerald-500/30',
+        color: 'nx-tone-positive',
+        bg: 'nx-tone-positive-bg',
         description: 'Punto de Venta e inventario (solo lectura)'
     },
     VIEWER: {
         label: 'Visor',
         icon: <Eye size={14} />,
-        color: 'text-purple-400',
-        bg: 'bg-purple-500/10 border-purple-500/30',
+        color: 'nx-tone-neutral',
+        bg: 'nx-tone-neutral-bg',
         description: 'Solo lectura: dashboard, reportes, clientes'
     },
     EMPLOYEE: {
         label: 'Empleado',
         icon: <Users size={14} />,
-        color: 'text-slate-400',
-        bg: 'bg-slate-500/10 border-slate-500/30',
+        color: 'nx-tone-neutral',
+        bg: 'nx-tone-neutral-bg',
         description: 'POS e inventario básico'
     },
     VENDEDOR: {
         label: 'Vendedor',
         icon: <ShoppingCart size={14} />,
-        color: 'text-cyan-400',
-        bg: 'bg-cyan-500/10 border-cyan-500/30',
+        color: 'nx-tone-info',
+        bg: 'nx-tone-info-bg',
         description: 'Vende y cobra su cartera: POS, sus clientes, fiado y su reporte'
     },
     BODEGUERO: {
         label: 'Bodeguero',
         icon: <Package size={14} />,
-        color: 'text-teal-300',
-        bg: 'bg-teal-500/10 border-teal-500/30',
+        color: 'nx-tone-info',
+        bg: 'nx-tone-info-bg',
         description: 'Existencias, transferencias, conteos y recepción. Sin acceso a ventas ni dinero'
     },
     ACCOUNTANT: {
         label: 'Contador',
         icon: <Calculator size={14} />,
-        color: 'text-amber-400',
-        bg: 'bg-amber-500/10 border-amber-500/30',
+        color: 'nx-tone-warning',
+        bg: 'nx-tone-warning-bg',
         description: 'Reportes fiscales DGI, constancias, auditoría'
     },
 };
@@ -279,25 +289,26 @@ const TeamManagement: React.FC = () => {
 
     if (loading) {
         return (
-            <div className="flex items-center justify-center h-64">
-                <Loader2 className="animate-spin text-nortex-accent" size={32} />
+            <div className="nx-workspace flex h-full items-center justify-center">
+                <Loader2 className="animate-spin text-brand" size={32} aria-label="Cargando equipo" />
             </div>
         );
     }
 
     return (
-        <div className="space-y-6">
+        <div className="nx-workspace mx-auto h-full w-full max-w-[1600px] space-y-6 overflow-y-auto p-4 sm:p-6 lg:p-8">
             {/* Header */}
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <Users className="text-nortex-accent" /> Mi Equipo
+                    <h1 className="nx-module-header nx-canvas-text flex items-center gap-2 text-2xl font-bold">
+                        <Users className="text-brand" aria-hidden="true" /> Mi Equipo
                     </h1>
-                    <p className="text-slate-400 text-sm mt-1">
+                    <p className="nx-canvas-muted mt-1 text-sm">
                         Gestiona quién tiene acceso a tu sistema — {users.length} miembro{users.length !== 1 && 's'}
                     </p>
                 </div>
                 <button
+                    type="button"
                     onClick={() => {
                         setShowInviteModal(true);
                         setInviteEmail('');
@@ -305,16 +316,16 @@ const TeamManagement: React.FC = () => {
                         setGeneratedLink('');
                         setError('');
                     }}
-                    className="flex items-center gap-2 px-5 py-2.5 bg-nortex-accent text-nortex-900 font-bold rounded-lg hover:bg-emerald-400 transition-all shadow-lg shadow-nortex-accent/20"
+                    className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 rounded-control bg-brand px-5 py-2.5 font-bold text-brand-on shadow-sm transition-colors hover:bg-brand-hover"
                 >
-                    <UserPlus size={18} /> Invitar Miembro
+                    <UserPlus size={18} aria-hidden="true" /> Invitar Miembro
                 </button>
             </div>
 
             {/* Success message */}
             {successMsg && (
-                <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-3 text-emerald-400 text-sm flex items-center gap-2">
-                    <Check size={16} /> {successMsg}
+                <div role="status" className="nx-tone-positive-bg nx-tone-positive flex items-center gap-2 rounded-control border p-3 text-sm font-medium">
+                    <Check size={16} aria-hidden="true" /> {successMsg}
                 </div>
             )}
 
@@ -322,56 +333,57 @@ const TeamManagement: React.FC = () => {
                 cancelar invitación eran mudos (solo console.error) — el botón
                 parecía no hacer nada. */}
             {error && !showInviteModal && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm flex items-center gap-2">
-                    <AlertCircle size={16} /> {error}
+                <div role="alert" className="nx-tone-danger-bg nx-tone-danger flex items-center gap-2 rounded-control border p-3 text-sm font-medium">
+                    <AlertCircle size={16} aria-hidden="true" /> {error}
                 </div>
             )}
 
             {/* Team Members */}
-            <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
-                <div className="px-5 py-3 border-b border-slate-700/50">
-                    <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Miembros Activos</h2>
+            <section className="nx-canvas-card overflow-hidden" aria-labelledby="active-team-title">
+                <div className="border-b border-[var(--nx-canvas-border)] px-5 py-3">
+                    <h2 id="active-team-title" className="nx-canvas-muted text-sm font-semibold uppercase tracking-wider">Miembros Activos</h2>
                 </div>
-                <div className="divide-y divide-slate-700/30">
+                <div className="divide-y divide-[var(--nx-canvas-border)]">
                     {users.map(u => {
                         const rc = ROLE_CONFIG[u.role] || ROLE_CONFIG.EMPLOYEE;
                         const isOwner = ['OWNER', 'ADMIN'].includes(u.role);
                         return (
-                            <div key={u.id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-slate-800/30 transition-colors">
+                            <div key={u.id} className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-[var(--nx-canvas-subtle)] sm:flex-row sm:items-center">
                                 {/* Avatar + Info */}
                                 <div className="flex items-center gap-3 flex-1 min-w-0">
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold ${rc.bg} ${rc.color} border shrink-0`}>
+                                    <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full border text-sm font-bold ${rc.bg} ${rc.color}`} aria-hidden="true">
                                         {u.name.charAt(0).toUpperCase()}
                                     </div>
                                     <div className="min-w-0">
                                         <div className="flex items-center gap-2">
-                                            <span className="font-semibold text-white truncate">{u.name}</span>
+                                            <span className="nx-canvas-text truncate font-semibold">{u.name}</span>
                                             {u.status === 'DISABLED' && (
-                                                <span className="text-[10px] bg-red-500/20 text-red-400 px-1.5 py-0.5 rounded font-mono">DESACTIVADO</span>
+                                                <span className="nx-tone-danger-bg nx-tone-danger rounded-pill px-2 py-0.5 text-[10px] font-bold">DESACTIVADO</span>
                                             )}
                                         </div>
-                                        <p className="text-xs text-slate-500 truncate">{u.email}</p>
+                                        <p className="nx-canvas-muted truncate text-xs">{u.email}</p>
                                     </div>
                                 </div>
 
                                 {/* Role Badge */}
-                                <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${rc.bg} ${rc.color} shrink-0`}>
+                                <div className={`flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-1 text-xs font-semibold ${rc.bg} ${rc.color}`}>
                                     {rc.icon} {rc.label}
                                 </div>
 
                                 {/* Last Login */}
-                                <div className="text-xs text-slate-500 flex items-center gap-1 shrink-0 w-40">
-                                    <Clock size={12} />
+                                <div className="nx-canvas-muted flex w-40 shrink-0 items-center gap-1 text-xs">
+                                    <Clock size={12} aria-hidden="true" />
                                     <span>{formatDate(u.lastLogin)}</span>
                                 </div>
 
                                 {/* Actions */}
                                 {!isOwner && u.status === 'ACTIVE' && (
-                                    <div className="flex items-center gap-2 shrink-0">
+                                    <div className="flex shrink-0 flex-wrap items-center gap-2">
                                         <select
+                                            aria-label={`Cambiar rol de ${u.name}`}
                                             value={u.role}
                                             onChange={(e) => handleChangeRole(u.id, e.target.value)}
-                                            className="bg-slate-800 border border-slate-600 rounded text-xs text-slate-300 px-2 py-1 cursor-pointer hover:border-slate-500"
+                                            className="nx-canvas-text min-h-tap cursor-pointer rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] px-3 text-xs hover:bg-[var(--nx-canvas-subtle)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                                         >
                                             {TEAM_ASSIGNABLE_ROLES.map(role => (
                                                 <option key={role} value={role}>{ROLE_CONFIG[role].label}</option>
@@ -379,19 +391,23 @@ const TeamManagement: React.FC = () => {
                                         </select>
                                         {u.role === 'VENDEDOR' && (
                                             <button
+                                                type="button"
                                                 onClick={() => abrirCatalogo(u.id, u.name)}
-                                                className="p-1.5 text-cyan-400 hover:bg-cyan-500/10 rounded transition-colors"
+                                                className="nx-fluid-press nx-tone-info flex h-touch w-touch items-center justify-center rounded-control transition-colors hover:bg-[var(--nx-canvas-subtle)]"
                                                 title="Catálogo asignado (qué productos vende)"
+                                                aria-label={`Abrir catálogo asignado de ${u.name}`}
                                             >
-                                                <Package size={14} />
+                                                <Package size={16} aria-hidden="true" />
                                             </button>
                                         )}
                                         <button
+                                            type="button"
                                             onClick={() => handleDisableUser(u.id, u.name)}
-                                            className="p-1.5 text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                                            className="nx-fluid-press nx-tone-danger flex h-touch w-touch items-center justify-center rounded-control transition-colors hover:bg-[var(--nx-danger-bg)]"
                                             title="Desactivar usuario"
+                                            aria-label={`Desactivar a ${u.name}`}
                                         >
-                                            <Trash2 size={14} />
+                                            <Trash2 size={16} aria-hidden="true" />
                                         </button>
                                     </div>
                                 )}
@@ -399,117 +415,123 @@ const TeamManagement: React.FC = () => {
                         );
                     })}
                 </div>
-            </div>
+            </section>
 
             {/* Pending Invitations */}
             {invitations.length > 0 && (
-                <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl overflow-hidden">
-                    <div className="px-5 py-3 border-b border-slate-700/50">
-                        <h2 className="text-sm font-semibold text-slate-300 uppercase tracking-wider">Invitaciones Pendientes</h2>
+                <section className="nx-canvas-card overflow-hidden" aria-labelledby="pending-invitations-title">
+                    <div className="border-b border-[var(--nx-canvas-border)] px-5 py-3">
+                        <h2 id="pending-invitations-title" className="nx-canvas-muted text-sm font-semibold uppercase tracking-wider">Invitaciones Pendientes</h2>
                     </div>
-                    <div className="divide-y divide-slate-700/30">
+                    <div className="divide-y divide-[var(--nx-canvas-border)]">
                         {invitations.map(inv => {
                             const rc = ROLE_CONFIG[inv.role] || ROLE_CONFIG.EMPLOYEE;
                             const expiresIn = Math.max(0, Math.floor((new Date(inv.expiresAt).getTime() - Date.now()) / 3600000));
                             const baseUrl = window.location.origin;
                             const link = `${baseUrl}/invite/${inv.token}`;
                             return (
-                                <div key={inv.id} className="px-5 py-4 flex flex-col sm:flex-row sm:items-center gap-3 hover:bg-slate-800/30 transition-colors">
+                                <div key={inv.id} className="flex flex-col gap-3 px-5 py-4 transition-colors hover:bg-[var(--nx-canvas-subtle)] sm:flex-row sm:items-center">
                                     <div className="flex items-center gap-3 flex-1 min-w-0">
-                                        <div className="w-10 h-10 rounded-full flex items-center justify-center text-sm bg-slate-700/50 text-slate-400 border border-dashed border-slate-600 shrink-0">
-                                            <Mail size={16} />
+                                        <div className="nx-tone-neutral-bg nx-tone-neutral flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-dashed">
+                                            <Mail size={16} aria-hidden="true" />
                                         </div>
                                         <div className="min-w-0">
-                                            <p className="text-white font-medium truncate">{inv.email}</p>
-                                            <p className="text-xs text-slate-500">Expira en {expiresIn}h</p>
+                                            <p className="nx-canvas-text truncate font-medium">{inv.email}</p>
+                                            <p className="nx-canvas-muted text-xs">Expira en {expiresIn}h</p>
                                         </div>
                                     </div>
-                                    <div className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium border ${rc.bg} ${rc.color} shrink-0`}>
+                                    <div className={`flex shrink-0 items-center gap-1.5 rounded-pill border px-2.5 py-1 text-xs font-semibold ${rc.bg} ${rc.color}`}>
                                         {rc.icon} {rc.label}
                                     </div>
-                                    <div className="flex items-center gap-2 shrink-0">
+                                    <div className="flex shrink-0 items-center gap-2">
                                         <button
+                                            type="button"
                                             onClick={() => { navigator.clipboard.writeText(link); setSuccessMsg('Link copiado!'); setTimeout(() => setSuccessMsg(''), 2000); }}
-                                            className="flex items-center gap-1 px-3 py-1.5 bg-slate-700 text-slate-300 rounded text-xs hover:bg-slate-600 transition-colors"
+                                            className="nx-fluid-press nx-canvas-text flex min-h-tap items-center gap-1 rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] px-3 text-xs font-semibold transition-colors hover:bg-[var(--nx-canvas-subtle)]"
                                         >
-                                            <Copy size={12} /> Copiar Link
+                                            <Copy size={14} aria-hidden="true" /> Copiar Link
                                         </button>
                                         <button
+                                            type="button"
                                             onClick={() => handleCancelInvite(inv.id)}
-                                            className="p-1.5 text-red-400 hover:bg-red-500/10 rounded transition-colors"
+                                            className="nx-fluid-press nx-tone-danger flex h-touch w-touch items-center justify-center rounded-control transition-colors hover:bg-[var(--nx-danger-bg)]"
+                                            aria-label={`Cancelar invitación de ${inv.email}`}
                                         >
-                                            <Trash2 size={14} />
+                                            <Trash2 size={16} aria-hidden="true" />
                                         </button>
                                     </div>
                                 </div>
                             );
                         })}
                     </div>
-                </div>
+                </section>
             )}
 
             {/* Role Permissions Info */}
-            <div className="bg-nortex-800/50 border border-slate-700/50 rounded-xl p-5">
-                <h3 className="text-sm font-semibold text-slate-300 uppercase tracking-wider mb-4">Permisos por Rol</h3>
+            <section className="nx-canvas-card p-5" aria-labelledby="role-permissions-title">
+                <h2 id="role-permissions-title" className="nx-canvas-muted mb-4 text-sm font-semibold uppercase tracking-wider">Permisos por Rol</h2>
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
                     {TEAM_ASSIGNABLE_ROLES.map(role => {
                         const rc = ROLE_CONFIG[role];
                         return (
-                            <div key={role} className={`p-3 rounded-lg border ${rc.bg}`}>
-                                <div className={`flex items-center gap-1.5 font-semibold text-sm mb-1 ${rc.color}`}>
+                            <div key={role} className={`rounded-card border p-3 ${rc.bg}`}>
+                                <div className={`mb-1 flex items-center gap-1.5 text-sm font-semibold ${rc.color}`}>
                                     {rc.icon} {rc.label}
                                 </div>
-                                <p className="text-xs text-slate-400">{rc.description}</p>
+                                <p className="nx-canvas-muted text-xs leading-relaxed">{rc.description}</p>
                             </div>
                         );
                     })}
                 </div>
-            </div>
+            </section>
 
             {/* ====== INVITE MODAL ====== */}
             {showInviteModal && (
-                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-                    <div className="bg-nortex-800 border border-slate-700 rounded-2xl w-full max-w-md shadow-2xl">
+                <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center">
+                    <div role="dialog" aria-modal="true" aria-labelledby="invite-member-title" className="nx-canvas-card max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto shadow-2xl">
                         <div className="p-6">
-                            <h2 className="text-xl font-bold text-white flex items-center gap-2 mb-1">
-                                <UserPlus className="text-nortex-accent" size={22} /> Invitar Miembro
+                            <h2 id="invite-member-title" className="nx-canvas-text mb-1 flex items-center gap-2 text-xl font-bold">
+                                <UserPlus className="text-brand" size={22} aria-hidden="true" /> Invitar Miembro
                             </h2>
-                            <p className="text-sm text-slate-400 mb-6">El invitado recibirá un link para crear su cuenta.</p>
+                            <p className="nx-canvas-muted mb-6 text-sm">El invitado recibirá un link para crear su cuenta.</p>
 
                             {!generatedLink ? (
                                 <>
                                     {/* Email */}
                                     <div className="mb-4">
-                                        <label className="text-sm font-medium text-slate-300 block mb-1.5">Email</label>
+                                        <label htmlFor="team-invite-email" className="nx-canvas-text mb-1.5 block text-sm font-medium">Email</label>
                                         <input
+                                            id="team-invite-email"
                                             type="email"
                                             value={inviteEmail}
                                             onChange={e => setInviteEmail(e.target.value)}
                                             placeholder="empleado@ejemplo.com"
-                                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-4 py-2.5 text-white placeholder:text-slate-500 focus:border-nortex-accent focus:outline-none"
+                                            className="nx-canvas-text min-h-tap w-full rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] px-4 py-2.5 placeholder:text-[var(--nx-canvas-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring"
                                         />
                                     </div>
 
                                     {/* Role */}
                                     <div className="mb-6">
-                                        <label className="text-sm font-medium text-slate-300 block mb-2">Rol</label>
+                                        <p className="nx-canvas-text mb-2 text-sm font-medium">Rol</p>
                                         <div className="grid grid-cols-2 gap-2">
                                             {TEAM_ASSIGNABLE_ROLES.map(role => {
                                                 const rc = ROLE_CONFIG[role];
                                                 const isSelected = inviteRole === role;
                                                 return (
                                                     <button
+                                                        type="button"
                                                         key={role}
                                                         onClick={() => setInviteRole(role)}
-                                                        className={`p-3 rounded-lg border text-left transition-all ${isSelected
-                                                            ? `${rc.bg} border-current ${rc.color} ring-1 ring-current`
-                                                            : 'border-slate-700 hover:border-slate-600'
+                                                        aria-pressed={isSelected}
+                                                        className={`nx-fluid-press min-h-tap rounded-control border p-3 text-left transition-colors ${isSelected
+                                                            ? `${rc.bg} ${rc.color} ring-1 ring-current`
+                                                            : 'border-[var(--nx-canvas-border)] hover:bg-[var(--nx-canvas-subtle)]'
                                                             }`}
                                                     >
-                                                        <div className={`flex items-center gap-1.5 text-sm font-medium mb-0.5 ${isSelected ? rc.color : 'text-slate-300'}`}>
+                                                        <div className={`mb-0.5 flex items-center gap-1.5 text-sm font-medium ${isSelected ? rc.color : 'nx-canvas-text'}`}>
                                                             {rc.icon} {rc.label}
                                                         </div>
-                                                        <p className="text-[11px] text-slate-500">{rc.description}</p>
+                                                        <p className="nx-canvas-muted text-[11px] leading-relaxed">{rc.description}</p>
                                                     </button>
                                                 );
                                             })}
@@ -517,24 +539,26 @@ const TeamManagement: React.FC = () => {
                                     </div>
 
                                     {error && (
-                                        <div className="mb-4 bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-sm text-red-400 flex items-center gap-2">
-                                            <AlertCircle size={16} /> {error}
+                                        <div role="alert" className="nx-tone-danger-bg nx-tone-danger mb-4 flex items-center gap-2 rounded-control border p-3 text-sm font-medium">
+                                            <AlertCircle size={16} aria-hidden="true" /> {error}
                                         </div>
                                     )}
 
                                     <div className="flex gap-3">
                                         <button
+                                            type="button"
                                             onClick={() => setShowInviteModal(false)}
-                                            className="flex-1 px-4 py-2.5 border border-slate-600 text-slate-300 rounded-lg hover:bg-slate-700 transition-colors"
+                                            className="nx-fluid-press nx-canvas-text min-h-tap flex-1 rounded-control border border-[var(--nx-canvas-border)] px-4 py-2.5 font-semibold transition-colors hover:bg-[var(--nx-canvas-subtle)]"
                                         >
                                             Cancelar
                                         </button>
                                         <button
+                                            type="button"
                                             onClick={handleInvite}
                                             disabled={!inviteEmail || inviteLoading}
-                                            className="flex-1 px-4 py-2.5 bg-nortex-accent text-nortex-900 font-bold rounded-lg hover:bg-emerald-400 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                            className="nx-fluid-press flex min-h-tap flex-1 items-center justify-center gap-2 rounded-control bg-brand px-4 py-2.5 font-bold text-brand-on transition-colors hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-50"
                                         >
-                                            {inviteLoading ? <Loader2 className="animate-spin" size={16} /> : <Plus size={16} />}
+                                            {inviteLoading ? <Loader2 className="animate-spin" size={16} aria-hidden="true" /> : <Plus size={16} aria-hidden="true" />}
                                             {inviteLoading ? 'Creando...' : 'Crear Invitación'}
                                         </button>
                                     </div>
@@ -542,36 +566,39 @@ const TeamManagement: React.FC = () => {
                             ) : (
                                 /* Link Generated */
                                 <div className="space-y-4">
-                                    <div className="bg-emerald-500/10 border border-emerald-500/30 rounded-lg p-4 text-center">
-                                        <Check className="text-emerald-400 mx-auto mb-2" size={32} />
-                                        <p className="text-emerald-400 font-medium">¡Invitación Creada!</p>
-                                        <p className="text-xs text-slate-400 mt-1">Comparte este link con <strong className="text-white">{inviteEmail}</strong></p>
+                                    <div className="nx-tone-positive-bg rounded-control border p-4 text-center">
+                                        <Check className="nx-tone-positive mx-auto mb-2" size={32} aria-hidden="true" />
+                                        <p className="nx-tone-positive font-semibold">¡Invitación Creada!</p>
+                                        <p className="nx-canvas-muted mt-1 text-xs">Comparte este link con <strong className="nx-canvas-text">{inviteEmail}</strong></p>
                                     </div>
 
-                                    <div className="bg-slate-900 rounded-lg p-3 flex items-center gap-2">
+                                    <div className="flex items-center gap-2 rounded-control bg-[var(--nx-canvas-subtle)] p-3">
                                         <input
                                             readOnly
                                             value={generatedLink}
-                                            className="flex-1 bg-transparent text-sm text-nortex-accent font-mono truncate border-none outline-none"
+                                            aria-label="Enlace de invitación generado"
+                                            className="nx-canvas-text min-w-0 flex-1 truncate border-none bg-transparent font-mono text-sm outline-none"
                                         />
                                         <button
+                                            type="button"
                                             onClick={handleCopyLink}
-                                            className={`shrink-0 px-3 py-1.5 rounded text-sm font-medium transition-all flex items-center gap-1 ${copiedLink
-                                                ? 'bg-emerald-500/20 text-emerald-400'
-                                                : 'bg-slate-700 text-white hover:bg-slate-600'
+                                            className={`nx-fluid-press flex min-h-tap shrink-0 items-center gap-1 rounded-control border px-3 text-sm font-semibold transition-colors ${copiedLink
+                                                ? 'nx-tone-positive-bg nx-tone-positive'
+                                                : 'nx-canvas-text border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] hover:bg-[var(--nx-canvas-subtle)]'
                                                 }`}
                                         >
-                                            {copiedLink ? <><Check size={14} /> Copiado</> : <><Copy size={14} /> Copiar</>}
+                                            {copiedLink ? <><Check size={14} aria-hidden="true" /> Copiado</> : <><Copy size={14} aria-hidden="true" /> Copiar</>}
                                         </button>
                                     </div>
 
-                                    <p className="text-xs text-slate-500 text-center">
+                                    <p className="nx-canvas-muted text-center text-xs">
                                         El link expira en 48 horas. Puedes compartirlo por WhatsApp, email, etc.
                                     </p>
 
                                     <button
+                                        type="button"
                                         onClick={() => setShowInviteModal(false)}
-                                        className="w-full px-4 py-2.5 bg-slate-700 text-white rounded-lg hover:bg-slate-600 transition-colors"
+                                        className="nx-fluid-press nx-canvas-text min-h-tap w-full rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] px-4 py-2.5 font-semibold transition-colors hover:bg-[var(--nx-canvas-subtle)]"
                                     >
                                         Cerrar
                                     </button>
@@ -584,13 +611,13 @@ const TeamManagement: React.FC = () => {
 
             {/* ── Modal: catálogo asignado del vendedor ─────────────────── */}
             {catalogModal && (
-                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4" onClick={() => setCatalogModal(null)}>
-                    <div className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
-                        <div className="p-4 border-b border-slate-700">
-                            <h3 className="font-bold text-white flex items-center gap-2">
-                                <Package size={16} className="text-cyan-400" /> Catálogo de {catalogModal.sellerName}
+                <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/60 p-4 backdrop-blur-sm sm:items-center" onClick={() => setCatalogModal(null)}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="seller-catalog-title" className="nx-canvas-card flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col overflow-hidden shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="border-b border-[var(--nx-canvas-border)] p-4">
+                            <h3 id="seller-catalog-title" className="nx-canvas-text flex items-center gap-2 font-bold">
+                                <Package size={16} className="nx-tone-info" aria-hidden="true" /> Catálogo de {catalogModal.sellerName}
                             </h3>
-                            <p className="text-xs text-slate-500 mt-1">
+                            <p className="nx-canvas-muted mt-1 text-xs leading-relaxed">
                                 Marcá qué productos vende. Sin ninguno marcado, ve el catálogo completo
                                 (así funciona hoy). Con uno o más, su POS muestra SOLO esos.
                             </p>
@@ -598,7 +625,7 @@ const TeamManagement: React.FC = () => {
                                 value={catalogSearch}
                                 onChange={e => setCatalogSearch(e.target.value)}
                                 placeholder="Buscar producto…"
-                                className="mt-3 w-full bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-sm text-slate-200"
+                                className="nx-canvas-text mt-3 min-h-tap w-full rounded-control border border-[var(--nx-canvas-border)] bg-[var(--nx-canvas-raised)] px-3 py-2 text-sm placeholder:text-[var(--nx-canvas-faint)] focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring"
                             />
                         </div>
                         <div className="flex-1 overflow-y-auto p-2">
@@ -606,7 +633,7 @@ const TeamManagement: React.FC = () => {
                                 .filter(pr => pr.name.toLowerCase().includes(catalogSearch.toLowerCase()) || (pr.sku ?? '').toLowerCase().includes(catalogSearch.toLowerCase()))
                                 .slice(0, 300)
                                 .map(pr => (
-                                    <label key={pr.id} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-800 cursor-pointer text-sm text-slate-300">
+                                    <label key={pr.id} className="nx-canvas-text flex min-h-tap cursor-pointer items-center gap-2 rounded-control px-2 py-1.5 text-sm transition-colors hover:bg-[var(--nx-canvas-subtle)]">
                                         <input
                                             type="checkbox"
                                             checked={catalogIds.has(pr.id)}
@@ -617,19 +644,19 @@ const TeamManagement: React.FC = () => {
                                             }}
                                         />
                                         <span className="truncate">{pr.name}</span>
-                                        {pr.sku && <span className="text-[10px] text-slate-500 font-mono ml-auto shrink-0">{pr.sku}</span>}
+                                        {pr.sku && <span className="nx-canvas-muted ml-auto shrink-0 font-mono text-[10px]">{pr.sku}</span>}
                                     </label>
                                 ))}
                             {catalogProducts.length === 0 && (
-                                <p className="text-center text-slate-500 text-sm py-6">Sin productos en el inventario.</p>
+                                <p className="nx-canvas-muted py-6 text-center text-sm">Sin productos en el inventario.</p>
                             )}
                         </div>
-                        <div className="p-4 border-t border-slate-700 flex items-center justify-between gap-3">
-                            <span className="text-xs text-slate-500">{catalogIds.size} producto(s) asignado(s)</span>
+                        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--nx-canvas-border)] p-4">
+                            <span className="nx-canvas-muted text-xs">{catalogIds.size} producto(s) asignado(s)</span>
                             <div className="flex gap-2">
-                                <button onClick={() => setCatalogModal(null)} className="px-4 py-2 bg-slate-700 text-white rounded-lg text-sm hover:bg-slate-600">Cancelar</button>
-                                <button onClick={guardarCatalogo} disabled={catalogSaving}
-                                    className="px-4 py-2 bg-cyan-600 text-white rounded-lg text-sm font-bold hover:bg-cyan-500 disabled:opacity-50">
+                                <button type="button" onClick={() => setCatalogModal(null)} className="nx-fluid-press nx-canvas-text min-h-tap rounded-control border border-[var(--nx-canvas-border)] px-4 py-2 text-sm font-semibold transition-colors hover:bg-[var(--nx-canvas-subtle)]">Cancelar</button>
+                                <button type="button" onClick={guardarCatalogo} disabled={catalogSaving}
+                                    className="nx-fluid-press min-h-tap rounded-control bg-brand px-4 py-2 text-sm font-bold text-brand-on transition-colors hover:bg-brand-hover disabled:opacity-50">
                                     {catalogSaving ? 'Guardando…' : 'Guardar catálogo'}
                                 </button>
                             </div>

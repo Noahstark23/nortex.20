@@ -1,6 +1,9 @@
 import { createHash } from 'crypto';
 import Decimal from 'decimal.js';
 import { Prisma, PrismaClient } from '@prisma/client';
+import type { SalePromotionSnapshot } from '../../shared/promotions.js';
+import { loadPromotionProducts } from './promotions/authority.js';
+import { applyPromotionsToItems, type PromotionPricingContext } from './promotions/pricing.js';
 import {
     convertQuantity,
     validateQuantity,
@@ -80,6 +83,9 @@ export interface AcceptedLabelPriceOverride {
 }
 
 export interface NormalizedSaleItem {
+    promotionSnapshot?: SalePromotionSnapshot;
+    pricingConfigHash?: string;
+    promotionUnavailable?: { id: string; name: string; reason: 'CONFIG_CHANGED' };
     productId: string;
     quantity: Decimal;
     unitPrice: Decimal;
@@ -407,6 +413,7 @@ export async function normalizeSaleItems(
         wholesaleCustomer: boolean;
         allowRevokedScaleVersionForReplay: boolean;
         quotedAt?: Date;
+        promotionContext?: PromotionPricingContext;
     },
 ): Promise<NormalizedSaleItem[]> {
     const labelResolutions = new Map<number, Awaited<ReturnType<typeof resolveScaleLabel>>>();
@@ -575,7 +582,7 @@ export async function normalizeSaleItems(
         }
     }
 
-    const products = await db.product.findMany({
+    const products = params.promotionContext ? await loadPromotionProducts(db, params.tenantId, [...productIds], true) : await db.product.findMany({
         where: { tenantId: params.tenantId, id: { in: [...productIds] } },
         select: PRODUCT_SELECT,
     }) as unknown as ProductAuthority[];
@@ -878,5 +885,7 @@ export async function normalizeSaleItems(
         });
     }
 
-    return normalized;
+    return params.promotionContext
+        ? applyPromotionsToItems(db, params.tenantId, normalized, products as any, params.promotionContext)
+        : normalized;
 }

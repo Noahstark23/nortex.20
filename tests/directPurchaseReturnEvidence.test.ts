@@ -1,13 +1,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { parsePurchaseInput } from '../backend/services/purchaseRegistrationAuthority';
 
-const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
-const routeStart = server.indexOf("app.post('/api/purchases'");
-const routeEnd = server.indexOf('// POST /api/purchases/:id/pay', routeStart);
-if (routeStart < 0 || routeEnd < 0) throw new Error('No se encontró POST /api/purchases');
+// La ruta compone este servicio; las invariantes de inventario viven aquí.
+const registrationSource = readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationService.ts'), 'utf8');
+const registrationStart = registrationSource.indexOf('export async function registerPurchase(');
+if (registrationStart < 0) throw new Error('No se encontró registerPurchase');
+const purchaseRoute = registrationSource.slice(registrationStart)
+    + '\n' + readFileSync(resolve(process.cwd(), 'backend/services/purchaseRegistrationPreparation.ts'), 'utf8');
 
-const purchaseRoute = server.slice(routeStart, routeEnd);
 const preparedStart = purchaseRoute.indexOf('const processedItems = preparedItems.map');
 const purchaseCreate = purchaseRoute.indexOf('const purchase = await tx.purchase.create', preparedStart);
 const inventoryStart = purchaseRoute.indexOf('const inventoryMutationItems = linkedPurchaseOrder', purchaseCreate);
@@ -69,7 +71,14 @@ describe('evidencia física de devolución en compra directa', () => {
         expect(occurrences(purchaseRoute, 'inventoryWarehouseId')).toBe(1);
         expect(occurrences(purchaseRoute, 'inventoryBatchId')).toBe(1);
         expect(occurrences(purchaseRoute, 'inventoryUnitCostExact')).toBe(1);
-        expect(purchaseRoute).not.toMatch(/req\.body[^;]*(?:inventoryWarehouseId|inventoryBatchId|inventoryUnitCostExact)/u);
+        const parsed = parsePurchaseInput({
+            supplierId: 'supplier-1', invoiceNumber: 'FAC-1', date: '2026-09-05', paymentMethod: 'CASH',
+            items: [{ productId: 'product-1', quantity: '1', unitCost: '10',
+                id: 'forged-item', inventoryWarehouseId: 'forged-warehouse', inventoryBatchId: 'forged-batch', inventoryUnitCostExact: '0.000001' }],
+        });
+        for (const field of ['id', 'inventoryWarehouseId', 'inventoryBatchId', 'inventoryUnitCostExact']) {
+            expect(parsed.items[0]).not.toHaveProperty(field);
+        }
     });
 
     it('exige actualizar exactamente una línea y deja el rollback a la transacción', () => {
@@ -82,7 +91,8 @@ describe('evidencia física de devolución en compra directa', () => {
         expect(evidenceTail).toMatch(/\.count\s*!==\s*1/u);
         expect(evidenceTail).toMatch(/throw new (?:Error|ProcurementMatchError)\(/u);
         expect(evidenceTail).not.toContain('.catch(');
-        expect(purchaseRoute.indexOf('const result = await prisma.$transaction'))
+        expect(purchaseRoute.indexOf('return db.$transaction')).toBeGreaterThan(-1);
+        expect(purchaseRoute.indexOf('return db.$transaction'))
             .toBeLessThan(purchaseRoute.indexOf('tx.purchaseItem.updateMany'));
     });
 

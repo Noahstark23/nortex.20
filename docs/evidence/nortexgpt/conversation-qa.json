@@ -1,0 +1,106 @@
+{
+  "recordedAt": "2026-09-05T21:48:33.226Z",
+  "candidate": "/tmp/nortexgpt-conversation-20260905",
+  "status": "passed",
+  "environment": {
+    "engine": "MySQL 8",
+    "database": "nortex_qa_assistant",
+    "container": "nortex-gpt-qa-20260905",
+    "origin": "disposable_synthetic_only",
+    "transport": "real_authenticated_HTTP"
+  },
+  "suite": "tests/assistantTextPurchase.integration.test.ts",
+  "startedAt": "2026-09-05T21:47:43.028Z",
+  "tests": {
+    "total": 10,
+    "passed": 10,
+    "failed": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "scenarios": [
+    {
+      "name": "prepara manual sin lectura pagada y confirma crédito una sola vez, sin archivos ficticios",
+      "status": "passed"
+    },
+    {
+      "name": "compra manual de contado requiere pago declarado y deja un solo débito de caja",
+      "status": "passed"
+    },
+    {
+      "name": "fuente documental vacía sigue bloqueada y el navegador no puede sustituir procedencia",
+      "status": "passed"
+    },
+    {
+      "name": "rechaza conversación ajena, otro usuario y procedencia caducada antes de revisar o confirmar",
+      "status": "passed"
+    },
+    {
+      "name": "corregir desde conversación invalida revisión anterior y conserva evidencia",
+      "status": "passed"
+    },
+    {
+      "name": "permiso revocado y cierre fiscal no dejan una compra manual parcialmente confirmada",
+      "status": "passed"
+    },
+    {
+      "name": "conversa compra de 50 cementos, conserva captura al recargar y nunca registra por un sí",
+      "status": "passed"
+    },
+    {
+      "name": "conserva flete y notas editados en revisión cuando se corrige cantidad por chat",
+      "status": "passed"
+    },
+    {
+      "name": "cancelar captura manual READY revoca la propuesta y bloquea su confirmación anterior",
+      "status": "passed"
+    },
+    {
+      "name": "concilia cancelación y confirmación concurrentes sin compra parcial ni reversión por chat",
+      "status": "passed"
+    }
+  ],
+  "defectsReproducedAndRetested": [
+    {
+      "scenario": "Editar flete=5 y notas en revisión; corregir cantidad por chat",
+      "before": "El borrador perdía flete y notas.",
+      "after": "Conserva ambos campos; revisión sigue bloqueada por flete no representable.",
+      "status": "fixed_and_retested_real_mysql"
+    },
+    {
+      "scenario": "Cancelar captura manual que ya tiene propuesta READY",
+      "before": "La captura desaparecía pero la propuesta conservaba READY y hash.",
+      "after": "CANCELLED incrementa versión, borra preview/hash y rechaza confirmación anterior.",
+      "status": "fixed_and_retested_real_mysql"
+    }
+  ],
+  "concurrency": {
+    "simultaneousConfirmationReplay": "passed",
+    "cancelVersusConfirmAttempts": 3,
+    "allowedTerminalStates": [
+      "CANCELLED_without_effects",
+      "COMMITTED_with_complete_effects"
+    ],
+    "note": "La prueba tolera cualquiera de los ganadores; no acredita haber observado ambos órdenes en esas tres carreras."
+  },
+  "paidCalls": 0,
+  "languageProvider": "disabled",
+  "documentModelEvaluation": "not_run",
+  "exactMigrationEvidence": "docs/evidence/nortexgpt/conversation-migration.json",
+  "limitations": [
+    "Valida conversación determinista y transacciones reales con datos sintéticos; no acredita comprensión de lenguaje mediante proveedor pagado.",
+    "El recorrido conversacional usa ferretería; no reemplaza corpus de farmacia, revisión humana ni evaluación OCR.",
+    "QA visual, compuerta integral, staging y producción se informan por separado."
+  ],
+  "filesSha256": {
+    "tests/assistantTextPurchase.integration.test.ts": "2c0910275774937d53d5029e2dc22543f99ccb246238f7423cfc343a2a063c73",
+    "tests/fixtures/assistant/manualPurchaseHelpers.ts": "49a61c4306063a1ec33c66e061693ff90d2ee1302494b63c7f18e0546902dfb3",
+    "backend/services/assistant/conversations.ts": "38204ab40d94d5848952d2430c9b1a642fb15f10b130d90c6e9be8e861ae791d",
+    "backend/services/assistant/purchaseIntake.ts": "1b87260724dccd269e9f5eb3e55b70d5e3fb96dd900ebcd0670c202e9577bb01",
+    "backend/services/assistant/purchaseIntakeTypes.ts": "8832f13a98f30206bd69fdc76bb2d7be735509359e0ec07fe482449f5e1f3bf9",
+    "backend/services/assistant/purchaseIntakeParsing.ts": "49b68da37cf5e3c2188947ff1aa9ffcd247c612dfd039aab8becaeea82d9b23b",
+    "backend/services/assistant/proposals.ts": "9288d1c10c931bebe9e919840d87c60fd43a57285f1bee644794efca3806c12f",
+    "backend/services/assistant/purchaseSource.ts": "349fb91c834eb8846599df2c094fe4b0eb700a8144134f394af1f29542f777b4",
+    "backend/prisma/schema.prisma": "f5adc2b306ca883370d379605cb58857963f2160c986ce23f04e1f8e002413ec"
+  }
+}

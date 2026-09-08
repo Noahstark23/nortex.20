@@ -1167,7 +1167,7 @@ export async function executeSupplierCreditNote({
             retentionAdjustmentRequired: retentionPurchaseIds.has(purchase.id) ? true : false,
         })),
         fiscalPeriodOpen: true,
-        retentionAdjustmentRequired: retentionPurchaseIds.size === 0,
+        retentionAdjustmentRequired: retentionPurchaseIds.size > 0,
         fiscalRegimeAtPosting: fiscalRegimeAtCredit,
     });
 

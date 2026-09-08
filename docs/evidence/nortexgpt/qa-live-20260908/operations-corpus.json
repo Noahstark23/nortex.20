@@ -1,0 +1,870 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-08T21:24:59.567Z",
+  "corpusSha256": "e3da2052a9bd98a153dedfc8869c1ab2c2ff1bc5e5fd4afbb2b2241141349869",
+  "humanReview": "pending",
+  "modelEvaluation": "not_run",
+  "pilot": "not_run",
+  "paidCalls": 0,
+  "results": [
+    {
+      "id": "reposicion-ferreteria-01-velocidad-neta",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 3
+    },
+    {
+      "id": "reposicion-ferreteria-02-fraccion-redondeo",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-03-sin-ventas",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-04-devolucion-sin-foto",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-05-retornos-mayores-ventas",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-06-bodega-sin-costos",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-07-lotes-no-concilian",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-08-bodega-ajena",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-09-caja-no-inventario",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-10-dias-completos-managua",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-11-no-dia-parcial",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-12-tenant-jwt-ajeno",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-13-borrador-no-recibe",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 1
+    },
+    {
+      "id": "reposicion-ferreteria-14-reintento-mismo-borrador",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-15-clave-con-contenido-distinto",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-16-historial-otro-negocio",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-17-version-manipulada",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-18-revision-vencida",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-19-datos-incompletos-bloquean",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-ferreteria-20-bodega-no-ordena",
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-01-vence-hoy-vendible",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-02-vencido-ayer",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-03-medianoche-managua",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-04-lote-bodega-conciliado",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-05-ledger-apagado",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-06-bodega-no-concilia",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-07-lotes-no-concilian",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-08-consulta-sin-permiso-accion",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-09-stock-ausente",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-10-fallo-no-significa-cero",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-11-caja-no-lotes",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-12-no-inventa-stock-historico",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-13-modelo-no-confirma-retiro",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-14-reintento-baja",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-15-retiro-sin-datos-bloqueado",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 1
+    },
+    {
+      "id": "vencimientos-ferreteria-16-historial-otro-usuario",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-17-editar-invalida-revision",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-18-baja-vencida",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-19-bodega-no-da-baja",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-ferreteria-20-modelo-no-certifica-entrega",
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-01-ventas-no-son-utilidad",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 1
+    },
+    {
+      "id": "ventas-promociones-ferreteria-02-iva-historico-ausente",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-03-costo-devolucion-ausente",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-04-caja-solo-su-operacion",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-05-preparar-fechas-managua",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 3
+    },
+    {
+      "id": "ventas-promociones-ferreteria-06-gerente-no-publica",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-07-producto-otro-negocio",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-08-instruccion-no-cambia-tenant",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-09-promocion-caducada",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-10-porcentaje-no-admitido",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-11-precio-autoritativo",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-12-descuento-global-incompatible",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-13-descuento-linea-incompatible",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-14-precio-catalogo-cambiado",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-15-cotizacion-no-acumula-descuento",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-16-cobro-requiere-revision",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-17-revision-cobro-caducada",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-18-promocion-vence-al-cobrar",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-19-carrito-cambio-despues-revision",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-ferreteria-20-total-revisado-con-impuestos",
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-01-velocidad-neta",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-02-fraccion-redondeo",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-03-sin-ventas",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-04-devolucion-sin-foto",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-05-retornos-mayores-ventas",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-06-bodega-sin-costos",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-07-lotes-no-concilian",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-08-bodega-ajena",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-09-caja-no-inventario",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-10-dias-completos-managua",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-11-no-dia-parcial",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-12-tenant-jwt-ajeno",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-13-borrador-no-recibe",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-14-reintento-mismo-borrador",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-15-clave-con-contenido-distinto",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-16-historial-otro-negocio",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-17-version-manipulada",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-18-revision-vencida",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-19-datos-incompletos-bloquean",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "reposicion-farmacia-20-bodega-no-ordena",
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-01-vence-hoy-vendible",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-02-vencido-ayer",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-03-medianoche-managua",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-04-lote-bodega-conciliado",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-05-ledger-apagado",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-06-bodega-no-concilia",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-07-lotes-no-concilian",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-08-consulta-sin-permiso-accion",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-09-stock-ausente",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-10-fallo-no-significa-cero",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-11-caja-no-lotes",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-12-no-inventa-stock-historico",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-13-modelo-no-confirma-retiro",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-14-reintento-baja",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-15-retiro-sin-datos-bloqueado",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 1
+    },
+    {
+      "id": "vencimientos-farmacia-16-historial-otro-usuario",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-17-editar-invalida-revision",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-18-baja-vencida",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-19-bodega-no-da-baja",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "vencimientos-farmacia-20-modelo-no-certifica-entrega",
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-01-ventas-no-son-utilidad",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-02-iva-historico-ausente",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-03-costo-devolucion-ausente",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-04-caja-solo-su-operacion",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-05-preparar-fechas-managua",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-06-gerente-no-publica",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-07-producto-otro-negocio",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-08-instruccion-no-cambia-tenant",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-09-promocion-caducada",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-10-porcentaje-no-admitido",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-11-precio-autoritativo",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-12-descuento-global-incompatible",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-13-descuento-linea-incompatible",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-14-precio-catalogo-cambiado",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-15-cotizacion-no-acumula-descuento",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-16-cobro-requiere-revision",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-17-revision-cobro-caducada",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-18-promocion-vence-al-cobrar",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-19-carrito-cambio-despues-revision",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    },
+    {
+      "id": "ventas-promociones-farmacia-20-total-revisado-con-impuestos",
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "status": "passed",
+      "durationMs": 0
+    }
+  ],
+  "limitations": [
+    "Evalúa funciones reales con respuestas de repositorio sintéticas; no ejecuta MySQL.",
+    "Esperados independientes escritos por agente; pendientes de revisión humana.",
+    "No acredita precisión del modelo, entrega de mensajes, ni reducción de tiempo de tareas."
+  ],
+  "sourceSha256": {
+    "backend/services/assistant/operations/inventory.ts": "5f966c83ad400f1dd6db0d929d28c3c1e0399352316b06909d1c786758e3ac78",
+    "backend/services/assistant/operations/analytics.ts": "e64e1303bff84844e4c7a5342e9fc740d4d0e7025a43cf6d5091ac1ffa24908b",
+    "backend/services/assistant/operations/analyticsPeriod.ts": "80c98eddf54a8e492d5deca4e386c72f759231f404254be172fe4867207fedb9",
+    "backend/services/assistant/access.ts": "c90a8ca59d9324c607e76c68caf81ee57affda026c36c0e62fda27b822f500e9",
+    "backend/services/assistant/actions/service.ts": "ed35c040e45611efdaca80ef3953d7bdda58aac36852b69312d8518b66597218",
+    "backend/services/promotions/management.ts": "a89a43555ad32da7dfbc22f819eb32aeba65c369952af29310296df45d4feb70",
+    "backend/services/promotions/pricing.ts": "9f84a28fc7018143fdff27e26bdf56df589fd6c2e8b2c47c5c92d9334ff3eb2b",
+    "backend/services/promotions/checkout.ts": "bfa1026907e524496040165864a823b271d6a28f59d19eaef18dfbdbcc00cee8",
+    "backend/services/promotions/totals.ts": "189ef4049917a4673b062e90fab694da1529ea5ca3f7b6bd4c860c15f29b4670",
+    "scripts/assistant-evaluation/operations-product.mjs": "b462475b1f6944a5a46143a607ede66a0d4c659a251758b00cc2c70f96fc6d70"
+  },
+  "passed": 120,
+  "failed": 0
+}

@@ -1,5 +1,40 @@
 # Plan de migración: backups, WhatsApp/RAG y escala de Nortex
 
+> **Revisión 2026-09-04 — orden coordinado por el [plan maestro](PLAN_TRANSFORMACION_TOTAL_2026.md).**
+> La aprobación histórica de este plan no prueba fases ejecutadas ni autoriza nuevos
+> envíos/despliegues. La [auditoría actual](AUDITORIA_GENERAL_2026-09-04.md) verificó
+> código y pruebas locales; no verificó backup off-site, restore ni infraestructura productiva.
+
+## Estado vigente y ajuste de secuencia
+
+| Capacidad | Implementado en código local | Evidencia/pendiente |
+|---|---|---|
+| Backup/restore | Scripts y jobs CI | Operación off-site y drill productivo no verificados hoy |
+| Prisma compartido | Migración parcial | 11 construcciones runtime incl. singleton; 10 fuera; getAccount aún requiere tx |
+| WhatsApp | HMAC, routing, menú/LLM, catálogo FULLTEXT | ACK antes de persistencia, cola memoria, salida sin outbox/claim |
+| Identidad privada | Contexto tenant server-side | B2B por canal y vínculo de cliente por sufijo insuficientes |
+| Handoff | Estado HUMAN | Bandeja/asignación/atención pendientes |
+| RAG documental | No encontrado | Fuentes aprobadas, ACL, versiones, citas, retirada y evals pendientes |
+| Vector store | Decisión condicionada en ADR | Sin provisión ni comparación de calidad verificadas |
+
+**Identidad fuerte y handoff se adelantan al primer piloto**, no se postergan
+hasta escala. Ejecutar T01 y T07–T12 del plan maestro: identidad por persona/rol,
+contexto por canal/propósito, inbox antes de ACK, outbox/UNKNOWN/conciliación,
+consentimiento/opt-out/plantillas/retención, bandeja y presupuesto. Revalidar
+eligibilidad de farmacia/productos y políticas oficiales Meta antes de activar.
+El soporte corporativo Nortex se separa de clientes de comercios y de herramientas
+privadas del dueño. Datos vivos se consultan al core; documentos aprobados alimentan RAG.
+
+**Decisiones conservadas:** MySQL transaccional y monolito modular; workers
+durables; PostgreSQL/pgvector únicamente documental y después de una evaluación
+que supere al baseline. No mover el asiento de venta fuera de su transacción.
+
+El resto del documento conserva el diseño y checklist históricos; sus casillas
+no se marcan completas por esta reconciliación. Los números de PR y evidencia
+operacional antiguos requieren revisar estado actual antes de ejecutarse.
+
+---
+
 **Estado:** aprobado para ejecución por fases
 
 **Fecha:** 2026-08-27

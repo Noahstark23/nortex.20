@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "scope": "Local synthetic filesystem backup/restore; metadata fixture only, not a MySQL restore or off-host backup.",
+  "bytes": 900,
+  "restoredBytesMatch": true,
+  "originalRemovedBeforeRestore": true,
+  "fileMode": "0600",
+  "tamperRejected": true,
+  "archiveCommand": "tar -cf <private-archive> -C <source> <opaque-storage-key>",
+  "restoreCommand": "tar -xf <private-archive> -C <restored-directory>"
+}

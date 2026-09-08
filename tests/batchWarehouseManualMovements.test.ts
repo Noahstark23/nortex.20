@@ -31,7 +31,9 @@ const writeoffRoute = between(
     server,
     "app.post('/api/inventory/batches/:batchId/writeoff'",
     "app.get('/api/inventory/expiring-soon'",
-);
+) + readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffService.ts'), 'utf8');
+const writeoffAuthority = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffPreparation.ts'), 'utf8');
+const writeoffValue = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffValue.ts'), 'utf8');
 const adjustRoute = between(
     server,
     "app.post('/api/inventory/adjust'",
@@ -55,7 +57,7 @@ const kardexRecordRoute = between(
 const seedCatalogRoute = between(
     server,
     "app.post('/api/onboarding/seed-catalog'",
-    "app.get('/api/onboarding'",
+    "app.use('/api/onboarding'",
 );
 const createProductRoute = between(
     server,
@@ -220,14 +222,16 @@ describe('integridad transaccional de alta y merma manual', () => {
         expect(createBatchRoute).toContain('resultAuditId');
         expect(createBatchRoute).toContain('movementId');
         expect(createBatchRoute).not.toMatch(/findMany[\s\S]*MANUAL_BATCH_COMMAND/u);
-        expect(writeoffRoute).toContain('loadManualBatchReplay({');
-        expect(writeoffRoute).toContain('isUniqueConstraintFailure(error)');
+        expect(writeoffRoute).toContain('loadBatchWriteoffReplay(');
+        expect(writeoffRoute).toContain("error.code === 'P2002'");
     });
 
     it('merma exige ubicación/cantidad, descuenta local y agregado sin poner el lote en cero', () => {
         expect(writeoffRoute).toContain('validate(WriteoffBatchSchema)');
         expect(writeoffRoute.match(/resolveBatchWarehouseLedgerMode\(/gu)).toHaveLength(1);
-        expect(writeoffRoute).toContain("status: 'ACTIVE'");
+        expect(writeoffRoute).toContain('await assertBatchWriteoffPrincipal(principal, tx, true)');
+        expect(writeoffAuthority).toContain("actor.status !== 'ACTIVE'");
+        expect(writeoffAuthority).toContain('actor.role !== principal.role');
         expect(writeoffRoute).toContain("movementType: 'WRITEOFF'");
         expect(writeoffRoute).toContain('warehouseId: operationWarehouse.id');
         expect(writeoffRoute).toContain('enforceSufficient: true');
@@ -239,7 +243,9 @@ describe('integridad transaccional de alta y merma manual', () => {
     });
 
     it('valúa la merma con Decimal 2dp y mantiene asiento/auditoría en la misma tx', () => {
-        expect(writeoffRoute).toContain('.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)');
+        expect(writeoffRoute).toContain('calculateBatchWriteoffValue(writeoffQuantity,');
+        expect(writeoffAuthority).toContain('calculateBatchWriteoffValue(quantity, cost)');
+        expect(writeoffValue).toContain('.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)');
         expect(writeoffRoute).toContain('const journalValue = lossValue.toNumber()');
         expect(writeoffRoute).toContain("{ accountCode: '5.1.2', debit: journalValue, credit: 0 }");
         expect(writeoffRoute).toContain("{ accountCode: '1.1.4', debit: 0, credit: journalValue }");
@@ -321,8 +327,8 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
 // Verifica la clase por separado para que los callers puedan mapear siempre 409.
 expect(new ManualBatchMovementError('BATCH_SELECTION_REQUIRED', 409, 'x').httpStatus).toBe(409);
 
-// Ronda HTTP opcional contra una instancia MySQL descartable. La suite normal
-// la omite; CI/release puede activarla con NORTEX_QA_BASE_URL.
+// Ronda HTTP contra MySQL descartable. La suite normal la omite; la compuerta
+// test:integration:required exige estos dos casos con NORTEX_QA_BASE_URL.
 const QA_BASE_URL = process.env.NORTEX_QA_BASE_URL?.replace(/\/$/u, '');
 const qaDescribe = QA_BASE_URL ? describe.sequential : describe.skip;
 

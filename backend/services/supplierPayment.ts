@@ -185,16 +185,18 @@ async function debitarGaveta(
 
     // 2. Efectivo real de la gaveta, releído bajo el lock (cierra el TOCTOU de
     //    dos salidas concurrentes que juntas la sobregirarían).
-    const ventas: Array<{ total: unknown }> = await tx.sale.findMany({
+    const ventas: Array<{ total: unknown; storeCreditApplied: unknown }> = await tx.sale.findMany({
         where: { shiftId: turno.id, paymentMethod: 'CASH', status: { not: ESTADO_ANULADA } },
-        select: { total: true },
+        select: { total: true, storeCreditApplied: true },
     });
     const movimientos: MovimientoDeCaja[] = await tx.cashMovement.findMany({
         where: { shiftId: turno.id, isVoided: false },
         select: { type: true, amount: true, currency: true, category: true },
     });
     const ventasEfectivo = ventas.reduce(
-        (suma: Decimal, v) => suma.plus(new Decimal(String(v.total ?? 0))),
+        (suma: Decimal, v) => suma.plus(
+            new Decimal(String(v.total ?? 0)).minus(String(v.storeCreditApplied ?? 0)),
+        ),
         new Decimal(0)
     );
     const efectivoAntes = efectivoDisponibleDelTurno({

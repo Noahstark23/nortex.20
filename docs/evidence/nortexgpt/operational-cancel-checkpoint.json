@@ -1,0 +1,82 @@
+{
+  "status": "CANCELLED",
+  "proposalExists": true,
+  "proposalStatus": "DRAFT",
+  "checkpointProposalIds": [
+    "e79d9865-4d46-45f6-a3c0-383f6be7809d"
+  ],
+  "recoveredResult": {
+    "text": "La consulta se interrumpió. Conservé los borradores preparados para revisión; ninguna acción fue confirmada.",
+    "evidence": [
+      {
+        "id": "e1",
+        "tool": "check_inventory_burn_rate",
+        "label": "Cobertura de inventario",
+        "data": {
+          "kind": "INVENTORY_BURN_RATE",
+          "rows": [],
+          "period": {
+            "cutoff": "2026-09-05T06:00:00.000Z",
+            "endDate": "2026-09-04",
+            "timeZone": "America/Managua",
+            "startDate": "2026-08-06",
+            "completeDays": true
+          },
+          "status": "ok",
+          "metrics": [],
+          "evidence": [
+            "SaleItem.quantity representa unidades BASE históricas, incluso cuando la presentación fue PACK.",
+            "Se excluyen ventas anuladas y se restan devoluciones normalizadas del período. No se interpretan devoluciones antiguas ambiguas como cero.",
+            "Product.stock, lotes, ProductStock y saldo pendiente de OC se consultan sin crear filas ni asignar existencias históricas."
+          ],
+          "warnings": [
+            "Estimación con días completos de ventas netas registradas; no es un pronóstico ni una hora de agotamiento.",
+            "Las OC aprobadas pendientes reducen la sugerencia; su fecha de llegada y cambios posteriores deben revisarse antes de ordenar."
+          ],
+          "checkedAt": "2026-09-05T23:03:19.465Z"
+        }
+      },
+      {
+        "id": "e2",
+        "tool": "prepare_purchase_order",
+        "label": "Orden de compra",
+        "data": {
+          "id": "e79d9865-4d46-45f6-a3c0-383f6be7809d",
+          "kind": "PURCHASE_ORDER_DRAFT",
+          "issues": [
+            "Revisá los datos y sus efectos antes de confirmar."
+          ],
+          "status": "DRAFT",
+          "message": "Borrador preparado. Requiere revisión humana para decidir sus efectos.",
+          "version": 1,
+          "expiresAt": "2026-09-12T23:03:19.550Z"
+        }
+      }
+    ],
+    "actionProposalIds": [
+      "e79d9865-4d46-45f6-a3c0-383f6be7809d"
+    ],
+    "degraded": true
+  },
+  "steps": [
+    {
+      "id": "step1",
+      "tool": "check_inventory_burn_rate",
+      "label": "Cobertura de inventario",
+      "status": "SUCCEEDED",
+      "evidenceId": "e1"
+    },
+    {
+      "id": "step2",
+      "tool": "prepare_purchase_order",
+      "label": "Orden de compra",
+      "status": "SUCCEEDED",
+      "evidenceId": "e2"
+    }
+  ],
+  "syntheticProviderCalls": 3,
+  "paidCalls": 0,
+  "getAndListRecover": true,
+  "actionRevocationHidesReferences": true,
+  "roleRevocationBlocksGetAndList": true
+}
