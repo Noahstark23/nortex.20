@@ -91,7 +91,8 @@ qa_container_id="$(MYSQL_ROOT_PASSWORD="$qa_root_password" MYSQL_DATABASE="$qa_d
     -e MYSQL_USER \
     -e MYSQL_PASSWORD \
     mysql:8.0 \
-    --default-authentication-plugin=mysql_native_password)"
+    --default-authentication-plugin=mysql_native_password \
+    --log-bin-trust-function-creators=1)"
 [ -n "$qa_container_id" ] || qa_die 'no se pudo iniciar el contenedor MySQL efímero.'
 qa_container_started=1
 

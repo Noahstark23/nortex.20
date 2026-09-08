@@ -10,7 +10,7 @@ La extracción fiscal fue caracterizada con ocho pruebas de conducta antes y des
 
 ## Producción pendiente
 
-Existe respaldo externo del 8 de septiembre: metadata y SHA-256 del objeto remoto coinciden. Una restauración vigente aún no está acreditada. El destino observado usa Docker Compose, mientras las guardas de promoción requieren Dockerfile; no se cambió el destino ni se debilitó la guarda para omitir esta diferencia. Faltan identidades y tokens de lectura configurados para los workflows nuevos. No se aprobó el run antiguo de main ni se ejecutó un despliegue.
+Existe respaldo externo del 8 de septiembre: metadata y SHA-256 del objeto remoto coinciden. Una restauración vigente aún no está acreditada. El destino observado usa Docker Compose, admitido por las guardas actualizadas de PR205/206. La referencia anterior a un requisito exclusivo de Dockerfile quedó corregida tras verificar código y runbook; faltan confirmar el pin exacto y Auto Deploy desactivado. Faltan identidades y tokens de lectura configurados para los workflows nuevos. No se aprobó el run antiguo de main ni se ejecutó un despliegue.
 
 La publicación del candidato no acredita CI, staging, producción, calidad del modelo real ni resultado de piloto. La autorización de publicar y desplegar fue dada por el usuario; los controles técnicos deben pasar sobre el candidato completo.
 
