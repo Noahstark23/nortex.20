@@ -1,6 +1,7 @@
 # Plan — Compras que no llevan IVA (traslación del IVA en la factura de compra)
 
-> **Estado:** plan de implementación. Nada de este documento está implementado todavía.
+> **Estado:** Fase A y Fase B-7 (UI de Compras) **implementadas** en este candidato;
+> Fase B-8 (captura de NortexGPT), Fase C y Fase D siguen pendientes — ver §6 y §10.
 > **Corte de código analizado:** `ba9cf30` (main al 2026-09-09).
 > **Dueño de edición propuesto:** Compras/Finanzas (`nortex-finance`), con integración de
 > libros fiscales coordinada con `nortex-contador` y captura de NortexGPT con `nortex-intelligence`.
@@ -174,7 +175,7 @@ el hash lo cubre automáticamente — pero **la versión sube a 2** porque cambi
 
 ## 6. Fases (PRs secuenciales en draft — mergear A antes de construir B)
 
-### Fase A — Núcleo, schema y registro
+### Fase A — Núcleo, schema y registro — **IMPLEMENTADA**
 1. `shared/purchaseTaxTreatment.ts`: enum, motivos, `resolveTaxTreatmentSuggestion(fiscalCategory)`.
 2. `backend/lib/purchaseMoney.ts`: `calculatePurchaseMoney(inputs, allowsCreditableTax, taxTreatment)`
    + `taxableSubtotal`/`exemptSubtotal` en el retorno.
@@ -187,7 +188,7 @@ el hash lo cubre automáticamente — pero **la versión sube a 2** porque cambi
    la invariante antes del `create`.
 6. `buildPurchasePreview`: exponer tratamiento/motivo, `version: 2`.
 
-### Fase B — UI de Compras y captura de NortexGPT
+### Fase B — UI de Compras (**7 implementada**) y captura de NortexGPT (**8 pendiente**)
 7. `components/Purchases.tsx`: selector en la cabecera de la factura, default sugerido por
    `fiscalCategory` del proveedor, motivo obligatorio al elegir `SIN_TRASLADO`, y desglose
    *base gravada / base exenta / IVA* en el resumen. Sin cálculo local del 15%.
@@ -263,3 +264,68 @@ más `sh scripts/ci-local-safe.sh`.
 | Divergencia cliente/servidor del 15% | El cliente deja de calcular: regla en `shared/`, dinero autoritativo del servidor y sellado en el hash del preview (v2) |
 | Vista previa aprobada con un tratamiento y registrada con otro | `purchasePayloadHash` ya cubre `input`; subir a `version: 2` invalida previews de forma vieja |
 | El paso 11 rompe asientos existentes de compras exentas | Es un delta declarado, con pruebas propias y mutación; diferible sin bloquear las Fases A-C |
+
+---
+
+## 10. Lo entregado en este candidato (Fase A + Fase B-7)
+
+**Archivos.** `utils/purchaseTaxTreatment.ts` (regla pura nueva, compartida) ·
+`utils/purchaseTaxTreatmentLabels.ts` (copy, deliberadamente fuera de la red de mutación) ·
+`backend/lib/purchaseMoney.ts` · `backend/prisma/schema.prisma` +
+`migrations/20260909_purchase_tax_treatment/` · `backend/validation/schemas.ts` ·
+`backend/services/purchaseRegistration{Preparation,Service,Preview}.ts` ·
+`components/Purchases.tsx` · `stryker.config.json` · `scripts/check-mutation-scope.cjs`.
+
+**Decisión de diseño frente al plan original:** la tasa y la regla de traslación viven en
+`utils/`, no en `shared/`, para espejar `utils/fiscalRegime.ts` — que ya es la regla fiscal
+pura compartida por frontend y backend y ya está bajo mutación. `components/Purchases.tsx`
+importa `purchaseLineTax` y perdió su copia literal del `'0.15'`.
+
+**QA ejecutado localmente (Node 22.22.2, Prisma 6.4.1 pineado):**
+
+| Verificación | Resultado |
+|---|---|
+| `prisma validate` + `generate` | OK |
+| `tsc --noEmit` | Limpio salvo el bloqueo de `xlsx` (§11) |
+| Suite completa Vitest | 5.798 pasan · 3 fallan, **todas** por `xlsx` (§11) |
+| Mutación dirigida `utils/purchaseTaxTreatment.ts` | **100.00%** (65/65) |
+| Mutación dirigida `backend/lib/purchaseMoney.ts` | **100.00%** (24/24, subió de 21) |
+| Pruebas nuevas | 57 puras + 9 de servicio + 5 de conducta UI en jsdom |
+
+Los 9 mutantes que sobrevivieron en la primera corrida se resolvieron **sin bajar el umbral**:
+8 eran etiquetas de presentación —se movieron a `purchaseTaxTreatmentLabels.ts`, porque una red
+de mutación sobre *copy* solo congela la redacción y no caza ningún bug— y 1 era el centinela
+`?? ''` de `suggestPurchaseTaxTreatment`, un **mutante equivalente** que se eliminó
+reformulando con encadenamiento opcional en vez de documentarlo como aceptable.
+
+`stryker.config.json` movió el rango `schemas.ts:838-850` → `868-880`: la edición de
+`CreatePurchaseSchema` desplazó `canonicalizeCloseShiftPayload` exactamente +30 líneas, y el
+rango viejo habría mutado otro código. Los pisos de `check-mutation-scope.cjs` subieron
+(21 → 24) y se agregó el del módulo nuevo (65). **Ningún umbral bajó.**
+
+## 11. Bloqueos externos de este entorno (acción pendiente, no PASS)
+
+Ambos son del entorno remoto, ajenos al diff, y **CI los cubre**:
+
+1. **`xlsx` no instalable.** `package.json` lo pinea a `https://cdn.sheetjs.com/...`, host
+   denegado por la política de egress (`403 CONNECT`). Sin él `npm ci` no completa, así que
+   se instaló el resto y quedaron rojos 13 archivos de prueba —todos por
+   `Cannot find package 'xlsx'`, ninguno de compras ni fiscal— y `npm run build` muere al
+   resolver `xlsx` desde `components/HRM.tsx` **después** de transformar 1.893 módulos,
+   incluido `Purchases.tsx`. `tests/posVentaCritica.test.tsx` es parte de ese bloqueo: **la
+   conducta del POS no pudo ejecutarse acá**. El diff no toca POS.
+2. **`npm run test:integration:required` no ejecutable.** El wrapper exige Docker y el daemon
+   no está disponible (`/var/run/docker.sock` ausente). Este cambio **mueve dinero**
+   (CxP, gaveta, mayor), así que la evidencia HTTP + MySQL real es obligatoria y queda a
+   cargo del job `integration-required` del PR.
+
+Por eso **no se declara `Security & Integrity Loop superado` a nivel de sistema**. Lo que sí
+está comprobado y con qué alcance está en §10.
+
+## 12. Pendiente inmediato de Fase B-8 (declarado, falla cerrado)
+
+La captura de NortexGPT **todavía no envía** `taxTreatment`: `toPurchaseInput` no lo incluye,
+así que una factura sin IVA capturada por chat cae en el default `IVA_TRASLADADO` y
+`totalIssues` reporta la discrepancia contra el `documentTax = 0.00` impreso. Es decir, el
+asistente **bloquea** en vez de registrar una compra inflada —falla cerrado— y el operador la
+registra correctamente en Compras. Cerrar B-8 elimina esa fricción.
