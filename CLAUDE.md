@@ -31,6 +31,10 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
   confirmación tipada y una autorización de producto que nombre alcance, ventana y
   rollback; ver `docs/runbooks/release-promotion.md`.
+- La promoción requiere una API Coolify que exponga Auto Deploy explícitamente
+  apagado; 4.1.2 omite ese campo y bloquea la compuerta. Los webhooks usan POST.
+  Actualizar el panel requiere su propio respaldo y recuperación, separados de
+  MySQL de Nortex; ver `docs/releases/2026-09-08-coolify-compatibility.md`.
 
 - Backend: `tsx backend/server.ts` (sin build). Verificar con `npx tsc --noEmit`.
 - Frontend: `npm run build` (Vite + PWA). Producción usa `npm run build:seo`

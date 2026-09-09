@@ -1,7 +1,9 @@
 // @vitest-environment node
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parseDocument } from 'yaml';
 
@@ -827,4 +829,69 @@ describe.each(executableRunGates)('REST gate $release / $workflow / $job / $name
             await expect(executeRestGate(target, [{ ...validRun, conclusion: 'failure' }, validRun])).resolves.toBeUndefined();
         });
     }
+});
+
+
+const deployWebhookTargets = [
+    { release: 'staging', source: stagingSource, job: 'deploy-staging', name: 'Desplegar STAGING (webhook de Coolify)' },
+    { release: 'production', source: productionSource, job: 'deploy-production', name: 'Desplegar PROD (webhook de Coolify)' },
+];
+
+function executeDeployShell(target: typeof deployWebhookTargets[number], bearer: string, curlExit = 0) {
+    const directory = mkdtempSync(join(tmpdir(), 'nortex-webhook-shell-'));
+    const record = join(directory, 'synthetic-curl-args');
+    const fakeCurl = join(directory, 'curl');
+    const webhook = 'https://coolify.example.test/api/v1/deploy?uuid=qa-synthetic&force=false';
+    try {
+        // Only synthetic values reach this file. PATH selects this fake before
+        // any system curl; no network request can occur in these shell tests.
+        writeFileSync(fakeCurl, '#!/bin/sh\nprintf \'CALL\\n\' >> "$QA_CURL_RECORD"\nprintf \'%s\\n\' "$@" >> "$QA_CURL_RECORD"\nexit "$QA_CURL_EXIT"\n');
+        chmodSync(fakeCurl, 0o700);
+        const script = step(parse(target.source).jobs[target.job].steps, target.name).run;
+        const result = spawnSync('/bin/bash', ['-c', script], {
+            encoding: 'utf8', timeout: 2_000,
+            env: { PATH: directory + ':/usr/bin:/bin', WEBHOOK: webhook, TOKEN: bearer,
+                QA_CURL_RECORD: record, QA_CURL_EXIT: String(curlExit) },
+        });
+        expect(result.error).toBeUndefined();
+        const recorded = readFileSync(record, 'utf8').trimEnd().split('\n');
+        expect(recorded.filter(value => value === 'CALL')).toHaveLength(1);
+        return { ...result, args: recorded.slice(1), webhook };
+    } finally {
+        rmSync(directory, { recursive: true, force: true });
+    }
+}
+
+describe.each(deployWebhookTargets)('Shell webhook $release', (target) => {
+    it.each(['', 'qa-synthetic-bearer-$-literal'])('envía POST explícito y preserva destino/autorización: %j', (bearer) => {
+        const result = executeDeployShell(target, bearer);
+        expect(result.status).toBe(0);
+        expect(result.args[result.args.indexOf('--request') + 1]).toBe('POST');
+        expect(result.args.at(-1)).toBe(result.webhook);
+        expect(result.args).not.toContain('--retry');
+        expect(result.args).toContain('--fail');
+        expect(result.args).toContain('--silent');
+        expect(result.args[result.args.indexOf('--max-time') + 1]).toBe('30');
+        expect(result.args[result.args.indexOf('--output') + 1]).toBe('/dev/null');
+        if (bearer) {
+            expect(result.args[result.args.indexOf('-H') + 1]).toBe('Authorization: Bearer ' + bearer);
+            expect(result.stdout + result.stderr).not.toContain(bearer);
+        } else {
+            expect(result.args).not.toContain('-H');
+            expect(result.args.some(value => value.includes('Authorization:'))).toBe(false);
+        }
+        expect(result.stdout + result.stderr).not.toContain(result.webhook);
+    });
+
+    it.each([
+        { bearer: '', curlExit: 22 }, { bearer: 'qa-synthetic-bearer-$-literal', curlExit: 22 },
+        { bearer: '', curlExit: 28 }, { bearer: 'qa-synthetic-bearer-$-literal', curlExit: 28 },
+    ])('falla sin reintentar ni filtrar URL/token: $curlExit / $bearer', ({ bearer, curlExit }) => {
+        const result = executeDeployShell(target, bearer, curlExit);
+        expect(result.status).toBe(target.release === 'production' ? 1 : curlExit);
+        expect(result.stdout + result.stderr).not.toContain(result.webhook);
+        if (bearer) expect(result.stdout + result.stderr).not.toContain(bearer);
+        expect(result.stdout + result.stderr).not.toContain('Deploy de');
+        expect(result.args).not.toContain('--retry');
+    });
 });

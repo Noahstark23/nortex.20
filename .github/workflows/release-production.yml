@@ -271,11 +271,11 @@ jobs:
           TOKEN: ${{ secrets.COOLIFY_PROD_DEPLOY_TOKEN }}
         run: |
           if [ -n "$TOKEN" ]; then
-            if ! curl --fail --silent --max-time 30 --output /dev/null \
+            if ! curl --request POST --fail --silent --max-time 30 --output /dev/null \
               -H "Authorization: Bearer $TOKEN" "$WEBHOOK"; then
               echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
             fi
-          elif ! curl --fail --silent --max-time 30 --output /dev/null "$WEBHOOK"; then
+          elif ! curl --request POST --fail --silent --max-time 30 --output /dev/null "$WEBHOOK"; then
             echo "::error::Coolify no confirmó la solicitud de producción"; exit 1
           fi
           echo "🚀 Deploy de prod disparado"

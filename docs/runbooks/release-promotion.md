@@ -92,6 +92,19 @@ La falta, URL ambigua, token ausente o cualquier desacuerdo entre esos elementos
 detiene el run antes del webhook. El workflow nunca escribe el pin de Coolify ni
 intenta adivinar la app correcta.
 
+**Compatibilidad comprobada el 2026-09-08:** Coolify 4.1.2 no carga la relación
+`settings` en `GET /applications/{uuid}`. Su interfaz puede mostrar Auto Deploy
+apagado mientras la API omite el campo; eso bloquea correctamente esta compuerta.
+No aceptar `undefined`, `null`, `0` o cadenas como `false`, ni ampliar el token a
+`read:sensitive`. Comprobar una versión del proveedor que exponga el booleano
+antes de promover. La fuente de 4.3.18 sí carga `settings`; esa revisión de código
+no acredita que la actualización del panel esté ejecutada ni probada.
+
+Los webhooks se invocan mediante **POST**, con y sin bearer. Coolify 4.1.2 admite
+ese método y las versiones nuevas rechazan el GET que cambiaba estado. Un fallo
+o timeout no provoca reintentos automáticos: consultar la operación antes de
+volver a solicitar despliegue. [Compatibilidad y recuperación del panel](../releases/2026-09-08-coolify-compatibility.md).
+
 `STAGING_URL` y `PROD_URL` son además orígenes públicos HTTPS raíz, sin
 credenciales, query ni fragmento. El verificador de salud rechaza redirecciones y
 solo acepta API/base sanas con el SHA esperado y una respuesta que incluya
