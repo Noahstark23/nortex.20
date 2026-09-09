@@ -57,8 +57,10 @@ El contrato Coolify vive en `scripts/verify-coolify-staging-target.mjs` y
 Los webhooks usan POST explícito; no reintentar automáticamente un resultado
 incierto. Coolify 4.1.2 omite `settings` en GET application y no satisface la
 compuerta: no interpretar ausencia como Auto Deploy apagado ni elevar permisos.
-La fuente 4.3.18 incluye la relación, pero actualizar el panel exige acreditar
-su propia recuperación; el respaldo MySQL de Nortex no respalda Coolify.
+La instancia pasó a 4.3.18 tras respaldo y ensayos independientes; las guardas
+reales de staging y producción pasaron en `07f30c9`. Verificar el estado vivo en
+cada release. Una futura actualización del panel exige acreditar su propia
+recuperación; el respaldo MySQL de Nortex no respalda Coolify.
 Ver `docs/releases/2026-09-08-coolify-compatibility.md` antes de ese cambio.
 
 Tokens distintos por environment no prueban aislamiento entre aplicaciones. Comprobar

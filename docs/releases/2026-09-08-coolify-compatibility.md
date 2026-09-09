@@ -35,3 +35,7 @@ Antes de cambiar el panel:
 **No ejecutado:** actualización de Coolify, respaldo/restauración de su panel, despliegue del nuevo Nortex en staging o producción, prueba financiera remota y observación. La producción continúa en `2834497f6090c2d55bcc48d5edb86887f6993ae3`; staging, en `38e9c6f2ae0809fecff9d6edd09204dc4c756fe8` en el último health observado. API y MySQL responden sanos.
 
 No se retiró ninguna compuerta para publicar. Las capacidades IA/adjuntos/ejecución del asistente continúan sujetas a sus contratos, evaluación y habilitación independiente.
+
+## Seguimiento posterior de esta misma promoción
+
+El bloqueo descrito arriba se resolvió: Coolify fue actualizado realmente a 4.3.18 después de respaldar y ensayar su recuperación; la API satisfizo las guardas sin ampliar permisos. Staging y producción del SHA `07f30c9` terminaron exitosamente y sus pruebas financieras sintéticas pasaron. El apartado anterior «No ejecutado» conserva el estado del intento inicial; para el cierre y la observación posterior consultar el [expediente de producción](2026-09-08-production-verification.md).
