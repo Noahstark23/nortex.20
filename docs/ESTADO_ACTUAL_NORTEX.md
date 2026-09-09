@@ -1,6 +1,6 @@
 # Estado actual de Nortex
 
-Revisión documental: 2026-09-08. Corte de producto verificado: `484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b`, [PR 207](https://github.com/Noahstark23/nortex.20/pull/207). Este documento es el punto de entrada mantenido; los informes fechados describen su propio candidato. La actualización posterior de guías y perfiles necesita su propia comprobación; no cambia los resultados de producto ya registrados.
+Revisión documental: 2026-09-08 (cierre de promoción en UTC del 09/09). Candidato desplegado: `07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc`. Corte de producto verificado: `484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b`, [PR 207](https://github.com/Noahstark23/nortex.20/pull/207). Este documento es el punto de entrada mantenido; los informes fechados describen su propio candidato. La actualización posterior de guías y perfiles necesita su propia comprobación; no cambia los resultados de producto ya registrados.
 
 ## Evidencia por estado
 
@@ -10,12 +10,13 @@ Revisión documental: 2026-09-08. Corte de producto verificado: `484f58a4e31ad74
 | QA local | Prisma generate/validate, TypeScript, diseño, build SEO; 5.736 pruebas generales aprobadas, cero fallidas | 318 omitidas no cuentan como aprobadas; QA visual/dispositivos y jornada real no sustituidas |
 | Integración financiera | 37 suites, 332 casos HTTP/MySQL 8 descartable, cero omisiones | Solo escenarios y candidato ejecutados |
 | Mutación local | 64 módulos, 100%; 5.759 eliminados + cuatro timeouts, cero sobrevivientes/sin cobertura; 20 exclusiones históricas | No es cobertura global ni mutación ejecutada en el run de PR |
-| CI | Cuatro jobs exitosos en main `d51a948a4251b4b4a5676c5ff87ec982ac6e08d5`, [run 34291897808](https://github.com/Noahstark23/nortex.20/actions/runs/34291897808) | El cambio posterior de webhooks a POST necesita su propio CI |
+| CI | Cuatro jobs exitosos en el candidato desplegado `07f30c9`, [run 34293152828](https://github.com/Noahstark23/nortex.20/actions/runs/34293152828) | Mutación corresponde a la corrida local indicada arriba; el paso está omitido en este run de CI |
 | RAG | 12 artículos, búsqueda léxica/top-2 y filtros; datos del negocio desde herramientas deterministas | Curación, citas visibles del recorrido operativo, benchmark reservado y evaluación real siguen pendientes |
 | Infraestructura | Droplet 2 vCPU, 4 GiB RAM, 80 GiB; producción y staging comparten host. Muestra: 1.695 MiB disponibles y 879 MiB de swap usados | No existe capacidad de clientes concurrentes acreditada; faltan series, carga y p95 |
 | Respaldo real | Respaldo remoto restaurado en MySQL 8 aislado; schema candidato aplicado dos veces, con filas y agregados preservados y relaciones verificadas; cleanup aprobado | No acredita recuperación completa de la aplicación ni de originales privados; evidencia operativa conservada fuera del repositorio público |
-| Configuración | Identidad HTTPS/UUID y webhooks verificados; tokens de lectura separados y token de deploy de producción; ambos Auto Deploy apagados en la interfaz; main requiere PR/checks y environments solo main sin bypass administrativo | Tokens limitados al equipo, no por app. El usuario eligió su propia cuenta para revisar production: excepción explícita, no revisión independiente. Pins deben corresponder al próximo SHA definitivo |
-| Despliegue | PR 207 y reparación REST PR 208 fusionadas en main; producción sigue sana en `2834497f6090c2d55bcc48d5edb86887f6993ae3` | El nuevo staging pasó la validación de GitHub y se detuvo antes del webhook: Coolify 4.1.2 omite settings en la API. Compatibilidad/recuperación del panel pendientes; piloto no acreditado |
+| Configuración | Identidad HTTPS/UUID y webhooks verificados; tokens de lectura separados y token de deploy de producción; ambos Auto Deploy apagados en la interfaz; main requiere PR/checks y environments solo main sin bypass administrativo | Tokens limitados al equipo, no por app. El usuario eligió su propia cuenta para revisar production: excepción explícita, no revisión independiente. Ambos pins corresponden al candidato desplegado; revalidar antes de cada promoción |
+| Despliegue | PR 207/208/209 fusionadas; staging [34296014918](https://github.com/Noahstark23/nortex.20/actions/runs/34296014918) y producción [34296529913](https://github.com/Noahstark23/nortex.20/actions/runs/34296529913) exitosos en `07f30c9`; smoke financiero sintético aprobado en ambos | Hubo HTTP 503 durante el reemplazo; duración continua no medida. Observación posterior de 30 minutos aprobada (31 muestras); piloto no acreditado |
+| Panel Coolify | Actualización real 4.1.2 → 4.3.18; backup cifrado fuera del host y en Mac; restauración SQL, 53 migraciones y reejecución ensayadas; sesión existente y API verificadas | No acredita rollback integral con consumidores reiniciados, recuperación del host ni originales privados de NortexGPT |
 
 [Evidencia local y manifiesto](releases/evidence/2026-09-08-consolidated/local-verification.json) · [expediente del candidato](releases/2026-09-08-consolidated-candidate.md). Los datos de entorno de esta tabla son observaciones fechadas; revalidar antes de operar.
 
@@ -41,4 +42,4 @@ La ferretería del piloto tiene una referencia de contacto aportada por el usuar
 
 Actualización del intento de promoción: [incidente del verificador REST y reparación](releases/2026-09-08-workflow-run-path.md). La producción observada no tiene el asistente ni la extracción activos; publicar código no sustituye habilitación, workers, volumen privado y evaluación del piloto.
 
-Bloqueo vigente y preparación: [contrato Coolify y recuperación independiente](releases/2026-09-08-coolify-compatibility.md).
+Cierre del bloqueo de Coolify y promoción: [evidencia de producción](releases/2026-09-08-production-verification.md). El [informe de compatibilidad](releases/2026-09-08-coolify-compatibility.md) conserva el intento anterior como historia.

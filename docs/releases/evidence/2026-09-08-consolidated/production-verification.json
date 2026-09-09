@@ -1,0 +1,597 @@
+{
+  "candidate": "07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc",
+  "recordedUtc": "2026-09-09T01:25:21.330921+00:00",
+  "status": "VERIFIED_BOUNDED_RELEASE",
+  "runs": {
+    "ci": {
+      "url": "https://github.com/Noahstark23/nortex.20/actions/runs/34293152828",
+      "candidate": "07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "verify",
+          "conclusion": "success"
+        },
+        {
+          "name": "backup-restore-smoke",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy-schema-smoke",
+          "conclusion": "success"
+        },
+        {
+          "name": "integration-required",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "staging": {
+      "url": "https://github.com/Noahstark23/nortex.20/actions/runs/34296014918",
+      "candidate": "07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "validate-staging-candidate",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy-staging",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "production": {
+      "url": "https://github.com/Noahstark23/nortex.20/actions/runs/34296529913",
+      "candidate": "07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc",
+      "status": "completed",
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "validate-production-candidate",
+          "conclusion": "success"
+        },
+        {
+          "name": "deploy-production",
+          "conclusion": "success"
+        }
+      ]
+    }
+  },
+  "financialSmokes": {
+    "staging": {
+      "candidate": "07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc",
+      "status": "PASSED_BOUNDED_SMOKE",
+      "uncertain": false,
+      "checks": [
+        "exact_source_and_health",
+        "authenticated_synthetic_tenant",
+        "sale_replay",
+        "approved_return_replay",
+        "approved_cancellation_replay",
+        "stock_9_cash_123_zero_difference_close_replay",
+        "four_balanced_journals",
+        "persistent_counts_and_warehouse_stock",
+        "retired_users_session_revoked"
+      ],
+      "cleanup": "RETIRED_AUDITED",
+      "executedScriptSha256": "aac38924aef03b95938ef26c32fe11205f71096a66a753c5f9333a9f5f073a0e",
+      "limitations": [
+        "Synthetic counted product only",
+        "No pharmacy/offline/model quality evaluation",
+        "Fixture remains in unfiltered tenant/new-tenant/CANCELLED metrics; exclude exact tenantId"
+      ]
+    },
+    "production": {
+      "candidate": "07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc",
+      "status": "PASSED_BOUNDED_SMOKE",
+      "uncertain": false,
+      "checks": [
+        "exact_source_and_health",
+        "authenticated_synthetic_tenant",
+        "sale_replay",
+        "approved_return_replay",
+        "approved_cancellation_replay",
+        "stock_9_cash_123_zero_difference_close_replay",
+        "four_balanced_journals",
+        "persistent_counts_and_warehouse_stock",
+        "retired_users_session_revoked"
+      ],
+      "cleanup": "RETIRED_AUDITED",
+      "executedScriptSha256": "aac38924aef03b95938ef26c32fe11205f71096a66a753c5f9333a9f5f073a0e",
+      "limitations": [
+        "Synthetic counted product only",
+        "No pharmacy/offline/model quality evaluation",
+        "Fixture remains in unfiltered tenant/new-tenant/CANCELLED metrics; exclude exact tenantId"
+      ]
+    }
+  },
+  "publicHealthObservation": {
+    "status": "PASSED_30_MINUTE_PUBLIC_HEALTH",
+    "elapsedSeconds": 1800.188,
+    "samples": [
+      {
+        "index": 0,
+        "observedUtc": "2026-09-09T00:55:09.162395+00:00",
+        "elapsedSeconds": 0.177,
+        "latencySeconds": 0.177,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 25,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 1,
+        "observedUtc": "2026-09-09T00:56:09.208826+00:00",
+        "elapsedSeconds": 60.223,
+        "latencySeconds": 0.215,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 85,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 2,
+        "observedUtc": "2026-09-09T00:57:09.375178+00:00",
+        "elapsedSeconds": 120.39,
+        "latencySeconds": 0.385,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 145,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 3,
+        "observedUtc": "2026-09-09T00:58:09.205911+00:00",
+        "elapsedSeconds": 180.22,
+        "latencySeconds": 0.215,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 205,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 4,
+        "observedUtc": "2026-09-09T00:59:09.191364+00:00",
+        "elapsedSeconds": 240.206,
+        "latencySeconds": 0.201,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 265,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 5,
+        "observedUtc": "2026-09-09T01:00:09.219863+00:00",
+        "elapsedSeconds": 300.234,
+        "latencySeconds": 0.234,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 325,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 6,
+        "observedUtc": "2026-09-09T01:01:09.176615+00:00",
+        "elapsedSeconds": 360.191,
+        "latencySeconds": 0.189,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 385,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 7,
+        "observedUtc": "2026-09-09T01:02:09.212755+00:00",
+        "elapsedSeconds": 420.227,
+        "latencySeconds": 0.22,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 445,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 8,
+        "observedUtc": "2026-09-09T01:03:09.204927+00:00",
+        "elapsedSeconds": 480.219,
+        "latencySeconds": 0.213,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 505,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 9,
+        "observedUtc": "2026-09-09T01:04:09.183925+00:00",
+        "elapsedSeconds": 540.194,
+        "latencySeconds": 0.185,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 565,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 10,
+        "observedUtc": "2026-09-09T01:05:09.178215+00:00",
+        "elapsedSeconds": 600.188,
+        "latencySeconds": 0.179,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 625,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 11,
+        "observedUtc": "2026-09-09T01:06:09.229434+00:00",
+        "elapsedSeconds": 660.239,
+        "latencySeconds": 0.231,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 685,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 12,
+        "observedUtc": "2026-09-09T01:07:09.219088+00:00",
+        "elapsedSeconds": 720.228,
+        "latencySeconds": 0.223,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 745,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 13,
+        "observedUtc": "2026-09-09T01:08:09.205370+00:00",
+        "elapsedSeconds": 780.214,
+        "latencySeconds": 0.209,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 805,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 14,
+        "observedUtc": "2026-09-09T01:09:09.198983+00:00",
+        "elapsedSeconds": 840.208,
+        "latencySeconds": 0.204,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 865,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 15,
+        "observedUtc": "2026-09-09T01:10:09.199284+00:00",
+        "elapsedSeconds": 900.208,
+        "latencySeconds": 0.203,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 925,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 16,
+        "observedUtc": "2026-09-09T01:11:09.182621+00:00",
+        "elapsedSeconds": 960.191,
+        "latencySeconds": 0.187,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 985,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 17,
+        "observedUtc": "2026-09-09T01:12:09.202739+00:00",
+        "elapsedSeconds": 1020.211,
+        "latencySeconds": 0.206,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1045,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 18,
+        "observedUtc": "2026-09-09T01:13:09.195206+00:00",
+        "elapsedSeconds": 1080.204,
+        "latencySeconds": 0.194,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1105,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 19,
+        "observedUtc": "2026-09-09T01:14:09.219907+00:00",
+        "elapsedSeconds": 1140.228,
+        "latencySeconds": 0.221,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1165,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 20,
+        "observedUtc": "2026-09-09T01:15:09.365593+00:00",
+        "elapsedSeconds": 1200.374,
+        "latencySeconds": 0.368,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1225,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 21,
+        "observedUtc": "2026-09-09T01:16:09.185422+00:00",
+        "elapsedSeconds": 1260.193,
+        "latencySeconds": 0.188,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1285,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 22,
+        "observedUtc": "2026-09-09T01:17:09.190472+00:00",
+        "elapsedSeconds": 1320.198,
+        "latencySeconds": 0.193,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1345,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 23,
+        "observedUtc": "2026-09-09T01:18:09.190460+00:00",
+        "elapsedSeconds": 1380.198,
+        "latencySeconds": 0.191,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1405,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 24,
+        "observedUtc": "2026-09-09T01:19:09.220277+00:00",
+        "elapsedSeconds": 1440.228,
+        "latencySeconds": 0.223,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1465,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 25,
+        "observedUtc": "2026-09-09T01:20:09.211755+00:00",
+        "elapsedSeconds": 1500.219,
+        "latencySeconds": 0.214,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1525,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 26,
+        "observedUtc": "2026-09-09T01:21:09.184073+00:00",
+        "elapsedSeconds": 1560.191,
+        "latencySeconds": 0.186,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1585,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 27,
+        "observedUtc": "2026-09-09T01:22:09.187668+00:00",
+        "elapsedSeconds": 1620.195,
+        "latencySeconds": 0.186,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1645,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 28,
+        "observedUtc": "2026-09-09T01:23:09.181360+00:00",
+        "elapsedSeconds": 1680.188,
+        "latencySeconds": 0.182,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1705,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 29,
+        "observedUtc": "2026-09-09T01:24:09.213940+00:00",
+        "elapsedSeconds": 1740.221,
+        "latencySeconds": 0.213,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1765,
+        "uptimeMonotonic": true
+      },
+      {
+        "index": 30,
+        "observedUtc": "2026-09-09T01:25:09.181419+00:00",
+        "elapsedSeconds": 1800.188,
+        "latencySeconds": 0.178,
+        "passed": true,
+        "httpStatus": 200,
+        "ok": true,
+        "dbUp": true,
+        "exactSha": true,
+        "cacheNoStore": true,
+        "uptimeSeconds": 1825,
+        "uptimeMonotonic": true
+      }
+    ],
+    "scope": "Public API/database/SHA/cache/uptime sampled once per minute; no merchant data, no load test, no continuous availability claim"
+  },
+  "runtime": {
+    "node": "v22.23.2",
+    "prisma": "6.4.1",
+    "evaluatedCapabilities": [
+      "NORTEX_ASSISTANT_ENABLED",
+      "NORTEX_ASSISTANT_LANGUAGE_ENABLED",
+      "NORTEX_ASSISTANT_EXTRACTION_ENABLED",
+      "NORTEX_ASSISTANT_EXECUTION_ENABLED",
+      "NORTEX_ASSISTANT_OPERATIONS_ENABLED",
+      "NORTEX_ASSISTANT_ACTIONS_ENABLED",
+      "NORTEX_PROMOTIONS_ENABLED",
+      "NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED"
+    ],
+    "activeCapabilities": [],
+    "storageConfigured": false
+  },
+  "transition": {
+    "observed503Responses": 2,
+    "continuousDowntimeDuration": "not_measured",
+    "recoveredExactCandidate": true
+  },
+  "controlPlane": {
+    "versionBefore": "4.1.2",
+    "versionAfter": "4.3.18",
+    "encryptedOffhostAndMacBackupVerified": true,
+    "isolatedSqlRestoreVerified": true,
+    "migrationRehearsalAndReplayVerified": true,
+    "newMigrations": 53,
+    "fullRollbackBootTested": false
+  },
+  "documentaryChecks": {
+    "files": 5,
+    "testsPassed": 188,
+    "testsSkipped": 0,
+    "scope": "release contracts and existing monolith budgets; no new financial code"
+  },
+  "limitations": [
+    "No load/capacity guarantee",
+    "No full private attachment recovery",
+    "No model quality or pilot acceptance",
+    "No new authenticated device/offline UX evaluation",
+    "Synthetic fixture IDs and recovery artifacts retained only in private evidence",
+    "No independent production reviewer; owner selected own account",
+    "Local mutation evidence is separate from final CI, whose mutation step was skipped"
+  ]
+}

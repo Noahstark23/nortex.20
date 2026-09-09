@@ -97,8 +97,11 @@ intenta adivinar la app correcta.
 apagado mientras la API omite el campo; eso bloquea correctamente esta compuerta.
 No aceptar `undefined`, `null`, `0` o cadenas como `false`, ni ampliar el token a
 `read:sensitive`. Comprobar una versión del proveedor que exponga el booleano
-antes de promover. La fuente de 4.3.18 sí carga `settings`; esa revisión de código
-no acredita que la actualización del panel esté ejecutada ni probada.
+antes de promover. La fuente de 4.3.18 sí carga `settings`. Posteriormente se ejecutó esa
+actualización y las guardas de staging y producción pasaron; el [expediente
+de producción](../releases/2026-09-08-production-verification.md) separa respaldo,
+ensayos y observación. Revalidar la instancia en cada release; la versión por sí
+sola no acredita configuración ni salud.
 
 Los webhooks se invocan mediante **POST**, con y sin bearer. Coolify 4.1.2 admite
 ese método y las versiones nuevas rechazan el GET que cambiaba estado. Un fallo

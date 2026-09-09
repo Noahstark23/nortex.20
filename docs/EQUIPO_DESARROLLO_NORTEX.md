@@ -26,7 +26,7 @@ Codex conserva `max_threads=6` y `max_depth=1`: como máximo el integrador y cin
 
 ## Primer ciclo de estabilidad
 
-1. Plataforma y QA: terminar el ensayo de restauración real aislado, verificar almacenamiento privado de adjuntos y medir baseline de los cuatro negocios sin saturar producción. Registrar RPO/RTO y ventanas; una muestra de RAM no acredita capacidad.
+1. Plataforma y QA: conservar el ensayo SQL real aislado ya aprobado y completar la recuperación del almacenamiento privado de adjuntos y medir baseline de los cuatro negocios sin saturar producción. Registrar RPO/RTO y ventanas; una muestra de RAM no acredita capacidad.
 2. Finanzas y QA: adjudicar CxP paginadas, seriales, RRHH y caja bancaria mediante reproducciones independientes de D11; reparar únicamente los defectos demostrados, con transacción y reconciliación.
 3. Clean Code y POS: caracterizar y extraer alta rápida y conteos, uno por lote. Exportación fiscal ya vive en rutas; queda revisar su carga síncrona. Reducir presupuestos en el mismo cambio.
 4. Inteligencia y QA: reparar recorrido de citas, ampliar ayuda revisada y medir retrieval antes de elegir embeddings; mantener evaluación real y piloto como gates distintos.
