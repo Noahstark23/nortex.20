@@ -721,7 +721,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                 {/* Footer */}
                 {rows.length > 0 && !summary && (
-                    <div className="bg-surface-900/80 px-4 sm:px-6 py-3 sm:py-4 border-t border-surface-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:pb-4">
+                    <div className="bg-surface-900/80 px-4 sm:px-6 py-3 sm:py-4 border-t border-surface-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-4">
                         <div className="text-sm text-surface-400 flex-1 min-w-0">
                             {progress ? (
                                 <div>
