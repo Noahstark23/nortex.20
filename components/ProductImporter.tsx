@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import { Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, XCircle, Loader2, X, Columns3 } from 'lucide-react';
 // xlsx (~430 KB) se importa DINÁMICAMENTE dentro de cada handler: solo baja al
 // navegador cuando alguien importa/exporta un Excel, nunca en el bundle inicial.
@@ -7,6 +7,14 @@ import {
     type ParsedRow, type ColumnResolution, type CanonicalField,
 } from '../utils/importProducts';
 import { formatMoney } from '../utils/money';
+import {
+    PREVIEW_FILTERS,
+    PREVIEW_PAGE_SIZE,
+    countPreviewRows,
+    selectPreviewRows,
+    summarizePreviewIssues,
+    type PreviewFilter,
+} from '../utils/importPreview';
 
 interface ProductImporterProps {
     onClose: () => void;
@@ -39,6 +47,10 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     const [importing, setImporting] = useState(false);
     const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
     const [summary, setSummary] = useState<ImportSummary | null>(null);
+    // Filtro y tope de la vista previa. Se reinician con cada archivo para que
+    // un "Con errores" de una carga anterior no esconda la carga nueva.
+    const [filter, setFilter] = useState<PreviewFilter>('ALL');
+    const [limit, setLimit] = useState(PREVIEW_PAGE_SIZE);
     const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Manejar archivo — el parseo/validación vive en utils/importProducts.ts
@@ -61,6 +73,10 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 const result = parseWorkbookRows(jsonData);
                 setRows(result.rows);
                 setResolution(result.resolution);
+                // Un archivo nuevo empieza mostrándose entero: heredar el filtro
+                // anterior haría creer que la carga vino vacía o sin errores.
+                setFilter('ALL');
+                setLimit(PREVIEW_PAGE_SIZE);
             } catch (error) {
                 alert('Error leyendo archivo. Verificá que sea un Excel/CSV válido.');
             } finally {
@@ -273,29 +289,49 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         XLSX.writeFile(workbook, 'productos_rechazados_nortex.xlsx');
     };
 
-    const validCount = rows.filter(r => r.valid).length;
-    const errorCount = rows.filter(r => !r.valid).length;
+    const counts = useMemo(() => countPreviewRows(rows), [rows]);
+    const issues = useMemo(() => summarizePreviewIssues(rows), [rows]);
+    const selection = useMemo(() => selectPreviewRows(rows, filter, limit), [rows, filter, limit]);
+    const visibleRows = selection.visible;
+    const matchingRows = selection.matching;
+    const hiddenRows = selection.hidden;
+    const validCount = counts.valid;
+    const errorCount = counts.errors;
     const missingCols = resolution?.missing.filter(f => f !== 'sku') ?? [];
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-surface-800 rounded-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden shadow-2xl border border-surface-700" onClick={(e) => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose}>
+            {/*
+              Altura en `dvh`, no `vh`: en iOS la barra dinámica achica el viewport
+              y `90vh` se pasaba de largo, recortando la cabecera. El alto lo
+              reparte flex — el body es el único que scrollea — para no depender
+              de una resta hardcodeada de la altura de cabecera, que asumía una
+              sola línea y dejaba de cuadrar apenas el título envolvía.
+            */}
+            <div
+                className="bg-surface-800 rounded-none sm:rounded-2xl w-full max-w-6xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col overflow-hidden shadow-2xl border-0 sm:border border-surface-700"
+                onClick={(e) => e.stopPropagation()}
+            >
                 {/* Header */}
-                <div className="bg-gradient-to-r from-brand-900/40 to-brand-900/20 px-6 py-4 border-b border-surface-700 flex items-center justify-between">
-                    <div>
-                        <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                            <Upload size={20} className="text-brand-400" />
-                            Importar Productos Masivamente
+                <div className="bg-gradient-to-r from-brand-900/40 to-brand-900/20 px-4 sm:px-6 py-3 sm:py-4 border-b border-surface-700 flex items-start justify-between gap-3 shrink-0">
+                    <div className="min-w-0">
+                        <h2 className="text-base sm:text-xl font-bold text-white flex items-center gap-2">
+                            <Upload size={20} className="text-brand-400 shrink-0" />
+                            <span className="truncate">Importar productos</span>
                         </h2>
-                        <p className="text-sm text-surface-400 mt-1">Carga hasta 500 productos desde Excel/CSV con validación automática</p>
+                        <p className="hidden sm:block text-sm text-surface-400 mt-1">Carga hasta 500 productos desde Excel/CSV con validación automática</p>
                     </div>
-                    <button onClick={onClose} className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors">
+                    <button
+                        onClick={onClose}
+                        aria-label="Cerrar importador"
+                        className="shrink-0 flex h-11 w-11 items-center justify-center hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors"
+                    >
                         <X size={20} />
                     </button>
                 </div>
 
                 {/* Body */}
-                <div className="p-6 space-y-6 overflow-y-auto max-h-[calc(90vh-180px)]">
+                <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 overflow-y-auto flex-1 min-h-0">
                     {/* Upload Zone */}
                     {rows.length === 0 && !summary && (
                         <div>
@@ -303,19 +339,23 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                 onDrop={handleDrop}
                                 onDragOver={(e) => e.preventDefault()}
                                 onClick={() => fileInputRef.current?.click()}
-                                className="border-2 border-dashed border-surface-600 rounded-xl p-12 text-center cursor-pointer hover:border-brand-500 hover:bg-surface-700/20 transition-all"
+                                className="border-2 border-dashed border-surface-600 rounded-xl p-6 sm:p-12 text-center cursor-pointer hover:border-brand-500 hover:bg-surface-700/20 transition-all"
                             >
                                 {loading ? (
                                     <div className="flex flex-col items-center gap-3">
-                                        <Loader2 className="animate-spin text-brand-400" size={48} />
+                                        <Loader2 className="animate-spin text-brand-400 size-9 sm:size-12" />
                                         <p className="text-surface-400">Procesando archivo...</p>
                                     </div>
                                 ) : (
                                     <>
-                                        <FileSpreadsheet size={48} className="mx-auto text-brand-400 mb-4" />
-                                        <p className="text-lg text-white font-semibold mb-2">Arrastra tu archivo Excel/CSV aquí</p>
-                                        <p className="text-sm text-surface-400 mb-4">o haz click para seleccionar</p>
-                                        <p className="text-xs text-surface-500">Formatos soportados: .xlsx, .xls, .csv (max 500 productos)</p>
+                                        <FileSpreadsheet className="mx-auto text-brand-400 mb-3 sm:mb-4 size-9 sm:size-12" />
+                                        {/* En un teléfono no se arrastra nada: el gesto real es tocar. */}
+                                        <p className="text-base sm:text-lg text-white font-semibold mb-2">
+                                            <span className="sm:hidden">Tocá para elegir tu archivo</span>
+                                            <span className="hidden sm:inline">Arrastra tu archivo Excel/CSV aquí</span>
+                                        </p>
+                                        <p className="hidden sm:block text-sm text-surface-400 mb-4">o haz click para seleccionar</p>
+                                        <p className="text-xs text-surface-500">.xlsx, .xls o .csv · hasta 500 productos</p>
                                     </>
                                 )}
                             </div>
@@ -372,18 +412,31 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                             {summary.rejected.length > 0 && (
                                 <div className="bg-surface-900/60 rounded-xl border border-surface-700 overflow-hidden">
-                                    <div className="flex items-center justify-between px-4 py-3 border-b border-surface-700">
+                                    <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 border-b border-surface-700">
                                         <p className="text-sm font-semibold text-white">Filas que NO entraron (corregilas en tu Excel y volvé a subir solo esas)</p>
                                         <button
                                             onClick={downloadRejected}
-                                            className="flex items-center gap-2 px-3 py-1.5 bg-amber-600/20 border border-amber-600/40 hover:bg-amber-600/30 rounded-lg text-amber-300 text-sm font-semibold transition-colors"
+                                            className="nx-fluid-press flex min-h-11 shrink-0 items-center justify-center gap-2 px-3 py-1.5 bg-amber-600/20 border border-amber-600/40 hover:bg-amber-600/30 rounded-lg text-amber-300 text-sm font-semibold transition-colors"
                                         >
                                             <Download size={16} />
                                             Descargar los {summary.rejected.length} que fallaron
                                         </button>
                                     </div>
-                                    <div className="overflow-x-auto max-h-72">
-                                        <table className="w-full text-sm">
+                                    {/* Mismo criterio que la vista previa: en angosto
+                                      una lista apilada, y la tabla solo cuando hay
+                                      ancho real para sus tres columnas. */}
+                                    <ul className="sm:hidden max-h-72 overflow-y-auto divide-y divide-surface-700/50">
+                                        {summary.rejected.map((r, i) => (
+                                            <li key={i} className="bg-red-950/10 px-4 py-2.5">
+                                                <p className="text-xs font-mono text-surface-400">
+                                                    Fila {r.excelRow ?? '—'}{r.sku && r.sku !== '—' ? ` · ${r.sku}` : ''}
+                                                </p>
+                                                <p className="text-sm text-red-300 break-words">{r.motivo}</p>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    <div className="hidden sm:block overflow-x-auto max-h-72">
+                                        <table className="min-w-full text-sm">
                                             <thead className="bg-surface-900/80 sticky top-0">
                                                 <tr>
                                                     <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Fila Excel</th>
@@ -463,32 +516,119 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                     )}
                                 </div>
                             )}
-                            <div className="flex items-center justify-between mb-4">
-                                <div className="flex items-center gap-4">
-                                    <div className="flex items-center gap-2 bg-emerald-900/40 border border-emerald-700 text-emerald-300 px-3 py-1.5 rounded-lg">
-                                        <CheckCircle size={16} />
-                                        <span className="font-bold">{validCount}</span>
-                                        <span className="text-sm">válidos</span>
-                                    </div>
-                                    {errorCount > 0 && (
-                                        <div className="flex items-center gap-2 bg-red-900/40 border border-red-700 text-red-300 px-3 py-1.5 rounded-lg">
-                                            <XCircle size={16} />
-                                            <span className="font-bold">{errorCount}</span>
-                                            <span className="text-sm">con errores</span>
-                                        </div>
-                                    )}
-                                </div>
+                            {/*
+                              Filtro y tope: con 500 filas la lista completa no es
+                              recorrible en un teléfono y lo único accionable son
+                              las que fallaron. El filtro las aísla; el tope evita
+                              renderizar miles de nodos. Las reglas viven en
+                              utils/importPreview.ts para poder probarlas sin DOM.
+                            */}
+                            <div className="flex flex-wrap items-center gap-2 mb-3">
+                                {PREVIEW_FILTERS.map(f => {
+                                    const label = f === 'ALL' ? 'Todos' : f === 'VALID' ? 'Válidos' : 'Con errores';
+                                    const count = f === 'ALL' ? counts.total : f === 'VALID' ? counts.valid : counts.errors;
+                                    const active = filter === f;
+                                    if (f === 'ERRORS' && counts.errors === 0) return null;
+                                    return (
+                                        <button
+                                            key={f}
+                                            type="button"
+                                            aria-pressed={active}
+                                            onClick={() => { setFilter(f); setLimit(PREVIEW_PAGE_SIZE); }}
+                                            className={`nx-fluid-press min-h-11 rounded-lg border px-3 text-sm font-semibold transition-colors ${active
+                                                ? f === 'ERRORS'
+                                                    ? 'border-red-700 bg-red-900/40 text-red-300'
+                                                    : 'border-emerald-700 bg-emerald-900/40 text-emerald-300'
+                                                : 'border-surface-600 bg-surface-800 text-surface-300 hover:border-surface-500'}`}
+                                        >
+                                            {label} <span className="font-bold">{count}</span>
+                                        </button>
+                                    );
+                                })}
                                 <button
                                     onClick={() => { setRows([]); setResolution(null); }}
-                                    className="text-sm text-surface-400 hover:text-white underline"
+                                    className="nx-fluid-press ml-auto min-h-11 px-2 text-sm text-surface-400 hover:text-white underline"
                                 >
                                     Cargar otro archivo
                                 </button>
                             </div>
 
-                            <div className="bg-surface-900/60 rounded-xl border border-surface-700 overflow-hidden">
+                            {/*
+                              Motivos agrupados: con un archivo grande sirve leer
+                              "12 filas sin precio" y corregir la columna entera,
+                              en vez de cazar 12 íconos rojos de a uno.
+                            */}
+                            {issues.length > 0 && (
+                                <div className="bg-red-950/30 border border-red-800/40 rounded-lg p-3 mb-3 space-y-1.5">
+                                    <p className="text-xs uppercase font-semibold text-red-300">Qué hay que corregir en tu Excel</p>
+                                    {issues.map(issue => (
+                                        <p key={issue.motivo} className="text-sm text-red-200">
+                                            <span className="font-bold">{issue.filas}</span>{' '}
+                                            {issue.filas === 1 ? 'fila' : 'filas'}: {issue.motivo}
+                                            <span className="block text-xs text-red-300/70">
+                                                Fila{issue.ejemplos.length > 1 ? 's' : ''} {issue.ejemplos.join(', ')}
+                                                {issue.filas > issue.ejemplos.length ? '…' : ''}
+                                            </span>
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/*
+                              Móvil: tarjetas apiladas. Una tabla de 8 columnas en
+                              390px se aplasta y desborda a la vez, y obliga a un
+                              scroll horizontal anidado dentro del scroll vertical
+                              del modal. El motivo del error va INLINE: antes vivía
+                              en un tooltip `group-hover`, y en touch no hay hover,
+                              así que una fila rota nunca podía explicarse.
+                            */}
+                            <div className="sm:hidden space-y-2">
+                                {visibleRows.map(r => (
+                                    <div
+                                        key={r.excelRow}
+                                        className={`rounded-xl border p-3 ${r.valid ? 'border-surface-700 bg-surface-900/60' : 'border-red-800/60 bg-red-950/30'}`}
+                                    >
+                                        <div className="flex items-start gap-2">
+                                            {r.valid
+                                                ? <CheckCircle size={16} className="text-emerald-400 mt-0.5 shrink-0" />
+                                                : <AlertCircle size={16} className="text-red-400 mt-0.5 shrink-0" />}
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-white font-semibold break-words">{r.data.nombre || '(sin nombre)'}</p>
+                                                <p className="text-xs text-surface-500 font-mono">
+                                                    Fila {r.excelRow}{r.data.sku ? ` · ${r.data.sku}` : ''}
+                                                </p>
+                                            </div>
+                                            <span className={`shrink-0 font-bold ${r.valid ? 'text-emerald-400' : 'text-red-300'}`}>
+                                                {r.valid ? formatMoney(r.data.precio) : '—'}
+                                            </span>
+                                        </div>
+                                        {!r.valid && (
+                                            <p className="mt-2 text-xs text-red-300">{r.errors.join(' · ')}</p>
+                                        )}
+                                        <dl className="mt-2 grid grid-cols-3 gap-2 text-xs">
+                                            <div className="min-w-0">
+                                                <dt className="text-surface-500">Costo</dt>
+                                                <dd className="text-surface-300">{formatMoney(r.data.costo)}</dd>
+                                            </div>
+                                            <div className="min-w-0">
+                                                <dt className="text-surface-500">Existencia</dt>
+                                                <dd className="text-white font-semibold">{r.data.stock} {r.data.unidad}</dd>
+                                            </div>
+                                            <div className="min-w-0">
+                                                <dt className="text-surface-500">Categoría</dt>
+                                                <dd className="text-surface-300 truncate">{r.data.categoria}</dd>
+                                            </div>
+                                        </dl>
+                                    </div>
+                                ))}
+                            </div>
+
+                            {/* Pantalla ancha: la tabla completa, con ancho natural
+                              (`min-w-full`) para que el contenedor scrollee en vez
+                              de aplastar las columnas hasta romperlas. */}
+                            <div className="hidden sm:block bg-surface-900/60 rounded-xl border border-surface-700 overflow-hidden">
                                 <div className="overflow-x-auto max-h-96">
-                                    <table className="w-full text-sm">
+                                    <table className="min-w-full text-sm">
                                         <thead className="bg-surface-900/80 sticky top-0">
                                             <tr>
                                                 <th className="text-left px-3 py-2 text-xs text-surface-400 uppercase font-semibold">Estado</th>
@@ -502,29 +642,27 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-surface-700/50">
-                                            {rows.map((r) => (
+                                            {visibleRows.map((r) => (
                                                 <tr key={r.excelRow} className={r.valid ? 'hover:bg-surface-700/20' : 'bg-red-950/20'}>
-                                                    <td className="px-3 py-2">
-                                                        {r.valid ? (
-                                                            <CheckCircle size={16} className="text-emerald-400" />
-                                                        ) : (
-                                                            <div className="group relative">
-                                                                <AlertCircle size={16} className="text-red-400 cursor-help" />
-                                                                <div className="absolute left-0 bottom-full mb-2 hidden group-hover:block bg-red-900 text-red-200 text-xs p-2 rounded shadow-lg w-56 z-10">
-                                                                    {r.errors.join(' · ')}
-                                                                </div>
-                                                            </div>
+                                                    <td className="px-3 py-2 align-top">
+                                                        {r.valid
+                                                            ? <CheckCircle size={16} className="text-emerald-400" />
+                                                            : <AlertCircle size={16} className="text-red-400" />}
+                                                    </td>
+                                                    <td className="px-3 py-2 align-top font-mono text-surface-500">{r.excelRow}</td>
+                                                    <td className="px-3 py-2 align-top font-mono text-surface-300">{r.data.sku}</td>
+                                                    <td className="px-3 py-2 align-top text-white">
+                                                        {r.data.nombre}
+                                                        {!r.valid && (
+                                                            <span className="block text-xs text-red-300 mt-0.5">{r.errors.join(' · ')}</span>
                                                         )}
                                                     </td>
-                                                    <td className="px-3 py-2 font-mono text-surface-500">{r.excelRow}</td>
-                                                    <td className="px-3 py-2 font-mono text-surface-300">{r.data.sku}</td>
-                                                    <td className="px-3 py-2 text-white">{r.data.nombre}</td>
-                                                    <td className="px-3 py-2 text-surface-400">{r.data.categoria}</td>
-                                                    <td className={`px-3 py-2 text-right font-semibold ${r.valid ? 'text-emerald-400' : 'text-red-300'}`}>
+                                                    <td className="px-3 py-2 align-top text-surface-400">{r.data.categoria}</td>
+                                                    <td className={`px-3 py-2 align-top text-right font-semibold ${r.valid ? 'text-emerald-400' : 'text-red-300'}`}>
                                                         {r.valid ? `${formatMoney(r.data.precio)}` : '—'}
                                                     </td>
-                                                    <td className="px-3 py-2 text-right text-surface-400">{formatMoney(r.data.costo)}</td>
-                                                    <td className="px-3 py-2 text-right text-white font-bold">
+                                                    <td className="px-3 py-2 align-top text-right text-surface-400">{formatMoney(r.data.costo)}</td>
+                                                    <td className="px-3 py-2 align-top text-right text-white font-bold">
                                                         {r.data.stock} {r.data.unidad}
                                                         <span className="block text-[10px] text-surface-500">
                                                             {r.data.modoVenta === 'MEASURED' ? 'Medido' : 'Contado'} · paso {r.data.pasoCantidad}
@@ -546,6 +684,24 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                 </div>
                             </div>
 
+                            {/* El tope acota el DOM, no los datos: el conteo real
+                              sigue a la vista para que nadie crea que el archivo
+                              llegó recortado. */}
+                            {hiddenRows > 0 && (
+                                <button
+                                    type="button"
+                                    onClick={() => setLimit(current => current + PREVIEW_PAGE_SIZE)}
+                                    className="nx-fluid-press mt-3 min-h-11 w-full rounded-lg border border-surface-600 bg-surface-800 px-4 text-sm font-semibold text-surface-200 hover:border-surface-500"
+                                >
+                                    Ver {Math.min(hiddenRows, PREVIEW_PAGE_SIZE)} más ({visibleRows.length} de {matchingRows})
+                                </button>
+                            )}
+                            {matchingRows === 0 && (
+                                <p className="rounded-lg border border-surface-700 bg-surface-900/60 p-4 text-center text-sm text-surface-400">
+                                    Ninguna fila en este filtro.
+                                </p>
+                            )}
+
                             {errorCount > 0 && (
                                 <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2 mt-4">
                                     <AlertCircle size={18} className="text-amber-400 mt-0.5 shrink-0" />
@@ -554,7 +710,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                             {errorCount} {errorCount === 1 ? 'producto tiene' : 'productos tienen'} errores
                                         </p>
                                         <p className="text-xs text-amber-400/80 mt-1">
-                                            Solo se importarán los productos válidos. Pasa el mouse sobre para ver detalles del error.
+                                            Solo se importarán los válidos. El motivo de cada fila se ve arriba, en la lista.
                                         </p>
                                     </div>
                                 </div>
@@ -565,7 +721,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                 {/* Footer */}
                 {rows.length > 0 && !summary && (
-                    <div className="bg-surface-900/80 px-6 py-4 border-t border-surface-700 flex items-center justify-between gap-4">
+                    <div className="bg-surface-900/80 px-4 sm:px-6 py-3 sm:py-4 border-t border-surface-700 flex flex-col sm:flex-row sm:items-center justify-between gap-3 sm:gap-4 shrink-0 pb-[calc(0.75rem+env(safe-area-inset-bottom))] sm:pb-4">
                         <div className="text-sm text-surface-400 flex-1 min-w-0">
                             {progress ? (
                                 <div>
@@ -587,14 +743,14 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                         <div className="flex gap-3">
                             <button
                                 onClick={onClose}
-                                className="px-6 py-2.5 bg-surface-700 hover:bg-surface-600 rounded-lg text-white font-medium transition-colors"
+                                className="nx-fluid-press min-h-11 px-4 sm:px-6 py-2.5 bg-surface-700 hover:bg-surface-600 rounded-lg text-white font-medium transition-colors"
                             >
                                 Cancelar
                             </button>
                             <button
                                 onClick={handleImport}
                                 disabled={validCount === 0 || importing}
-                                className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-800 disabled:opacity-50 rounded-lg text-white font-bold transition-colors flex items-center gap-2"
+                                className="nx-fluid-press min-h-11 flex-1 sm:flex-none justify-center px-4 sm:px-6 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-800 disabled:opacity-50 rounded-lg text-white font-bold transition-colors flex items-center gap-2"
                             >
                                 {importing ? (
                                     <>
@@ -604,7 +760,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                 ) : (
                                     <>
                                         <Upload size={18} />
-                                        Importar {validCount} Productos
+                                        Importar {validCount}
                                     </>
                                 )}
                             </button>
