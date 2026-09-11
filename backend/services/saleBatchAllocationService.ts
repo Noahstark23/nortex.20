@@ -675,6 +675,15 @@ export async function allocateSaleItemBatchesFefo(
                 tenantId: params.tenantId,
                 saleItemId: params.saleItemId,
                 batchId: allocation.batchId,
+                // OJO (auditoría FEFO 2026-09-11): en OFF la selección de la
+                // ruta A NO filtra por bodega —barre los lotes del producto en
+                // todo el negocio— y aun así acá se firma `params.warehouseId`.
+                // Esa columna es la que se lee en un retiro sanitario. Cambiarla
+                // a null NO es inocuo: las filas históricas de un tenant que
+                // luego pase a SHADOW/ENFORCED deciden si su devolución toma la
+                // rama exacta o la agregada, y en farmacia la agregada se
+                // rechaza con PHARMACY_RETURN_EXACT_BATCH_REQUIRED. Requiere
+                // decisión de producto sobre el histórico, no un parche acá.
                 warehouseId: params.warehouseId ?? null,
                 quantity: allocation.quantity.toFixed(4),
             })),
