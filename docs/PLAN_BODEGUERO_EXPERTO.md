@@ -55,8 +55,10 @@
 >   (`manualBatchMovements`) y merma por lote.
 >
 > Lo que sí queda abierto está en la auditoría del 2026-09-11: la cuarentena de
-> devolución no tiene salida, y en modo `OFF` la evidencia de asignación firma
-> una bodega que la selección FEFO no filtró.
+> devolución no tiene salida, en modo `OFF` la evidencia de asignación firma una
+> bodega que la selección FEFO no filtró, y la devolución repone a un lote ya
+> vencido sin dejar rastro —el audit correspondiente no cabe hoy en
+> `backend/server.ts`, que está exactamente en su presupuesto de composición.
 
 ## 3 · El plan — 3 fases
 

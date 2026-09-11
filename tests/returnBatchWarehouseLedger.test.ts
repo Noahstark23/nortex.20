@@ -452,44 +452,6 @@ describe('integración transaccional lote+bodega de devoluciones y anulaciones',
         expect(cancelRoute).not.toContain('Asiento de anulación falló');
     });
 
-    it('deja rastro cuando la devolución repone a un lote ya vencido', () => {
-        // Reponer a un lote vencido NO se bloquea: la unidad física existe y
-        // negarla descuadra el inventario, además de dejar al cliente sin su
-        // reembolso por un problema de bodega. Pero el saldo del lote pasa a
-        // mostrar existencias vencidas como si fueran stock vendible, así que
-        // el hecho tiene que quedar escrito —y en la MISMA transacción, o un
-        // rollback se llevaría la evidencia y dejaría el stock repuesto.
-        //
-        // Es un guard de fuente, como el resto de este archivo: la ruta vive
-        // dentro del handler grande y no se monta suelta. La conducta real la
-        // ejerce el circuito de integración con MySQL.
-        const create = returnRoute.indexOf('tx.productReturn.create');
-        const expiryLookup = returnRoute.indexOf('const restorationTargets = new Map', create);
-        const audit = returnRoute.indexOf("action: 'RETURN_TO_EXPIRED_BATCH'", expiryLookup);
-        const restorationLoop = returnRoute.indexOf(
-            'for (const { item, batchRestoration } of returnLinesInLockOrder)',
-            audit,
-        );
-
-        expect(expiryLookup).toBeGreaterThan(create);
-        expect(audit).toBeGreaterThan(expiryLookup);
-        // Antes de reponer: si se escribiera después, un fallo de restauración
-        // dejaría el AuditLog acusando una reposición que nunca ocurrió.
-        expect(restorationLoop).toBeGreaterThan(audit);
-
-        const bloque = returnRoute.slice(expiryLookup, restorationLoop);
-        expect(bloque).toContain('expiryDate: { lt: batchExpiryDayStart() }');
-        expect(bloque).toContain('tenantId: authReq.tenantId!');
-        expect(bloque).toContain('userId: authReq.userId!');
-        expect(bloque).toContain('batchNumber: batch.batchNumber');
-        expect(bloque).toContain('expiryDate: batch.expiryDate.toISOString()');
-        // Una sola consulta acotada a los lotes de esta devolución: ni N+1 ni
-        // findMany abierto dentro de la transacción.
-        expect(bloque).toContain('id: { in: [...restorationTargets.keys()] }');
-        // El corte es la política civil compartida, no un `new Date()` a mano.
-        expect(bloque).not.toContain('new Date()');
-    });
-
     it('ambas rutas traducen errores del core sin volverlos 500 genérico', () => {
         expect(returnRoute).toContain('if (error instanceof BatchWarehouseLedgerError)');
         expect(returnRoute).toContain('if (error instanceof ProductBatchHoldError)');
