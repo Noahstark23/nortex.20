@@ -118,6 +118,7 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
         if (!purchaseOrderId) await asegurarBodegaPorDefecto(tx, principal.tenantId);
         const context = await preparePurchaseContext(tx, principal, input);
         const { operationWarehouse, linkedPurchaseOrder, fiscalRegimeAtPurchase, cuotaFijaPurchase,
+            taxTreatment, noTaxReason,
             preparedItems, productsById, purchaseMoney, subtotalAmount, taxAmount, totalAmount, creditableTax } = context;
         // La factura OC valida primero la trazabilidad de recepción/conciliación.
         // Capturar null no autoriza pago; la falta de caja se rechaza tras el match.
@@ -166,6 +167,9 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
                 totalCost: lineMoney.lineNet.toFixed(2),
                 taxAmountExact: lineMoney.lineTax.toFixed(2),
                 creditableTaxExact: lineMoney.creditableTax.toFixed(2),
+                // Con IVA cero por falta de traslación, este booleano es la única
+                // forma de saber después si la línea era gravada o exenta.
+                taxableAtPurchase: lineMoney.taxable,
             };
         });
 
@@ -187,6 +191,12 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
                 subtotal: subtotalAmount.toFixed(2),
                 tax: taxAmount.toFixed(2),
                 fiscalRegimeAtPurchase,
+                // Foto de la traslación: se congela con la compra y no se
+                // re-deriva del proveedor, que puede cambiar de régimen después.
+                taxTreatment,
+                noTaxReason,
+                taxableSubtotal: purchaseMoney.taxableSubtotal.toFixed(4),
+                exemptSubtotal: purchaseMoney.exemptSubtotal.toFixed(4),
                 creditableTax: creditableTax.toFixed(2),
                 total: totalAmount.toFixed(2),
                 documentStatus: 'POSTED',
@@ -495,9 +505,16 @@ export async function registerPurchase(options: RegisterPurchaseOptions, db: Pri
                     warehouseId: operationWarehouse?.id ?? null,
                     paymentMethod,
                     subtotal: subtotalAmount.toString(),
+                    taxableSubtotal: purchaseMoney.taxableSubtotal.toString(),
+                    exemptSubtotal: purchaseMoney.exemptSubtotal.toString(),
                     tax: taxAmount.toString(),
                     creditableTax: creditableTax.toString(),
                     fiscalRegime: fiscalRegimeAtPurchase,
+                    // La auditoría explica POR QUÉ el IVA fue cero: sin esto un
+                    // revisor no puede distinguir una factura sin traslación de
+                    // una compra íntegramente exenta.
+                    taxTreatment,
+                    noTaxReason,
                     total: totalAmount.toString(),
                     matchStatus: procurementMatch.matchStatus,
                     paymentHold: procurementMatch.paymentHold,

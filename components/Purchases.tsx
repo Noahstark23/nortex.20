@@ -4,7 +4,7 @@ import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
     Calendar, X, Check, AlertTriangle, Clock, Trash2,
     ShoppingCart, Wallet, Printer, Eye, Stamp, Loader2, GitCompareArrows,
-    LockKeyhole, RotateCcw, SlidersHorizontal
+    LockKeyhole, RotateCcw, SlidersHorizontal, Receipt
 } from 'lucide-react';
 import { formatMoney, sanitizeDecimalInput } from '../utils/money';
 import Decimal from 'decimal.js';
@@ -17,6 +17,17 @@ import {
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
 import { authenticatedRequestErrorMessage, openAuthenticatedPreview } from '../utils/authenticatedDownload';
+import {
+    PURCHASE_NO_TAX_REASONS,
+    PURCHASE_TAX_SIN_TRASLADO,
+    PURCHASE_TAX_TRASLADADO,
+    purchaseLineTax,
+    purchaseTaxTreatmentIssue,
+    suggestPurchaseTaxTreatment,
+    type PurchaseNoTaxReason,
+    type PurchaseTaxTreatment,
+} from '../utils/purchaseTaxTreatment';
+import { PURCHASE_NO_TAX_REASON_LABELS } from '../utils/purchaseTaxTreatmentLabels';
 
 // ==========================================
 // TYPES
@@ -27,6 +38,8 @@ interface Supplier {
     name: string;
     contactName?: string;
     phone?: string;
+    /** Descriptiva y de texto libre: solo SUGIERE la traslación, no la decide. */
+    fiscalCategory?: string | null;
 }
 
 interface Product {
@@ -146,6 +159,7 @@ interface PurchaseFormErrors {
     dueDate?: string;
     notes?: string;
     items?: string;
+    noTaxReason?: string;
 }
 
 interface WarehouseOption {
@@ -488,6 +502,10 @@ export default function Purchases() {
     const [invoiceNumber, setInvoiceNumber] = useState('');
     const [purchaseDate, setPurchaseDate] = useState(() => localCalendarDateInputValue());
     const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CASH');
+    // Traslación declarada de la factura. Arranca en el default histórico y solo
+    // el operador la cambia: la categoría fiscal del proveedor sugiere, no manda.
+    const [taxTreatment, setTaxTreatment] = useState<PurchaseTaxTreatment>(PURCHASE_TAX_TRASLADADO);
+    const [noTaxReason, setNoTaxReason] = useState<PurchaseNoTaxReason | ''>('');
     const [dueDate, setDueDate] = useState('');
     const [notes, setNotes] = useState('');
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -1003,26 +1021,54 @@ export default function Purchases() {
     const changeSupplier = (supplierId: string) => {
         setSelectedSupplier(supplierId);
         setFormErrors(current => ({ ...current, supplierId: undefined }));
+        // Sugerencia, no autoridad: se precarga desde la categoría fiscal del
+        // proveedor para que el caso común (cuota fija) no exija recordarlo, y
+        // el operador la confirma contra el papel antes de registrar.
+        const suggestion = suggestPurchaseTaxTreatment(
+            suppliers.find(supplier => supplier.id === supplierId)?.fiscalCategory,
+        );
+        setTaxTreatment(suggestion.treatment);
+        setNoTaxReason(suggestion.reason ?? '');
+        setFormErrors(current => ({ ...current, noTaxReason: undefined }));
         if (selectedPO) {
             setSelectedPO('');
             setCart([]);
         }
     };
 
+    const changeTaxTreatment = (next: PurchaseTaxTreatment) => {
+        setTaxTreatment(next);
+        // Un motivo solo existe sin traslación; volver a IVA_TRASLADADO lo limpia
+        // para que el backend nunca reciba el par incoherente que rechaza.
+        setNoTaxReason(current => (next === PURCHASE_TAX_SIN_TRASLADO ? current : ''));
+        setFormErrors(current => ({ ...current, noTaxReason: undefined }));
+    };
+
+    // Vista previa del operador. El IVA sale de la MISMA regla pura que el
+    // servidor (`purchaseLineTax`), no de una copia local del 15%: el total
+    // autoritativo lo sigue liquidando el backend por línea.
     const cartTotals = useMemo(() => {
         const subtotal = cart.reduce((sum, item) => sum.plus(item.totalCost), new Decimal(0));
         const taxableSubtotal = cart.reduce(
             (sum, item) => item.ivaExento ? sum : sum.plus(item.totalCost),
             new Decimal(0),
         );
-        const tax = taxableSubtotal.mul('0.15').toDecimalPlaces(2);
+        const tax = cart.reduce(
+            (sum, item) => sum.plus(purchaseLineTax(
+                new Decimal(item.totalCost).toDecimalPlaces(2, Decimal.ROUND_HALF_UP),
+                !item.ivaExento,
+                taxTreatment,
+            )),
+            new Decimal(0),
+        );
         return {
             subtotal: subtotal.toNumber(),
             taxableSubtotal: taxableSubtotal.toNumber(),
+            exemptSubtotal: subtotal.minus(taxableSubtotal).toNumber(),
             tax: tax.toNumber(),
             total: subtotal.plus(tax).toNumber(),
         };
-    }, [cart]);
+    }, [cart, taxTreatment]);
 
     // ==========================================
     // SUBMIT PURCHASE
@@ -1040,6 +1086,11 @@ export default function Purchases() {
         if (cart.length === 0) errors.items = 'Agregá al menos un producto.';
         if (paymentMethod === 'CREDIT' && !dueDate) errors.dueDate = 'Ingresá la fecha de vencimiento.';
         if (notes.trim().length > 500) errors.notes = 'Las notas no pueden superar 500 caracteres.';
+        // Misma función pura que valida el backend: el formulario no inventa su
+        // propia versión de la regla ni deja pasar un par incoherente.
+        if (purchaseTaxTreatmentIssue(taxTreatment, noTaxReason || null) === 'REASON_REQUIRED') {
+            errors.noTaxReason = 'Indicá por qué la factura no trae IVA.';
+        }
 
         const invalidItem = cart.find(item => {
             try {
@@ -1124,6 +1175,12 @@ export default function Purchases() {
                     postingDate: purchaseDate,
                     purchaseOrderId: selectedPO || undefined,
                     paymentMethod,
+                    taxTreatment,
+                    // Un motivo solo viaja sin traslación; el backend rechaza el par
+                    // incoherente en vez de descartar el campo en silencio.
+                    noTaxReason: taxTreatment === PURCHASE_TAX_SIN_TRASLADO && noTaxReason
+                        ? noTaxReason
+                        : undefined,
                     // JSON.stringify omite undefined: los opcionales no viajan como null.
                     dueDate: paymentMethod === 'CREDIT' && dueDate ? dueDate : undefined,
                     notes: notes.trim() || undefined,
@@ -1168,6 +1225,8 @@ export default function Purchases() {
                 setInvoiceNumber('');
                 setPurchaseDate(localCalendarDateInputValue());
                 setPaymentMethod('CASH');
+                setTaxTreatment(PURCHASE_TAX_TRASLADADO);
+                setNoTaxReason('');
                 setDueDate('');
                 setNotes('');
                 setCart([]);
@@ -1183,6 +1242,7 @@ export default function Purchases() {
                     dueDate: Array.isArray(details.dueDate) ? String(details.dueDate[0]) : undefined,
                     notes: Array.isArray(details.notes) ? String(details.notes[0]) : undefined,
                     items: Array.isArray(details.items) ? String(details.items[0]) : undefined,
+                    noTaxReason: Array.isArray(details.noTaxReason) ? String(details.noTaxReason[0]) : undefined,
                 });
                 showToast({
                     tone: 'error',
@@ -1879,6 +1939,59 @@ export default function Purchases() {
                                             </button>
                                         </div>
                                     </div>
+                                    <div className="col-span-2">
+                                        <label className="mb-1.5 block text-sm font-medium text-slate-700">IVA de la factura *</label>
+                                        <div className="flex gap-2">
+                                            <button
+                                                type="button"
+                                                aria-pressed={taxTreatment === PURCHASE_TAX_TRASLADADO}
+                                                onClick={() => changeTaxTreatment(PURCHASE_TAX_TRASLADADO)}
+                                                className={`nx-fluid-press flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control border px-3 py-2.5 text-sm font-medium ${taxTreatment === PURCHASE_TAX_TRASLADADO
+                                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
+                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
+                                            >
+                                                <Receipt size={16} /> Trae IVA (15%)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                aria-pressed={taxTreatment === PURCHASE_TAX_SIN_TRASLADO}
+                                                onClick={() => changeTaxTreatment(PURCHASE_TAX_SIN_TRASLADO)}
+                                                className={`nx-fluid-press flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control border px-3 py-2.5 text-sm font-medium ${taxTreatment === PURCHASE_TAX_SIN_TRASLADO
+                                                    ? 'border-amber-300 bg-amber-50 text-amber-700 shadow-sm'
+                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
+                                            >
+                                                <AlertTriangle size={16} /> No trae IVA
+                                            </button>
+                                        </div>
+                                    </div>
+                                    {taxTreatment === PURCHASE_TAX_SIN_TRASLADO && (
+                                        <div className="col-span-2">
+                                            <label htmlFor="purchase-no-tax-reason" className="mb-1.5 block text-sm font-medium text-slate-700">
+                                                ¿Por qué no trae IVA? *
+                                            </label>
+                                            <select
+                                                id="purchase-no-tax-reason"
+                                                value={noTaxReason}
+                                                onChange={(e) => {
+                                                    setNoTaxReason(e.target.value as PurchaseNoTaxReason | '');
+                                                    setFormErrors(current => ({ ...current, noTaxReason: undefined }));
+                                                }}
+                                                aria-invalid={Boolean(formErrors.noTaxReason)}
+                                                className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.noTaxReason ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
+                                            >
+                                                <option value="">Seleccionar motivo…</option>
+                                                {PURCHASE_NO_TAX_REASONS.map(reason => (
+                                                    <option key={reason} value={reason}>
+                                                        {PURCHASE_NO_TAX_REASON_LABELS[reason]}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            {formErrors.noTaxReason && <p className="mt-1 text-xs text-red-600">{formErrors.noTaxReason}</p>}
+                                            <p className="mt-1.5 text-xs text-slate-500">
+                                                No se registra IVA ni crédito fiscal: el total queda igual al subtotal, tal como dice la factura.
+                                            </p>
+                                        </div>
+                                    )}
                                     {paymentMethod === 'CREDIT' && (
                                         <div>
                                             <label className="mb-1.5 block text-sm font-medium text-slate-700">Fecha de vencimiento *</label>
@@ -2174,14 +2287,23 @@ export default function Purchases() {
                                             </div>
                                             <div className="flex justify-between text-xs">
                                                 <span className="text-slate-500">Productos exentos</span>
-                                                <span className="text-slate-300">{formatCurrency(cartTotals.subtotal - cartTotals.taxableSubtotal)}</span>
+                                                <span className="text-slate-300">{formatCurrency(cartTotals.exemptSubtotal)}</span>
                                             </div>
                                         </>
                                     )}
                                     <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">IVA (15%)</span>
+                                        <span className="text-slate-400">
+                                            {taxTreatment === PURCHASE_TAX_SIN_TRASLADO ? 'IVA (no trasladado)' : 'IVA (15%)'}
+                                        </span>
                                         <span className="text-white">{formatCurrency(cartTotals.tax)}</span>
                                     </div>
+                                    {taxTreatment === PURCHASE_TAX_SIN_TRASLADO && (
+                                        <p className="text-xs text-amber-300">
+                                            {noTaxReason
+                                                ? PURCHASE_NO_TAX_REASON_LABELS[noTaxReason]
+                                                : 'Indicá el motivo de la no traslación para registrar.'}
+                                        </p>
+                                    )}
                                     <div className="flex justify-between border-t border-white/10 pt-4">
                                         <span className="text-white font-bold text-lg">TOTAL</span>
                                         <span className="text-emerald-400 font-bold text-xl">{formatCurrency(cartTotals.total)}</span>
