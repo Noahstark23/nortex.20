@@ -12,6 +12,7 @@ const dashboard = read('components/Dashboard.tsx');
 const delivery = read('components/DeliveryManager.tsx');
 const deliveryKanban = read('components/delivery/DeliveryKanban.tsx');
 const stockCount = read('components/StockCount.tsx');
+const productImporter = read('components/ProductImporter.tsx');
 
 describe('compuerta movil y PWA', () => {
     it('habilita safe-area real en iPhone y mantiene superficies semanticas', () => {
@@ -45,5 +46,9 @@ describe('compuerta movil y PWA', () => {
         expect(dashboard).toContain('calc(100dvh-2rem)');
         expect(deliveryKanban).toContain('calc(100dvh-260px)');
         expect(stockCount).toContain('calc(100dvh-2rem)');
+        // El importador quedó fuera de la auditoría original y conservó `90vh`:
+        // en iOS eso excede el viewport visible y recorta la cabecera del modal.
+        expect(productImporter).not.toMatch(/\d+vh\]/);
+        expect(productImporter).toContain('100dvh');
     });
 });
