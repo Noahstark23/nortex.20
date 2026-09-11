@@ -42,7 +42,7 @@ import { BODEGUERO_ROLE, redactBodegueroProduct } from './security/bodegueroPoli
 import { calculateTenantScore } from './services/scoring';
 import { ESTADO_ANULADA, puedeAnularse, planDeReversion, textoUtil } from './services/saleCancellation';
 import { isSameManaguaBusinessDay } from './lib/saleCorrections';
-import { batchExpiryWindow } from './lib/batchExpiry.js';
+import { batchExpiryDayStart, batchExpiryWindow } from './lib/batchExpiry.js';
 import { parseProductRefreshIds } from './lib/productRefreshQuery';
 import offlineSaleEvidenceRoutes from './routes/offlineSaleEvidence';
 import {
@@ -4506,6 +4506,48 @@ app.post('/api/returns', authenticate, checkRole(['OWNER', 'ADMIN', 'MANAGER', '
                     (left, right) => left.item.productId.localeCompare(right.item.productId)
                         || left.item.saleItemId.localeCompare(right.item.saleItemId),
                 );
+            // Reponer a un lote ya vencido NO se bloquea: la unidad física
+            // existe y negarla descuadraría el inventario, y además dejaría al
+            // cliente sin su reembolso por un problema de bodega. Pero el saldo
+            // del lote pasa a mostrar existencias vencidas como si fueran stock,
+            // así que el hecho tiene que quedar escrito en la MISMA transacción.
+            const restorationTargets = new Map<string, string>();
+            for (const { batchRestoration } of returnLinesInLockOrder) {
+                for (const restoration of batchRestoration.batchRestorations) {
+                    restorationTargets.set(restoration.batchId, restoration.batchNumber);
+                }
+            }
+            if (restorationTargets.size > 0) {
+                // Una sola consulta acotada a los lotes de esta devolución.
+                const expiredTargets = await tx.productBatch.findMany({
+                    where: {
+                        tenantId: authReq.tenantId!,
+                        id: { in: [...restorationTargets.keys()] },
+                        expiryDate: { lt: batchExpiryDayStart() },
+                    },
+                    orderBy: [{ expiryDate: 'asc' }, { id: 'asc' }],
+                    select: { id: true, batchNumber: true, expiryDate: true },
+                });
+                if (expiredTargets.length > 0) {
+                    await tx.auditLog.create({
+                        data: {
+                            tenantId: authReq.tenantId!,
+                            userId: authReq.userId!,
+                            action: 'RETURN_TO_EXPIRED_BATCH',
+                            details: JSON.stringify({
+                                returnId: productReturn.id,
+                                saleId: sale.id,
+                                batches: expiredTargets.map(batch => ({
+                                    batchId: batch.id,
+                                    batchNumber: batch.batchNumber,
+                                    expiryDate: batch.expiryDate.toISOString(),
+                                })),
+                            }),
+                        },
+                    });
+                }
+            }
+
             for (const { item, batchRestoration } of returnLinesInLockOrder) {
                 const approvedLine = approvedLines.get(item.saleItemId);
                 if (approvedLine?.disposition === 'QUARANTINE') {

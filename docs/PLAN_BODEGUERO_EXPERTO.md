@@ -44,6 +44,20 @@
 | R1 | **Compras inteligentes es un cascarón** | `/app/smart-purchases` dice "en construcción"; el oráculo existe pero "Orden Manual" no hace nada → no se puede generar la orden de compra. |
 | R2 | **Proveedor no ligado al producto** | No hay proveedor por defecto por SKU; reponer obliga a elegir proveedor a mano. (Y faltan PUT/DELETE de proveedores.) |
 
+> **Corrección fechada (2026-09-11, auditoría FEFO de farmacia).** Dos filas de
+> arriba conservan su valor histórico pero ya no describen el código:
+>
+> - «Lotes y vencimientos (FEFO **best-effort**)» y **C3** («FEFO es sugerencia;
+>   nada bloquea vender un lote vencido»): el motor sí hace cumplir el
+>   vencimiento — `consumeProductBatchesFefo` excluye por `expiryDate` contra el
+>   día civil de Managua y, sin cobertura vigente, la venta online revierte.
+> - **F4** («lotes solo lectura»): existen movimientos manuales de lote
+>   (`manualBatchMovements`) y merma por lote.
+>
+> Lo que sí queda abierto está en la auditoría del 2026-09-11: la cuarentena de
+> devolución no tiene salida, y en modo `OFF` la evidencia de asignación firma
+> una bodega que la selección FEFO no filtró.
+
 ## 3 · El plan — 3 fases
 
 ### FASE A — «El bodeguero sin fricción» · que sea fácil

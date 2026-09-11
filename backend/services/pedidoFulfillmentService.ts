@@ -26,6 +26,13 @@ import {
     normalizeFiscalRegime,
     resolveSaleFiscalAmounts,
 } from '../../utils/fiscalRegime.js';
+import { batchExpiryDayStart, batchExpiryPresentation } from '../lib/batchExpiry.js';
+
+/**
+ * Cuántos lotes vencidos se nombran en el mensaje de rechazo. El resto se
+ * cuenta: un pedido grande no debe devolver un muro de texto al mostrador.
+ */
+const EXPIRED_BATCHES_IN_MESSAGE = 3;
 
 type PrismaTx = Prisma.TransactionClient;
 
@@ -42,6 +49,7 @@ export type PedidoFulfillmentCode =
     | 'PEDIDO_TENANT_NOT_FOUND'
     | 'PEDIDO_BATCH_STOCK_INSUFFICIENT'
     | 'PEDIDO_BATCH_RECONCILIATION_REQUIRED'
+    | 'PEDIDO_BATCH_EXPIRED'
     | 'PEDIDO_BATCH_WAREHOUSE_CONFLICT';
 
 export class PedidoFulfillmentError extends Error {
@@ -1271,6 +1279,50 @@ export async function completePedidoDeliveryInTransaction(
             quantity: (current?.quantity ?? new Decimal(0)).plus(new Decimal(movement.quantity).abs()),
         });
         reservedBatchPool.set(movement.productId, productPool);
+    }
+
+    // La reserva eligió lote vigente con el corte FEFO del día en que se
+    // reservó. Entre reservar y entregar pasan días reales, y la rama
+    // `wasReserved` de abajo reusa ese lote sin volver a mirarlo: sin esta
+    // compuerta, un lote que venció en el medio se despacha igual y la
+    // asignación lo registra como una venta FEFO normal. En una farmacia eso
+    // es medicina vencida en la mano del cliente, sin rastro que lo delate.
+    const reservedBatchIds = [...new Set(
+        [...reservedBatchPool.values()].flatMap(productPool => [...productPool.values()]
+            .filter(reservation => reservation.quantity.greaterThan(0))
+            .map(reservation => reservation.batchId)),
+    )];
+    if (reservedBatchIds.length > 0) {
+        // Una sola consulta acotada por la lista de lotes del propio pedido:
+        // ni N+1 ni findMany abierto dentro de la transacción.
+        const expiredBatches = await tx.productBatch.findMany({
+            where: {
+                tenantId: pedido.tenantId,
+                id: { in: reservedBatchIds },
+                expiryDate: { lt: batchExpiryDayStart() },
+            },
+            orderBy: [{ expiryDate: 'asc' }, { id: 'asc' }],
+            select: { batchNumber: true, expiryDate: true },
+        });
+        if (expiredBatches.length > 0) {
+            // El mensaje nombra lote y fecha porque quien lo lee está en el
+            // mostrador y tiene que saber CUÁL lote sacar de la caja.
+            const detalle = expiredBatches
+                .slice(0, EXPIRED_BATCHES_IN_MESSAGE)
+                .map(batch => `${batch.batchNumber} (venció el ${
+                    batchExpiryPresentation(batch.expiryDate.toISOString()).label
+                })`)
+                .join(', ');
+            const restantes = expiredBatches.length - EXPIRED_BATCHES_IN_MESSAGE;
+            throw new PedidoFulfillmentError(
+                'PEDIDO_BATCH_EXPIRED',
+                409,
+                `La reserva de este pedido incluye ${
+                    expiredBatches.length === 1 ? 'un lote vencido' : 'lotes vencidos'
+                }: ${detalle}${restantes > 0 ? ` y ${restantes} más` : ''}. `
+                + 'Apartá ese producto y volvé a reservar el pedido para que tome lote vigente.',
+            );
+        }
     }
 
     const exemptTotal = orderedItems.reduce((sum, item) => {
