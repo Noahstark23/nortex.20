@@ -157,6 +157,10 @@ const deliveryTx = (options: {
             findMany: vi.fn().mockResolvedValue(reservations),
             create: vi.fn().mockResolvedValue({ id: 'kardex-delivery' }),
         },
+        // Ningún lote vencido: estas pruebas caracterizan el subledger, no la
+        // vigencia. La compuerta de vencimiento en la entrega tiene su propio
+        // archivo (pedidoFulfillmentExpiredBatch).
+        productBatch: { findMany: vi.fn().mockResolvedValue([]) },
         tenant: { findUnique: vi.fn().mockResolvedValue({
             allowNegativeStock: false,
             fiscalRegime: 'GENERAL',
