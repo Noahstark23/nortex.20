@@ -903,6 +903,16 @@ model Purchase {
   // Foto fiscal de la compra: los defaults conservan el régimen general en el
   // histórico y NULL distingue el crédito fiscal que nunca se persistió.
   fiscalRegimeAtPurchase String    @default("GENERAL") @db.VarChar(32)
+  // Traslación congelada del documento. El default conserva el significado con
+  // el que nacieron las compras históricas: el proveedor trasladó IVA.
+  // SIN_TRASLADO exige noTaxReason y fuerza tax = creditableTax = 0.
+  taxTreatment           String    @default("IVA_TRASLADADO") @db.VarChar(32)
+  noTaxReason            String?   @db.VarChar(32)
+  // Bases separadas para el libro fiscal. NULL = compra previa al desglose, que
+  // no puede reinterpretarse: bajo SIN_TRASLADO todas las líneas tienen IVA cero
+  // y sin estas columnas una base exenta es indistinguible de una gravada.
+  taxableSubtotal        Decimal?  @db.Decimal(18, 4)
+  exemptSubtotal         Decimal?  @db.Decimal(18, 4)
   creditableTax          Decimal?  @db.Decimal(18, 4)
   total                  Decimal   @db.Decimal(12, 2)
   status                 String    @default("COMPLETED") // COMPLETED | PENDING_PAYMENT | PARTIALLY_PAID
@@ -1178,6 +1188,10 @@ model PurchaseItem {
   expectedUnitCostExact  Decimal?  @db.Decimal(18, 6)
   taxAmountExact         Decimal?  @db.Decimal(18, 4)
   creditableTaxExact     Decimal?  @db.Decimal(18, 4)
+  // Verdad fiscal de la línea al comprar. Con IVA cero por falta de traslación,
+  // taxAmountExact ya no alcanza para saber si la línea era gravada o exenta.
+  // NULL = línea histórica ambigua; se resuelve fail-closed contra el documento.
+  taxableAtPurchase      Boolean?
   priceVarianceExact     Decimal?  @db.Decimal(18, 4)
   // Evidencia exacta de la entrada física para devoluciones futuras. Nullable
   // mantiene las compras históricas ambiguas en modo fail-closed.

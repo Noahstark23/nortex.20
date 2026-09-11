@@ -20,6 +20,13 @@ import {
     PRODUCT_IMAGE_URL_MAX_LENGTH,
 } from '../../utils/productImageUrl.js';
 import { fiscalCivilDate } from '../lib/fiscalAccess.js';
+import {
+    PURCHASE_NO_TAX_REASONS,
+    PURCHASE_TAX_TRASLADADO,
+    PURCHASE_TAX_TREATMENTS,
+    purchaseTaxTreatmentIssue,
+    type PurchaseTaxTreatment,
+} from '../../utils/purchaseTaxTreatment.js';
 
 // ============================================================
 // HELPERS
@@ -387,6 +394,12 @@ export const CreatePurchaseSchema = z
         dueDate:        historicalOptional(purchaseDateInput),
         notes:          historicalOptional(z.string().trim().max(500)),
         purchaseOrderId: historicalOptional(z.string().trim().min(1, 'purchaseOrderId inválido')),
+        // Traslación declarada del documento. El default conserva el contrato de
+        // los clientes anteriores a este campo; un valor fuera del vocabulario se
+        // RECHAZA en vez de asumirse, porque asumir mueve dinero.
+        taxTreatment:   z.enum(PURCHASE_TAX_TREATMENTS as unknown as [PurchaseTaxTreatment, ...PurchaseTaxTreatment[]])
+            .default(PURCHASE_TAX_TRASLADADO),
+        noTaxReason:    historicalOptional(z.enum(PURCHASE_NO_TAX_REASONS)),
         items:          z.array(PurchaseItemSchema)
             .min(1, 'Se requiere al menos 1 ítem')
             .max(200, 'Máximo 200 ítems por compra'),
@@ -397,6 +410,23 @@ export const CreatePurchaseSchema = z
                 code: 'custom',
                 path: ['dueDate'],
                 message: 'La fecha de vencimiento es obligatoria para compras a crédito',
+            });
+        }
+        // El par tratamiento/motivo se valida con la MISMA función pura que usan
+        // el asistente y la re-verificación previa a escribir.
+        const issue = purchaseTaxTreatmentIssue(purchase.taxTreatment, purchase.noTaxReason ?? null);
+        if (issue === 'REASON_REQUIRED') {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['noTaxReason'],
+                message: 'Indicá por qué la factura no trae IVA',
+            });
+        }
+        if (issue === 'REASON_NOT_APPLICABLE') {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['noTaxReason'],
+                message: 'Una factura que traslada IVA no lleva motivo de no traslación',
             });
         }
     })

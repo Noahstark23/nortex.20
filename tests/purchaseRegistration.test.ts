@@ -329,3 +329,125 @@ describe('registro de compra — caracterización conservada contra el servicio 
     });
 
 });
+
+describe('compra cuya factura no traslada IVA', () => {
+    const sinTraslado = (overrides: Record<string, unknown> = {}) => input({
+        taxTreatment: 'SIN_TRASLADO',
+        noTaxReason: 'PROVEEDOR_CUOTA_FIJA',
+        ...overrides,
+    });
+
+    it('persiste el total del papel, sin impuesto ni crédito fiscal', async () => {
+        const fake = fixture();
+        const result = await register(fake, sinTraslado());
+
+        // El caso reportado: 2 × C$10 = C$20 y el papel dice C$20, no C$23.
+        expect(result.purchase).toMatchObject({
+            subtotal: '20.00',
+            tax: '0.00',
+            creditableTax: '0.00',
+            total: '20.00',
+            balanceDue: '20.00',
+            taxTreatment: 'SIN_TRASLADO',
+            noTaxReason: 'PROVEEDOR_CUOTA_FIJA',
+        });
+        // La base gravada se conserva aunque el IVA sea cero.
+        expect(result.purchase).toMatchObject({ taxableSubtotal: '20.0000', exemptSubtotal: '0.0000' });
+        expect(fake.state.stock).toBe(7);
+        expect(fake.events).toEqual(['purchase', 'stock', 'kardex', 'journal', 'audit']);
+    });
+
+    it('conserva la verdad fiscal de cada línea', async () => {
+        const fake = fixture();
+        await register(fake, sinTraslado());
+        expect(fake.state.purchases.at(-1).items[0]).toMatchObject({
+            taxAmountExact: '0.00',
+            creditableTaxExact: '0.00',
+            taxableAtPurchase: true,
+        });
+    });
+
+    it('el asiento no debita IVA crédito y la gaveta paga solo el subtotal', async () => {
+        const fake = fixture();
+        await register(fake, sinTraslado({ paymentMethod: 'CASH', dueDate: undefined }));
+
+        // recordPurchase(tx, tenantId, userId, purchaseId, total, tax, method, creditableTax, …)
+        const asiento = fake.context.recordPurchase.mock.calls[0] as unknown as any[];
+        expect({ total: asiento[4], tax: asiento[5], method: asiento[6], creditableTax: asiento[7] })
+            .toEqual({ total: '20.00', tax: '0.00', method: 'CASH', creditableTax: '0.00' });
+        // La gaveta pierde exactamente lo que dice la factura, no C$23.
+        const salida = (fake.context.registrarSalidaDeCajaPorCompra.mock.calls[0] as unknown as any[])[1];
+        expect(salida.total.toFixed(2)).toBe('20.00');
+    });
+
+    it('la auditoría explica por qué el IVA fue cero', async () => {
+        const fake = fixture();
+        await register(fake, sinTraslado());
+        const details = JSON.parse(fake.db.auditLog.create.mock.calls[0][0].data.details);
+        expect(details).toMatchObject({
+            tax: '0',
+            creditableTax: '0',
+            taxTreatment: 'SIN_TRASLADO',
+            noTaxReason: 'PROVEEDOR_CUOTA_FIJA',
+            taxableSubtotal: '20',
+        });
+    });
+
+    it('sin motivo no registra nada', async () => {
+        const fake = fixture();
+        await expect(register(fake, input({ taxTreatment: 'SIN_TRASLADO' })))
+            .rejects.toThrow(/no trae IVA/);
+        expect(fake.events).toEqual([]);
+        expect(fake.state.purchases).toEqual([]);
+    });
+
+    it('un motivo sobre una factura que sí traslada tampoco registra nada', async () => {
+        const fake = fixture();
+        await expect(register(fake, input({ noTaxReason: 'PROVEEDOR_CUOTA_FIJA' })))
+            .rejects.toThrow(/no lleva motivo/);
+        expect(fake.events).toEqual([]);
+    });
+
+    it('rechaza un tratamiento o motivo fuera del vocabulario', async () => {
+        const fake = fixture();
+        await expect(register(fake, input({ taxTreatment: 'SIN_IVA' }))).rejects.toThrow();
+        await expect(register(fake, sinTraslado({ noTaxReason: 'PORQUE_SI' }))).rejects.toThrow();
+        expect(fake.state.purchases).toEqual([]);
+    });
+
+    it('sin declarar tratamiento conserva el contrato histórico con IVA', async () => {
+        // Un cliente anterior a este campo debe seguir registrando IVA: el
+        // default nunca puede convertir una compra vieja en una sin traslación.
+        const fake = fixture();
+        const result = await register(fake, input());
+        expect(result.purchase).toMatchObject({
+            tax: '3.00',
+            total: '23.00',
+            taxTreatment: 'IVA_TRASLADADO',
+            noTaxReason: null,
+        });
+    });
+
+    it('la vista previa muestra el total sin IVA y sella el tratamiento', async () => {
+        const fake = fixture();
+        runtime.current = fake;
+        const preview = await preparePurchasePreview({ principal, input: sinTraslado() }, fake.db);
+
+        expect(preview).toMatchObject({
+            taxTreatment: 'SIN_TRASLADO',
+            noTaxReason: 'PROVEEDOR_CUOTA_FIJA',
+            subtotal: '20.00',
+            tax: '0.00',
+            creditableTax: '0.00',
+            total: '20.00',
+            taxableSubtotal: '20.00',
+            exemptSubtotal: '0.00',
+            payableIncrease: '20.00',
+        });
+
+        // Cambiar el tratamiento cambia el hash: una vista previa aprobada sin
+        // IVA no puede confirmarse como una que sí lo traslada.
+        const conIva = await preparePurchasePreview({ principal, input: input() }, fake.db);
+        expect(conIva.hash).not.toBe(preview.hash);
+    });
+});

@@ -27,7 +27,7 @@ Actualización del índice: 2026-09-08. La prioridad actual es primera venta, us
 | Caja y contabilidad | [Cierre profesional](PLAN_CIERRE_CAJA_PROFESIONAL_DGI_CONTABILIDAD.md) | Priorizar integridad del recorrido real; cumplimiento profesional separado |
 | Bodega/lotes | [Bodega confiable](PLAN_BODEGA_CONFIABLE_2026.md), [Bodeguero](PLAN_BODEGUERO_EXPERTO.md) | Farmacia y disponibilidad: verificar modo y UX antes de ampliar |
 | POS | [Refactor Caja Nica](PLAN_REFACTOR_POS_CAJA_NICA.md) | Extraer por conducta preservada; no aumentar presupuesto |
-| Compras/devoluciones | [ADR procurement](ADR_PROCUREMENT_DEVOLUCIONES_NOTAS_CREDITO.md) | Conciliar documentos/saldos y pruebas de datos |
+| Compras/devoluciones | [ADR procurement](ADR_PROCUREMENT_DEVOLUCIONES_NOTAS_CREDITO.md), [Compras sin IVA](PLAN_COMPRAS_SIN_IVA_2026-09-09.md) | Conciliar documentos/saldos y pruebas de datos; el plan de traslación del IVA es diseño sin implementar |
 | RRHH | [Plan RRHH Nicaragua](PLAN_RRHH_NICARAGUA.md) | Mantener trabajo existente; nuevas capacidades según demanda |
 | Hardware | [Cámara/códigos](PLAN_CAMARA_CODIGOS_BODEGA.md), [Balanzas](PLAN_BALANZAS_DIGITALES_Y_ETIQUETAS.md) | Simulación no acredita dispositivo físico; diferir expansión no requerida |
 | Móvil | [App móvil](PLAN_APP_MOVIL.md), [Tiendas](PLAN_MOBILE_STORES.md) | Priorizar PWA/dispositivos actuales antes de nuevas publicaciones |

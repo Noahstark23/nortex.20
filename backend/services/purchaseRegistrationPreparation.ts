@@ -8,6 +8,11 @@ import { resolveOperationalWarehouse } from './stockService';
 import { resolvePurchaseLine } from '../../utils/purchasePackaging';
 import { QuantityValidationError, type SaleMode } from '../../utils/quantity';
 import { FISCAL_REGIME_CUOTA_FIJA, normalizeFiscalRegime } from '../../utils/fiscalRegime';
+import {
+    purchaseTaxTreatmentIssue,
+    purchaseTransfersTax,
+    type PurchaseTaxTreatment,
+} from '../../utils/purchaseTaxTreatment';
 import { PurchaseRegistrationError, type PurchasePrincipal } from './purchaseRegistrationAuthority';
 
 export type PurchaseInput = z.infer<typeof CreatePurchaseSchema>;
@@ -19,6 +24,23 @@ const legacyPurchaseQuantity = (quantity: Decimal): number => {
 /** Preparación determinista compartida: solamente lecturas, sin semillas ni efectos. */
 export async function preparePurchaseContext(tx: any, principal: PurchasePrincipal, input: PurchaseInput) {
     const { supplierId, warehouseId, invoiceNumber, items, purchaseOrderId } = input;
+    // La traslación viaja declarada y validada por Zod; se re-verifica acá para
+    // que ningún caller interno (asistente incluido) pueda saltarse la regla.
+    const taxTreatment: PurchaseTaxTreatment = input.taxTreatment;
+    const noTaxReason = input.noTaxReason ?? null;
+    const treatmentIssue = purchaseTaxTreatmentIssue(taxTreatment, noTaxReason);
+    if (treatmentIssue === 'REASON_REQUIRED') {
+        throw new PurchaseRegistrationError(
+            'PURCHASE_NO_TAX_REASON_REQUIRED', 400,
+            'Indicá por qué la factura no trae IVA',
+        );
+    }
+    if (treatmentIssue === 'REASON_NOT_APPLICABLE') {
+        throw new PurchaseRegistrationError(
+            'PURCHASE_NO_TAX_REASON_NOT_APPLICABLE', 400,
+            'Una factura que traslada IVA no lleva motivo de no traslación',
+        );
+    }
     // Verificar propiedad del proveedor: nunca confiar en supplierId del body sin
     // scoping por tenant. Sin esto, el include: { supplier: true } filtraría PII
     // del proveedor de otro tenant (fuga cross-tenant).
@@ -273,12 +295,24 @@ export async function preparePurchaseContext(tx: any, principal: PurchasePrincip
     const purchaseMoney = calculatePurchaseMoney(
         preparedItems.map((item) => ({ lineNet: item.lineNet, taxable: item.taxable })),
         !cuotaFijaPurchase,
+        taxTreatment,
     );
     const subtotalAmount = purchaseMoney.subtotal;
     const taxAmount = purchaseMoney.tax;
     const totalAmount = purchaseMoney.total;
     const creditableTax = purchaseMoney.creditableTax;
+    // Invariante del documento sin traslación: el papel dice `subtotal` y eso es
+    // exactamente lo que debe llegar a la CxP, la gaveta y el mayor. Se afirma
+    // acá, antes de cualquier efecto, y no se confía solo en el cálculo.
+    if (!purchaseTransfersTax(taxTreatment)
+        && !(taxAmount.isZero() && creditableTax.isZero() && totalAmount.equals(subtotalAmount))) {
+        throw new PurchaseRegistrationError(
+            'PURCHASE_NO_TAX_INVARIANT', 500,
+            'Una factura sin traslación de IVA no puede registrar impuesto',
+        );
+    }
     return { supplier, operationWarehouse, linkedPurchaseOrder, linkedProductAvailability,
-        fiscalRegimeAtPurchase, cuotaFijaPurchase, preparedItems, productsById,
+        fiscalRegimeAtPurchase, cuotaFijaPurchase, taxTreatment, noTaxReason,
+        preparedItems, productsById,
         purchaseMoney, subtotalAmount, taxAmount, totalAmount, creditableTax };
 }
