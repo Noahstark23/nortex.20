@@ -128,9 +128,18 @@ const PISO_MUTANTES = {
     'backend/lib/salesQuantityReport.ts': 67,
     // Saldo recibido aún facturable por producto: 16/16.
     'backend/lib/purchaseOrderAvailability.ts': 16,
-    // Redondeo HALF_UP por línea de factura de compra: 21/21. Protege que
+    // Redondeo HALF_UP por línea de factura de compra: 24/24. Protege que
     // C$0.10 gravados produzcan C$0.12 liquidables y no un saldo C$0.1150.
-    'backend/lib/purchaseMoney.ts': 21,
+    // Subió de 21 a 24 al entrar la traslación del documento y el desglose de
+    // base gravada/exenta; la tasa y la regla de traslación viven en
+    // utils/purchaseTaxTreatment.ts, que tiene su propio piso.
+    'backend/lib/purchaseMoney.ts': 24,
+    // Traslación del IVA en la factura de compra: 65/65. Protege que una
+    // factura sin traslación no cause impuesto ni crédito fiscal sobre un
+    // producto gravado, el fail-closed del histórico hacia IVA_TRASLADADO y la
+    // coherencia obligatoria del par tratamiento/motivo. Las etiquetas viven
+    // en purchaseTaxTreatmentLabels.ts justamente para no mutar copy.
+    'utils/purchaseTaxTreatment.ts': 65,
     // Motor 3-way completo: identidad por PurchaseOrderItem, disponibilidad
     // recibida-asignada, FIFO, tolerancia 18,6, legacy, CASH fail-closed y
     // resolución idempotente. Corrida dirigida: 310/310, 0 NoCoverage; la
