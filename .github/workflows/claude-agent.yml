@@ -1,0 +1,70 @@
+name: Claude Agent Task
+
+# Se dispara cuando se agrega un label a un issue. La lógica corre únicamente
+# si el label es "agent-task" (ver el `if` del job).
+on:
+  issues:
+    types: [labeled]
+
+# Permisos mínimos para que el agente pueda commitear y abrir el Pull Request.
+permissions:
+  contents: write
+  pull-requests: write
+  issues: read
+
+jobs:
+  run-agent-task:
+    # Solo ejecutar cuando el label agregado sea exactamente "agent-task".
+    if: github.event.label.name == 'agent-task'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependencias
+        run: npm ci
+
+      - name: Instalar Claude Code CLI
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Extraer el cuerpo del issue y ejecutar Claude headless
+        env:
+          # API key tomada de los secretos del repositorio.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # El cuerpo se pasa por variable de entorno (no se interpola en la
+          # línea de comando) para evitar inyección de shell.
+          ISSUE_BODY: ${{ github.event.issue.body }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          # Persistir el cuerpo del issue como tarea actual (mismo formato que
+          # usa scripts/run-task-headless.sh).
+          mkdir -p tasks
+          printf '%s' "$ISSUE_BODY" > tasks/current.md
+
+          # Ejecutar Claude en modo headless con el cuerpo del issue como
+          # instrucción. --dangerously-skip-permissions es necesario para que
+          # pueda editar archivos sin prompts interactivos en CI.
+          claude -p "$ISSUE_BODY" --dangerously-skip-permissions
+
+      - name: Abrir Pull Request automático hacia main
+        uses: peter-evans/create-pull-request@v6
+        with:
+          base: main
+          branch: agent/issue-${{ github.event.issue.number }}
+          commit-message: "feat(agent): finalizada tarea del issue #${{ github.event.issue.number }}"
+          title: "feat(agent): tarea del issue #${{ github.event.issue.number }}"
+          body: |
+            PR automático generado por el agente headless a partir del
+            issue #${{ github.event.issue.number }}.
+
+            Disparado por el label `agent-task`.
+          labels: agent-task
+          delete-branch: true
