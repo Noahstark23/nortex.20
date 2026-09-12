@@ -1,6 +1,6 @@
 import { createHash } from 'crypto';
 import Decimal from 'decimal.js';
-import { resolveLegacySaleMode } from '../../utils/legacySaleMode.js';
+import { resolveProductQuantityRules } from '../../utils/productQuantityRules.js';
 import { Prisma, PrismaClient } from '@prisma/client';
 import type { SalePromotionSnapshot } from '../../shared/promotions.js';
 import { loadPromotionProducts } from './promotions/authority.js';
@@ -209,7 +209,7 @@ const convertToBaseUnit = (
     }
 };
 
-/** El legado medido conserva fracciones; cajas/unidades sin configuración son enteras. */
+/** Sin unidad conserva el fallback de snapshots heredados; con unidad resuelve el catálogo actual. */
 export const effectiveSaleModeAndStep = (
     saleMode: string | null,
     quantityStep: { toString(): string } | string | null,
@@ -222,10 +222,11 @@ export const effectiveSaleModeAndStep = (
             409,
         );
     }
-    const effectiveMode = resolveLegacySaleMode({ saleMode, quantityStep, unit });
+    const rules = resolveProductQuantityRules({ saleMode, quantityStep, unit });
     return {
-        saleMode: effectiveMode,
-        quantityStep: quantityStep?.toString() ?? (effectiveMode === 'COUNTED' ? '1' : '0.0001'),
+        saleMode: rules.saleMode,
+        // Una configuración inválida ya persistida se rechaza, no se corrige al vender.
+        quantityStep: quantityStep?.toString() ?? rules.quantityStep,
     };
 };
 
@@ -649,7 +650,8 @@ export async function normalizeSaleItems(
                         409,
                     );
                 }
-                const currentRules = effectiveSaleModeAndStep(product.saleMode, product.quantityStep, product.unit);
+                // Una cotización emitida sin modo conserva su fallback histórico fraccionario.
+                const currentRules = effectiveSaleModeAndStep(product.saleMode, product.quantityStep);
                 const saleModeAtSale = quotedItem.saleModeAtQuote ?? currentRules.saleMode;
                 const quantityStepAtSale = quotedItem.quantityStepAtQuote?.toString()
                     ?? (quotedItem.saleModeAtQuote === null

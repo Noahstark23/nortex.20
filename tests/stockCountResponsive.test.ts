@@ -12,17 +12,20 @@ const between = (source: string, start: string, end: string) => {
 };
 
 describe('Toma Física responsive y no bloqueante', () => {
-    it('muestra tarjetas móviles completas en el historial y conserva la tabla desde sm', () => {
-        const history = between(component, '// RENDER — LISTA / HISTORIAL', '{detailLoading &&');
-
-        expect(history).toContain('aria-label="Historial de tomas físicas"');
-        expect(history).toContain('className="sm:hidden space-y-3"');
-        expect(history).toContain('hidden sm:block bg-slate-800/60');
-        expect(history).toContain('Creada por');
-        expect(history).toContain('Productos');
-        expect(history).toContain('Todo el inventario');
-        expect(history).toContain('Ver detalle');
-        expect(history).toContain('<time dateTime={c.createdAt}');
+    it('usa una lista adaptable para continuar y deja el historial bajo demanda', () => {
+        const list = readFileSync(resolve(process.cwd(), 'components/inventory/StockCountWorkspaceList.tsx'), 'utf8');
+        const styles = readFileSync(resolve(process.cwd(), 'components/inventory/StockCountWorkspace.css'), 'utf8');
+        expect(component).toContain('<StockCountWorkspaceList');
+        expect(list).toContain('aria-label="Conteos por terminar"');
+        expect(list).toContain('Historial de conteos');
+        expect(list).toContain('showHistory &&');
+        expect(list).toContain('count.creator.name');
+        expect(list).toContain('count._count?.items');
+        expect(list).toContain('Todos los productos');
+        expect(list).toContain('Ver detalle');
+        expect(list).toContain('<time dateTime={count.createdAt}');
+        expect(styles).toContain('@media(max-width:640px)');
+        expect(styles).toContain('.stock-count-list-row');
     });
 
     it('muestra esperado, contado y diferencia en tarjetas móviles del detalle', () => {
@@ -49,7 +52,7 @@ describe('Toma Física responsive y no bloqueante', () => {
         expect(component).toContain('creating || !createFormValid');
         expect(component).toContain("['OPEN', 'CLOSING'].includes(count.status)");
         expect(component).toContain("CLOSING: { label: 'Cerrando'");
-        expect(component).toContain("c.warehouse?.name || 'Bodega no especificada'");
+        expect(component).toContain("detail.count.warehouse?.name || 'Conteo sin ubicación'");
         expect(component).toContain('roleCapabilitiesFor(currentSessionRole())');
         expect(component).toContain('canManageWarehouseTopology, canViewInventoryValuation');
         expect(component).toContain('{canViewInventoryValuation && (');

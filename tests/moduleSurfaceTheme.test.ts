@@ -7,6 +7,8 @@ const readSource = (file: string): string => readFileSync(resolve(ROOT, file), '
 
 const css = readSource('index.css');
 const inventory = readSource('components/Inventory.tsx');
+const inventoryCatalog = readSource('components/inventory/InventoryCatalog.tsx');
+const inventoryCatalogCss = readSource('components/inventory/inventoryCatalog.css');
 const moduleHeader = readSource('components/ui/ModuleHeader.tsx');
 const inventoryTabs = readSource('components/ui/InventoryTabs.tsx');
 const emptyState = readSource('components/ui/EmptyState.tsx');
@@ -18,7 +20,11 @@ describe('superficies semánticas de módulo en Día y Noche', () => {
     it('no fuerza colores del modo claro dentro de Inventario', () => {
         expect(inventory).not.toContain('lightEmptyStateClass');
         expect(inventory).not.toMatch(/<ModuleHeader[\s\S]*?className="[^"]*!text-slate/);
-        expect(inventory).toContain('className="border-b pb-5"');
+        expect(inventory).toContain('<InventoryCatalog');
+        expect(inventoryCatalog).toContain("import './inventoryCatalog.css'");
+        expect(inventoryCatalog).not.toMatch(/className="[^"]*!text-slate/);
+        expect(inventoryCatalogCss).toMatch(/\.nx-inventory-catalog\s*\{[^}]*color:\s*var\(--nx-canvas-text\)/);
+        expect(inventoryCatalogCss).toMatch(/\.nx-inventory-catalog\s+\.nx-inventory-catalog-product\s*\{[^}]*color:\s*var\(--nx-canvas-text\);[^}]*background:\s*var\(--nx-canvas-raised\)/);
     });
 
     it('el encabezado y sus pestañas consumen tokens del canvas', () => {

@@ -1,0 +1,30 @@
+{
+  "modules": 55,
+  "instrumented": 5196,
+  "statuses": {
+    "Ignored": 20,
+    "Killed": 5166,
+    "Survived": 6,
+    "Timeout": 4
+  },
+  "score": 99.88408037094281,
+  "threshold": 99.85,
+  "scopeGuardPassed": true,
+  "changedModules": {
+    "utils/bodegaReceivingInput.ts": {
+      "Killed": 27
+    },
+    "utils/posActivation.ts": {
+      "Killed": 192
+    },
+    "utils/productQuantityRules.ts": {
+      "Killed": 38
+    },
+    "utils/purchasePackaging.ts": {
+      "Killed": 99
+    },
+    "utils/stockTransferQuantity.ts": {
+      "Killed": 1
+    }
+  }
+}

@@ -6,6 +6,8 @@ const ROOT = resolve(import.meta.dirname, '..');
 const css = readFileSync(resolve(ROOT, 'index.css'), 'utf8');
 const tokens = readFileSync(resolve(ROOT, 'nortex-tokens.css'), 'utf8');
 const purchases = readFileSync(resolve(ROOT, 'components/Purchases.tsx'), 'utf8');
+const receiving = readFileSync(resolve(ROOT, 'components/inventory/ReceivingWorkspace.tsx'), 'utf8');
+const receivingCss = readFileSync(resolve(ROOT, 'components/inventory/receivingWorkspace.css'), 'utf8');
 
 const hexRgb = (hex: string): [number, number, number] => {
     const value = hex.replace('#', '');
@@ -78,14 +80,36 @@ describe('superficie ticket dentro del workspace Día/Noche', () => {
         }
     });
 
-    it('declara los recibos y diálogos de Compras como contexto oscuro intencional', () => {
-        const surfaces = [...purchases.matchAll(/className="([^"]*nx-ticket-surface[^"]*)"/g)]
+    it('conserva los tres diálogos operativos oscuros y la nueva recepción tematizable', () => {
+        const surfaces = [...`${purchases}\n${receiving}`.matchAll(/className="([^"]*nx-ticket-surface[^"]*)"/g)]
             .map(match => match[1]);
 
-        expect(surfaces).toHaveLength(4);
+        // La cuarta superficie era el resumen de alta; pasó al footer de
+        // ReceivingWorkspace. Los tres modales siguen auditándose individualmente.
+        expect(surfaces).toHaveLength(3);
         for (const className of surfaces) expect(className).toContain('nx-dark-context');
-        expect(purchases).toContain('disabled:bg-slate-700 disabled:text-slate-300');
-        expect(purchases).not.toContain('disabled:bg-slate-700 disabled:text-slate-500');
+        for (const title of ['match-detail-title', 'match-resolution-title', 'confirm-payment-title']) {
+            expect(purchases).toMatch(new RegExp(`role="dialog"[^>]*aria-labelledby="${title}"[^>]*className="[^"]*nx-dark-context[^"]*nx-ticket-surface`));
+        }
+        expect(receiving).toContain('nx-light-context receiving-workspace');
+        expect(receiving).toContain('receiving-footer');
+        expect(receivingCss).toMatch(/\.receiving-footer\s*\{[^}]*background:\s*var\(--nx-canvas-raised/);
+        expect(`${purchases}\n${receiving}`).not.toContain('disabled:bg-slate-700 disabled:text-slate-500');
+    });
+
+    it('el CTA de recepción conserva contraste AA en Día y Noche', () => {
+        const block = receivingCss.match(/\.receiving-submit\s*\{([^}]+)\}/)?.[1] ?? '';
+        const backgroundToken = block.match(/background:\s*var\(--([\w-]+)/)?.[1];
+        const foregroundToken = block.match(/color:\s*var\(--([\w-]+)/)?.[1];
+        expect(backgroundToken, 'El fondo del CTA debe usar un token semántico.').toBeDefined();
+        expect(foregroundToken, 'La tinta del CTA debe usar el token de contraste correspondiente.').toBeDefined();
+        for (const theme of ['light', 'dark'] as const) {
+            const resolveColor = (name: string) => {
+                const themeBlock = tokens.match(new RegExp(`\\[data-nx-theme=['"]${theme}['"]\\]\\s*\\{([\\s\\S]*?)\\n\\}`))?.[1] ?? '';
+                return themeBlock.match(new RegExp(`--${name}:\\s*(#[0-9A-Fa-f]{6})`))?.[1] ?? tokenHex(name);
+            };
+            expect(contrast(resolveColor(foregroundToken!), resolveColor(backgroundToken!)), theme).toBeGreaterThanOrEqual(4.5);
+        }
     });
 
     it('traduce todos los escalones de texto semántico en el canvas claro', () => {

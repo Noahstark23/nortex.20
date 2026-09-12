@@ -1,0 +1,9 @@
+{
+  "checkedAtUtc": "2026-09-12T19:50:21.525Z",
+  "method": "Read-only Prisma queries after the UI replay",
+  "scope": "Business state and effect counts in ui-receipt-evidence.json",
+  "beforeSha256": "1755c36d8130bd576609b5a0bb00d67a8b3d01c744b0962c0018851ea30bbc4f",
+  "afterSha256": "1755c36d8130bd576609b5a0bb00d67a8b3d01c744b0962c0018851ea30bbc4f",
+  "identicalBusinessState": true,
+  "evidence": "ui-receipt-evidence.json"
+}

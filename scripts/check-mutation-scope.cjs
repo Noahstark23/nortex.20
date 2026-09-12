@@ -107,13 +107,17 @@ const PISO_MUTANTES = {
     // la construcción exportada de MAX_QUANTITY al importar el módulo, antes
     // de que coverageAnalysis=perTest pueda activar un mutante estático.
     'utils/quantity.ts': 257,
-    // Transferencias de bodega reutilizan modo/paso autoritativos: 18/18.
-    'utils/stockTransferQuantity.ts': 18,
+    // Transferencias: 1/1; se borraron 17 mutantes al extraer reglas compartidas.
+    'utils/stockTransferQuantity.ts': 1,
     // Parser declarativo completo de etiquetas: 370 mutantes, 100.00% (incluye
     // un timeout por hit-limit que Stryker cuenta como detectado).
     'utils/scaleLabels.ts': 370,
-    // Conversión autoritativa BASE/PACK y costo unitario: 117/117.
-    'utils/purchasePackaging.ts': 117,
+    // BASE/PACK y costo: 99/99; se extrajo la inferencia duplicada de modo/paso.
+    'utils/purchasePackaging.ts': 99,
+    // Reglas de modo/paso extraídas de POS, traslado y compra: 38/38; total conjunto 330/330.
+    'utils/productQuantityRules.ts': 38,
+    // Captura decimal local completa: 27/27; formatos ambiguos bloquean envío.
+    'utils/bodegaReceivingInput.ts': 27,
     // Serialización pura de filas para el XLSX de reportes medidos: 3/3.
     'utils/measuredReportExport.ts': 3,
     // Núcleo monetario completo de reportes: Decimal/HALF_UP, IVA histórico,

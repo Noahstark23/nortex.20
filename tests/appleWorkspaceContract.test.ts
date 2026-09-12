@@ -8,6 +8,7 @@ const ROOT = resolve(import.meta.dirname, '..');
 type DirectWorkspace = {
     component: string;
     file: string;
+    routeDefaults?: Record<string, boolean>;
 };
 
 type AuthenticatedWorkspaceMode = 'apple-themed' | 'pos';
@@ -59,7 +60,7 @@ const DIRECT_WORKSPACES: DirectWorkspace[] = [
     { component: 'CashRegisters', file: 'components/CashRegisters.tsx' },
     { component: 'RetailDashboard', file: 'components/Dashboard.tsx' },
     { component: 'Inventory', file: 'components/Inventory.tsx' },
-    { component: 'Purchases', file: 'components/Purchases.tsx' },
+    { component: 'Purchases', file: 'components/Purchases.tsx', routeDefaults: { embedded: false } },
     { component: 'Clients', file: 'components/Clients.tsx' },
     { component: 'Suppliers', file: 'components/Suppliers.tsx' },
     { component: 'HRM', file: 'components/HRM.tsx' },
@@ -214,27 +215,42 @@ const componentRoutes = (componentName: string): RouteDeclaration[] => {
 };
 
 /**
- * Extrae solo las superficies devueltas directamente por el componente de ruta.
+ * Extrae las superficies devueltas por el componente de ruta. Resuelve wrappers
+ * locales sin canvas propio (por ejemplo, la frontera de sesión de Inventory) y
+ * evalúa únicamente props de ruta conocidas: /purchases usa embedded=false.
  * Ignora returns de callbacks, effects y subcomponentes para no confundir un
  * modal oscuro permitido con el fondo de todo el módulo.
  */
-const routeRootClasses = (file: string, componentName: string): string[] => {
+const routeRootClasses = (file: string, componentName: string, routeDefaults: Record<string, boolean> = {}): string[] => {
     const source = readSource(file);
     const tree = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
-    const component = findComponent(tree, componentName);
     const classes: string[] = [];
-
-    const visit = (node: ts.Node) => {
-        if (node !== component && isNestedFunction(node)) return;
-        if (ts.isReturnStatement(node) && node.expression) {
-            const element = firstRootElement(node.expression);
-            if (element) classes.push(classNameText(tree, element));
-            return;
-        }
-        ts.forEachChild(node, visit);
+    const collect = (name: string, ancestors: string[]) => {
+        if (ancestors.includes(name)) throw new Error(`Wrapper de ruta circular: ${[...ancestors, name].join(' → ')}`);
+        const component = findComponent(tree, name);
+        const visit = (node: ts.Node) => {
+            if (node !== component && isNestedFunction(node)) return;
+            if (ts.isIfStatement(node)) {
+                const condition = unwrapExpression(node.expression);
+                const known = ts.isIdentifier(condition) ? routeDefaults[condition.text] : undefined;
+                if (known === false) { if (node.elseStatement) visit(node.elseStatement); return; }
+                if (known === true) { visit(node.thenStatement); return; }
+            }
+            if (ts.isReturnStatement(node) && node.expression) {
+                const element = firstRootElement(node.expression);
+                if (element) {
+                    const className = classNameText(tree, element);
+                    const tag = element.tagName.getText(tree);
+                    if (!className && /^[A-Z]/.test(tag)) collect(tag, [...ancestors, name]);
+                    else classes.push(className);
+                }
+                return;
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(component);
     };
-
-    visit(component);
+    collect(componentName, []);
     return classes;
 };
 
@@ -343,8 +359,8 @@ describe('contrato Apple/HIG del workspace autenticado', () => {
 
     it.each(DIRECT_WORKSPACES)(
         '$file expone cada estado de ruta como workspace claro',
-        ({ component, file }) => {
-            const roots = routeRootClasses(file, component);
+        ({ component, file, routeDefaults }) => {
+            const roots = routeRootClasses(file, component, routeDefaults);
 
             expect(roots.length, `${component} debe devolver al menos una superficie de ruta.`).toBeGreaterThan(0);
             for (const root of roots) {
@@ -359,6 +375,20 @@ describe('contrato Apple/HIG del workspace autenticado', () => {
             }
         },
     );
+
+    it('la recepción embebida conserva contexto de canvas y las mismas entradas del formulario de ruta', () => {
+        const purchases = readSource('components/Purchases.tsx');
+        const receiving = readSource('components/inventory/ReceivingWorkspace.tsx');
+        const styles = readSource('components/inventory/receivingWorkspace.css');
+        expect(componentRoutes('ProtectedApp').filter(route => route.path === 'purchases')).toEqual([
+            expect.objectContaining({ element: '<Purchases />', isInsideLayout: true }),
+        ]);
+        expect(purchases).toContain('embedded = false');
+        expect(purchases).toMatch(/if \(embedded\) return <div className="nx-light-context receiving-embedded-host"/);
+        expect(purchases).toContain('const receivingView = <ReceivingWorkspace');
+        expect(receiving).toContain('nx-light-context receiving-workspace');
+        expect(styles).toMatch(/\.receiving-embedded-host\s*\{[^}]*color:\s*var\(--nx-canvas-text[^}]*background:\s*var\(--nx-canvas-raised/);
+    });
 
     it('mantiene el dashboard retail como destino del router para comercios', () => {
         const dashboard = readSource('components/Dashboard.tsx');

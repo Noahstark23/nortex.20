@@ -19,6 +19,7 @@ import {
     PRODUCT_IMAGE_ALLOWED_HOST,
     PRODUCT_IMAGE_URL_MAX_LENGTH,
 } from '../../utils/productImageUrl.js';
+import { resolveProductQuantityRules } from '../../utils/productQuantityRules.js';
 import { fiscalCivilDate } from '../lib/fiscalAccess.js';
 import {
     PURCHASE_NO_TAX_REASONS,
@@ -491,6 +492,9 @@ export const CreateRetencionSufridaSchema = z.object({
 
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({
+    // Los clientes actuales conservan este UUID hasta recibir confirmación.
+    // Opcional únicamente para compatibilidad con clientes anteriores.
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID').optional(),
     productId: z.string().min(1, 'productId requerido'),
     // La UI nueva siempre envía la ubicación. Se conserva opcional para
     // clientes de una sola bodega; el handler rechaza la omisión ambigua.
@@ -606,6 +610,7 @@ const ProductFieldsSchema = z.object({
     name:                  z.string().trim().min(1, 'Nombre requerido').max(200),
     sku:                   z.string().trim().min(1, 'SKU requerido').max(100),
     description:           z.string().trim().max(1000).optional().nullable(),
+    brand:                 z.string().trim().max(100).optional().nullable(),
     category:              z.string().trim().max(100).optional().nullable(),
     price:                 moneyAmountPositive,
     cost:                  moneyAmount.optional(),
@@ -631,6 +636,7 @@ const ProductFieldsSchema = z.object({
 
 const addQuantityConfigurationIssues = (
     product: {
+        unit?: string | null;
         saleMode?: 'COUNTED' | 'MEASURED' | null;
         quantityStep?: string | null;
         stock?: string;
@@ -644,11 +650,7 @@ const addQuantityConfigurationIssues = (
     },
     ctx: z.RefinementCtx,
 ) => {
-    // D6: `null` es producto legado, no sinónimo de contado. Antes de estos
-    // campos Product.stock ya era Float y aceptaba fracciones; conservarlo con
-    // paso efectivo 0.0001 evita quebrar catálogos históricos.
-    const saleMode = product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
-    const quantityStep = product.quantityStep || (saleMode === 'COUNTED' ? '1' : '0.0001');
+    const { saleMode, quantityStep } = resolveProductQuantityRules(product);
     const quantities = [
         ['stock', product.stock],
         ['minStock', product.minStock],
@@ -722,6 +724,7 @@ export const UpdateProductSchema = ProductFieldsSchema.partial().refine(
 // El bulk conserva aliases históricos (nombre/precio/etc.); cada fila se
 // normaliza y valida con CreateProductSchema dentro del handler.
 export const BulkImportProductsSchema = z.object({
+    warehouseId: z.string().trim().min(1).max(191).optional(),
     products: z.array(z.record(z.string(), z.unknown()))
         .min(1, 'Se requiere al menos un producto')
         .max(500, 'Máximo 500 productos por lote'),

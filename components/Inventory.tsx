@@ -1,25 +1,30 @@
-import { EmptyState, TableEmptyState, type EmptyStateProps } from './ui/EmptyState';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { EmptyState, type EmptyStateProps } from './ui/EmptyState';
+import { useInventoryBarcode } from '../hooks/useInventoryBarcode';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 // xlsx (~430 KB) se importa dinámicamente en handleExport — fuera del bundle inicial.
 import ImageUploader from './ImageUploader';
+import { resolveProductQuantityRules } from '../utils/productQuantityRules';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
 import { resolveLegacySaleMode } from '../utils/legacySaleMode';
 import { trackEvent } from '../utils/analytics';
 import { batchExpiryPresentation } from '../utils/batchExpiry';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
-import { buildCreateProductPayload, productValidationMessage } from '../utils/productForm';
+import { buildCreateProductPayload, normalizeProductQuantityInput, productValidationMessage } from '../utils/productForm';
+import { clearInventoryAdjustmentAttempt, inventoryAdjustmentScope, isConfirmedInventoryAdjustment, isRejectedInventoryAdjustment, readInventoryAdjustmentAttempt, saveInventoryAdjustmentAttempt, type InventoryAdjustmentAttempt, type InventoryAdjustmentScope } from '../utils/inventoryAdjustmentAttempt';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
     Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
     Tag, DollarSign, Printer
 } from 'lucide-react';
-import { ModuleHeader } from './ui/ModuleHeader';
+import { InventoryCatalog, type InventoryCatalogFilters } from './inventory/InventoryCatalog';
+import { StockProductPane, StockPaneEmpty } from './inventory/StockProductPane';
+import { FluidSheet } from './ui/FluidSheet';
+import './inventory/stockWorkspace.css';
 import { IconButton } from './ui/IconButton';
 import { ActionMenu } from './ui/ActionMenu';
-import { InventoryTabs } from './ui/InventoryTabs';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
 import { maybeAutostartTour } from '../utils/tours';
@@ -32,6 +37,7 @@ import { ToastViewport, useToast } from './ui/Toast';
 
 interface Product {
     id: string;
+    brand?: string | null;
     name: string;
     sku: string;
     description?: string;
@@ -145,10 +151,7 @@ interface KardexEntry {
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
 /** El bodeguero registra hallazgos físicos; compras y devoluciones tienen su flujo propio. */
-export const adjustmentTypesForRole = (isBodeguero: boolean): AdjustType[] =>
-    isBodeguero
-        ? ['ADJUST_LOSS', 'ADJUST_GAIN']
-        : ['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN'];
+export const adjustmentTypesForRole = (_isBodeguero: boolean): AdjustType[] => ['ADJUST_LOSS', 'ADJUST_GAIN'];
 
 // ==========================================
 // HELPERS
@@ -164,7 +167,7 @@ const MOVEMENT_LABELS: Record<string, { label: string; color: string; icon: stri
     // Día y Noche. Usar sus tokens explícitos evita que la traducción Día de
     // `orange-*` deje una tinta clara sobre un fondo claro.
     'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-[var(--nx-ticket-raised)] text-[var(--nx-ticket-warning)] border-[color:var(--nx-ticket-warning)]', icon: '' },
-    'ADJUST_GAIN': { label: 'Ganancia', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
+    'ADJUST_GAIN': { label: 'Sobrante', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
     'ADJUSTMENT': { label: 'Ajuste', color: 'bg-yellow-900/60 text-yellow-300 border-yellow-700', icon: '' },
     'RETURN': { label: 'Devolución', color: 'bg-purple-900/60 text-purple-300 border-purple-700', icon: '↩' },
 };
@@ -198,13 +201,13 @@ const TarjetaKpi: React.FC<{
                 {icono}
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{titulo}</span>
             </div>
-            <p className="text-kpi font-bold tabular-nums text-slate-950">{valor}</p>
-            <p className="text-xs text-slate-500">{nota}</p>
+            <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-950 sm:text-kpi">{valor}</p>
+            <p className="hidden text-xs text-slate-500 sm:block">{nota}</p>
         </>
     );
 
     if (!onClick) {
-        return <div className="nx-canvas-card p-4 text-left">{contenido}</div>;
+        return <div className="nx-canvas-card p-3 text-left sm:p-4">{contenido}</div>;
     }
 
     return (
@@ -213,7 +216,7 @@ const TarjetaKpi: React.FC<{
             onClick={onClick}
             aria-pressed={activa}
             aria-label={etiquetaAccion ?? titulo}
-            className={`nx-canvas-card nx-fluid-press cursor-pointer p-4 text-left transition-colors hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
+            className={`nx-canvas-card nx-fluid-press cursor-pointer p-3 text-left transition-colors sm:p-4 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
                 activa ? 'border-brand bg-brand-soft' : 'hover:border-slate-300'
             }`}
         >
@@ -243,14 +246,14 @@ const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
 // MAIN COMPONENT
 // ==========================================
 
-export default function Inventory() {
+function InventoryWorkspace() {
     const userRole = currentSessionRole() || 'EMPLOYEE';
     const {
         isBodeguero,
         canManageProducts,
         canAdjustStock,
         canViewKardex,
-        canViewInventoryValuation,
+        canViewInventoryValuation, canTransferStock, canManagePurchaseOrders, canReceivePurchaseOrders,
     } = roleCapabilitiesFor(userRole);
     // Conserva el nombre histórico usado en el render; ahora su definición
     // vive antes de hooks que dependen de ella y no mezcla ajustes con edición.
@@ -265,6 +268,38 @@ export default function Inventory() {
     const [seedError, setSeedError] = useState('');
     const [loading, setLoading] = useState(true);
     const [inventoryParams] = useSearchParams();
+    const navigate = useNavigate();
+    const [activeProduct, setActiveProduct] = useState<Product | null>(null);
+    const [stockRevision, setStockRevision] = useState(0);
+    const [receivingBusy, setReceivingBusy] = useState(false);
+    const [receivingOpen, setReceivingOpen] = useState(false);
+    const receivingOpenRef = useRef(false);
+    const updateReceivingOpen = (open: boolean) => {
+        receivingOpenRef.current = open;
+        setReceivingOpen(open);
+        if (!open && typeof matchMedia === 'function') setCompactPane(matchMedia('(max-width: 1100px)').matches);
+    };
+    const [showSummary, setShowSummary] = useState(false);
+    const [bulkMode, setBulkMode] = useState(false);
+    const [compactPane, setCompactPane] = useState(() => typeof matchMedia === 'function' && matchMedia('(max-width: 1100px)').matches);
+    useEffect(() => {
+        if (typeof matchMedia !== 'function') return;
+        const media = matchMedia('(max-width: 1100px)');
+        const update = () => { if (!receivingOpenRef.current) setCompactPane(media.matches); };
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, []);
+    useEffect(() => {
+        if (!receivingBusy) return;
+        const preventLeave = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+        const preventLink = (event: MouseEvent) => {
+            const target = event.target as HTMLElement;
+            if (!target.closest('.nx-stock-pane') && !target.closest('[aria-label="Cerrar sesión"]')) { event.preventDefault(); event.stopPropagation(); }
+        };
+        window.addEventListener('beforeunload', preventLeave);
+        document.addEventListener('click', preventLink, true);
+        return () => { window.removeEventListener('beforeunload', preventLeave); document.removeEventListener('click', preventLink, true); };
+    }, [receivingBusy]);
     const alertSearch = inventoryParams.get('search') ?? '';
     const [searchTerm, setSearchTerm] = useState(alertSearch);
     useEffect(() => { setSearchTerm(alertSearch); }, [alertSearch]);
@@ -281,6 +316,7 @@ export default function Inventory() {
     const [sortField, setSortField] = useState('name');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [categories, setCategories] = useState<string[]>([]);
+    const [statsError, setStatsError] = useState(false);
     const [stats, setStats] = useState<{ totalProducts: number; inventoryValue: number; totalUnits: number; outOfStock: number; lowStockCount: number } | null>(null);
     const [exporting, setExporting] = useState(false);
 
@@ -292,7 +328,6 @@ export default function Inventory() {
     const [showKardexModal, setShowKardexModal] = useState(false);
     const [showAdjustModal, setShowAdjustModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
-    const [showDropdown, setShowDropdown] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
     const [showBatchesModal, setShowBatchesModal] = useState(false);
     const [showBulkEditModal, setShowBulkEditModal] = useState(false);
@@ -340,18 +375,39 @@ export default function Inventory() {
     const [adjustWarehousesLoading, setAdjustWarehousesLoading] = useState(false);
     const [adjustStockLoading, setAdjustStockLoading] = useState(false);
     const [adjustError, setAdjustError] = useState('');
+    const [adjustRecovery, setAdjustRecovery] = useState<InventoryAdjustmentAttempt | null>(null);
+    const [adjustRecoveryBlocked, setAdjustRecoveryBlocked] = useState(false);
+    const adjustPending = useRef(false);
+    const adjustWarehouseRequest = useRef(0);
+    const adjustScopeAtOpen = useRef<InventoryAdjustmentScope | null>(null);
+    const closeAdjust = () => { if (!adjustPending.current) setShowAdjustModal(false); };
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
+        name: '', brand: '', sku: '', minStock: '0', ivaExento: false, requiresBatchTracking: false, description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
         unit: 'unidad', saleMode: 'LEGACY' as 'LEGACY' | 'COUNTED' | 'MEASURED', quantityStep: '', productFamily: 'GENERAL'
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
+    const editPending = useRef(false);
+    const closeEdit = () => { if (!editPending.current) setShowEditModal(false); };
+    const [editError, setEditError] = useState('');
+    const [kardexError, setKardexError] = useState('');
+    const [batchLoadError, setBatchLoadError] = useState('');
+    const batchRequest = useRef(0);
+    const kardexRequest = useRef(0);
+    const productRequest = useRef(0);
+    const statsRequest = useRef(0);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
+    useEffect(() => {
+        if (!showEditModal) return;
+        const onEscape = (event: KeyboardEvent) => { if (document.querySelector('[data-camera-scanner]')) return; if (event.key === 'Escape') closeEdit(); };
+        window.addEventListener('keydown', onEscape);
+        return () => window.removeEventListener('keydown', onEscape);
+    }, [showEditModal]);
 
     // Create form
     const [formData, setFormData] = useState({
-        name: '', sku: '', description: '', category: '',
+        name: '', brand: '', sku: '', description: '', category: '',
         price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '',
         wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
         saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED', quantityStep: '1', productFamily: 'GENERAL' as ProductFamily
@@ -363,13 +419,22 @@ export default function Inventory() {
         'Authorization': `Bearer ${token}`
     }), [token]);
 
+    useEffect(() => {
+        if (!showAdjustModal || !adjustScopeAtOpen.current) return;
+        try {
+            const scope = inventoryAdjustmentScope(token);
+            if (scope.tenantId === adjustScopeAtOpen.current.tenantId && scope.userId === adjustScopeAtOpen.current.userId) return;
+        } catch { /* A closed or different session cannot display this recovery. */ }
+        setShowAdjustModal(false);
+        setAdjustRecovery(null);
+        setAdjustError('');
+    }, [token, showAdjustModal]);
+
     const adjustQuantityState = useMemo(() => {
         if (!adjustForm.quantity || !selectedProduct) return { value: null as number | null, error: '' };
 
         try {
-            const saleMode = selectedProduct.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
-            const quantityStep = selectedProduct.quantityStep?.toString()
-                || (saleMode === 'COUNTED' ? '1' : '0.0001');
+            const { saleMode, quantityStep } = resolveProductQuantityRules(selectedProduct);
             return {
                 value: validateQuantity(adjustForm.quantity, { saleMode, quantityStep }).toNumber(),
                 error: '',
@@ -385,7 +450,8 @@ export default function Inventory() {
     useEffect(() => {
         if (!showAdjustModal) return;
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape' && !adjustSubmitting) setShowAdjustModal(false);
+            if (document.querySelector('[data-camera-scanner]')) return;
+            if (event.key === 'Escape') closeAdjust();
         };
         window.addEventListener('keydown', closeOnEscape);
         return () => window.removeEventListener('keydown', closeOnEscape);
@@ -396,6 +462,7 @@ export default function Inventory() {
     // ==========================================
 
     const fetchProducts = useCallback(async () => {
+        const request = ++productRequest.current;
         try {
             setLoading(true);
             const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sort: sortField, dir: sortDir });
@@ -405,8 +472,10 @@ export default function Inventory() {
             if (modeFilter) params.set('mode', modeFilter);
             if (statusFilter) params.set('status', statusFilter);
             const res = await fetch(`/api/products?${params.toString()}`, { headers });
+            if (request !== productRequest.current) return;
             if (res.ok) {
                 const data = await res.json();
+                if (request !== productRequest.current) return;
                 setProducts(data.products || []);
                 setTotal(data.total || 0);
                 setProductsError(false);
@@ -416,19 +485,24 @@ export default function Inventory() {
                 setProductsError(true);
             }
         } catch (e) {
-            console.error('Error fetching products:', e);
-            setProductsError(true);
+            if (request === productRequest.current) setProductsError(true);
         } finally {
-            setLoading(false);
-            setSelectedProductIds([]); // Reset selection on fetch
+            if (request === productRequest.current) {
+                setLoading(false);
+                setSelectedProductIds([]);
+            }
         }
     }, [page, debouncedSearch, categoryFilter, familyFilter, modeFilter, statusFilter, sortField, sortDir, headers]);
 
     const fetchStats = useCallback(async () => {
+        const request = ++statsRequest.current;
+        setStatsError(false);
         try {
             const res = await fetch('/api/reports/inventory', { headers });
+            if (!res.ok) throw new Error('No se pudo cargar el resumen.');
             if (res.ok) {
                 const d = await res.json();
+                if (request !== statsRequest.current) return;
                 setStats({
                     totalProducts: d.totalProducts || 0,
                     inventoryValue: d.inventoryValue || 0,
@@ -437,7 +511,9 @@ export default function Inventory() {
                     lowStockCount: Math.max(0, (d.lowStock?.length || 0) - (d.outOfStock || 0)),
                 });
             }
-        } catch (e) { console.error('Error fetching stats:', e); }
+        } catch {
+            if (request === statsRequest.current) { setStats(null); setStatsError(true); }
+        }
     }, [headers]);
 
     const fetchCategories = useCallback(async () => {
@@ -449,9 +525,11 @@ export default function Inventory() {
 
     // Recarga todo (lista + KPIs) tras una mutación.
     const reload = useCallback(() => {
+        setStockRevision(value => value + 1);
         fetchProducts();
+        fetchCategories();
         if (canViewInventoryValuation) fetchStats();
-    }, [canViewInventoryValuation, fetchProducts, fetchStats]);
+    }, [canViewInventoryValuation, fetchProducts, fetchStats, fetchCategories]);
 
     // Catálogo de EJEMPLO por giro (retención R2): mismo endpoint que el POS.
     const seedCatalog = useCallback(async () => {
@@ -484,12 +562,14 @@ export default function Inventory() {
             if (modeFilter) params.set('mode', modeFilter);
             if (statusFilter) params.set('status', statusFilter);
             const res = await fetch(`/api/products?${params.toString()}`, { headers });
-            const data = res.ok ? await res.json() : [];
-            const arr = Array.isArray(data) ? data : (data.products || []);
+            if (!res.ok) throw new Error('No se pudo cargar el catálogo para exportar.');
+            const data = await res.json();
+            if (receivingOpenRef.current) return;
+                            const arr = Array.isArray(data) ? data : (data.products || []);
             const rows = arr.map((p: any) => ({
-                SKU: p.sku, Producto: p.name, 'Categoría': p.category || '', Unidad: p.unit,
+                SKU: p.sku, Producto: p.name, Marca: p.brand || '', 'Categoría': p.category || '', Unidad: p.unit,
                 'Modo de venta': p.saleMode || 'LEGACY',
-                'Paso de cantidad': p.quantityStep == null ? '' : String(p.quantityStep),
+                'Cantidad mínima por paso': p.quantityStep == null ? '' : String(p.quantityStep),
                 'Familia operativa': p.productFamily || 'GENERAL',
                 'Unidad de empaque': p.packUnit || '',
                 'Tamaño de empaque': p.packSize == null ? '' : String(p.packSize),
@@ -574,11 +654,14 @@ export default function Inventory() {
         }
     }, [canManageProducts]);
 
+    const scanWithCamera = useInventoryBarcode<Product>(product => { if (!receivingOpenRef.current) { setSearchTerm(product.sku); setActiveProduct(product); } });
+
     // ==========================================
     // SCAN DETECTION
     // ==========================================
 
     const playScanSound = useCallback((found: boolean) => {
+        try {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
         const gainNode = audioContext.createGain();
@@ -597,6 +680,8 @@ export default function Inventory() {
             oscillator.start(audioContext.currentTime);
             oscillator.stop(audioContext.currentTime + 0.15);
         }
+        oscillator.onended = () => { void audioContext.close().catch(() => {}); };
+        } catch { /* El escáner conserva su resultado aunque no haya audio. */ }
     }, []);
 
     useEffect(() => {
@@ -605,8 +690,9 @@ export default function Inventory() {
 
         const handleKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement;
-            if (showCreateModal || showImportModal || showQuickAddModal || showKardexModal || showAdjustModal || showEditModal) return;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+            if (document.querySelector('[data-camera-scanner]')) return;
+            if (receivingOpen || receivingBusy || (compactPane && activeProduct) || showSummary || showCreateModal || showImportModal || showQuickAddModal || showKardexModal || showAdjustModal || showEditModal || showBatchesModal || showBulkEditModal) return;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
 
             const currentTime = Date.now();
 
@@ -623,10 +709,15 @@ export default function Inventory() {
                     (async () => {
                         try {
                             const res = await fetch(`/api/products?search=${encodeURIComponent(scannedCode)}`, { headers });
-                            const data = res.ok ? await res.json() : [];
+                            if (!res.ok) {
+                                showToast({ tone: 'error', title: 'No pudimos buscar el código', message: 'Reintentá la búsqueda. No se pudo comprobar si el producto existe.' });
+                                return;
+                            }
+                            const data = await res.json();
+                            if (receivingOpenRef.current) return;
                             const arr = Array.isArray(data) ? data : (data.products || []);
                             const found = arr.find((p: any) => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
-                            if (found) { playScanSound(true); setSearchTerm(found.sku); }
+                            if (found) { playScanSound(true); setSearchTerm(found.sku); setActiveProduct(found); }
                             else {
                                 playScanSound(false);
                                 if (canManageProducts) {
@@ -634,7 +725,10 @@ export default function Inventory() {
                                     setShowQuickAddModal(true);
                                 }
                             }
-                        } catch { playScanSound(false); }
+                        } catch {
+                            showToast({ tone: 'error', title: 'No pudimos buscar el código', message: 'Reintentá la búsqueda. No se pudo comprobar si el producto existe.' });
+                            playScanSound(false);
+                        }
                     })();
                 }
                 buffer = '';
@@ -645,7 +739,7 @@ export default function Inventory() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [canManageProducts, headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
+    }, [receivingOpen, receivingBusy, compactPane, activeProduct, showSummary, canManageProducts, headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, showBatchesModal, showBulkEditModal, playScanSound, showToast]);
 
     // ==========================================
     // INVENTORY TOTALS
@@ -653,11 +747,13 @@ export default function Inventory() {
 
     /** Alterna el filtro: volver a tocar la tarjeta activa lo quita. */
     const aplicarFiltroEstado = useCallback((valor: string) => {
+        setShowSummary(false);
         setStatusFilter(prev => (prev === valor ? '' : valor));
         setPage(1);
     }, []);
 
     const limpiarFiltros = useCallback(() => {
+        setShowSummary(false);
         setStatusFilter('');
         setCategoryFilter('');
         setFamilyFilter('');
@@ -683,22 +779,27 @@ export default function Inventory() {
     // Fetch paginado del Kardex (A5). from/to son días locales (YYYY-MM-DD); el
     // backend los interpreta en hora Nicaragua (UTC-6).
     const fetchKardex = async (productId: string, targetPage: number, from: string, to: string) => {
+        const request = ++kardexRequest.current;
         setKardexLoading(true);
+        setKardexError('');
+        setKardexData([]);
         try {
             const params = new URLSearchParams({ page: String(targetPage), pageSize: String(KARDEX_PAGE_SIZE) });
             if (from) params.set('from', from);
             if (to) params.set('to', to);
             const res = await fetch(`/api/kardex/${productId}?${params.toString()}`, { headers });
+            if (!res.ok) throw new Error('No pudimos cargar los movimientos. Reintentá.');
             if (res.ok) {
                 const data = await res.json();
+                if (request !== kardexRequest.current) return;
                 setKardexData(data.entries || []);
                 setKardexTotal(data.total || 0);
                 setKardexPage(data.page || targetPage);
             }
         } catch (e) {
-            console.error('Error fetching kardex:', e);
+            if (request === kardexRequest.current) setKardexError('No pudimos cargar los movimientos. Reintentá.');
         } finally {
-            setKardexLoading(false);
+            if (request === kardexRequest.current) setKardexLoading(false);
         }
     };
 
@@ -716,6 +817,10 @@ export default function Inventory() {
     // ==========================================
 
     const openBatches = async (product: Product) => {
+        const request = ++batchRequest.current;
+        setBatchesData([]);
+        setBatchWarehouses([]);
+        setBatchLoadError('');
         setSelectedProduct(product);
         setShowBatchesModal(true);
         setShowAddBatchForm(false);
@@ -730,9 +835,14 @@ export default function Inventory() {
                 fetch(`/api/inventory/batches/${product.id}`, { headers }),
                 fetch('/api/warehouses', { headers }),
             ]);
-            if (batchResponse.ok) setBatchesData(await batchResponse.json());
+            if (request !== batchRequest.current) return;
+            if (!batchResponse.ok) throw new Error('No pudimos cargar los lotes de este producto.');
+            const batches = await batchResponse.json();
+            if (request !== batchRequest.current) return;
+            setBatchesData(batches);
 
             const warehouseData: any = await warehouseResponse.json().catch(() => ({}));
+            if (request !== batchRequest.current) return;
             if (warehouseResponse.ok) {
                 const available = (Array.isArray(warehouseData.data) ? warehouseData.data : [])
                     .filter((warehouse: WarehouseOption) => warehouse.isActive);
@@ -747,19 +857,26 @@ export default function Inventory() {
                 setBatchCommandError(warehouseData.error || 'No se pudieron cargar las bodegas activas.');
             }
         } catch (e) {
-            console.error('Error fetching batches:', e);
+            if (request !== batchRequest.current) return;
+            setBatchesData([]);
             setBatchWarehouses([]);
-            setBatchCommandError('No pudimos cargar lotes y bodegas. Revisá tu conexión.');
+            setBatchLoadError('No pudimos cargar los lotes de este producto. Revisá tu conexión y reintentá.');
         } finally {
-            setBatchesLoading(false);
-            setBatchWarehousesLoading(false);
+            if (request === batchRequest.current) {
+                setBatchesLoading(false);
+                setBatchWarehousesLoading(false);
+            }
         }
     };
 
     const refreshSelectedProductBatches = async () => {
         if (!selectedProduct) return;
+        const request = batchRequest.current;
         const response = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
-        if (response.ok) setBatchesData(await response.json());
+        if (request !== batchRequest.current) return;
+        if (!response.ok) { setBatchLoadError('El movimiento se registró, pero no pudimos actualizar la lista de lotes. Reintentá cargarla.'); return; }
+        const batches = await response.json();
+        if (request === batchRequest.current) { setBatchesData(batches); setBatchLoadError(''); }
     };
 
     const editBatchForm = (patch: Partial<Pick<ManualBatchFormState, 'batchNumber' | 'expiryDate' | 'quantity' | 'warehouseId'>>) => {
@@ -915,37 +1032,39 @@ export default function Inventory() {
     // ADJUST
     // ==========================================
 
-    const loadAdjustWarehouses = useCallback(async () => {
+    const loadAdjustWarehouses = useCallback(async (recovery: InventoryAdjustmentAttempt | null = null) => {
+        const request = ++adjustWarehouseRequest.current;
         setAdjustWarehousesLoading(true);
-        setAdjustError('');
-        setAdjustWarehouseId('');
+        setAdjustWarehouseId(recovery?.payload.warehouseId || '');
         setAdjustWarehouseStock(null);
         try {
             const response = await fetch('/api/warehouses', { headers });
             const data: any = await response.json().catch(() => ({}));
+            if (request !== adjustWarehouseRequest.current) return;
             if (!response.ok) {
                 setAdjustWarehouses([]);
-                setAdjustError(data.error || 'No se pudieron cargar las bodegas activas.');
+                setAdjustError(current => current || data.error || 'No se pudieron cargar las bodegas activas.');
                 return;
             }
 
             const available = (Array.isArray(data.data) ? data.data : [])
                 .filter((warehouse: WarehouseOption) => warehouse.isActive);
             setAdjustWarehouses(available);
-            setAdjustWarehouseId(soleActiveWarehouseId(available));
+            setAdjustWarehouseId(recovery?.payload.warehouseId || soleActiveWarehouseId(available));
             if (available.length === 0) {
-                setAdjustError('No hay una bodega activa. Pedile a un administrador que active una.');
+                setAdjustError(current => current || 'No hay una bodega activa. Pedile a un administrador que active una.');
             }
         } catch {
+            if (request !== adjustWarehouseRequest.current) return;
             setAdjustWarehouses([]);
-            setAdjustError('No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
+            setAdjustError(current => current || 'No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
         } finally {
-            setAdjustWarehousesLoading(false);
+            if (request === adjustWarehouseRequest.current) setAdjustWarehousesLoading(false);
         }
     }, [headers]);
 
     useEffect(() => {
-        if (!showAdjustModal || !selectedProduct || !adjustWarehouseId) {
+        if (!showAdjustModal || !selectedProduct || !adjustWarehouseId || adjustRecovery || adjustRecoveryBlocked) {
             setAdjustWarehouseStock(null);
             setAdjustStockLoading(false);
             return;
@@ -954,7 +1073,6 @@ export default function Inventory() {
         let cancelled = false;
         setAdjustStockLoading(true);
         setAdjustWarehouseStock(null);
-        setAdjustError('');
         void fetch(`/api/warehouses/${adjustWarehouseId}/stock`, { headers })
             .then(async response => {
                 const data: any = await response.json().catch(() => ({}));
@@ -964,22 +1082,37 @@ export default function Inventory() {
                 setAdjustWarehouseStock(localStockForProduct(items, selectedProduct.id));
             })
             .catch(error => {
-                if (!cancelled) setAdjustError(error?.message || 'No se pudo leer el stock local.');
+                if (!cancelled) setAdjustError(current => current || error?.message || 'No se pudo leer el stock local.');
             })
             .finally(() => {
                 if (!cancelled) setAdjustStockLoading(false);
             });
 
         return () => { cancelled = true; };
-    }, [adjustWarehouseId, headers, selectedProduct, showAdjustModal]);
+    }, [adjustWarehouseId, headers, selectedProduct, showAdjustModal, adjustRecovery, adjustRecoveryBlocked]);
 
     const openAdjust = (product: Product) => {
+        if (adjustPending.current) return;
         setSelectedProduct(product);
-        setAdjustForm({ type: 'ADJUST_LOSS', quantity: '', reason: '' });
         setAdjustError('');
+        setAdjustRecoveryBlocked(false);
+        let recovery: InventoryAdjustmentAttempt | null = null;
+        adjustScopeAtOpen.current = null;
+        try {
+            const scope = inventoryAdjustmentScope(localStorage.getItem('nortex_token'));
+            adjustScopeAtOpen.current = scope;
+            recovery = readInventoryAdjustmentAttempt(scope, product.id);
+        } catch (error) {
+            setAdjustRecoveryBlocked(true);
+            setAdjustError(error instanceof Error ? error.message : 'No pudimos recuperar el ajuste pendiente.');
+        }
+        setAdjustRecovery(recovery);
+        setAdjustForm(recovery
+            ? { type: recovery.payload.type, quantity: String(Math.abs(recovery.payload.quantity)), reason: recovery.payload.reason }
+            : { type: 'ADJUST_LOSS', quantity: '', reason: '' });
         setAdjustWarehouseStock(null);
         setShowAdjustModal(true);
-        void loadAdjustWarehouses();
+        void loadAdjustWarehouses(recovery);
     };
 
     // ==========================================
@@ -987,9 +1120,16 @@ export default function Inventory() {
     // ==========================================
 
     const openEditModal = (product: Product) => {
+        if (editPending.current) return;
+        setEditError('');
         setSelectedProduct(product);
         setEditForm({
             name: product.name,
+            sku: product.sku,
+            minStock: String(product.minStock ?? 0),
+            ivaExento: Boolean(product.ivaExento),
+            requiresBatchTracking: Boolean(product.requiresBatchTracking),
+            brand: product.brand || '',
             description: product.description || '',
             category: product.category || '',
             price: String(product.price),
@@ -1012,7 +1152,9 @@ export default function Inventory() {
 
     const handleEdit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedProduct) return;
+        if (!selectedProduct || editPending.current) return;
+        editPending.current = true;
+        setEditError('');
         setEditSubmitting(true);
         try {
             const res = await fetch(`/api/products/${selectedProduct.id}`, {
@@ -1020,7 +1162,12 @@ export default function Inventory() {
                 headers,
                 body: JSON.stringify({
                     name: editForm.name,
+                    sku: editForm.sku.trim(),
+                    minStock: normalizeProductQuantityInput(editForm.minStock) ?? '0',
+                    ivaExento: editForm.ivaExento,
+                    requiresBatchTracking: editForm.requiresBatchTracking,
                     description: editForm.description,
+                    brand: editForm.brand.trim() || null,
                     category: editForm.category,
                     price: parseFloat(editForm.price),
                     imageUrl: editForm.imageUrl,
@@ -1036,7 +1183,7 @@ export default function Inventory() {
                     saleMode: editForm.saleMode === 'LEGACY' ? null : editForm.saleMode,
                     quantityStep: editForm.saleMode === 'LEGACY' ? null : editForm.quantityStep,
                     productFamily: editForm.productFamily,
-                    // stock/cost/minStock siguen excluidos: se ajustan por Kardex.
+                    // La ficha nunca reemplaza existencias ni el costo contable.
                 })
             });
             if (res.ok) {
@@ -1050,81 +1197,138 @@ export default function Inventory() {
                 reload();
             } else {
                 const err = await res.json().catch(() => ({}));
-                alert(`Error: ${productValidationMessage(err, 'No pudimos actualizar el producto.')}`);
+                setEditError(productValidationMessage(err, 'No pudimos actualizar el producto.'));
             }
         } catch {
-            alert('Error actualizando producto');
+            setEditError('No pudimos confirmar los cambios. Conservamos lo que escribiste para reintentar.');
         } finally {
+            editPending.current = false;
             setEditSubmitting(false);
         }
     };
 
     const handleAdjust = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedProduct) return;
+        if (!selectedProduct || adjustPending.current || adjustRecoveryBlocked) return;
         setAdjustError('');
-
-        if (!adjustmentTypesForRole(isBodeguero).includes(adjustForm.type)) {
-            setAdjustError('Usá Compras o Devoluciones para registrar ese movimiento.');
+        let attempt: InventoryAdjustmentAttempt;
+        let requestToken: string | null;
+        try {
+            requestToken = localStorage.getItem('nortex_token');
+            const scope = inventoryAdjustmentScope(requestToken);
+            const openedScope = adjustScopeAtOpen.current;
+            if (!openedScope || scope.tenantId !== openedScope.tenantId || scope.userId !== openedScope.userId) {
+                throw new Error('La sesión cambió. Cerrá y volvé a abrir el ajuste desde tu cuenta actual.');
+            }
+            const stored = readInventoryAdjustmentAttempt(scope, selectedProduct.id);
+            if (stored && adjustRecovery && JSON.stringify(stored) !== JSON.stringify(adjustRecovery)) {
+                setAdjustRecoveryBlocked(true);
+                setAdjustError('La recuperación guardada cambió. Cerrá y volvé a abrir el formulario para revisar sus datos antes de enviarla.');
+                return;
+            }
+            if (stored && !adjustRecovery) {
+                setAdjustRecovery(stored);
+                setAdjustWarehouseId(stored.payload.warehouseId);
+                setAdjustForm({ type: stored.payload.type, quantity: String(Math.abs(stored.payload.quantity)), reason: stored.payload.reason });
+                setAdjustError('Recuperamos un ajuste pendiente. Revisá sus datos antes de recuperar el resultado.');
+                return;
+            }
+            // A replay asks for the already committed result, so current stock,
+            // warehouse availability and changed product rules cannot prevent it.
+            const recovery = stored || adjustRecovery;
+            if (recovery) {
+                if (recovery.scope.tenantId !== scope.tenantId || recovery.scope.userId !== scope.userId) throw new Error('La sesión cambió. Volvé a abrir el ajuste.');
+                attempt = recovery;
+            } else {
+                if (!adjustmentTypesForRole(isBodeguero).includes(adjustForm.type)) {
+                    setAdjustError('Usá Compras o Devoluciones para registrar ese movimiento.');
+                    return;
+                }
+                if (!adjustWarehouseId) {
+                    setAdjustError('Seleccioná la bodega donde ocurrió este movimiento.');
+                    return;
+                }
+                if (adjustWarehouseStock === null) {
+                    setAdjustError('Esperá a que cargue el stock de la bodega seleccionada.');
+                    return;
+                }
+                if (!adjustmentFormReady || adjustQuantityState.value === null) {
+                    setAdjustError('Revisá la bodega, el tipo, la cantidad y la justificación antes de registrar.');
+                    return;
+                }
+                if (adjustForm.reason.trim().length > 300) {
+                    setAdjustError('La justificación puede tener hasta 300 caracteres.');
+                    return;
+                }
+                const adjustedQty = adjustForm.type === 'ADJUST_LOSS' ? -adjustQuantityState.value : adjustQuantityState.value;
+                if (adjustedQty < 0 && Math.abs(adjustedQty) > adjustWarehouseStock) {
+                    setAdjustError(`Stock insuficiente en esta bodega. Disponible: ${adjustWarehouseStock}.`);
+                    return;
+                }
+                attempt = {
+                    version: 1, scope, createdAt: new Date().toISOString(),
+                    warehouseName: selectedAdjustWarehouse?.name || adjustWarehouseId,
+                    payload: {
+                        productId: selectedProduct.id,
+                        warehouseId: adjustWarehouseId,
+                        quantity: adjustedQty,
+                        reason: adjustForm.reason.trim(),
+                        type: adjustForm.type as 'ADJUST_LOSS' | 'ADJUST_GAIN',
+                        clientEventId: newManualBatchClientEventId(),
+                    },
+                };
+            }
+            // Persist and verify BEFORE dispatch. Never mint a replacement for
+            // uncertain evidence, including malformed storage or an unproven 4xx.
+            saveInventoryAdjustmentAttempt(attempt);
+        } catch (error) {
+            setAdjustError(error instanceof Error ? error.message : 'No se envió el ajuste: no pudimos guardar su evidencia.');
             return;
         }
-
-        if (!adjustWarehouseId) {
-            setAdjustError('Seleccioná la bodega donde ocurrió este movimiento.');
-            return;
-        }
-        if (adjustWarehouseStock === null) {
-            setAdjustError('Esperá a que cargue el stock de la bodega seleccionada.');
-            return;
-        }
-
-        if (!adjustmentFormReady || adjustQuantityState.value === null) {
-            setAdjustError('Revisá la bodega, el tipo, la cantidad y la justificación antes de registrar.');
-            return;
-        }
-
-        const adjustedQty = adjustForm.type === 'ADJUST_LOSS'
-            ? -adjustQuantityState.value
-            : adjustQuantityState.value;
-
-        if (adjustedQty < 0 && Math.abs(adjustedQty) > adjustWarehouseStock) {
-            setAdjustError(`Stock insuficiente en esta bodega. Disponible: ${adjustWarehouseStock}.`);
-            return;
-        }
-
+        adjustPending.current = true;
+        setAdjustRecovery(attempt);
         setAdjustSubmitting(true);
-        setAdjustError('');
-
         try {
             const res = await fetch('/api/inventory/adjust', {
                 method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    productId: selectedProduct.id,
-                    warehouseId: adjustWarehouseId,
-                    quantity: adjustedQty,
-                    reason: adjustForm.reason.trim(),
-                    type: adjustForm.type
-                })
+                headers: { ...headers, Authorization: `Bearer ${requestToken}` },
+                body: JSON.stringify(attempt.payload),
             });
-
             const data = await res.json().catch(() => ({}));
-
-            if (res.ok) {
-                const warehouseName = selectedAdjustWarehouse?.name || 'la bodega seleccionada';
+            const currentScope = inventoryAdjustmentScope(localStorage.getItem('nortex_token'));
+            if (currentScope.tenantId !== attempt.scope.tenantId || currentScope.userId !== attempt.scope.userId) return;
+            if (res.ok && isConfirmedInventoryAdjustment(data, attempt)) {
+                try {
+                    clearInventoryAdjustmentAttempt(attempt);
+                } catch {
+                    setAdjustError('El ajuste se confirmó, pero no pudimos limpiar la recuperación de esta pestaña. Recuperá el resultado de nuevo antes de registrar otro ajuste.');
+                    reload();
+                    return;
+                }
+                setAdjustRecovery(null);
                 setShowAdjustModal(false);
                 reload();
                 showToast({
                     tone: 'success',
                     title: 'Ajuste registrado',
-                    message: `Existencia actualizada en ${warehouseName}.`,
+                    message: `Existencia actualizada en ${attempt.warehouseName}.`,
                 });
+            } else if (!res.ok && isRejectedInventoryAdjustment(data, attempt)) {
+                try {
+                    clearInventoryAdjustmentAttempt(attempt);
+                } catch {
+                    setAdjustError('No se aplicó el ajuste, pero no pudimos limpiar su recuperación. Recuperá el resultado otra vez antes de corregir los datos.');
+                    return;
+                }
+                setAdjustRecovery(null);
+                setAdjustError(`No se aplicó el ajuste. ${data.error || 'El servidor rechazó este movimiento.'} Corregí los datos para intentarlo de nuevo.`);
             } else {
-                setAdjustError(data.error || 'No pudimos registrar el ajuste.');
+                setAdjustError(`${data.error || 'No pudimos confirmar el ajuste.'} Conservamos el intento. Recuperá su resultado antes de registrar otro ajuste para este producto.`);
             }
-        } catch (e) {
-            setAdjustError('No pudimos registrar el ajuste. Revisá tu conexión e intentá de nuevo.');
+        } catch {
+            setAdjustError('No pudimos confirmar el ajuste. Recuperá su resultado: conservamos los mismos datos y el identificador para evitar duplicados.');
         } finally {
+            adjustPending.current = false;
             setAdjustSubmitting(false);
         }
     };
@@ -1155,7 +1359,7 @@ export default function Inventory() {
                     });
                 }
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'GENERAL' });
+                setFormData({ name: '', brand: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'GENERAL' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -1171,26 +1375,6 @@ export default function Inventory() {
     // DELETE PRODUCT
     // ==========================================
 
-    const handleDelete = async (id: string, name: string) => {
-        if (!confirm(`Eliminar producto "${name}"? Solo se puede eliminar si stock = 0`)) return;
-
-        try {
-            const res = await fetch(`/api/products/${id}`, {
-                method: 'DELETE',
-                headers
-            });
-
-            if (res.ok) {
-                reload();
-                alert('Producto eliminado');
-            } else {
-                const error = await res.json();
-                alert(`Error: ${error.error}`);
-            }
-        } catch (e) {
-            alert('Error eliminando producto');
-        }
-    };
 
     // ==========================================
     // TOGGLE PUBLISH PRODUCT
@@ -1334,7 +1518,6 @@ export default function Inventory() {
 
     // El servidor ya filtra y pagina; la página actual es `products`.
     const filteredProducts = products;
-    const inventoryTableColumnCount = isOwner ? 9 : isBodeguero ? 5 : 6;
     const selectedAdjustWarehouse = adjustWarehouses.find(warehouse => warehouse.id === adjustWarehouseId);
     const adjustmentQuantity = adjustQuantityState.value ?? 0;
     const projectedWarehouseStock = adjustWarehouseStock === null
@@ -1376,9 +1559,9 @@ export default function Inventory() {
 
         // Para BODEGUERO el ajuste queda visible como acción diaria. En roles
         // administrativos permanece en el menú, conservando la jerarquía previa.
-        if (isOwner && canAdjustStock) {
+        if (canAdjustStock) {
             actions.push({
-                label: 'Ajuste de stock (Kardex)',
+                label: 'Registrar pérdida o sobrante',
                 icon: <Wrench size={16} />,
                 onClick: () => openAdjust(product),
             });
@@ -1390,22 +1573,11 @@ export default function Inventory() {
                 icon: <Globe size={16} />,
                 onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
             });
-            actions.push({
-                label: 'Eliminar producto',
-                icon: <Trash2 size={16} />,
-                onClick: () => handleDelete(product.id, product.name),
-                danger: true,
-            });
+
         }
 
         return actions;
     };
-
-    // El semáforo de existencias también es compartido entre tabla y tarjetas.
-    const estadoStock = (product: Product) => ({
-        agotado: product.stock === 0,
-        bajo: product.stock <= product.minStock && product.stock > 0,
-    });
 
     // El vacío dice lo MISMO en los dos modos; solo cambia el envoltorio
     // (`<tr><td colSpan>` en la tabla, bloque suelto en las tarjetas). Declararlo
@@ -1418,12 +1590,12 @@ export default function Inventory() {
             description: 'Puede ser tu conexión. Tus productos siguen ahí — reintentá.',
             action: { label: 'Reintentar', onClick: () => fetchProducts() },
         }
-        : searchTerm
+        : hayFiltro
             ? {
                 mode: 'no-results',
                 title: 'No se encontraron resultados',
-                description: `Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.`,
-                action: { label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') },
+                description: searchTerm ? `Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.` : 'Ningún producto coincide con estos filtros. Tus otros productos siguen en el catálogo.',
+                action: { label: 'Limpiar filtros', onClick: limpiarFiltros },
             }
             : {
                 icon: <Package size={32} />,
@@ -1431,7 +1603,7 @@ export default function Inventory() {
                 description: isBodeguero
                     ? 'Todavía no hay productos para operar. Pedile a un administrador que cargue el catálogo.'
                     : 'Importá tu lista desde Excel y Nortex arma el catálogo solo.',
-                action: isOwner ? { label: 'Modo rápido', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
+                action: isOwner ? { label: 'Nuevo producto', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
                 secondaryAction: isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined,
                 linkAction: isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined,
                 errorText: seedError,
@@ -1453,98 +1625,96 @@ export default function Inventory() {
         </div>
     ) : null;
 
+    useEffect(() => {
+        const id = inventoryParams.get('productId');
+        if (receivingBusy) return;
+        setActiveProduct(current => {
+            const updated = products.find(product => product.id === (current?.id ?? id));
+            return updated ?? current;
+        });
+    }, [products, inventoryParams, receivingBusy]);
+    const changeFilters = (next: Partial<InventoryCatalogFilters>) => {
+        if (receivingBusy) return;
+        if (next.search !== undefined) setSearchTerm(next.search);
+        if (next.category !== undefined) setCategoryFilter(next.category);
+        if (next.family !== undefined) setFamilyFilter(next.family);
+        if (next.mode !== undefined) setModeFilter(next.mode);
+        if (next.status !== undefined) setStatusFilter(next.status);
+        if (next.sortField !== undefined) setSortField(next.sortField);
+        if (next.sortDir !== undefined) setSortDir(next.sortDir);
+        setPage(1);
+    };
+    const closeProductPane = () => {
+        if (receivingBusy) return;
+        updateReceivingOpen(false);
+        setActiveProduct(null);
+    };
+    const productPane = activeProduct ? <StockProductPane key={activeProduct.id} product={activeProduct} revision={stockRevision}
+        canReceive={canManagePurchaseOrders} canReceiveOrders={canReceivePurchaseOrders} canTransfer={canTransferStock}
+        canCount={canAdjustStock} canViewPrice={!isBodeguero} onBusyChange={setReceivingBusy} onReceivingChange={updateReceivingOpen}
+        onClose={closeProductPane}
+        onCompleted={reload}
+        onNavigate={(route, warehouseId) => {
+            if (receivingBusy) return;
+            const params = new URLSearchParams({ productId: activeProduct.id, search: searchTerm || activeProduct.sku });
+            if (warehouseId) params.set('warehouseId', warehouseId);
+            if (route === '/app/warehouses' && warehouseId) params.set('transfer', '1');
+            navigate(`${route}?${params}`);
+        }}
+        actions={<>
+            {canManageProducts && <button type="button" className="nx-fluid-press" aria-label={`Editar ${activeProduct.name}`} onClick={() => openEditModal(activeProduct)}>Editar producto</button>}
+            {canViewKardex && <button type="button" className="nx-fluid-press" aria-label={`Auditar kardex de ${activeProduct.name}`} onClick={() => openKardex(activeProduct)}>Movimientos</button>}
+            <ActionMenu label={`Más acciones de ${activeProduct.name}`} items={accionesDe(activeProduct)}/>
+        </>}/> : null;
+
     // ==========================================
     // RENDER
     // ==========================================
 
     return (
-        <div className="nx-light-context nx-workspace h-full space-y-6 overflow-y-auto bg-slate-50 p-4 text-slate-950 sm:p-6 lg:p-8">
+        <div className="nx-light-context nx-workspace h-full overflow-y-auto bg-slate-50 text-slate-950">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
-            {/* HEADER — altura única de módulo (antes: bloque de ~110px con un
-                cuadrado degradado azul→cian y los enlaces incrustados entre el
-                título y el subtítulo). */}
-            <ModuleHeader
-                className="border-b pb-5"
-                icon={<Shield size={20} />}
-                title={isBodeguero ? 'Existencias' : 'Mis Productos'}
-                subtitle={isBodeguero
-                    ? 'Consultá el stock, revisá el Kardex y registrá ajustes justificados'
-                    : 'Tu catálogo, precios y existencias — cada movimiento queda registrado'}
-                // Las pestañas viven en un componente compartido montado también en
-                // Bodegas y Series: antes solo existían acá y entrar a las otras dos
-                // dejaba al usuario sin camino de vuelta.
-                contextLinks={<InventoryTabs />}
-                actions={isOwner && (
-                    <div className="relative">
-                        <button
-                            type="button"
-                            data-tour="inv-new"
-                            onClick={() => setShowDropdown(!showDropdown)}
-                            className="btn-primary nx-fluid-press flex h-touch items-center gap-2 rounded-control"
-                        >
-                            <Plus size={20} />
-                            Nuevo Producto
-                            <ChevronDown size={16} className={`transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {showDropdown && (
-                            <>
-                                <div className="fixed inset-0 z-10" onClick={() => setShowDropdown(false)} />
-                                <div className="nx-dark-context absolute right-0 z-20 mt-2 w-56 overflow-hidden rounded-card border border-white/[0.08] bg-slate-900 shadow-2xl">
-                                    <button
-                                        type="button"
-                                        onClick={() => { setShowCreateModal(true); setShowDropdown(false); }}
-                                        className="nx-fluid-press w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
-                                    >
-                                        <Plus size={18} className="text-brand" />
-                                        <div>
-                                            <p className="font-semibold">Crear Manual</p>
-                                            <p className="text-xs text-slate-400">Producto individual</p>
-                                        </div>
-                                    </button>
-                                    <div className="border-t border-slate-700" />
-                                    <button
-                                        type="button"
-                                        onClick={() => { setShowQuickAddModal(true); setQuickAddSKU(''); setShowDropdown(false); }}
-                                        className="nx-fluid-press w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
-                                    >
-                                        <Zap size={18} className="text-orange-400" />
-                                        <div>
-                                            <p className="font-semibold">Modo Rápido </p>
-                                            <p className="text-xs text-slate-400">Escáner / Teclado</p>
-                                        </div>
-                                    </button>
-                                    <div className="border-t border-slate-700" />
-                                    <button
-                                        type="button"
-                                        onClick={() => { setShowImportModal(true); setShowDropdown(false); }}
-                                        className="nx-fluid-press w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
-                                    >
-                                        <Upload size={18} className="text-emerald-400" />
-                                        <div>
-                                            <p className="font-semibold">Importar Masivo</p>
-                                            <p className="text-xs text-slate-400">Carga desde Excel/CSV</p>
-                                        </div>
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                )}
-            />
-
-            {/* KPI CARDS — las tres accionables FILTRAN la tabla.
-                "¿Qué tengo que comprar?" es la pregunta más frecuente del dueño de
-                bodega, y la respuesta ya estaba en pantalla: la tarjeta contaba los
-                productos bajo mínimo pero el número era decorativo — no se podía
-                hacer clic ni existía la opción en el filtro de estado. Había que
-                ordenar por stock ascendente y contar a ojo dónde terminaba el rojo. */}
+            <div className={`nx-stock-workspace ${receivingOpen ? 'nx-stock-workspace--receiving' : ''}`}>
+                <fieldset className="nx-stock-workspace__catalog" disabled={receivingOpen}>
+                    <InventoryCatalog onCreateScannedProduct={canManageProducts ? code => { setQuickAddSKU(code); setShowQuickAddModal(true); } : undefined} onCameraCode={scanWithCamera} title="Mis productos" products={productsError ? [] : products} total={total} loading={loading} error={productsError}
+                        filters={{search:searchTerm,category:categoryFilter,family:familyFilter,mode:modeFilter,status:statusFilter,sortField,sortDir}}
+                        onFiltersChange={changeFilters} categories={categories} selectedProductId={activeProduct?.id ?? null}
+                        onSelectProduct={product => { if (!receivingOpen) setActiveProduct(product as Product); }} canViewPrice={!isBodeguero}
+                        actions={{
+                            create: isOwner ? () => { setQuickAddSKU(''); setShowQuickAddModal(true); } : undefined,
+                            fullCreate: isOwner ? () => setShowCreateModal(true) : undefined,
+                            import: isOwner ? () => setShowImportModal(true) : undefined,
+                            export: handleExport,
+                            showSummary: canViewInventoryValuation ? () => setShowSummary(true) : undefined,
+                            warehouses: canTransferStock ? () => navigate('/app/warehouses') : undefined,
+                            receiving: canReceivePurchaseOrders ? () => navigate(isBodeguero ? '/app/purchase-orders' : '/app/purchases') : undefined,
+                            count: canAdjustStock ? () => navigate('/app/inventory-count') : undefined,
+                            serials: !isBodeguero ? () => navigate('/app/serials') : undefined,
+                            bulk: isOwner ? () => { setBulkMode(value => !value); setSelectedProductIds([]); } : undefined,
+                        }} exporting={exporting}
+                        selection={{enabled:bulkMode,ids:selectedProductIds,onToggle:toggleSelection,onToggleAll:toggleSelectAll}}
+                        bulkActions={selectedProductIds.length > 0 && isOwner ? <div className="nx-stock-bulk">
+                            <button type="button" className="nx-fluid-press" onClick={openBulkEdit}>Editar precio/categoría</button>
+                            <button type="button" className="nx-fluid-press" onClick={handlePrintLabels}>Etiquetas</button>
+                            <button type="button" className="nx-fluid-press" onClick={() => handleBulkPublish(true)}>Publicar</button>
+                            <button type="button" className="nx-fluid-press" onClick={() => handleBulkPublish(false)}>Ocultar</button>
+                        </div> : null}
+                        emptyState={<EmptyState {...propsVacio}/>} pagination={paginacion}/>
+                </fieldset>
+                {!compactPane && <aside className="nx-stock-workspace__detail">{productPane ?? <StockPaneEmpty/>}</aside>}
+            </div>
+            {compactPane && <FluidSheet open={Boolean(activeProduct) && !showQuickAddModal && !showEditModal && !showKardexModal && !showAdjustModal && !showBatchesModal}
+                onClose={closeProductPane} ariaLabel="Detalle del producto" panelClassName="nx-light-context nx-stock-mobile-panel" size="content"
+                closeOnBackdrop={!receivingBusy} closeOnEscape={!receivingBusy} dragToDismiss={!receivingBusy}>{productPane}</FluidSheet>}
+            <FluidSheet open={showSummary} onClose={() => setShowSummary(false)} ariaLabel="Resumen de inventario" panelClassName="nx-light-context" size="content">
+                <div className="nx-stock-summary"><div className="flex items-center justify-between"><h2>Resumen de inventario</h2><button type="button" className="nx-fluid-press nx-stock-icon" aria-label="Cerrar resumen" onClick={() => setShowSummary(false)}><X size={20}/></button></div>
+                <p className="mb-4 text-sm text-slate-500">Todo el catálogo. Tocá un indicador para ver los productos.</p>
             {canViewInventoryValuation && <section aria-label="Resumen de inventario" className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
                 <TarjetaKpi
                     icono={<Package size={16} className="text-brand" />}
                     titulo="Productos"
-                    valor={(stats?.totalProducts ?? 0).toLocaleString()}
-                    nota={`${totals.totalItems.toLocaleString()} unidades en bodega`}
+                    valor={stats ? stats.totalProducts.toLocaleString() : '—'}
+                    nota="Cada producto conserva su unidad de medida"
                     activa={statusFilter === '' && categoryFilter === '' && familyFilter === '' && modeFilter === '' && !searchTerm}
                     onClick={limpiarFiltros}
                     etiquetaAccion="Ver todo el catálogo, sin filtros"
@@ -1554,13 +1724,13 @@ export default function Inventory() {
                 <TarjetaKpi
                     icono={<TrendingUp size={16} className="text-emerald-400" />}
                     titulo="Valor Inventario"
-                    valor={formatCurrency(totals.totalValue)}
+                    valor={stats ? formatCurrency(totals.totalValue) : '—'}
                     nota="Al costo de compra"
                 />
                 <TarjetaKpi
                     icono={<AlertTriangle size={16} className="text-amber-400" />}
                     titulo="Stock Bajo"
-                    valor={String(totals.lowStockCount)}
+                    valor={stats ? String(totals.lowStockCount) : '—'}
                     nota="Productos bajo mínimo"
                     activa={statusFilter === 'low'}
                     onClick={() => aplicarFiltroEstado('low')}
@@ -1569,7 +1739,7 @@ export default function Inventory() {
                 <TarjetaKpi
                     icono={<FileWarning size={16} className="text-red-400" />}
                     titulo="Agotados"
-                    valor={String(totals.outOfStockCount)}
+                    valor={stats ? String(totals.outOfStockCount) : '—'}
                     nota="Stock en cero"
                     activa={statusFilter === 'out'}
                     onClick={() => aplicarFiltroEstado('out')}
@@ -1577,514 +1747,9 @@ export default function Inventory() {
                 />
             </section>}
 
-            {/* Las tarjetas cuentan SIEMPRE sobre el catálogo completo (vienen del
-                endpoint de stats, no de la página visible). Con un filtro puesto,
-                decirlo evita que el dueño lea "1,003 productos" sobre una tabla de 5
-                y no sepa si el valor del inventario es del filtro o del total. */}
-            {canViewInventoryValuation && hayFiltro && (
-                <p className="-mt-2 text-xs text-slate-500">
-                    Los totales de arriba son de tu catálogo completo; la tabla está filtrada.
-                </p>
-            )}
-
-            {/* SEARCH + FILTROS + ORDEN + EXPORTAR
-
-                En el teléfono `flex-wrap` repartía los 5 controles en 3 renglones
-                de alturas distintas (buscador solo, dos selects, select + Excel):
-                ocupaba media pantalla antes de que apareciera un producto. Debajo
-                de `sm` el buscador va a lo ancho y los otros cuatro caen en una
-                grilla de 2×2 pareja. `sm:contents` disuelve ese envoltorio de
-                `sm` para arriba, así que en escritorio el layout queda idéntico
-                al de antes — una sola fila flex. */}
-            <section aria-label="Buscar, filtrar y ordenar productos" className="nx-canvas-card flex flex-col gap-3 p-3 sm:flex-row sm:flex-wrap sm:items-center sm:p-4">
-                <div className="w-full sm:flex-1 sm:min-w-[200px] relative">
-                    <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={20} />
-                    <input
-                        data-tour="inv-search"
-                        type="text"
-                        aria-label="Buscar productos"
-                        placeholder="Buscar por nombre, SKU o categoría..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="h-touch w-full rounded-control border border-slate-300 bg-white pl-10 pr-4 text-slate-950 placeholder-slate-400 transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring"
-                    />
+            {canViewInventoryValuation && statsError && <div role="alert" className="text-sm text-red-700">No pudimos cargar el resumen. <button type="button" onClick={fetchStats} className="nx-fluid-press min-h-tap underline">Reintentar resumen</button></div>}
                 </div>
-                <div className="grid grid-cols-2 gap-3 sm:contents">
-                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
-                    aria-label="Filtrar por categoría"
-                    className="h-touch min-w-0 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-brand focus:ring-2 focus:ring-brand-ring">
-                    <option value="">Todas las categorías</option>
-                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={familyFilter} onChange={(e) => { setFamilyFilter(e.target.value); setPage(1); }}
-                    aria-label="Filtrar por familia operativa"
-                    className="h-touch rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-brand focus:ring-2 focus:ring-brand-ring">
-                    <option value="">Todas las familias</option>
-                    <option value="GENERAL">General</option>
-                    <option value="MEAT">Carnes</option>
-                    <option value="POULTRY">Aves</option>
-                    <option value="ANIMAL_FEED">Alimento animal</option>
-                    <option value="AGRO_INPUT">Agroinsumos</option>
-                    <option value="VETERINARY">Veterinaria</option>
-                </select>
-                <select value={modeFilter} onChange={(e) => { setModeFilter(e.target.value); setPage(1); }}
-                    aria-label="Filtrar por forma de venta"
-                    className="h-touch rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-brand focus:ring-2 focus:ring-brand-ring">
-                    <option value="">Todas las formas</option>
-                    <option value="COUNTED">Contados</option>
-                    <option value="MEASURED">Medidos</option>
-                    <option value="LEGACY">Configuración automática (legado)</option>
-                </select>
-                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-                    aria-label="Filtrar por estado de existencias"
-                    className="h-touch min-w-0 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-brand focus:ring-2 focus:ring-brand-ring">
-                    <option value="">Todos</option>
-                    <option value="low">Bajo mínimo</option>
-                    <option value="reorder">Toca reponer</option>
-                    <option value="out">Agotados</option>
-                    {!isBodeguero && <option value="published">Publicados</option>}
-                    {!isBodeguero && <option value="unpublished">Ocultos</option>}
-                </select>
-                <select value={`${sortField}:${sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); setSortField(f); setSortDir(d as 'asc' | 'desc'); setPage(1); }}
-                    aria-label="Ordenar productos"
-                    className="h-touch min-w-0 rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-800 focus:border-brand focus:ring-2 focus:ring-brand-ring">
-                    <option value="name:asc">Nombre A-Z</option>
-                    <option value="name:desc">Nombre Z-A</option>
-                    <option value="stock:asc">Stock ↑ (bajos primero)</option>
-                    <option value="stock:desc">Stock ↓</option>
-                    {!isBodeguero && <option value="price:desc">Precio ↓</option>}
-                    {!isBodeguero && <option value="price:asc">Precio ↑</option>}
-                    {canViewInventoryValuation && <option value="cost:desc">Costo ↓</option>}
-                </select>
-                {!isBodeguero && (
-                    <button onClick={handleExport} disabled={exporting}
-                        type="button"
-                        className="nx-fluid-press flex h-touch min-w-0 items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100 disabled:opacity-50">
-                        <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
-                    </button>
-                )}
-                </div>
-            </section>
-
-            {/* BULK ACTIONS BAR
-
-                En el teléfono esta barra estaba ANTES del listado: para seleccionar
-                productos hay que bajar, y al bajar la barra —con los botones que
-                aplican el cambio— se iba para arriba de la pantalla. Uno terminaba
-                marcando 20 productos y subiendo a ciegas a buscar el botón.
-
-                Debajo de `lg` queda anclada abajo, 72px sobre el borde para no
-                taparse con la barra de navegación (h-16 = 64px, fija). Es `fixed`
-                y no `sticky` a propósito: medido en el navegador, `sticky` NO se
-                anclaba dentro de esta vista —quedaba en -532px, fuera de pantalla—
-                y una barra que depende de dónde quedó el scroll no sirve para
-                confirmar un cambio de precios masivo. De `lg` para arriba vuelve a
-                ser un bloque normal en el flujo.
-
-                El botón "Quitar" existe porque una barra anclada sin salida es una
-                trampa: sin él, deseleccionar exige volver a tocar 20 casillas. */}
-            {selectedProductIds.length > 0 && isOwner && (
-                <div className="nx-list-surface fixed bottom-[72px] left-4 right-4 z-30 mb-4 flex flex-col gap-3 border-brand/30 bg-white/95 p-3 shadow-xl backdrop-blur-sm lg:static lg:bottom-auto lg:left-auto lg:right-auto lg:z-auto lg:flex-row lg:items-center lg:justify-between lg:shadow-sm">
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <CheckSquare size={18} className="shrink-0 text-brand" />
-                            <span className="truncate font-medium text-slate-950">
-                                {selectedProductIds.length} {selectedProductIds.length === 1 ? 'producto seleccionado' : 'productos seleccionados'}
-                            </span>
-                        </div>
-                        <button
-                            type="button"
-                            onClick={() => setSelectedProductIds([])}
-                            className="nx-fluid-press min-h-tap shrink-0 text-sm text-slate-600 underline underline-offset-2 hover:text-slate-950 lg:hidden"
-                        >
-                            Quitar
-                        </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 lg:flex lg:items-center lg:gap-3">
-                        <button
-                            type="button"
-                            onClick={openBulkEdit}
-                            className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on transition-colors hover:bg-brand-hover"
-                        >
-                            <Edit size={16} />
-                            <span className="truncate">Editar precio<span className="hidden lg:inline">/categoría</span></span>
-                        </button>
-                        <button
-                            type="button"
-                            onClick={handlePrintLabels}
-                            className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100"
-                        >
-                            <Printer size={16} />
-                            Etiquetas
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => handleBulkPublish(true)}
-                            className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on transition-colors hover:bg-brand-hover"
-                        >
-                            <Globe size={16} />
-                            Publicar
-                        </button>
-                        <button
-                            type="button"
-                            onClick={() => handleBulkPublish(false)}
-                            className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 transition-colors hover:bg-slate-100"
-                        >
-                            <EyeOff size={16} />
-                            Ocultar
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* PRODUCTS TABLE — solo de `lg` para arriba.
-
-                Medido en el navegador con el rol de dueño (8 columnas): la tabla
-                mide 849px de ancho natural. La caja que la contiene da 313px a
-                360px, 343px a 390px y 593px a 640px — o sea que en CUALQUIER
-                teléfono quedaban afuera Precio, Costo, Valor Total y Acciones.
-                No es que se vieran apretados: el `overflow-x-auto` los escondía
-                detrás de un scroll lateral que nadie descubre, así que el dueño
-                no podía ver el precio de su propio producto ni tocar "Editar".
-
-                Debajo de `lg` el listado se pinta como tarjetas (bloque siguiente).
-                A `lg` (1024px) la caja da 737px contra los 849px de la tabla, así
-                que ahí se esconde la columna Costo hasta `xl` — es el dato menos
-                urgente y el único cuya ausencia no rompe una decisión de venta;
-                Valor Total se queda porque es el que el dueño mira para saber
-                cuánta plata tiene parada. */}
-            <section aria-label="Productos del inventario" className="nx-list-surface hidden overflow-hidden lg:block">
-                <div className="overflow-x-auto">
-                    <table className="table-premium w-full">
-                        <thead>
-                            <tr className="bg-slate-100">
-                                {isOwner && (
-                                    <th className="text-center px-2 xl:px-4 py-3">
-                                        <input
-                                            type="checkbox"
-                                            checked={filteredProducts.length > 0 && selectedProductIds.length === filteredProducts.length}
-                                            onChange={toggleSelectAll}
-                                            className="h-4 w-4 rounded border-slate-300 bg-white text-brand focus:ring-brand-ring focus:ring-offset-white"
-                                        />
-                                    </th>
-                                )}
-                                <th className="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">SKU</th>
-                                <th className="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">Producto</th>
-                                <th className="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">Categoría</th>
-                                <th className="px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">Stock</th>
-                                {!isBodeguero && <th className="px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">Precio</th>}
-                                {isOwner && (
-                                    <>
-                                        <th className="hidden px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500 xl:table-cell xl:px-4">Costo</th>
-                                        <th className="px-2 py-3 text-right text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">Valor Total</th>
-                                    </>
-                                )}
-                                <th className="px-2 py-3 text-center text-xs font-semibold uppercase tracking-wider text-slate-500 xl:px-4">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200">
-                            {loading ? (
-                                Array.from({ length: 6 }).map((_, rowIndex) => (
-                                    <tr key={rowIndex} className="border-b border-slate-200">
-                                        {Array.from({ length: inventoryTableColumnCount }).map((__, cellIndex) => (
-                                            <td key={cellIndex} className="px-4 py-3">
-                                                <div className={`h-4 animate-pulse rounded-control bg-slate-200 ${cellIndex === 1 ? 'w-40' : 'w-20'}`} />
-                                            </td>
-                                        ))}
-                                    </tr>
-                                ))
-                            ) : filteredProducts.length === 0 ? (
-                                <TableEmptyState colSpan={inventoryTableColumnCount} {...propsVacio} />
-                            ) : (
-                                filteredProducts.map((product) => {
-                                    const isLow = product.stock <= product.minStock && product.stock > 0;
-                                    const isOut = product.stock === 0;
-                                    const rowBg = isOut
-                                        ? 'bg-red-50/70'
-                                        : isLow
-                                            ? 'bg-amber-50/70'
-                                            : 'hover:bg-slate-50';
-
-                                    return (
-                                        <tr key={product.id} className={`${rowBg} transition-colors`}>
-                                            {isOwner && (
-                                                <td className="px-2 xl:px-4 py-3 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedProductIds.includes(product.id)}
-                                                        onChange={() => toggleSelection(product.id)}
-                                                        className="h-4 w-4 rounded border-slate-300 bg-white text-brand focus:ring-brand-ring focus:ring-offset-white"
-                                                    />
-                                                </td>
-                                            )}
-                                            <td className="px-2 xl:px-4 py-3">
-                                                <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-sm text-slate-700">
-                                                    {product.sku}
-                                                </span>
-                                            </td>
-                                            <td className="px-2 xl:px-4 py-3">
-                                                <div className="flex flex-col">
-                                                    <span className="font-semibold text-slate-950">{product.name}</span>
-                                                    <span className="text-[10px] text-slate-500">
-                                                        {product.saleMode === 'COUNTED'
-                                                            ? `Contado · paso ${product.quantityStep || 1}`
-                                                            : product.saleMode === 'MEASURED'
-                                                                ? `Medido · paso ${product.quantityStep || '0.0001'}`
-                                                                : resolveLegacySaleMode(product) === 'COUNTED'
-                                                                    ? 'Legado · cantidades enteras'
-                                                                    : 'Legado · fraccionable'}
-                                                        {' · '}{product.productFamily || 'GENERAL'}
-                                                    </span>
-                                                    {product.description && (
-                                                        <span className="text-xs text-slate-500 truncate max-w-[200px]">{product.description}</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-2 xl:px-4 py-3">
-                                                {product.category ? (
-                                                    <span className="rounded-full bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                                                        {product.category}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-slate-500">-</span>
-                                                )}
-                                            </td>
-                                            <td className="px-2 xl:px-4 py-3 text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <span className={`font-mono tabular-nums font-bold ${isOut ? 'text-red-600' : isLow ? 'text-amber-700' : 'text-slate-950'}`}>
-                                                        {formatQuantityValue(product.stock)}
-                                                    </span>
-                                                    <span className="text-xs text-slate-500">{product.unit}</span>
-                                                </div>
-                                                <div className="mt-1 flex justify-end">
-                                                    {isOut ? (
-                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
-                                                    ) : isLow ? (
-                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
-                                                    ) : (
-                                                        <span className="badge-soft-success">OK</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            {!isBodeguero && (
-                                                <td className="whitespace-nowrap px-2 py-3 text-right font-mono font-semibold tabular-nums text-emerald-700 xl:px-4">
-                                                    {formatCurrency(Number(product.price ?? 0))}
-                                                </td>
-                                            )}
-                                            {isOwner && (
-                                                <>
-                                                    <td className="hidden whitespace-nowrap px-2 py-3 text-right font-mono tabular-nums text-slate-600 xl:table-cell xl:px-4">
-                                                        {formatCurrency(Number(product.cost ?? 0))}
-                                                    </td>
-                                                    <td className="whitespace-nowrap px-2 py-3 text-right font-mono font-semibold tabular-nums text-slate-900 xl:px-4">
-                                                        {formatCurrency(product.stock * Number(product.cost ?? 0))}
-                                                    </td>
-                                                </>
-                                            )}
-                                            <td className="px-2 xl:px-4 py-3">
-                                                {/* Antes había 6 íconos de ~33px pegados, con "Eliminar"
-                                                    al lado de "Ajustar stock". Con el dedo y con prisa,
-                                                    esa vecindad borra productos. Ahora quedan visibles
-                                                    las dos acciones de uso diario y el resto —incluida
-                                                    la destructiva, separada— vive en el menú. */}
-                                                <div className="nx-dark-context flex items-center justify-center gap-1 rounded-control border border-white/[0.07] bg-slate-900 px-1 shadow-sm">
-                                                    {(canViewKardex || canAdjustStock) && (
-                                                        <>
-                                                            {canViewKardex && (
-                                                                <IconButton
-                                                                    icon={<Eye size={16} />}
-                                                                    label={`Auditar kardex de ${product.name}`}
-                                                                    onClick={() => openKardex(product)}
-                                                                />
-                                                            )}
-                                                            {canManageProducts && (
-                                                                    <IconButton
-                                                                        icon={<Edit size={16} />}
-                                                                        label={`Editar ${product.name}`}
-                                                                        onClick={() => openEditModal(product)}
-                                                                    />
-                                                            )}
-                                                            {isBodeguero && canAdjustStock && (
-                                                                <IconButton
-                                                                    icon={<Wrench size={16} />}
-                                                                    label={`Ajustar existencias de ${product.name}`}
-                                                                    onClick={() => openAdjust(product)}
-                                                                />
-                                                            )}
-                                                            <ActionMenu
-                                                                label={`Más acciones de ${product.name}`}
-                                                                items={accionesDe(product)}
-                                                            />
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-                {paginacion}
-            </section>
-
-            {/* CATÁLOGO EN TARJETAS — el modo de teléfono y tablet (< lg).
-
-                Cada tarjeta muestra de una lo que la tabla escondía tras el
-                scroll lateral: nombre, SKU, existencias con su semáforo, PRECIO
-                y las acciones. Costo y Valor Total quedan en una segunda línea
-                solo para el dueño, que es el único a quien le sirven.
-
-                Se mantiene la casilla de selección para que la edición masiva
-                —el atajo para subir precios cuando cambia el dólar— siga siendo
-                posible desde el teléfono. */}
-            <section aria-label="Productos del inventario" className={`nx-list-surface overflow-hidden lg:hidden ${
-                // Con la barra de acciones anclada abajo, sin este colchón las
-                // últimas tarjetas y la paginación quedan debajo de ella.
-                selectedProductIds.length > 0 && isOwner ? 'pb-36' : ''
-            }`}>
-                {isOwner && filteredProducts.length > 0 && !loading && (
-                    <label className="flex cursor-pointer items-center gap-3 border-b border-slate-200 bg-slate-100 px-4 py-3">
-                        <input
-                            type="checkbox"
-                            checked={selectedProductIds.length === filteredProducts.length}
-                            onChange={toggleSelectAll}
-                            className="h-5 w-5 rounded border-slate-300 bg-white text-brand focus:ring-brand-ring focus:ring-offset-white"
-                        />
-                        <span className="text-sm font-medium text-slate-700">Seleccionar los {filteredProducts.length} de esta página</span>
-                    </label>
-                )}
-
-                {loading ? (
-                    <div className="divide-y divide-slate-200">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <div key={i} className="p-4 space-y-2">
-                                <div className="h-4 w-2/3 animate-pulse rounded bg-slate-200" />
-                                <div className="h-3 w-1/3 animate-pulse rounded bg-slate-100" />
-                            </div>
-                        ))}
-                    </div>
-                ) : filteredProducts.length === 0 ? (
-                    <EmptyState {...propsVacio} />
-                ) : (
-                    <ul className="divide-y divide-slate-200">
-                        {filteredProducts.map((product) => {
-                            const { agotado, bajo } = estadoStock(product);
-                            const fondo = agotado ? 'bg-red-50/70' : bajo ? 'bg-amber-50/70' : 'bg-white';
-                            const seleccionado = selectedProductIds.includes(product.id);
-
-                            return (
-                                <li key={product.id} data-fila-producto className={`${fondo} p-4`}>
-                                    <div className="flex items-start gap-3">
-                                        {isOwner && (
-                                            <input
-                                                type="checkbox"
-                                                aria-label={`Seleccionar ${product.name}`}
-                                                checked={seleccionado}
-                                                onChange={() => toggleSelection(product.id)}
-                                                className="mt-0.5 h-5 w-5 shrink-0 rounded border-slate-300 bg-white text-brand focus:ring-brand-ring focus:ring-offset-white"
-                                            />
-                                        )}
-
-                                        <div className="min-w-0 flex-1">
-                                            {/* El nombre se lleva el renglón entero. Compartiéndolo con el
-                                                precio y tres botones, "Broca modelo 100" caía en tres
-                                                líneas de dos palabras y el producto dejaba de leerse. */}
-                                            <p className="break-words font-semibold leading-snug text-slate-950">{product.name}</p>
-
-                                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                                                <span className="rounded bg-slate-100 px-2 py-0.5 font-mono text-xs text-slate-700">
-                                                    {product.sku}
-                                                </span>
-                                                {product.category && (
-                                                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">
-                                                        {product.category}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {/* Existencias a la izquierda, precio a la derecha: los dos
-                                                datos por los que se abre esta pantalla, en un renglón. */}
-                                            <div className="mt-2 flex items-center justify-between gap-3">
-                                                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                                                    <span className={`font-mono tabular-nums font-bold ${agotado ? 'text-red-600' : bajo ? 'text-amber-700' : 'text-slate-950'}`}>
-                                                        {product.stock}
-                                                    </span>
-                                                    <span className="text-xs text-slate-500">{product.unit}</span>
-                                                    {agotado ? (
-                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
-                                                    ) : bajo ? (
-                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
-                                                    ) : (
-                                                        <span className="badge-soft-success">OK</span>
-                                                    )}
-                                                </div>
-                                                {!isBodeguero && (
-                                                    <span className="shrink-0 font-mono font-bold tabular-nums text-emerald-700">
-                                                        {formatCurrency(Number(product.price ?? 0))}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {isOwner && (
-                                                <div className="mt-2 flex items-center justify-between gap-3">
-                                                    {/* Sin `truncate`: con los tres botones al lado, "Valor"
-                                                        se cortaba en "V…" y desaparecía justo la cifra que
-                                                        dice cuánta plata hay parada en ese producto. Que
-                                                        baje a dos líneas es mejor que ocultarla. */}
-                                                    <p className="min-w-0 font-mono text-xs tabular-nums text-slate-600">
-                                                        Costo {formatCurrency(Number(product.cost ?? 0))} · Valor <span className="font-semibold text-slate-900">{formatCurrency(product.stock * Number(product.cost ?? 0))}</span>
-                                                    </p>
-                                                    <div className="nx-dark-context flex shrink-0 items-center gap-1 rounded-control border border-white/[0.07] bg-slate-900 px-1 shadow-sm">
-                                                        <IconButton
-                                                            icon={<Eye size={16} />}
-                                                            label={`Auditar kardex de ${product.name}`}
-                                                            onClick={() => openKardex(product)}
-                                                        />
-                                                        <IconButton
-                                                            icon={<Edit size={16} />}
-                                                            label={`Editar ${product.name}`}
-                                                            onClick={() => openEditModal(product)}
-                                                        />
-                                                        <ActionMenu
-                                                            label={`Más acciones de ${product.name}`}
-                                                            items={accionesDe(product)}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {isBodeguero && (
-                                                <div className="nx-dark-context mt-3 flex items-center justify-end gap-1 rounded-control border border-white/[0.07] bg-slate-900 px-1 shadow-sm">
-                                                    {canViewKardex && (
-                                                        <IconButton
-                                                            icon={<Eye size={16} />}
-                                                            label={`Auditar kardex de ${product.name}`}
-                                                            onClick={() => openKardex(product)}
-                                                        />
-                                                    )}
-                                                    {canAdjustStock && (
-                                                        <IconButton
-                                                            icon={<Wrench size={16} />}
-                                                            label={`Ajustar existencias de ${product.name}`}
-                                                            onClick={() => openAdjust(product)}
-                                                        />
-                                                    )}
-                                                    <ActionMenu
-                                                        label={`Más acciones de ${product.name}`}
-                                                        items={accionesDe(product)}
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                )}
-                {paginacion}
-            </section>
+            </FluidSheet>
 
             {/* ==========================================
                 MODAL: KARDEX (HISTORIAL DE AUDITORÍA)
@@ -2160,7 +1825,7 @@ export default function Inventory() {
                                     <div className="mb-3 h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                                     <span className="text-slate-400">Cargando historial...</span>
                                 </div>
-                            ) : kardexData.length === 0 ? (
+                            ) : kardexError ? (<div role="alert" className="p-6 text-red-300">{kardexError}<button type="button" onClick={() => fetchKardex(selectedProduct.id, kardexPage, kardexFrom, kardexTo)} className="nx-fluid-press ml-3 min-h-tap underline">Reintentar</button></div>) : kardexData.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                                     <Clock size={40} className="opacity-30 mb-2" />
                                     <p>No hay movimientos registrados</p>
@@ -2257,7 +1922,7 @@ export default function Inventory() {
             {showAdjustModal && selectedProduct && (
                 <div
                     className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-                    onClick={() => { if (!adjustSubmitting) setShowAdjustModal(false); }}
+                    onClick={closeAdjust}
                 >
                     <div
                         role="dialog"
@@ -2283,12 +1948,19 @@ export default function Inventory() {
                                     icon={<X size={18} />}
                                     label="Cerrar ajuste de inventario"
                                     disabled={adjustSubmitting}
-                                    onClick={() => setShowAdjustModal(false)}
+                                    onClick={closeAdjust}
                                 />
                             </div>
                         </div>
 
                         <form onSubmit={handleAdjust} aria-busy={adjustSubmitting} className="p-6 space-y-5">
+                            {adjustRecovery && (
+                                <div role="status" className="rounded-lg border border-amber-700/50 bg-amber-950/40 p-3 text-sm text-amber-200">
+                                    <p className="font-semibold">Hay un ajuste pendiente de confirmar.</p>
+                                    <p className="mt-1">Recuperá su resultado con los mismos datos para evitar duplicarlo. Podés cerrar este formulario y volver; conservá esta pestaña del navegador hasta resolverlo.</p>
+                                    <p className="mt-1 text-xs">Bodega: {adjustRecovery.warehouseName}</p>
+                                </div>
+                            )}
                             {/* Warn banner */}
                             <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2">
                                 <AlertTriangle size={18} className="text-amber-400 mt-0.5 shrink-0" />
@@ -2311,8 +1983,8 @@ export default function Inventory() {
                                         setAdjustWarehouseId(event.target.value);
                                         setAdjustError('');
                                     }}
-                                    disabled={adjustWarehousesLoading}
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60"
+                                    disabled={adjustWarehousesLoading || adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked}
+                                    className="w-full px-4 py-2.5 border rounded-control focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60 bg-surface-900 text-slate-100 nx-form-field"
                                 >
                                     <option value="">
                                         {adjustWarehousesLoading
@@ -2326,6 +1998,9 @@ export default function Inventory() {
                                             {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
                                         </option>
                                     ))}
+                                    {adjustRecovery && !adjustWarehouses.some(warehouse => warehouse.id === adjustRecovery.payload.warehouseId) && (
+                                        <option value={adjustRecovery.payload.warehouseId}>{adjustRecovery.warehouseName}</option>
+                                    )}
                                 </select>
                                 {adjustStockLoading && (
                                     <p className="mt-2 text-xs text-slate-400">Consultando el stock de esta bodega…</p>
@@ -2359,7 +2034,7 @@ export default function Inventory() {
                                                 key={opt.value}
                                                 type="button"
                                                 aria-pressed={isSelected}
-                                                disabled={adjustSubmitting}
+                                                disabled={adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked}
                                                 onClick={() => {
                                                     setAdjustForm(current => ({ ...current, type: opt.value as AdjustType }));
                                                     setAdjustError('');
@@ -2391,7 +2066,7 @@ export default function Inventory() {
                                     inputMode={selectedProduct.saleMode === 'MEASURED' ? 'decimal' : 'numeric'}
                                     pattern={selectedProduct.saleMode === 'MEASURED' ? undefined : '[0-9]*'}
                                     value={adjustForm.quantity}
-                                    disabled={adjustSubmitting || !adjustWarehouseId}
+                                    disabled={adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked || !adjustWarehouseId}
                                     aria-invalid={Boolean(adjustQuantityState.error || adjustLossExceedsStock)}
                                     aria-describedby="inventory-adjust-quantity-help"
                                     onChange={(e) => {
@@ -2406,7 +2081,7 @@ export default function Inventory() {
                                     placeholder="Ej: 5"
                                     className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
                                 />
-                                <div id="inventory-adjust-quantity-help" className="mt-1.5 text-xs">
+                                <div id="inventory-adjust-quantity-help" className="mt-1.5 text-xs" hidden={Boolean(adjustRecovery)}>
                                     {adjustQuantityState.error && <p className="text-red-300">{adjustQuantityState.error}</p>}
                                     {!adjustQuantityState.error && adjustLossExceedsStock && (
                                         <p className="text-red-300">
@@ -2430,8 +2105,9 @@ export default function Inventory() {
                                     id="inventory-adjust-reason"
                                     required
                                     minLength={3}
+                                    maxLength={300}
                                     value={adjustForm.reason}
-                                    disabled={adjustSubmitting}
+                                    disabled={adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked}
                                     aria-invalid={Boolean(adjustForm.reason && adjustForm.reason.trim().length < 3)}
                                     onChange={(e) => {
                                         setAdjustForm(current => ({ ...current, reason: e.target.value }));
@@ -2457,20 +2133,20 @@ export default function Inventory() {
                                 <button
                                     type="button"
                                     disabled={adjustSubmitting}
-                                    onClick={() => setShowAdjustModal(false)}
+                                    onClick={closeAdjust}
                                     className="nx-fluid-press sm:w-auto px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    Cancelar
+                                    {adjustRecovery ? 'Cerrar y recuperar después' : 'Cancelar'}
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={adjustSubmitting || adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady}
+                                    disabled={adjustSubmitting || adjustRecoveryBlocked || (!adjustRecovery && (adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady))}
                                     className={`nx-fluid-press flex-1 py-3 rounded-lg font-bold text-white transition-colors ${adjustForm.type === 'ADJUST_LOSS'
                                         ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
                                         : 'bg-brand hover:bg-brand-hover disabled:bg-emerald-900'
                                         } disabled:opacity-50 disabled:cursor-not-allowed`}
                                 >
-                                    {adjustSubmitting ? 'Procesando...' : (
+                                    {adjustSubmitting ? 'Procesando...' : adjustRecovery ? 'Recuperar resultado del ajuste' : (
                                         adjustForm.type === 'ADJUST_LOSS'
                                             ? 'Registrar pérdida'
                                             : adjustForm.type
@@ -2488,7 +2164,7 @@ export default function Inventory() {
                 MODAL: EDITAR PRODUCTO (solo datos comerciales)
                ========================================== */}
             {showEditModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowEditModal(false)}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeEdit}>
                     <div className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Header */}
                         <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
@@ -2502,11 +2178,21 @@ export default function Inventory() {
                             <IconButton
                                 icon={<X size={18} />}
                                 label="Cerrar edición de producto"
-                                onClick={() => setShowEditModal(false)}
+                                disabled={editSubmitting}
+                                onClick={closeEdit}
                             />
                         </div>
 
-                        <form onSubmit={handleEdit} className="p-6 space-y-4">
+                        <form onSubmit={handleEdit} aria-busy={editSubmitting} className="p-6">
+                            <fieldset disabled={editSubmitting} className="space-y-4">
+                            {editError && <p role="alert" className="text-sm text-red-300">{editError}</p>}
+                            <p className="text-sm text-slate-400">Acá cambiás la ficha. Para cambiar existencias, recibí mercadería o hacé un conteo.</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <label className="text-sm text-slate-300">Código del producto<input required aria-label="Código del producto" value={editForm.sku} onChange={e => setEditForm({ ...editForm, sku: e.target.value })} className="input-premium w-full min-h-tap mt-1" /></label>
+                                <label className="text-sm text-slate-300">Avisarme cuando queden<input required aria-label="Avisarme cuando queden" inputMode="decimal" value={editForm.minStock} onChange={e => setEditForm({ ...editForm, minStock: e.target.value })} className="input-premium w-full min-h-tap mt-1" /><span className="text-xs text-slate-400">{editForm.unit}</span></label>
+                            </div>
+                            <label className="flex gap-2 text-sm text-slate-300"><input type="checkbox" checked={editForm.ivaExento} onChange={e => setEditForm({ ...editForm, ivaExento: e.target.checked })} />Exento de IVA</label>
+                            <label className="flex gap-2 text-sm text-slate-300"><input type="checkbox" checked={editForm.requiresBatchTracking} onChange={e => setEditForm({ ...editForm, requiresBatchTracking: e.target.checked })} />Controlar lotes y vencimientos</label>
                             {/* Nombre */}
                             <div>
                                 <label className="block text-sm text-slate-300 mb-1 font-medium">Nombre del Producto *</label>
@@ -2518,6 +2204,7 @@ export default function Inventory() {
                                 />
                             </div>
 
+                            <label className="block text-sm text-slate-300">Marca (opcional)<input aria-label="Marca (opcional)" maxLength={100} value={editForm.brand} onChange={e => setEditForm({ ...editForm, brand: e.target.value })} className="input-premium w-full min-h-tap mt-1" placeholder="Ej. Truper" /></label>
                             {/* Categoría */}
                             <div>
                                 <label className="block text-sm text-slate-300 mb-1 font-medium">Categoría</label>
@@ -2558,7 +2245,7 @@ export default function Inventory() {
                                         }}
                                         className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
                                     >
-                                        <option value="LEGACY">Configuración automática (legado)</option>
+                                        <option value="LEGACY">Configuración anterior</option>
                                         <option value="COUNTED">Por unidades contadas</option>
                                         <option value="MEASURED">Por peso/medida</option>
                                     </select>
@@ -2571,7 +2258,7 @@ export default function Inventory() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Paso de cantidad</label>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cantidad mínima por paso</label>
                                     <input
                                         type="text"
                                         inputMode="decimal"
@@ -2739,12 +2426,13 @@ export default function Inventory() {
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setShowEditModal(false)}
+                                    onClick={closeEdit}
                                     className="nx-fluid-press px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
                                 >
                                     Cancelar
                                 </button>
                             </div>
+                            </fieldset>
                         </form>
                     </div>
                 </div>
@@ -2769,6 +2457,7 @@ export default function Inventory() {
                         </div>
 
                         <form onSubmit={handleCreate} className="p-6 space-y-4">
+                            <label className="block text-sm text-slate-300">Marca (opcional)<input aria-label="Marca (opcional)" maxLength={100} value={formData.brand} onChange={e => setFormData({ ...formData, brand: e.target.value })} className="input-premium w-full min-h-tap mt-1" placeholder="Ej. Truper" /></label>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Nombre del Producto *</label>
@@ -2854,7 +2543,7 @@ export default function Inventory() {
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Paso de cantidad</label>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cantidad mínima por paso</label>
                                     <input
                                         required
                                         type="text"
@@ -2909,9 +2598,8 @@ export default function Inventory() {
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Costo de Compra *</label>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Costo de Compra (opcional)</label>
                                     <input
-                                        required
                                         type="text"
                                         inputMode="decimal"
                                         value={formData.cost}
@@ -3106,7 +2794,6 @@ export default function Inventory() {
                     onClose={() => setShowImportModal(false)}
                     onSuccess={() => {
                         reload();
-                        setShowImportModal(false);
                     }}
                 />
             )}
@@ -3117,8 +2804,9 @@ export default function Inventory() {
                 <QuickAddProduct
                     initialSKU={quickAddSKU}
                     onClose={() => setShowQuickAddModal(false)}
-                    onSuccess={() => {
+                    onSuccess={created => {
                         reload();
+                        if (created) setActiveProduct(created as Product);
                     }}
                 />
             )}
@@ -3151,7 +2839,7 @@ export default function Inventory() {
                                                 return !current;
                                             });
                                         }}
-                                        disabled={batchWarehousesLoading || batchWarehouses.length === 0}
+                                        disabled={batchesLoading || Boolean(batchLoadError) || batchWarehousesLoading || batchWarehouses.length === 0}
                                         className="nx-fluid-press min-h-tap bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                                     >
                                         <Plus size={16} /> Agregar lote
@@ -3292,6 +2980,7 @@ export default function Inventory() {
                             </form>
                         )}
 
+                        {batchLoadError && (<div role="alert" className="p-4 text-sm text-red-300">{batchLoadError}<button type="button" onClick={() => openBatches(selectedProduct)} className="nx-fluid-press ml-3 min-h-tap underline">Reintentar carga</button></div>)}
                         {batchCommandError && (
                             <div role="alert" className="px-6 py-3 border-b border-red-900/50 bg-red-950/30 text-sm text-red-200">
                                 {batchCommandError}
@@ -3481,4 +3170,16 @@ export default function Inventory() {
             )}
         </div>
     );
+}
+
+/** A changed authenticated session discards all visible catalogue and receipt state. */
+export default function Inventory() {
+    const [, refreshSession] = useState(0);
+    useEffect(() => {
+        const refresh = () => refreshSession(value => value + 1);
+        window.addEventListener('storage', refresh);
+        window.addEventListener('focus', refresh);
+        return () => { window.removeEventListener('storage', refresh); window.removeEventListener('focus', refresh); };
+    }, []);
+    return <InventoryWorkspace key={`${localStorage.getItem('nortex_token')}:${currentSessionRole()}`}/>;
 }

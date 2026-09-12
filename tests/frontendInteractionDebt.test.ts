@@ -19,7 +19,12 @@ const BUDGET = {
     // acoplamientos nuevos que vuelvan más difícil extraer el monolito.
     'components/CashRegisters.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
     'components/Inventory.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
+    // La extracción conserva el presupuesto cero en cada superficie destino.
+    'components/ui/CameraScanButton.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
+    'components/inventory/InventoryCatalog.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
+    'components/inventory/StockProductPane.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
     'components/Purchases.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
+    'components/inventory/ReceivingWorkspace.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
     'components/Sales.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
     'components/DeliveryManager.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },
     'components/delivery/DeliveryKanban.tsx': { buttonsWithoutPress: 0, transitionAll: 0 },

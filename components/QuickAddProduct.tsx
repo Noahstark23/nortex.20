@@ -1,14 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Zap, Check, AlertCircle, History, Volume2, VolumeX } from 'lucide-react';
+import { X } from 'lucide-react';
 import ImageUploader from './ImageUploader';
 import { formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
-import { productValidationMessage } from '../utils/productForm';
+import { buildCreateProductPayload, productValidationMessage } from '../utils/productForm';
 
 interface Product {
     id: string;
     sku: string;
+    brand?: string | null;
     name: string;
     category?: string;
     price: number;
@@ -23,7 +24,7 @@ interface Product {
 interface QuickAddProductProps {
     initialSKU?: string;
     onClose: () => void;
-    onSuccess: () => void;
+    onSuccess: (product?: Product) => void;
 }
 
 const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onClose, onSuccess }) => {
@@ -31,6 +32,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
     const [formData, setFormData] = useState({
         sku: initialSKU,
         name: '',
+        brand: '',
         category: '',
         price: '',
         cost: '',
@@ -39,11 +41,14 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
         unit: 'unidad',
         saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED',
         quantityStep: '1',
-        productFamily: 'GENERAL',
+        productFamily: 'GENERAL' as ProductFamily,
+        description: '', minStock: '5', isPublished: false, requiresBatchTracking: false,
+        ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '',
+        packUnit: '', packSize: '', packPrice: '',
     });
 
     // UI state
-    const [continuousMode, setContinuousMode] = useState(true);
+    const [continuousMode, setContinuousMode] = useState(false);
     const [audioEnabled, setAudioEnabled] = useState(true);
     const [sessionHistory, setSessionHistory] = useState<Product[]>([]);
     const [isSubmitting, setIsSubmitting] = useState(false);
@@ -53,6 +58,9 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
     // Refs
     const skuInputRef = useRef<HTMLInputElement>(null);
     const nameInputRef = useRef<HTMLInputElement>(null);
+    const formRef = useRef<HTMLFormElement>(null);
+    const submittingRef = useRef(false);
+    const requestClose = () => { if (!submittingRef.current) onClose(); };
 
     // Auto-focus SKU on mount
     useEffect(() => {
@@ -67,6 +75,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
     const playSound = (type: 'success' | 'error') => {
         if (!audioEnabled) return;
 
+        try {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
         const gainNode = audioContext.createGain();
@@ -88,11 +97,20 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
 
         oscillator.start(audioContext.currentTime);
         oscillator.stop(audioContext.currentTime + 0.15);
+        oscillator.onended = () => { void audioContext.close().catch(() => {}); };
+        } catch { /* El sonido opcional nunca cambia el resultado de guardar. */ }
     };
 
     // Handle form submission
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
+        if (submittingRef.current) return;
+        const payload = buildCreateProductPayload(formData);
+        if (formData.requiresBatchTracking && Number(payload.stock) > 0) {
+            setError('Creá este producto sin existencias. Después registrá la entrada con lote, vencimiento y bodega desde Compras o Lotes.');
+            return;
+        }
+        submittingRef.current = true;
         setError('');
         setIsSubmitting(true);
 
@@ -104,26 +122,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                     'Content-Type': 'application/json',
                     'Authorization': `Bearer ${token}`
                 },
-                body: JSON.stringify({
-                    sku: formData.sku.trim().toUpperCase(),
-                    name: formData.name.trim(),
-                    category: formData.category.trim() || undefined,
-                    // Texto decimal, no parseFloat: con F2 el submit salta la
-                    // validación HTML y un precio vacío llegaba como NaN → null,
-                    // que el schema reporta como "Invalid input" sin nombrar nada.
-                    price: formData.price.trim(),
-                    // Costo opcional: si el dueño no lo sabe, va 0 (se corrige con la compra).
-                    cost: formData.cost.trim() || '0',
-                    // La frontera HTTP conserva el texto para que el servidor
-                    // pueda rechazar precisión excesiva antes de tocar Float.
-                    stock: formData.stock === '' ? '0' : formData.stock,
-                    minStock: 5,
-                    unit: formData.unit,
-                    saleMode: formData.saleMode,
-                    quantityStep: formData.quantityStep,
-                    productFamily: formData.productFamily,
-                    imageUrl: formData.imageUrl || undefined,
-                })
+                body: JSON.stringify(payload)
             });
 
             const data = await res.json();
@@ -141,13 +140,14 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
 
                 // Add to session history
                 const newProduct: Product = {
-                    id: data.id || Date.now().toString(),
+                    id: data.id,
                     sku: formData.sku.toUpperCase(),
                     name: formData.name,
+                    brand: formData.brand.trim() || null,
                     category: formData.category,
-                    price: parseFloat(formData.price),
-                    cost: formData.cost ? parseFloat(formData.cost) : 0,
-                    stock: formData.stock === '' ? 0 : Number(formData.stock),
+                    price: Number(data.price ?? payload.price),
+                    cost: Number(data.cost ?? payload.cost),
+                    stock: Number(data.stock ?? payload.stock),
                     unit: formData.unit,
                     saleMode: formData.saleMode,
                     quantityStep: formData.quantityStep,
@@ -160,12 +160,13 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                 setTimeout(() => setShowSuccess(false), 1000);
 
                 // Call parent success callback
-                onSuccess();
+                onSuccess({ ...newProduct, ...data });
 
                 if (continuousMode) {
                     // Clear form but keep category
                     const lastCategory = formData.category;
                     setFormData({
+                        ...formData,
                         sku: '',
                         name: '',
                         category: lastCategory,
@@ -192,6 +193,7 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
             setError('Error de conexión al servidor');
             playSound('error');
         } finally {
+            submittingRef.current = false;
             setIsSubmitting(false);
         }
     };
@@ -202,11 +204,11 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
             // F2 to save
             if (e.key === 'F2') {
                 e.preventDefault();
-                handleSubmit(e as any);
+                if (!submittingRef.current) formRef.current?.requestSubmit();
             }
             // ESC to close
             if (e.key === 'Escape') {
-                onClose();
+                requestClose();
             }
         };
 
@@ -214,305 +216,96 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [formData, continuousMode]);
 
+    const fieldClass = 'nx-form-field w-full rounded-control border bg-surface-900 px-3 py-2.5 text-slate-100';
+    const labelClass = 'mb-1 block text-sm font-medium text-surface-300';
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={onClose}>
-            <div className="bg-surface-800 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden shadow-2xl border border-surface-700" onClick={(e) => e.stopPropagation()}>
-                {/* Header */}
-                <div className="bg-gradient-to-r from-brand-900/40 to-red-900/20 px-6 py-4 border-b border-surface-700 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-brand-600 rounded-lg flex items-center justify-center">
-                            <Zap size={20} className="text-brand-on" />
-                        </div>
-                        <div>
-                            <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                Modo Alta Velocidad
-                            </h2>
-                            <p className="text-sm text-surface-400">
-                                {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''} agregado{sessionHistory.length !== 1 ? 's' : ''} en esta sesión
-                            </p>
-                        </div>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-3 backdrop-blur-sm" onClick={requestClose}>
+            <div role="dialog" aria-modal="true" aria-label="Nuevo producto" className="nx-dark-context flex max-h-[92dvh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-surface-700 bg-surface-800 shadow-2xl" onClick={event => event.stopPropagation()}>
+                <header className="flex shrink-0 items-center justify-between border-b border-surface-700 px-5 py-4">
+                    <div>
+                        <h2 className="text-xl font-bold text-white">Nuevo producto</h2>
+                        <p className="mt-1 text-sm text-surface-400">Identificalo y definí cómo lo vendés.</p>
                     </div>
-                    <div className="flex items-center gap-2">
-                        <button
-                            onClick={() => setAudioEnabled(!audioEnabled)}
-                            className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors"
-                            title={audioEnabled ? 'Silenciar' : 'Activar sonido'}
-                        >
-                            {audioEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
-                        </button>
-                        <button onClick={onClose} aria-label="Cerrar modo rápido" className="p-2 hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors">
-                            <X size={20} />
-                        </button>
-                    </div>
-                </div>
-
-                {/* Body */}
-                <div className="flex gap-4 p-6 max-h-[calc(90vh-120px)] overflow-y-auto">
-                    {/* Form Section */}
-                    <div className="flex-1">
-                        <form onSubmit={handleSubmit} className="space-y-4">
-                            {/* Success Message */}
-                            {showSuccess && (
-                                <div className="bg-emerald-950/60 border border-emerald-700 rounded-lg p-3 flex items-center gap-2 animate-pulse">
-                                    <Check size={20} className="text-emerald-400" />
-                                    <span className="text-emerald-300 font-semibold">Producto guardado</span>
-                                </div>
-                            )}
-
-                            {/* Error Message */}
-                            {error && (
-                                <div className="bg-red-950/60 border border-red-700 rounded-lg p-3 flex items-center gap-2">
-                                    <AlertCircle size={20} className="text-red-400" />
-                                    <span className="text-red-300">{error}</span>
-                                </div>
-                            )}
-
-                            {/* SKU */}
+                    <button type="button" onClick={requestClose} disabled={isSubmitting} aria-label="Cerrar modo rápido" className="rounded-lg p-2 text-surface-300 hover:bg-surface-700 disabled:opacity-40"><X size={20} /></button>
+                </header>
+                <form ref={formRef} onSubmit={handleSubmit} aria-busy={isSubmitting} className="flex min-h-0 flex-1 flex-col">
+                    <div className="min-h-0 overflow-y-auto px-5 py-4">
+                        <fieldset disabled={isSubmitting} className="space-y-4">
+                            {showSuccess && <p role="status" className="rounded-lg bg-emerald-950/60 p-3 text-emerald-300">Producto guardado</p>}
+                            {error && <p role="alert" className="rounded-lg bg-red-950/60 p-3 text-red-300">{error}</p>}
                             <div>
-                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                    SKU / Código de Barras *
-                                </label>
-                                <input
-                                    ref={skuInputRef}
-                                    required
-                                    autoFocus={!initialSKU}
-                                    value={formData.sku}
-                                    onChange={(e) => setFormData({ ...formData, sku: e.target.value.toUpperCase() })}
-                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg font-mono focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
-                                    placeholder="7501234567890"
-                                />
+                                <label htmlFor="quick-name" className={labelClass}>Nombre del producto *</label>
+                                <input id="quick-name" ref={nameInputRef} required maxLength={200} value={formData.name} onChange={event => setFormData({ ...formData, name: event.target.value })} className={fieldClass} placeholder="Martillo 16oz" />
                             </div>
-
-                            {/* Name */}
-                            <div>
-                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                    Nombre del Producto *
-                                </label>
-                                <input
-                                    ref={nameInputRef}
-                                    required
-                                    value={formData.name}
-                                    onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
-                                    placeholder="Martillo Truper 16oz"
-                                />
-                            </div>
-
-                            {/* Category */}
-                            <div>
-                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                    Categoría
-                                </label>
-                                <input
-                                    value={formData.category}
-                                    onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
-                                    placeholder="Herramientas"
-                                />
-                            </div>
-
-                            <div className="grid grid-cols-3 gap-3">
+                            <div><label htmlFor="quick-brand" className={labelClass}>Marca (opcional)</label><input id="quick-brand" maxLength={100} value={formData.brand} onChange={event => setFormData({ ...formData, brand: event.target.value })} className={fieldClass} placeholder="Ej. Truper" /></div>
+                            <div className="grid grid-cols-2 gap-3">
                                 <div>
-                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Venta</label>
-                                    <select
-                                        value={formData.saleMode}
-                                        onChange={(e) => {
-                                            const saleMode = e.target.value as 'COUNTED' | 'MEASURED';
-                                            setFormData({ ...formData, saleMode, quantityStep: saleMode === 'COUNTED' ? '1' : '0.001' });
-                                        }}
-                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white"
-                                    >
-                                        <option value="COUNTED">Unidades</option>
-                                        <option value="MEASURED">Peso/medida</option>
-                                    </select>
+                                    <label htmlFor="quick-sku" className={labelClass}>Código o código de barras *</label>
+                                    <input id="quick-sku" ref={skuInputRef} required maxLength={100} value={formData.sku} onChange={event => setFormData({ ...formData, sku: event.target.value.toUpperCase() })} className={fieldClass} placeholder="7501234567890" />
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Unidad</label>
-                                    <select value={formData.unit} onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white">
-                                        {['unidad', 'g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro', 'saco', 'caja', 'frasco', 'bolsa'].map(unit => <option key={unit}>{unit}</option>)}
-                                    </select>
+                                    <label htmlFor="quick-price" className={labelClass}>Precio de venta (C$) *</label>
+                                    <input id="quick-price" required type="text" inputMode="decimal" value={formData.price} onChange={event => setFormData({ ...formData, price: event.target.value })} className={fieldClass} placeholder="150.00" />
+                                </div>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                    <label htmlFor="quick-mode" className={labelClass}>¿Cómo se vende?</label>
+                                    <select id="quick-mode" value={formData.saleMode} onChange={event => {
+                                        const saleMode = event.target.value as 'COUNTED' | 'MEASURED';
+                                        setFormData({ ...formData, saleMode, quantityStep: saleMode === 'COUNTED' ? '1' : '0.001' });
+                                    }} className={fieldClass}><option value="COUNTED">Por unidades enteras</option><option value="MEASURED">Por peso o medida</option></select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Paso</label>
-                                    <input required type="number" min="0.0001" step="0.0001" value={formData.quantityStep}
-                                        onChange={(e) => setFormData({ ...formData, quantityStep: e.target.value })}
-                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white" />
-                                </div>
-                                <div className="col-span-3">
-                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">Familia</label>
-                                    <select value={formData.productFamily} onChange={(e) => {
-                                        const productFamily = e.target.value as ProductFamily;
-                                        const preset = productFamilyPreset(productFamily);
-                                        setFormData({
-                                            ...formData,
-                                            productFamily,
-                                            unit: preset.unit,
-                                            saleMode: preset.saleMode,
-                                            quantityStep: preset.quantityStep,
-                                        });
-                                    }}
-                                        className="w-full px-3 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white">
-                                        <option value="GENERAL">General</option>
-                                        <option value="MEAT">Carnes</option>
-                                        <option value="POULTRY">Pollos y aves</option>
-                                        <option value="ANIMAL_FEED">Alimento animal</option>
-                                        <option value="AGRO_INPUT">Agroinsumos</option>
-                                        <option value="VETERINARY">Veterinaria</option>
-                                    </select>
+                                    <label htmlFor="quick-unit" className={labelClass}>Unidad de venta</label>
+                                    <select id="quick-unit" value={formData.unit} onChange={event => {
+                                        const unit = event.target.value;
+                                        const measured = ['g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro'].includes(unit);
+                                        setFormData({ ...formData, unit, saleMode: measured ? 'MEASURED' : 'COUNTED', quantityStep: measured ? '0.001' : '1' });
+                                    }} className={fieldClass}>{['unidad', 'g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro', 'saco', 'caja', 'frasco', 'bolsa', 'par', 'rollo'].map(unit => <option key={unit}>{unit}</option>)}</select>
                                 </div>
                             </div>
-
-                            {/* Price & Cost */}
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                        Precio Venta *
-                                    </label>
-                                    <input
-                                        required
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={formData.price}
-                                        onChange={(e) => setFormData({ ...formData, price: e.target.value })}
-                                        className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
-                                        placeholder="150.00"
-                                    />
-                                </div>
-                                <div>
-                                    <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                        Costo <span className="text-surface-500 font-normal">(opcional)</span>
-                                    </label>
-                                    <input
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        value={formData.cost}
-                                        onChange={(e) => setFormData({ ...formData, cost: e.target.value })}
-                                        className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
-                                        placeholder="95.00"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Stock */}
-                            <div>
-                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                    Stock Inicial
-                                </label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    step={formData.quantityStep || (formData.saleMode === 'COUNTED' ? '1' : '0.0001')}
-                                    value={formData.stock}
-                                    onChange={(e) => setFormData({ ...formData, stock: e.target.value })}
-                                    className="w-full px-4 py-3 bg-surface-900 border border-surface-700 rounded-lg text-white text-lg focus:border-brand-500 focus:ring-2 focus:ring-brand-500/50 transition-all"
-                                    placeholder="0"
-                                />
-                            </div>
-
-                            {/* Foto del Producto */}
-                            <div>
-                                <label className="block text-sm text-surface-300 mb-1.5 font-medium">
-                                    Foto del Producto <span className="text-surface-500 font-normal">(opcional)</span>
-                                </label>
-                                <ImageUploader
-                                    value={formData.imageUrl}
-                                    onChange={(url) => setFormData({ ...formData, imageUrl: url })}
-                                    disabled={isSubmitting}
-                                />
-                            </div>
-
-                            {/* Continuous Mode Toggle */}
-                            <div className="bg-surface-900/60 border border-surface-700 rounded-lg p-4 flex items-center justify-between">
-                                <div>
-                                    <p className="text-white font-semibold">Modo Continuo</p>
-                                    <p className="text-xs text-surface-400">No cerrar ventana al guardar</p>
-                                </div>
-                                <button
-                                    type="button"
-                                    onClick={() => setContinuousMode(!continuousMode)}
-                                    className={`relative inline-flex h-7 w-14 items-center rounded-full transition-colors ${continuousMode ? 'bg-brand-600' : 'bg-surface-700'
-                                        }`}
-                                >
-                                    <span
-                                        className={`inline-block h-5 w-5 transform rounded-full bg-surface-900 transition-transform ${continuousMode ? 'translate-x-8' : 'translate-x-1'
-                                            }`}
-                                    />
-                                </button>
-                            </div>
-
-                            {/* Submit Button */}
-                            <button
-                                type="submit"
-                                disabled={isSubmitting}
-                                className="w-full bg-brand-600 hover:bg-brand-700 disabled:bg-brand-800 disabled:opacity-50 py-4 rounded-lg text-white font-bold text-lg transition-colors flex items-center justify-center gap-2"
-                            >
-                                {isSubmitting ? (
-                                    <>
-                                        <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                        Guardando...
-                                    </>
-                                ) : (
-                                    <>
-                                        <Zap size={20} />
-                                        Guardar (F2 o ENTER)
-                                    </>
-                                )}
-                            </button>
-
-                            <p className="text-xs text-surface-500 text-center">
-                                Presiona <kbd className="px-2 py-1 bg-surface-700 rounded text-surface-300">ESC</kbd> para cerrar
-                            </p>
-                        </form>
-                    </div>
-
-                    {/* Session History Sidebar */}
-                    <div className="w-72 bg-surface-900/60 border border-surface-700 rounded-lg p-4">
-                        <div className="flex items-center gap-2 mb-3">
-                            <History size={18} className="text-surface-400" />
-                            <h3 className="font-semibold text-white">Últimos Agregados</h3>
-                        </div>
-
-                        {sessionHistory.length === 0 ? (
-                            <div className="text-center py-8">
-                                <p className="text-surface-500 text-sm">Aún no has agregado productos</p>
-                                <p className="text-xs text-surface-300 mt-1">Completa el formulario y guarda</p>
-                            </div>
-                        ) : (
-                            <div className="space-y-2">
-                                {sessionHistory.map((product, index) => (
-                                    <div
-                                        key={index}
-                                        className="bg-surface-800/60 border border-surface-700 rounded-lg p-3 duration-200"
-                                    >
-                                        <div className="flex items-start gap-2">
-                                            <Check size={16} className="text-emerald-400 mt-0.5 shrink-0" />
-                                            <div className="flex-1 min-w-0">
-                                                <p className="text-white font-semibold text-sm truncate">{product.name}</p>
-                                                <p className="text-xs text-surface-400 font-mono">{product.sku}</p>
-                                                <p className="text-xs text-emerald-400 font-bold mt-1">
-                                                    {formatMoney(product.price)}
-                                                </p>
-                                            </div>
-                                        </div>
+                            <p className="text-sm text-surface-400">El precio es por {formData.unit}.{formData.saleMode === 'MEASURED' ? ` Podés vender múltiplos de ${formData.quantityStep} ${formData.unit}.` : ' Se venden cantidades enteras.'}</p>
+                            <details className="rounded-lg border border-surface-700 p-3">
+                                <summary className="cursor-pointer font-semibold text-surface-300">Más opciones</summary>
+                                <div className="mt-4 space-y-4">
+                                    <div>
+                                        <label htmlFor="quick-family" className={labelClass}>Plantilla de producto</label>
+                                        <select id="quick-family" value={formData.productFamily} onChange={event => {
+                                            const productFamily = event.target.value as ProductFamily;
+                                            setFormData({ ...formData, productFamily, ...productFamilyPreset(productFamily) });
+                                        }} className={fieldClass}>
+                                            <option value="GENERAL">General</option><option value="MEAT">Carnes</option><option value="POULTRY">Pollos y aves</option><option value="ANIMAL_FEED">Alimento animal</option><option value="AGRO_INPUT">Agroinsumos</option><option value="VETERINARY">Veterinaria</option>
+                                        </select>
+                                        <p className="mt-1 text-xs text-surface-400">Aplica unidad, fracción, empaque y control por lote. Revisalos antes de guardar.</p>
                                     </div>
-                                ))}
-                            </div>
-                        )}
-
-                        {sessionHistory.length > 0 && (
-                            <div className="mt-4 pt-4 border-t border-surface-700">
-                                <div className="bg-brand-950/40 border border-brand-800/50 rounded-lg p-3">
-                                    <p className="text-xs text-brand-300 font-semibold">
-                                        Total: {sessionHistory.length} producto{sessionHistory.length !== 1 ? 's' : ''}
-                                    </p>
+                                    <div className="grid grid-cols-2 gap-3">
+                                        <div><label htmlFor="quick-category" className={labelClass}>Categoría</label><input id="quick-category" value={formData.category} onChange={event => setFormData({ ...formData, category: event.target.value })} className={fieldClass} placeholder="Herramientas" /></div>
+                                        <div><label htmlFor="quick-cost" className={labelClass}>Costo (C$, opcional)</label><input id="quick-cost" type="text" inputMode="decimal" value={formData.cost} onChange={event => setFormData({ ...formData, cost: event.target.value })} className={fieldClass} placeholder="95.00" /></div>
+                                        <div><label htmlFor="quick-step" className={labelClass}>Fracción o salto de venta</label><input id="quick-step" required type="text" inputMode="decimal" value={formData.quantityStep} onChange={event => setFormData({ ...formData, quantityStep: event.target.value })} className={fieldClass} /></div>
+                                        <div><label htmlFor="quick-min" className={labelClass}>Avisar al llegar a</label><input id="quick-min" type="text" inputMode="decimal" value={formData.minStock} onChange={event => setFormData({ ...formData, minStock: event.target.value })} className={fieldClass} /></div>
+                                    </div>
+                                    <div>
+                                        <label htmlFor="quick-stock" className={labelClass}>Existencias iniciales ({formData.unit})</label>
+                                        <input id="quick-stock" type="text" inputMode="decimal" value={formData.stock} onChange={event => setFormData({ ...formData, stock: event.target.value })} className={fieldClass} placeholder="0" />
+                                        <p className="mt-1 text-xs text-surface-400">Dejalo en cero para registrar la entrada después desde Compras. El alta inicial usa la bodega principal.</p>
+                                    </div>
+                                    <label className="flex items-center gap-2 text-sm text-surface-300"><input type="checkbox" checked={formData.requiresBatchTracking} onChange={event => setFormData({ ...formData, requiresBatchTracking: event.target.checked })} />Controlar lotes y vencimiento</label>
+                                    {formData.requiresBatchTracking && <p className="text-sm text-amber-300">Creá el producto sin existencias. Luego registrá la entrada con lote, vencimiento y bodega desde Compras o Lotes.</p>}
+                                    {formData.packUnit && <p className="text-sm text-surface-300">Un {formData.packUnit} contiene {formData.packSize} {formData.unit}. Podés ajustar esta presentación en la ficha completa.</p>}
+                                    <label className="flex items-center gap-2 text-sm text-surface-300"><input type="checkbox" checked={formData.ivaExento} onChange={event => setFormData({ ...formData, ivaExento: event.target.checked })} />Producto exento de IVA (según su clasificación fiscal)</label>
+                                    <div><p className={labelClass}>Foto del producto</p><ImageUploader value={formData.imageUrl} onChange={imageUrl => setFormData({ ...formData, imageUrl })} disabled={isSubmitting} /></div>
+                                    <label className="flex items-center gap-2 text-sm text-surface-300"><input type="checkbox" checked={audioEnabled} onChange={event => setAudioEnabled(event.target.checked)} />Sonido al guardar</label>
                                 </div>
-                            </div>
-                        )}
+                            </details>
+                            {sessionHistory.length > 0 && <p className="text-sm text-emerald-300" role="status">Último guardado: {sessionHistory[0].name} · {formatMoney(sessionHistory[0].price)}</p>}
+                        </fieldset>
                     </div>
-                </div>
+                    <footer className="shrink-0 space-y-3 border-t border-surface-700 bg-surface-800 px-5 py-4">
+                        <label className="flex items-center gap-2 text-sm text-surface-300"><input type="checkbox" disabled={isSubmitting} checked={continuousMode} onChange={event => setContinuousMode(event.target.checked)} />Guardar y seguir agregando productos</label>
+                        <button type="submit" disabled={isSubmitting} className="flex w-full items-center justify-center gap-2 rounded-control bg-brand px-4 py-3 font-bold text-brand-on hover:bg-brand-hover disabled:opacity-50">{isSubmitting ? 'Guardando...' : 'Guardar (F2 o ENTER)'}</button>
+                    </footer>
+                </form>
             </div>
         </div>
     );

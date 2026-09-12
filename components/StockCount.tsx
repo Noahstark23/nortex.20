@@ -6,6 +6,12 @@ import {
 import { formatMoney } from '../utils/money';
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
+import { resolveProductQuantityRules } from '../utils/productQuantityRules';
+import { useLocation } from 'react-router-dom';
+import { CameraScanButton } from './ui/CameraScanButton';
+import { FluidSheet } from './ui/FluidSheet';
+import { StockCountWorkspaceList } from './inventory/StockCountWorkspaceList';
+import { readStockWorkspaceContext, stockWorkspaceHref } from './inventory/WarehouseWorkspaceHeader';
 
 // ==========================================
 // TYPES
@@ -32,7 +38,8 @@ interface CountItem {
     counted: number | null;
     diff: number;
     countedAt: string | null;
-    product: { name: string; sku: string; unit: string; cost?: number };
+    bookStockAtCapture?: number | string | null;
+    product: { name: string; brand?: string | null; sku: string; unit: string; cost?: number; saleMode?: string | null; quantityStep?: string | number | null };
 }
 
 interface CountDetail {
@@ -50,6 +57,7 @@ interface WarehouseOption {
 const formatCurrency = (n: number) => formatMoney(n);
 const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 export const sanitizeCountInput = (value: string): string | null => {
+    value = value.replace(',', '.');
     if (!/^\d*(?:\.\d{0,4})?$/.test(value)) return null;
     return value.replace(/^0+(?=\d)/, '');
 };
@@ -67,16 +75,27 @@ const STATUS_META: Record<string, { label: string; color: string }> = {
 };
 
 export default function StockCount() {
+    const location = useLocation();
+    const context = useMemo(() => readStockWorkspaceContext(location.search), [location.search]);
+    const latestWarehouseContext = useRef(context.warehouseId);
+    latestWarehouseContext.current = context.warehouseId;
+    const appliedWarehouseContext = useRef<string | null>(null);
+    const [contextProductId, setContextProductId] = useState(context.productId);
+    const returnHref = stockWorkspaceHref('/app/inventory', { search: context.search, productId: context.productId });
     const [counts, setCounts] = useState<StockCountSummary[]>([]);
     const [loading, setLoading] = useState(true);
     const [detail, setDetail] = useState<CountDetail | null>(null);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [loadError, setLoadError] = useState('');
+    const [warehouseError, setWarehouseError] = useState('');
+    const [categoryError, setCategoryError] = useState('');
 
     // Crear conteo
     const [showCreate, setShowCreate] = useState(false);
     const [createScope, setCreateScope] = useState<'ALL' | 'CATEGORY'>('ALL');
     const [createCategory, setCreateCategory] = useState('');
     const [createNotes, setCreateNotes] = useState('');
+    const [showNotes, setShowNotes] = useState(false);
     const [createWarehouseId, setCreateWarehouseId] = useState('');
     const [categories, setCategories] = useState<string[]>([]);
     const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
@@ -87,6 +106,10 @@ export default function StockCount() {
     const [search, setSearch] = useState('');
     const [inputs, setInputs] = useState<Record<string, string>>({}); // productId → texto del input
     const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+    const [saveErrors, setSaveErrors] = useState<Record<string, string>>({});
+    const saveQueue = useRef(new Map<string, number>());
+    const activeSaves = useRef(new Set<string>());
+    useEffect(() => () => { saveQueue.current.clear(); }, []);
     const [closing, setClosing] = useState(false);
     const [showCloseConfirm, setShowCloseConfirm] = useState(false);
     const [showCancelConfirm, setShowCancelConfirm] = useState(false);
@@ -110,45 +133,61 @@ export default function StockCount() {
 
     const fetchCounts = useCallback(async () => {
         setLoading(true);
+        setLoadError('');
         try {
             const res = await fetch('/api/stock-counts', { headers });
-            if (res.ok) setCounts(await res.json());
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'No se pudieron cargar las tomas físicas.');
+            setCounts(data);
         } catch (e) {
-            console.error('Error fetching counts:', e);
+            setLoadError(e instanceof Error ? e.message : 'No se pudieron cargar las tomas físicas.');
         } finally {
             setLoading(false);
         }
     }, [headers]);
 
     const fetchCategories = useCallback(async () => {
+        setCategoryError('');
         try {
             const res = await fetch('/api/products/categories', { headers });
-            if (res.ok) setCategories(await res.json());
-        } catch { /* noop */ }
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || 'No se pudieron cargar las categorías.');
+            setCategories(data);
+        } catch { setCategoryError('No se pudieron cargar las categorías. Reintentá antes de contar por categoría.'); }
     }, [headers]);
 
     const fetchWarehouses = useCallback(async () => {
         setWarehousesLoading(true);
+        setWarehouseError('');
         try {
             const res = await fetch('/api/warehouses', { headers });
+            if (!res.ok) {
+                const payload = await res.json().catch(() => ({}));
+                throw new Error(payload.error || 'No se pudieron cargar las bodegas.');
+            }
             if (res.ok) {
                 const payload = await res.json();
+                if (latestWarehouseContext.current !== context.warehouseId) return;
+                const contextChanged = appliedWarehouseContext.current !== context.warehouseId;
+                appliedWarehouseContext.current = context.warehouseId;
                 const available = (payload.data || []).filter((warehouse: WarehouseOption) => warehouse.isActive);
                 setWarehouses(available);
                 setCreateWarehouseId(current => {
-                    if (current && available.some((warehouse: WarehouseOption) => warehouse.id === current)) return current;
+                    if (!contextChanged && current && available.some((warehouse: WarehouseOption) => warehouse.id === current)) return current;
+                    if (context.warehouseId) return available.find((warehouse: WarehouseOption) => warehouse.id === context.warehouseId)?.id || '';
                     return available.length === 1 ? available[0].id : '';
                 });
             }
         } catch (e) {
-            console.error('Error fetching warehouses:', e);
+            if (latestWarehouseContext.current !== context.warehouseId) return;
+            setWarehouseError(e instanceof Error ? e.message : 'No se pudieron cargar las bodegas.');
         } finally {
-            setWarehousesLoading(false);
+            if (latestWarehouseContext.current === context.warehouseId) setWarehousesLoading(false);
         }
-    }, [headers]);
+    }, [headers, context.warehouseId]);
 
     const openCreateForm = () => {
-        setCreateWarehouseId(current => current || (warehouses.length === 1 ? warehouses[0].id : ''));
+        setCreateWarehouseId(current => current || (context.warehouseId ? warehouses.find(warehouse => warehouse.id === context.warehouseId)?.id || '' : warehouses.length === 1 ? warehouses[0].id : ''));
         setShowCreate(true);
     };
 
@@ -159,20 +198,36 @@ export default function StockCount() {
     }, [fetchCounts, fetchCategories, fetchWarehouses]);
 
     const openDetail = async (id: string) => {
+        if (activeSaves.current.size > 0) return;
         setDetailLoading(true);
         try {
             const res = await fetch(`/api/stock-counts/${id}`, { headers });
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data.error || 'No se pudo abrir la toma física.');
+            }
             if (res.ok) {
                 const data: CountDetail = await res.json();
                 setDetail(data);
                 // Pre-cargar inputs con lo ya contado
                 const init: Record<string, string> = {};
                 for (const it of data.items) if (it.counted !== null) init[it.productId] = String(it.counted);
+                if (data.count.status === 'OPEN') {
+                    try {
+                        const draft = JSON.parse(sessionStorage.getItem(`nortex_count_draft:${id}`) || '{}');
+                        for (const it of data.items) {
+                            if (typeof draft[it.productId] === 'string' && sanitizeCountInput(draft[it.productId]) !== null) init[it.productId] = draft[it.productId];
+                        }
+                    } catch { /* El servidor conserva la captura confirmada. */ }
+                }
+                saveQueue.current.clear();
+                setSaveErrors({});
                 setInputs(init);
                 setSearch('');
+                setContextProductId(context.productId);
             }
         } catch (e) {
-            console.error('Error opening count:', e);
+            showToast({ tone: 'error', title: 'No se pudo abrir la toma', message: e instanceof Error ? e.message : 'Revisá la conexión e intentá nuevamente.' });
         } finally {
             setDetailLoading(false);
         }
@@ -218,39 +273,39 @@ export default function StockCount() {
         }
     };
 
-    // Guardar el conteo de un producto (PATCH). counted ya parseado.
+    // Una sola petición por producto; cambios posteriores se confirman en orden.
+    // La captura local nunca se sustituye con una respuesta de una petición vieja.
     const saveCount = useCallback(async (productId: string, counted: number) => {
         if (!detail) return;
-        const previousCount = detail.items.find(it => it.productId === productId)?.counted ?? null;
-        const restorePreviousCount = () => {
-            setInputs(prev => {
-                const next = { ...prev };
-                if (previousCount === null) delete next[productId];
-                else next[productId] = String(previousCount);
-                return next;
-            });
-        };
+        const countId = detail.count.id;
+        const key = `${countId}:${productId}`;
+        saveQueue.current.set(key, counted);
+        if (activeSaves.current.has(key)) return;
+        activeSaves.current.add(key);
         setSavingIds(prev => new Set(prev).add(productId));
         try {
-            const res = await fetch(`/api/stock-counts/${detail.count.id}/count`, {
-                method: 'PATCH', headers, body: JSON.stringify({ productId, counted }),
-            });
-            if (res.ok) {
-                setDetail(prev => prev ? {
+            while (saveQueue.current.has(key)) {
+                const nextCount = saveQueue.current.get(key)!;
+                saveQueue.current.delete(key);
+                const res = await fetch(`/api/stock-counts/${countId}/count`, {
+                    method: 'PATCH', headers, body: JSON.stringify({ productId, counted: nextCount }),
+                });
+                const data = await res.json().catch(() => ({}));
+                if (!res.ok) throw new Error(data.error || 'No se confirmó la captura.');
+                setDetail(prev => prev?.count.id === countId ? {
                     ...prev,
                     items: prev.items.map(it => it.productId === productId
-                        ? { ...it, counted, countedAt: new Date().toISOString() }
+                        ? { ...it, counted: nextCount, countedAt: data.countedAt || new Date().toISOString(), bookStockAtCapture: data.bookStockAtCapture ?? it.bookStockAtCapture }
                         : it),
                 } : prev);
-            } else {
-                const d = await res.json();
-                restorePreviousCount();
-                showToast({ tone: 'error', title: 'No se guardó el conteo', message: d.error || 'El valor anterior se mantuvo. Intentá de nuevo.' });
+                setSaveErrors(prev => { const next = { ...prev }; delete next[productId]; return next; });
             }
         } catch (e) {
-            restorePreviousCount();
-            showToast({ tone: 'error', title: 'No se guardó el conteo', message: 'Revisá tu conexión. El valor anterior se mantuvo.' });
+            const message = e instanceof Error ? e.message : 'No se pudo confirmar el guardado.';
+            setSaveErrors(prev => ({ ...prev, [productId]: message }));
+            showToast({ tone: 'error', title: 'No se guardó el conteo', message: `${message} La cantidad sigue escrita; reintentá para confirmarla.` });
         } finally {
+            activeSaves.current.delete(key);
             setSavingIds(prev => { const n = new Set(prev); n.delete(productId); return n; });
         }
     }, [detail, headers, showToast]);
@@ -258,11 +313,10 @@ export default function StockCount() {
     const updateCountInput = useCallback((productId: string, value: string) => {
         const sanitized = sanitizeCountInput(value);
         if (sanitized === null) {
-            setInputs(prev => ({ ...prev, [productId]: '' }));
             showToast({
                 tone: 'warning',
                 title: 'Cantidad inválida',
-                message: 'Usá un valor positivo con hasta cuatro decimales y punto como separador.',
+                message: 'Usá cero o una cantidad positiva con hasta cuatro decimales. La cantidad anterior se conservó.',
             });
             return;
         }
@@ -270,7 +324,10 @@ export default function StockCount() {
     }, [showToast]);
 
     const commitCountInput = useCallback((item: CountItem, rawValue: string) => {
-        if (rawValue === '') return;
+        if (rawValue === '') {
+            if (item.counted !== null) setInputs(prev => ({ ...prev, [item.productId]: String(item.counted) }));
+            return;
+        }
         const counted = parseCountInput(rawValue);
         if (counted === null) {
             setInputs(prev => {
@@ -286,16 +343,42 @@ export default function StockCount() {
             });
             return;
         }
-        if (counted !== item.counted) void saveCount(item.productId, counted);
-    }, [saveCount, showToast]);
+        if (counted !== item.counted || activeSaves.current.has(`${detail?.count.id}:${item.productId}`) || saveErrors[item.productId]) void saveCount(item.productId, counted);
+    }, [detail?.count.id, saveCount, saveErrors, showToast]);
+
+    const pendingItems = detail?.items.filter(item => {
+        const raw = inputs[item.productId];
+        return Boolean(saveErrors[item.productId]) || (raw !== undefined && raw !== '' && parseCountInput(raw) !== item.counted);
+    }) ?? [];
+    const hasUnconfirmedCounts = savingIds.size > 0 || pendingItems.length > 0;
+
+    useEffect(() => {
+        if (!detail || detail.count.status !== 'OPEN') return;
+        const draft = Object.fromEntries(detail.items.flatMap(item => {
+            const raw = inputs[item.productId];
+            return raw !== undefined && raw !== '' && (parseCountInput(raw) !== item.counted || saveErrors[item.productId]) ? [[item.productId, raw]] : [];
+        }));
+        try {
+            if (Object.keys(draft).length) sessionStorage.setItem(`nortex_count_draft:${detail.count.id}`, JSON.stringify(draft));
+            else sessionStorage.removeItem(`nortex_count_draft:${detail.count.id}`);
+        } catch { /* Storage no disponible: se conserva en pantalla. */ }
+    }, [detail, inputs, saveErrors]);
+
+    useEffect(() => {
+        if (!hasUnconfirmedCounts) return;
+        const beforeUnload = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+        window.addEventListener('beforeunload', beforeUnload);
+        return () => window.removeEventListener('beforeunload', beforeUnload);
+    }, [hasUnconfirmedCounts]);
 
     const closeCount = async () => {
-        if (!detail) return;
+        if (!detail || hasUnconfirmedCounts || activeSaves.current.size > 0) return;
         setClosing(true);
         try {
             const res = await fetch(`/api/stock-counts/${detail.count.id}/close`, { method: 'POST', headers });
             const data = await res.json();
             if (res.ok) {
+                try { sessionStorage.removeItem(`nortex_count_draft:${detail.count.id}`); } catch { /* Sin almacenamiento local. */ }
                 setShowCloseConfirm(false);
                 const resultParts = [`${data.adjusted} ajuste(s) aplicado(s)`];
                 if (canViewInventoryValuation && data.lossValue > 0) resultParts.push(`merma ${formatCurrency(data.lossValue)}`);
@@ -320,6 +403,7 @@ export default function StockCount() {
         try {
             const res = await fetch(`/api/stock-counts/${detail.count.id}/cancel`, { method: 'POST', headers });
             if (res.ok) {
+                try { sessionStorage.removeItem(`nortex_count_draft:${detail.count.id}`); } catch { /* Sin almacenamiento local. */ }
                 setShowCancelConfirm(false);
                 showToast({ tone: 'success', title: 'Toma física cancelada', message: 'No se aplicó ningún ajuste y el historial quedó disponible para consulta.' });
                 setDetail(null);
@@ -329,7 +413,7 @@ export default function StockCount() {
                 showToast({ tone: 'error', title: 'No se pudo cancelar la toma', message: d.error || 'Intentá de nuevo.' });
             }
         } catch {
-            showToast({ tone: 'error', title: 'Error de conexión', message: 'La toma sigue abierta. Revisá tu conexión e intentá de nuevo.' });
+            showToast({ tone: 'error', title: 'Error de conexión', message: 'No pudimos confirmar la cancelación. Revisá el estado de la toma antes de reintentar.' });
         } finally {
             setCancelling(false);
         }
@@ -409,8 +493,10 @@ export default function StockCount() {
     const scanTimer = useRef<any>(null);
 
     useEffect(() => {
-        if (!detail || detail.count.status !== 'OPEN' || !detail.count.warehouseId) return;
+        scanBuffer.current = '';
+        if (!detail || detail.count.status !== 'OPEN' || !detail.count.warehouseId || confirmationOpen || closing || cancelling) return;
         const handleKeyDown = (e: KeyboardEvent) => {
+            if (document.querySelector('[data-camera-scanner]')) { scanBuffer.current = ''; return; }
             const target = e.target as HTMLElement;
             if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT')) return;
             if (e.key === 'Enter') {
@@ -419,12 +505,18 @@ export default function StockCount() {
                 if (code.length < 3) return;
                 const item = detail.items.find(it => it.product.sku.toLowerCase() === code.toLowerCase());
                 if (item) {
+                    const rules = resolveProductQuantityRules(item.product);
+                    if (rules.saleMode === 'MEASURED' || Number(rules.quantityStep) !== 1) {
+                        setSearch(item.product.sku);
+                        showToast({ tone: 'info', title: 'Ingresá la cantidad física', message: `${item.product.name} se cuenta en ${item.product.unit}, en pasos de ${rules.quantityStep}. Conservamos lo ya capturado.` });
+                        return;
+                    }
                     const inputCount = inputs[item.productId] !== undefined ? parseCountInput(inputs[item.productId]) : null;
                     const current = inputCount ?? item.counted ?? 0;
-                    const next = Math.trunc(current) + 1;
+                    const next = current + 1;
                     setInputs(prev => ({ ...prev, [item.productId]: String(next) }));
                     saveCount(item.productId, next);
-                }
+                } else showToast({ tone: 'warning', title: 'Código fuera de esta toma', message: 'Buscá el producto por nombre o verificá el código.' });
             } else if (e.key.length === 1) {
                 scanBuffer.current += e.key;
                 if (scanTimer.current) clearTimeout(scanTimer.current);
@@ -432,8 +524,8 @@ export default function StockCount() {
             }
         };
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [detail, inputs, saveCount]);
+        return () => { window.removeEventListener('keydown', handleKeyDown); if (scanTimer.current) clearTimeout(scanTimer.current); };
+    }, [detail, inputs, saveCount, confirmationOpen, closing, cancelling, showToast]);
 
     // ==========================================
     // DERIVED
@@ -444,6 +536,7 @@ export default function StockCount() {
     );
     const selectedWarehouseHasOpenCount = createWarehouseId ? openWarehouseIds.has(createWarehouseId) : false;
     const createFormValid = Boolean(createWarehouseId)
+        && !warehousesLoading && !warehouseError && (createScope !== 'CATEGORY' || !categoryError)
         && !selectedWarehouseHasOpenCount
         && (createScope !== 'CATEGORY' || Boolean(createCategory));
 
@@ -455,7 +548,7 @@ export default function StockCount() {
             const val = raw !== undefined && raw !== '' ? parseCountInput(raw) : (it.counted ?? null);
             if (val === null) continue;
             counted++;
-            const diff = val - it.expected;
+            const diff = val - Number(it.bookStockAtCapture ?? it.expected);
             diffUnits += diff;
             if (diff < 0) lossValue += Math.abs(diff) * (Number(it.product.cost) || 0);
             else if (diff > 0) gainValue += diff * (Number(it.product.cost) || 0);
@@ -466,9 +559,10 @@ export default function StockCount() {
     const filteredItems = useMemo(() => {
         if (!detail) return [];
         const q = search.trim().toLowerCase();
-        if (!q) return detail.items;
-        return detail.items.filter(it => it.product.name.toLowerCase().includes(q) || it.product.sku.toLowerCase().includes(q));
-    }, [detail, search]);
+        const contextualItems = contextProductId ? detail.items.filter(item => item.productId === contextProductId) : detail.items;
+        if (!q) return contextualItems;
+        return contextualItems.filter(it => it.product.name.toLowerCase().includes(q) || (it.product.brand ?? '').toLowerCase().includes(q) || it.product.sku.toLowerCase().includes(q));
+    }, [detail, search, contextProductId]);
 
     // ==========================================
     // RENDER — DETALLE / CAPTURA
@@ -477,85 +571,21 @@ export default function StockCount() {
         const isOpen = detail.count.status === 'OPEN';
         const canOperate = isOpen && Boolean(detail.count.warehouseId);
         return (
-            <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+            <div className="stock-workspace nx-workspace">
                 <ToastViewport toast={toast} onDismiss={dismissToast} />
-
-                <button onClick={() => { setDetail(null); fetchCounts(); }} className="flex items-center gap-2 text-slate-400 hover:text-white mb-4 text-sm transition-colors">
-                    <ChevronLeft size={18} /> Volver a tomas físicas
-                </button>
-
-                {/* Header */}
-                <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-5 mb-4">
-                    <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                            <div className="flex items-center gap-2">
-                                <ClipboardList size={22} className="text-blue-400" />
-                                <h1 className="text-xl font-bold text-white">Toma Física</h1>
-                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${STATUS_META[detail.count.status]?.color}`}>
-                                    {STATUS_META[detail.count.status]?.label}
-                                </span>
-                            </div>
-                            <p className="text-sm text-slate-400 mt-1">
-                                <span className="inline-flex items-center gap-1 text-blue-300 font-medium">
-                                    <WarehouseIcon size={14} />
-                                    {detail.count.warehouse?.name || 'Ubicación histórica/no especificada'}
-                                </span>
-                                {' '}· {detail.count.scope === 'CATEGORY' ? `Categoría: ${detail.count.category}` : 'Todo el inventario'}
-                                {' '}· Creada {formatDate(detail.count.createdAt)}
-                                {detail.count.creator ? ` por ${detail.count.creator.name}` : ''}
-                            </p>
-                            {detail.count.notes && <p className="text-sm text-slate-500 mt-1 italic">"{detail.count.notes}"</p>}
-                        </div>
-                        {isOpen && (
-                            <div className="flex items-center gap-2">
-                                <button onClick={(event) => openCancelConfirmation(event.currentTarget)} className="bg-slate-700 hover:bg-slate-600 text-slate-300 px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600">
-                                    <Trash2 size={15} /> Cancelar
-                                </button>
-                                {canOperate && (
-                                    <button onClick={(event) => openCloseConfirmation(event.currentTarget)} className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors">
-                                        <Lock size={15} /> Cerrar y ajustar
-                                    </button>
-                                )}
-                            </div>
-                        )}
-                    </div>
-
-                    {!detail.count.warehouseId && (
-                        <div className="mt-4 bg-amber-950/50 border border-amber-700/60 rounded-lg p-3 flex items-start gap-2" role="alert">
-                            <AlertTriangle size={17} className="text-amber-400 mt-0.5 shrink-0" />
-                            <div>
-                                <p className="text-sm font-semibold text-amber-200">Conteo histórico sin ubicación</p>
-                                <p className="text-xs text-amber-300/80 mt-0.5">No es seguro aplicar este snapshot al inventario actual. Cancélalo y crea una toma nueva eligiendo la bodega.</p>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* Stats */}
-                    <div className={`grid grid-cols-2 ${canViewInventoryValuation ? 'sm:grid-cols-4' : 'sm:grid-cols-2'} gap-3 mt-4`}>
-                        <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                            <p className="text-xs text-slate-400">Progreso</p>
-                            <p className="text-lg font-bold text-white">{detailStats.counted}<span className="text-sm text-slate-500"> / {detailStats.total}</span></p>
-                        </div>
-                        <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                            <p className="text-xs text-slate-400">Diferencia</p>
-                            <p className={`text-lg font-bold ${detailStats.diffUnits < 0 ? 'text-red-400' : detailStats.diffUnits > 0 ? 'text-emerald-400' : 'text-white'}`}>
-                                {detailStats.diffUnits > 0 ? '+' : ''}{detailStats.diffUnits}
-                            </p>
-                        </div>
-                        {canViewInventoryValuation && (
-                            <>
-                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                                    <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingDown size={12} className="text-red-400" /> Merma estimada</p>
-                                    <p className="text-lg font-bold text-red-400">{formatCurrency(detailStats.lossValue)}</p>
-                                </div>
-                                <div className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
-                                    <p className="text-xs text-slate-400 flex items-center gap-1"><TrendingUp size={12} className="text-emerald-400" /> Sobrante estimado</p>
-                                    <p className="text-lg font-bold text-emerald-400">{formatCurrency(detailStats.gainValue)}</p>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                </div>
+                <header className="stock-count-capture-header">
+                    <button disabled={savingIds.size > 0} onClick={() => { setDetail(null); fetchCounts(); }} className="stock-workspace-back nx-fluid-press"><ChevronLeft size={17}/> Todos los conteos</button>
+                    <div className="stock-workspace-title"><h1>{detail.count.warehouse?.name || 'Conteo sin ubicación'}</h1>{isOpen && <button onClick={(event) => openCancelConfirmation(event.currentTarget)} className="stock-workspace-quiet nx-fluid-press">Cancelar conteo</button>}</div>
+                    <p className="stock-count-capture-subtitle">{detail.count.scope === 'CATEGORY' ? detail.count.category : 'Todos los productos'} · {STATUS_META[detail.count.status]?.label} · {formatDate(detail.count.createdAt)}</p>
+                    {detail.count.notes && <p className="stock-count-capture-subtitle">{detail.count.notes}</p>}
+                    {!detail.count.warehouseId && <p role="alert" className="stock-workspace-notice">Este conteo histórico no tiene ubicación. Cancelalo y creá uno nuevo eligiendo la bodega.</p>}
+                    <div className="stock-count-progress"><span>{detailStats.counted} de {detailStats.total} productos contados</span><progress aria-label="Progreso del conteo" value={detailStats.counted} max={detailStats.total || 1}/></div>
+                </header>
+                {contextProductId && <p role="status" className="stock-workspace-notice">{detail.items.some(item => item.productId === contextProductId) ? 'Mostrando el producto que elegiste. El conteo conserva su alcance completo.' : 'El producto del enlace no está incluido en este conteo.'} <button className="underline nx-fluid-press" onClick={() => { setContextProductId(''); setSearch(''); }}>Ver todos los productos de este conteo</button></p>}
+                {hasUnconfirmedCounts && <div role="status" className="mb-4 rounded-lg border border-amber-700 bg-amber-950/40 p-3 text-sm text-amber-200">
+                    {savingIds.size > 0 ? 'Guardando capturas. Esperá antes de cerrar.' : 'Hay cantidades sin confirmar. Se conservan en esta pestaña; revisalas y guardalas antes de cerrar.'}
+                    {savingIds.size === 0 && <button type="button" className="ml-3 underline font-semibold" onClick={() => pendingItems.forEach(item => commitCountInput(item, inputs[item.productId] ?? ''))}>Reintentar guardados</button>}
+                </div>}
 
                 {/* Toolbar */}
                 <div className="flex flex-wrap items-center gap-3 mb-3">
@@ -564,14 +594,15 @@ export default function StockCount() {
                         <input
                             aria-label="Buscar producto o SKU"
                             value={search}
-                            onChange={(e) => setSearch(e.target.value)}
+                            onChange={(e) => { setContextProductId(''); setSearch(e.target.value); }}
                             placeholder="Buscar producto o SKU..."
                             className="w-full bg-slate-800 border border-slate-600 rounded-lg pl-9 pr-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
                         />
                     </div>
+                    <CameraScanButton disabled={closing || cancelling} onCode={code => { const found = detail.items.find(item => item.product.sku.toUpperCase() === code.toUpperCase()); if (!found) throw new Error('El código no está en esta toma física. Revisá el producto y la bodega.'); setContextProductId(''); setSearch(found.product.sku); }} />
                     {canOperate && (
                         <div className="flex items-center gap-2 text-xs text-slate-400 bg-slate-800/60 border border-slate-700 rounded-lg px-3 py-2">
-                            <ScanLine size={15} className="text-blue-400" /> Escanea para sumar 1
+                            <ScanLine size={15} className="text-blue-400" /> Escaneá unidades para sumar 1; medidos requieren cantidad
                         </div>
                     )}
                 </div>
@@ -582,7 +613,7 @@ export default function StockCount() {
                         {filteredItems.map((it) => {
                             const raw = inputs[it.productId];
                             const val = raw !== undefined && raw !== '' ? parseCountInput(raw) : (it.counted ?? null);
-                            const diff = val !== null ? val - it.expected : null;
+                            const diff = val !== null ? val - Number(it.bookStockAtCapture ?? it.expected) : null;
                             const isSaving = savingIds.has(it.productId);
                             const isCounted = it.counted !== null;
                             const inputId = `stock-count-mobile-${it.id}`;
@@ -591,7 +622,7 @@ export default function StockCount() {
                                     <div className="flex items-start gap-2">
                                         {isCounted && <Check size={16} className="text-emerald-400 shrink-0 mt-0.5" aria-hidden="true" />}
                                         <div className="min-w-0">
-                                            <h2 className="text-sm font-semibold text-white break-words">{it.product.name}</h2>
+                                            <h2 className="text-sm font-semibold text-white break-words">{it.product.name}</h2>{it.product.brand && <p className="text-xs text-slate-300">{it.product.brand}</p>}
                                             <p className="text-xs text-slate-400 font-mono mt-1 break-all">SKU: {it.product.sku}</p>
                                         </div>
                                     </div>
@@ -599,7 +630,7 @@ export default function StockCount() {
                                     <dl className="grid grid-cols-2 gap-3 mt-4">
                                         <div className="bg-slate-900/60 rounded-lg border border-slate-700 p-3">
                                             <dt className="text-xs text-slate-400">Esperado</dt>
-                                            <dd className="text-base font-semibold text-slate-200 mt-1">{it.expected} {it.product.unit}</dd>
+                                            <dd className="text-base font-semibold text-slate-200 mt-1">{it.bookStockAtCapture ?? it.expected} {it.product.unit}</dd>
                                         </div>
                                         <div className="bg-slate-900/60 rounded-lg border border-slate-700 p-3">
                                             <dt className="text-xs text-slate-400">Diferencia</dt>
@@ -618,7 +649,7 @@ export default function StockCount() {
                                             </dt>
                                             <dd>
                                                 {canOperate ? (
-                                                    <input
+                                                    <><input
                                                         id={inputId}
                                                         aria-label={`Conteo físico de ${it.product.name}`}
                                                         type="text"
@@ -631,6 +662,7 @@ export default function StockCount() {
                                                         onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
                                                         className="w-full min-h-11 bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-base text-white text-right focus:outline-none focus:border-blue-500"
                                                     />
+                                                    {isCounted && <button type="button" aria-label={`Guardar reconteo de ${it.product.name}`} disabled={isSaving || parseCountInput(raw ?? '') === null} onClick={() => void saveCount(it.productId, parseCountInput(raw ?? '')!)} className="mt-2 text-xs text-blue-300 underline disabled:opacity-50">Volví a contar: guardar cantidad</button>}</>
                                                 ) : (
                                                     <div className="min-h-11 flex items-center justify-end bg-slate-900/60 border border-slate-700 rounded-lg px-3 py-2 text-base font-semibold text-slate-200">
                                                         {it.counted ?? '—'}{it.counted !== null ? ` ${it.product.unit}` : ''}
@@ -662,17 +694,17 @@ export default function StockCount() {
                                 {filteredItems.map((it) => {
                                     const raw = inputs[it.productId];
                                     const val = raw !== undefined && raw !== '' ? parseCountInput(raw) : (it.counted ?? null);
-                                    const diff = val !== null ? val - it.expected : null;
+                                    const diff = val !== null ? val - Number(it.bookStockAtCapture ?? it.expected) : null;
                                     const isSaving = savingIds.has(it.productId);
                                     const isCounted = it.counted !== null;
                                     return (
                                         <tr key={it.id} className="hover:bg-slate-700/20 transition-colors">
                                             <td className="px-4 py-3 text-sm text-white font-medium flex items-center gap-2">
                                                 {isCounted && <Check size={14} className="text-emerald-400 shrink-0" />}
-                                                {it.product.name}
+                                                <span>{it.product.name}{it.product.brand && <span className="block text-xs text-slate-300">{it.product.brand}</span>}</span>
                                             </td>
                                             <td className="px-4 py-3 text-sm text-slate-400 font-mono">{it.product.sku}</td>
-                                            <td className="px-4 py-3 text-right text-sm text-slate-300">{it.expected} {it.product.unit}</td>
+                                            <td className="px-4 py-3 text-right text-sm text-slate-300">{it.bookStockAtCapture ?? it.expected} {it.product.unit}</td>
                                             <td className="px-4 py-3 text-right">
                                                 {canOperate ? (
                                                     <div className="flex items-center justify-end gap-2">
@@ -693,6 +725,7 @@ export default function StockCount() {
                                                 ) : (
                                                     <span className="text-sm text-slate-300">{it.counted ?? '—'}</span>
                                                 )}
+                                                {canOperate && isCounted && <button type="button" aria-label={`Guardar reconteo de ${it.product.name}`} disabled={isSaving || parseCountInput(raw ?? '') === null} onClick={() => void saveCount(it.productId, parseCountInput(raw ?? '')!)} className="mt-1 block ml-auto text-xs text-blue-300 underline disabled:opacity-50">Guardar reconteo</button>}
                                             </td>
                                             <td className="px-4 py-3 text-right">
                                                 {diff === null ? (
@@ -715,6 +748,7 @@ export default function StockCount() {
                 </div>
 
                 {/* Confirmación de cierre */}
+                {isOpen && canOperate && <footer className="stock-count-reviewbar"><span>{hasUnconfirmedCounts ? 'Esperando confirmar capturas' : 'Revisá las diferencias antes de terminar'}</span><button disabled={hasUnconfirmedCounts} onClick={event => openCloseConfirmation(event.currentTarget)} className="stock-count-primary nx-fluid-press">Revisar y terminar</button></footer>}
                 {showCloseConfirm && (
                     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeConfirmationDialogs}>
                         <div
@@ -755,7 +789,7 @@ export default function StockCount() {
                                 )}
                                 <div className="flex gap-3 pt-1">
                                     <button ref={confirmationSafeActionRef} type="button" onClick={closeConfirmationDialogs} disabled={closing} className="flex-1 bg-slate-700 hover:bg-slate-600 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors">Volver</button>
-                                    <button onClick={closeCount} disabled={closing} className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors">
+                                    <button onClick={closeCount} disabled={closing || hasUnconfirmedCounts} className="flex-1 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors">
                                         {closing ? <><Loader2 size={15} className="animate-spin" /> Cerrando...</> : 'Confirmar cierre'}
                                     </button>
                                 </div>
@@ -807,133 +841,17 @@ export default function StockCount() {
     // RENDER — LISTA / HISTORIAL
     // ==========================================
     return (
-        <div className="p-4 sm:p-6 max-w-5xl mx-auto">
+        <div className="stock-workspace nx-workspace">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
 
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-                <div>
-                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
-                        <ClipboardList size={24} className="text-blue-400" /> Toma Física
-                    </h1>
-                    <p className="text-sm text-slate-400 mt-1">Cuenta una bodega a la vez. Las diferencias solo ajustan la ubicación elegida.</p>
-                </div>
-                <button onClick={openCreateForm} className="w-full sm:w-auto justify-center bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors">
-                    <Plus size={16} /> Nueva toma física
-                </button>
-            </div>
 
-            <section className="sm:hidden space-y-3" aria-label="Historial de tomas físicas">
-                {loading ? (
-                    <div className="bg-slate-800/60 rounded-xl border border-slate-700 px-4 py-12 text-center text-slate-400" role="status">
-                        <Loader2 className="animate-spin inline mr-2" size={18} aria-hidden="true" /> Cargando...
-                    </div>
-                ) : counts.length === 0 ? (
-                    <div className="bg-slate-800/60 rounded-xl border border-slate-700 px-4 py-14 text-center text-slate-500">
-                        <Package size={40} className="opacity-30 mb-2 mx-auto" aria-hidden="true" />
-                        <p>Aún no has hecho ninguna toma física.</p>
-                        <p className="text-xs text-slate-600 mt-1">Crea una para cuadrar tu inventario real con el sistema.</p>
-                    </div>
-                ) : counts.map((c) => {
-                    const actionLabel = c.status === 'OPEN' && c.warehouseId ? 'Continuar' : 'Ver detalle';
-                    return (
-                        <article
-                            key={c.id}
-                            className="w-full bg-slate-800/60 rounded-xl border border-slate-700 p-4 text-left"
-                        >
-                            <div className="flex items-start justify-between gap-3">
-                                <time dateTime={c.createdAt} className="text-sm font-medium text-slate-200">{formatDate(c.createdAt)}</time>
-                                <span className={`shrink-0 px-2.5 py-0.5 rounded-full text-xs font-medium border ${STATUS_META[c.status]?.color}`}>
-                                    {STATUS_META[c.status]?.label}
-                                </span>
-                            </div>
+            {(loadError || warehouseError || categoryError) && <div role="alert" className="mb-4 rounded-lg border border-red-700 bg-red-950/40 p-3 text-sm text-red-200">
+                {[loadError, warehouseError, categoryError].filter(Boolean).join(' ')}
+                <button type="button" className="ml-3 underline font-semibold" onClick={() => { void fetchCounts(); void fetchWarehouses(); void fetchCategories(); }}>Reintentar carga</button>
+            </div>}
 
-                            <p className="flex items-start gap-2 text-sm font-semibold text-white mt-3 break-words">
-                                <WarehouseIcon size={16} className={`shrink-0 mt-0.5 ${c.warehouse ? 'text-blue-400' : 'text-amber-400'}`} aria-hidden="true" />
-                                {c.warehouse?.name || 'Bodega no especificada'}
-                            </p>
-
-                            <dl className="grid grid-cols-2 gap-x-4 gap-y-3 mt-4">
-                                <div>
-                                    <dt className="text-xs text-slate-500">Alcance</dt>
-                                    <dd className="text-sm text-slate-300 mt-0.5 break-words">{c.scope === 'CATEGORY' ? c.category : 'Todo el inventario'}</dd>
-                                </div>
-                                <div>
-                                    <dt className="text-xs text-slate-500">Productos</dt>
-                                    <dd className="text-sm text-slate-300 mt-0.5">{c._count?.items ?? '—'}</dd>
-                                </div>
-                                <div className="col-span-2">
-                                    <dt className="text-xs text-slate-500">Creada por</dt>
-                                    <dd className="text-sm text-slate-300 mt-0.5 break-words">{c.creator?.name || '—'}</dd>
-                                </div>
-                            </dl>
-
-                            <button
-                                type="button"
-                                onClick={() => openDetail(c.id)}
-                                className="w-full mt-4 pt-3 border-t border-slate-700/70 flex items-center justify-end text-sm font-semibold text-blue-400 hover:text-blue-300 focus:outline-none focus:text-blue-200"
-                                aria-label={`${actionLabel}: toma de ${c.warehouse?.name || 'bodega no especificada'}, ${formatDate(c.createdAt)}`}
-                            >
-                                {actionLabel} <span aria-hidden="true">→</span>
-                            </button>
-                        </article>
-                    );
-                })}
-            </section>
-
-            <div className="hidden sm:block bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="w-full">
-                        <thead>
-                            <tr className="bg-slate-900/80">
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase font-semibold">Fecha</th>
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase font-semibold">Bodega</th>
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase font-semibold">Alcance</th>
-                                <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase font-semibold">Creada por</th>
-                                <th className="text-right px-4 py-3 text-xs text-slate-400 uppercase font-semibold">Productos</th>
-                                <th className="text-center px-4 py-3 text-xs text-slate-400 uppercase font-semibold">Estado</th>
-                                <th className="px-4 py-3"></th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-700/50">
-                            {loading ? (
-                                <tr><td colSpan={7} className="px-4 py-12 text-center text-slate-400"><Loader2 className="animate-spin inline mr-2" size={18} /> Cargando...</td></tr>
-                            ) : counts.length === 0 ? (
-                                <tr><td colSpan={7} className="px-4 py-16 text-center text-slate-500">
-                                    <Package size={40} className="opacity-30 mb-2 mx-auto" />
-                                    <p>Aún no has hecho ninguna toma física.</p>
-                                    <p className="text-xs text-slate-600 mt-1">Crea una para cuadrar tu inventario real con el sistema.</p>
-                                </td></tr>
-                            ) : counts.map((c) => (
-                                <tr key={c.id} className="hover:bg-slate-700/20 transition-colors cursor-pointer" onClick={() => openDetail(c.id)}>
-                                    <td className="px-4 py-3 text-sm text-slate-300">{formatDate(c.createdAt)}</td>
-                                    <td className="px-4 py-3 text-sm text-slate-300">
-                                        <span className="inline-flex items-center gap-1.5">
-                                            <WarehouseIcon size={14} className={c.warehouse ? 'text-blue-400' : 'text-amber-400'} />
-                                            {c.warehouse?.name || 'No especificada'}
-                                        </span>
-                                    </td>
-                                    <td className="px-4 py-3 text-sm text-slate-300">{c.scope === 'CATEGORY' ? c.category : 'Todo'}</td>
-                                    <td className="px-4 py-3 text-sm text-slate-400">{c.creator?.name || '—'}</td>
-                                    <td className="px-4 py-3 text-right text-sm text-slate-300">{c._count?.items ?? '—'}</td>
-                                    <td className="px-4 py-3 text-center">
-                                        <span className={`px-2.5 py-0.5 rounded-full text-xs font-medium border ${STATUS_META[c.status]?.color}`}>{STATUS_META[c.status]?.label}</span>
-                                    </td>
-                                    <td className="px-4 py-3 text-right">
-                                        <button
-                                            type="button"
-                                            onClick={(event) => { event.stopPropagation(); openDetail(c.id); }}
-                                            className="text-blue-400 text-sm hover:text-blue-300 focus:outline-none focus:text-blue-200"
-                                            aria-label={`${c.status === 'OPEN' && c.warehouseId ? 'Continuar' : 'Ver detalle'}: toma de ${c.warehouse?.name || 'bodega no especificada'}, ${formatDate(c.createdAt)}`}
-                                        >
-                                            {c.status === 'OPEN' && c.warehouseId ? 'Continuar →' : 'Ver →'}
-                                        </button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
-                </div>
-            </div>
+            <StockCountWorkspaceList counts={counts} loading={loading} error={Boolean(loadError)} selectedWarehouseId={createWarehouseId} onOpen={openDetail} onCreate={openCreateForm} returnHref={returnHref} />
+            {context.warehouseId && !warehousesLoading && !warehouseError && !warehouses.some(warehouse => warehouse.id === context.warehouseId) && <p role="alert" className="stock-workspace-notice">La bodega del enlace no está disponible. Elegí una ubicación al crear un conteo.</p>}
 
             {detailLoading && (
                 <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-40">
@@ -942,11 +860,10 @@ export default function StockCount() {
             )}
 
             {/* Crear */}
-            {showCreate && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowCreate(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+            <FluidSheet open={showCreate} onClose={() => { if (!creating) setShowCreate(false); }} labelledBy="stock-count-create-title" closeOnBackdrop={!creating} closeOnEscape={!creating} dragToDismiss={!creating} panelClassName="stock-count-create-sheet">
+                    <fieldset disabled={creating} className="min-w-0 border-0 p-0 overflow-y-auto">
                         <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2"><Plus size={20} className="text-blue-400" /> Nueva toma física</h2>
+                            <h2 id="stock-count-create-title" className="text-lg font-bold text-white">Nuevo conteo</h2>
                             <button aria-label="Cerrar" onClick={() => setShowCreate(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"><X size={20} /></button>
                         </div>
                         <div className="p-6 space-y-5">
@@ -971,7 +888,8 @@ export default function StockCount() {
                                         );
                                     })}
                                 </select>
-                                {!warehousesLoading && warehouses.length === 0 && (
+                                {warehouseError && <p role="alert" className="text-sm text-red-300 mt-2">{warehouseError} <button className="underline" onClick={() => void fetchWarehouses()}>Reintentar bodegas</button></p>}
+                                {!warehousesLoading && !warehouseError && warehouses.length === 0 && (
                                     <p className="text-xs text-amber-300 mt-2">
                                         No hay bodegas activas.{' '}
                                         {canManageWarehouseTopology ? (
@@ -988,12 +906,13 @@ export default function StockCount() {
                             <div>
                                 <label className="block text-sm text-slate-300 mb-2 font-medium">Alcance</label>
                                 <div className="grid grid-cols-2 gap-2">
-                                    <button onClick={() => setCreateScope('ALL')} className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${createScope === 'ALL' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}>Todo el inventario</button>
-                                    <button onClick={() => setCreateScope('CATEGORY')} className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${createScope === 'CATEGORY' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}>Por categoría</button>
+                                    <button onClick={() => setCreateScope('ALL')} className={`nx-fluid-press px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${createScope === 'ALL' ? 'bg-brand border-brand text-brand-on' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}>Todo el inventario</button>
+                                    <button onClick={() => setCreateScope('CATEGORY')} className={`nx-fluid-press px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${createScope === 'CATEGORY' ? 'bg-brand border-brand text-brand-on' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}>Por categoría</button>
                                 </div>
                             </div>
                             {createScope === 'CATEGORY' && (
                                 <div>
+                                    {categoryError && <p role="alert" className="text-sm text-red-300 mb-2">{categoryError} <button className="underline" onClick={() => void fetchCategories()}>Reintentar categorías</button></p>}
                                     <label htmlFor="stock-count-category" className="block text-sm text-slate-300 mb-2 font-medium">Categoría</label>
                                     <select id="stock-count-category" value={createCategory} onChange={(e) => setCreateCategory(e.target.value)} className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500">
                                         <option value="">Selecciona...</option>
@@ -1001,21 +920,21 @@ export default function StockCount() {
                                     </select>
                                 </div>
                             )}
-                            <div>
-                                <label htmlFor="stock-count-notes" className="block text-sm text-slate-300 mb-2 font-medium">Notas (opcional)</label>
-                                <input id="stock-count-notes" value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} placeholder="Ej: conteo mensual de cierre" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" />
+                            <details onToggle={event => setShowNotes(event.currentTarget.open)}>
+                                <summary className="cursor-pointer text-sm text-slate-400">Agregar nota</summary>
+                                {showNotes && <><label htmlFor="stock-count-notes" className="block text-sm text-slate-300 mb-2 font-medium">Notas (opcional)</label>
+                                <input id="stock-count-notes" value={createNotes} onChange={(e) => setCreateNotes(e.target.value)} placeholder="Ej: conteo mensual de cierre" className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500" /></>}
+                            </details>
+                            <div className="nx-count-guidance rounded-lg p-3 flex items-start gap-2">
+                                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                                <p className="text-xs">Se tomará una foto del stock de la bodega elegida. Evita ventas o movimientos mientras cuentas; si ocurren, vuelve a verificar los productos afectados antes de cerrar.</p>
                             </div>
-                            <div className="bg-blue-950/40 border border-blue-800/40 rounded-lg p-3 flex items-start gap-2">
-                                <AlertTriangle size={16} className="text-blue-400 mt-0.5 shrink-0" />
-                                <p className="text-xs text-blue-300/80">Se tomará una foto del stock de la bodega elegida. Evita ventas o movimientos mientras cuentas; si ocurren, vuelve a verificar los productos afectados antes de cerrar.</p>
-                            </div>
-                            <button onClick={createCount} disabled={creating || !createFormValid} className="w-full bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors">
+                            <button onClick={createCount} disabled={creating || !createFormValid} className="nx-fluid-press w-full bg-brand hover:bg-brand-hover disabled:opacity-50 disabled:cursor-not-allowed text-brand-on px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors">
                                 {creating ? <><Loader2 size={15} className="animate-spin" /> Creando...</> : 'Crear y empezar a contar'}
                             </button>
                         </div>
-                    </div>
-                </div>
-            )}
+                    </fieldset>
+            </FluidSheet>
         </div>
     );
 }

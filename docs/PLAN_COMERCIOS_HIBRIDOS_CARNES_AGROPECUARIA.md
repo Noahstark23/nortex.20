@@ -151,6 +151,12 @@ Todos los campos nuevos nacen nullable o con defaults que preserven negocios
 actuales. Los productos históricos conservan el comportamiento fraccionario
 actual hasta que el dueño los clasifique; no se impondrá paso `1` por sorpresa.
 
+> **Actualización 2026-09-12 — candidato local:** D6 describe la decisión del plan
+> original. En operaciones nuevas, unidad/unidades/caja/cajas sin modo ni paso
+> ahora usan enteros; MEASURED o paso explícito prevalecen y las unidades
+> desconocidas conservan fracciones. Se mantienen los snapshots históricos y
+> replays. Alcance y evidencia en la [auditoría de bodega y productos](AUDITORIA_BODEGA_PRODUCTOS_2026-09-12.md).
+
 ### D7. Requisitos no funcionales
 
 - **Integridad:** venta, stock, lote, Kardex y auditoría se confirman en una sola

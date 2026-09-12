@@ -205,6 +205,12 @@ Fixture adicional V10: fondo NIO500 + venta CASH115 + abono CASH25 + entrada20 �
 - Farmacia: **actualizado 2026-09-11.** Este corte decía que no se hallaban `pharmacyInventoryMode`, `ProductBatchHold` ni `heldStock`; hoy sí existen (`schema.prisma:62` · `productBatchHoldService.ts` · `ProductBatchWarehouseStock.heldStock`). Lo que sigue pendiente es distinto y está acotado por la auditoría FEFO del 2026-09-11: la cuarentena de devolución no tiene ruta de salida (ni liberación ni merma: `applyBatchWarehouseDelta` protege el retenido con `allowNegative: false`), y `batchWarehouseLedgerMode` nace en `OFF` sin ningún endpoint que lo escriba, así que encenderlo es intervención directa en base. No prometer stock vendible/retenido sin decidir antes esas dos cosas.
 - Históricos: permanece baja física de productos. Simplificar una acción de eliminar exige comprobar Kardex/lotes/documentos y un contrato de archivo; no borrar historia para limpiar la interfaz.
 
+> **Actualización 2026-09-12 — candidato local:** el riesgo de baja física anterior
+> corresponde al estado revisado por este plan. DELETE de una ficha propia
+> existente ahora devuelve 409 y conserva el producto. El archivado sigue
+> pendiente; ocultar del catálogo público no lo retira del inventario/POS. Ver la
+> [auditoría de bodega y productos](AUDITORIA_BODEGA_PRODUCTOS_2026-09-12.md); no implica despliegue.
+
 Las prioridades se aplican al flujo afectado y se contrastan con uso/incidentes. Estos hallazgos de código no demuestran por sí solos daños actuales a clientes. No impiden avanzar prototipos de lectura o correcciones visuales independientes.
 
 Además, inventariar todo módulo habilitado por tenant: RRHH/nómina, préstamos/mora, delivery/wallet, agente bancario y suscripciones. Validar sus roles, movimientos y reportes si están en uso. Si no se conoce el uso, marcarlo PENDIENTE; no asumir que es seguro posponerlo ni habilitarlo por este plan. Nómina, fiscalidad, clasificación de cuentas y políticas de crédito requieren responsable profesional y versión normativa antes de aceptar resultados.

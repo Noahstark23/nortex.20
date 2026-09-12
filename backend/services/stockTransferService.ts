@@ -41,6 +41,7 @@ interface LockedWarehouseAuthority extends Omit<WarehouseAuthority, 'isDefault'>
 interface LockedProductAuthority {
     id: string;
     name: string;
+    unit: string;
     saleMode: string | null;
     quantityStep: Decimal.Value | null;
     requiresBatchTracking: boolean | number;
@@ -456,7 +457,7 @@ const lockProducts = async (
     tenantId: string,
     productIds: string[],
 ): Promise<LockedProductAuthority[]> => tx.$queryRaw<LockedProductAuthority[]>(Prisma.sql`
-    SELECT \`id\`, \`name\`, \`saleMode\`, \`quantityStep\`, \`requiresBatchTracking\`
+    SELECT \`id\`, \`name\`, \`unit\`, \`saleMode\`, \`quantityStep\`, \`requiresBatchTracking\`
     FROM \`Product\`
     WHERE \`tenantId\` = ${tenantId}
       AND \`id\` IN (${Prisma.join(productIds)})

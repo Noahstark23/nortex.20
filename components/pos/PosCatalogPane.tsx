@@ -5,10 +5,12 @@ import { formatMoney } from '../../utils/money';
 import { buscarProductos, type EntradaIndice, type ResultadoBusqueda } from '../../utils/posSearch';
 import { EmptyState } from '../ui/EmptyState';
 import { ProductImage } from '../ui/ProductImage';
+import { CameraScanButton } from '../ui/CameraScanButton';
 import { CajaNicaCatalog } from './CajaNicaCatalog';
 
 export interface PosCatalogPaneProps {
     products: Product[];
+    onCameraCode?: (code: string) => Promise<void>;
     quantitiesByProduct?: ReadonlyMap<string, number>;
     indiceProductos: EntradaIndice<Product>[];
     resultadoBusqueda: ResultadoBusqueda<Product>;
@@ -81,7 +83,7 @@ const TarjetaProducto = React.memo<{
                 <h3 className="font-semibold text-sm text-slate-100 leading-tight line-clamp-2 min-w-0">{product.name}</h3>
                 {product.sku ? (
                     <p className="mt-0.5 text-[10px] font-bold uppercase tracking-[0.14em] text-slate-400 truncate">
-                        SKU: {product.sku}
+                        {product.brand ? `${product.brand} · ` : ''}SKU: {product.sku}
                     </p>
                 ) : null}
             </div>
@@ -101,7 +103,7 @@ TarjetaProducto.displayName = 'TarjetaProducto';
 
 /** Presentación del catálogo; las mutaciones y el escáner pertenecen al POS. */
 export function PosCatalogPane({
-    products, quantitiesByProduct, indiceProductos, resultadoBusqueda, productsError, guidedSimpleMode,
+    products, onCameraCode, quantitiesByProduct, indiceProductos, resultadoBusqueda, productsError, guidedSimpleMode,
     firstSaleMode, firstSaleStage, quickProductsLabel, pageSize,
     permiteStockNegativo, searchTerm, searchRef, setSearchTerm, handleSearchKeyDown,
     agregarDesdeGrilla, avisarProductoAgotado, fetchProducts, openQuickCreate,
@@ -237,6 +239,7 @@ export function PosCatalogPane({
                             {guidedSimpleMode && searchTerm && <button type="button" aria-label="Borrar texto de búsqueda" className="nx-pos-clear-search" onClick={() => { setSearchTerm(''); if (searchRef && 'current' in searchRef) searchRef.current?.focus(); }}><X size={18} /></button>}
                         </div></>
                     </div>
+                    {onCameraCode && <CameraScanButton onCode={onCameraCode}/>}
                     {guidedSimpleMode && <button type="button" onClick={openQuickCreate} className="nx-pos-create nx-fluid-press"><Plus size={17} /> Nuevo producto</button>}
                     {/* Quick Create */}
                     {!guidedSimpleMode && <button type="button"

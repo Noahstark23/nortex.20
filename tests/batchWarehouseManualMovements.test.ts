@@ -34,11 +34,7 @@ const writeoffRoute = between(
 ) + readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffService.ts'), 'utf8');
 const writeoffAuthority = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffPreparation.ts'), 'utf8');
 const writeoffValue = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffValue.ts'), 'utf8');
-const adjustRoute = between(
-    server,
-    "app.post('/api/inventory/adjust'",
-    "app.get('/api/inventory/batches/:productId'",
-);
+const adjustRoute = readFileSync(resolve(process.cwd(), 'backend/services/inventoryAdjustmentService.ts'), 'utf8');
 const updateProductRoute = between(
     server,
     "app.put('/api/products/:id'",
@@ -68,7 +64,7 @@ const bulkProductRoute = between(
     server,
     "app.post('/api/products/bulk'",
     "app.put('/api/products/:id'",
-);
+) + readFileSync(resolve(process.cwd(), 'backend/services/productImportService.ts'), 'utf8');
 
 const eventId = '123e4567-e89b-42d3-a456-426614174000';
 
@@ -256,12 +252,15 @@ describe('integridad transaccional de alta y merma manual', () => {
 
 describe('guard de mutaciones agregadas batch-tracked', () => {
     it('protege ajuste, edición de stock y kardex antes de applyStockDelta', () => {
-        for (const route of [adjustRoute, updateProductRoute, kardexRecordRoute]) {
+        for (const route of [updateProductRoute, kardexRecordRoute]) {
             expect(route).toContain('assertAggregateBatchMutationAllowed({');
             expect(route.indexOf('assertAggregateBatchMutationAllowed({'))
                 .toBeLessThan(route.indexOf('applyStockDelta(tx'));
         }
-        expect(adjustRoute).toContain('requiresBatchTracking');
+        expect(server).toContain("app.use('/api/inventory/adjust', inventoryAdjustmentsRouter)");
+        expect(adjustRoute).toContain("if (Boolean(product.requiresBatchTracking)) throw new InventoryAdjustmentError('BATCH_SELECTION_REQUIRED'");
+        expect(adjustRoute.indexOf("if (Boolean(product.requiresBatchTracking))"))
+            .toBeLessThan(adjustRoute.indexOf('await applyStockDelta(tx'));
         expect(updateProductRoute).toContain('lockedRequiresBatchTracking || nextRequiresBatchTracking');
         expect(kardexRecordRoute).toContain('requiresBatchTracking: product.requiresBatchTracking');
     });
@@ -272,9 +271,9 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
         expect(updateProductRoute).toContain('where: { tenantId: authReq.tenantId!, productId: id }');
         expect(updateProductRoute.indexOf('assertBatchTrackingTransitionAllowed({'))
             .toBeLessThan(updateProductRoute.indexOf('const result = await tx.product.update'));
-        expect(bulkProductRoute).toContain('SELECT stock, requiresBatchTracking FROM');
-        expect(bulkProductRoute).toContain('lockedRequiresBatchTracking !== nextRequiresBatchTracking');
-        expect(bulkProductRoute).toContain('where: { tenantId: authReq.tenantId!, productId: existing.id }');
+        expect(bulkProductRoute).toContain('SELECT id FROM \\`Product\\` WHERE tenantId = ${tenantId} AND sku = ${sku} FOR UPDATE');
+        expect(bulkProductRoute).toContain('existing.requiresBatchTracking !== data.requiresBatchTracking');
+        expect(bulkProductRoute).toContain('where: {tenantId, productId: existing.id}');
         expect(bulkProductRoute.indexOf('assertBatchTrackingTransitionAllowed({'))
             .toBeLessThan(bulkProductRoute.indexOf('await tx.product.update({'));
     });
@@ -285,17 +284,14 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
             'SELECT stock, requiresBatchTracking FROM',
             'const result = await tx.product.update',
         );
-        const bulkLockedDecision = between(
-            bulkProductRoute,
-            'SELECT stock, requiresBatchTracking FROM',
-            'await tx.product.update({',
-        );
-
-        for (const decision of [putLockedDecision, bulkLockedDecision]) {
-            expect(decision).toContain('lockedRequiresBatchTracking');
-            expect(decision).not.toContain('currentRequiresBatchTracking: existing.requiresBatchTracking');
-            expect(decision).not.toContain('requiresBatchTracking: Boolean(existing.requiresBatchTracking');
-        }
+        expect(putLockedDecision).toContain('lockedRequiresBatchTracking');
+        expect(putLockedDecision).not.toContain('currentRequiresBatchTracking: existing.requiresBatchTracking');
+        expect(putLockedDecision).not.toContain('requiresBatchTracking: Boolean(existing.requiresBatchTracking');
+        const lock = bulkProductRoute.indexOf('AND sku = ${sku} FOR UPDATE');
+        const authoritativeRead = bulkProductRoute.indexOf('tx.product.findFirstOrThrow({where: {id: locked[0].id, tenantId}})');
+        expect(lock).toBeGreaterThan(-1);
+        expect(authoritativeRead).toBeGreaterThan(lock);
+        expect(bulkProductRoute.indexOf('currentRequiresBatchTracking: existing.requiresBatchTracking')).toBeGreaterThan(authoritativeRead);
     });
 
     it('stock-count preflightea todas las líneas antes de aplicar una sola', () => {
@@ -317,9 +313,8 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
         expect(createProductRoute).toContain('const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)');
         expect(createProductRoute.indexOf('assertAggregateBatchMutationAllowed({'))
             .toBeLessThan(createProductRoute.indexOf('applyStockDelta(tx'));
-        expect(bulkProductRoute).toContain('const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)');
-        expect(bulkProductRoute).toContain('lockedRequiresBatchTracking || nextRequiresBatchTracking');
-        expect(bulkProductRoute).toContain('requiresBatchTracking: nextRequiresBatchTracking');
+        expect(bulkProductRoute).toContain('const mode = await resolveBatchWarehouseLedgerMode(tx, tenantId)');
+        expect(bulkProductRoute).toContain('assertAggregateBatchMutationAllowed({mode, requiresBatchTracking: data.requiresBatchTracking, delta: targetStock})');
         expect(bulkProductRoute).toContain('requiresBatchTracking: Boolean(normalized.requiresBatchTracking)');
     });
 });

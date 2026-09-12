@@ -4,6 +4,7 @@ import Decimal from 'decimal.js';
 import { ShoppingCart, Plus, Minus, X, Send, Phone, User, Store, Search, Share2, Package, Loader2, CheckCircle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { resolveProductQuantityRules } from '../utils/productQuantityRules';
 import { ProductImage } from './ui/ProductImage';
 
 type PublicPresentation = 'BASE' | 'PACK';
@@ -239,16 +240,9 @@ const refreshCartFromCatalogPage = (
     return reconcilePublicCatalogCart([item], [currentProduct]);
 });
 
-const productRules = (product: CatalogProduct, presentation: PublicPresentation) => ({
-    saleMode: presentation === 'PACK'
-        ? 'COUNTED' as const
-        : product.saleMode === 'COUNTED'
-            ? 'COUNTED' as const
-            : 'MEASURED' as const,
-    quantityStep: presentation === 'PACK'
-        ? '1'
-        : String(product.quantityStep ?? (product.saleMode === 'COUNTED' ? '1' : '0.0001')),
-});
+const productRules = (product: CatalogProduct, presentation: PublicPresentation) => presentation === 'PACK'
+    ? { saleMode: 'COUNTED' as const, quantityStep: '1' }
+    : resolveProductQuantityRules(product);
 
 const hasPackPresentation = (product: CatalogProduct): boolean => {
     try {

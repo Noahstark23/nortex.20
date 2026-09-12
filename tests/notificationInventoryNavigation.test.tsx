@@ -38,7 +38,7 @@ function NextNotice() {
 describe('destino de un aviso de inventario', () => {
     it('muestra el producto de la URL y lo busca en el catálogo después del debounce', async () => {
         render(<MemoryRouter initialEntries={['/app/inventory?search=Suero%20oral']}><Inventory /></MemoryRouter>);
-        expect(screen.getByPlaceholderText('Buscar por nombre, SKU o categoría...')).toHaveValue('Suero oral');
+        expect(screen.getByRole('searchbox', { name: 'Buscar productos' })).toHaveValue('Suero oral');
         await waitFor(() => expect(productRequests.some(url => url.searchParams.get('search') === 'Suero oral')).toBe(true));
         const filtered = productRequests.find(url => url.searchParams.get('search') === 'Suero oral')!;
         expect(filtered.searchParams.get('page')).toBe('1');
@@ -49,7 +49,7 @@ describe('destino de un aviso de inventario', () => {
         render(<MemoryRouter initialEntries={['/app/inventory?search=Suero%20oral']}><Inventory /><NextNotice /></MemoryRouter>);
         await waitFor(() => expect(productRequests.some(url => url.searchParams.get('search') === 'Suero oral')).toBe(true));
         fireEvent.click(screen.getByRole('button', { name: 'Abrir otro aviso' }));
-        const search = screen.getByPlaceholderText('Buscar por nombre, SKU o categoría...');
+        const search = screen.getByRole('searchbox', { name: 'Buscar productos' });
         expect(search).toHaveValue('Alcohol 70%');
         await waitFor(() => expect(productRequests.some(url => url.searchParams.get('search') === 'Alcohol 70%')).toBe(true));
         fireEvent.change(search, { target: { value: 'Vendas' } });

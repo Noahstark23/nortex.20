@@ -132,9 +132,9 @@ describe('registro de compra — caracterización conservada contra el servicio 
         await expect(register(fake, input())).rejects.toThrow('LOTE_REQUERIDO');
         expect(fake.db.purchase.create).not.toHaveBeenCalled();
     });
-    it('factura vinculada a recepción registra dinero sin reingresar stock', async () => {
+    it.each(['RECEIVED', 'CLOSED_SHORT'])('factura vinculada a recepción %s registra dinero sin reingresar stock', async (status) => {
         const fake = fixture();
-        fake.db.purchaseOrder.findFirst.mockResolvedValue({ id: 'po-1', supplierId: 'supplier-1', status: 'RECEIVED',
+        fake.db.purchaseOrder.findFirst.mockResolvedValue({ id: 'po-1', supplierId: 'supplier-1', status,
             items: [{ id: 'poi-1', productId: 'product-1', productName: 'Tornillo', quantityReceived: 2, quantityReceivedExact: '2' }], receipts: [] });
         await register(fake, input({ purchaseOrderId: 'po-1' }));
         expect(fake.state.stock).toBe(5);
@@ -144,6 +144,16 @@ describe('registro de compra — caracterización conservada contra el servicio 
         const fake = fixture(); fake.db.auditLog.create.mockRejectedValue(new Error('audit failed'));
         await expect(register(fake, input())).rejects.toThrow('audit failed');
         expect(fake.state.purchases).toEqual([]); expect(fake.state.stock).toBe(5);
+    });
+    it('factura la fracción histórica recibida sin reinterpretarla por el catálogo actual', async () => {
+        const fake = fixture();
+        fake.product.unit = 'caja';
+        fake.db.purchaseOrder.findFirst.mockResolvedValue({ id: 'po-1', supplierId: 'supplier-1', status: 'CLOSED_SHORT',
+            items: [{ id: 'poi-1', productId: 'product-1', productName: 'Tornillo', quantityOrdered: 2, quantityReceived: 1.5, quantityReceivedExact: '1.5', unitAtOrder: 'caja', saleModeAtOrder: 'MEASURED', quantityStepAtOrder: '0.0001' }], receipts: [] });
+        const result = await register(fake, input({ purchaseOrderId: 'po-1', items: [{ productId: 'product-1', purchaseOrderItemId: 'poi-1', quantity: '1.5', unitCost: '10', purchaseUnit: 'BASE' }] }));
+        expect(result.purchase.total).toBe('17.25');
+        expect(fake.state.stock).toBe(5);
+        expect(fake.context.applyStockDelta).not.toHaveBeenCalled();
     });
     it('factura repetida permanece bloqueada', async () => {
         const fake = fixture(); await register(fake, input());

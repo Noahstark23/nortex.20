@@ -20,6 +20,13 @@ const props = (overrides: Partial<CajaNicaCatalogProps> = {}): CajaNicaCatalogPr
 });
 
 describe('catálogo compacto del mostrador', () => {
+    it('identifica la marca sin reemplazar nombre, código ni reglas del producto', () => {
+        const branded = product({ brand: 'Truper' }); const initial = props({ products: [branded] });
+        render(<CajaNicaCatalog {...initial}/>);
+        expect(screen.getByText('Truper · SKU ELEC-12-A')).toBeVisible();
+        fireEvent.click(screen.getByRole('button', { name: /Agregar Cable THHN/ }));
+        expect(initial.onAdd).toHaveBeenCalledExactlyOnceWith(branded);
+    });
     it('permite agregar desde toda la fila sin controles anidados ni marcador de foto ausente', () => {
         const initial = props();
         const { container } = render(<CajaNicaCatalog {...initial} />);

@@ -110,6 +110,57 @@ pruebas; al extraer, ajustar el trinquete hacia abajo en el mismo cambio.
 
 ---
 
+## Bodega y catálogo — contrato del candidato local 2026-09-12
+
+Estas reglas describen el código del candidato; no acreditan despliegue ni
+reconciliación de datos históricos.
+
+- **Unidad base y cantidades:** usar `utils/productQuantityRules.ts` para nuevas
+  operaciones. `unidad`/`unidades`/`caja`/`cajas` sin modo ni paso configurados
+  usan enteros. `MEASURED` o un paso explícito prevalecen sobre el nombre; las
+  unidades desconocidas conservan el fallback fraccionario. El factor de empaque
+  convierte a unidad base. No reinterpretar snapshots de cotizaciones, pedidos
+  o recepciones históricas ni volver a aplicar un replay confirmado.
+- **Marca y cámara (candidato local):** `Product.brand` es opcional e independiente
+  del nombre; omitirla en importación conserva la existente. El lector óptico es
+  entrada, no una mutación de stock. POS conserva su router SKU/balanza; bodega
+  identifica antes de recibir, mover o contar. Una captura se acepta una vez y
+  se descarta si cambió la sesión. La validación de software no acredita cámara
+  física: ver [entrega de marca y cámara](docs/MARCAS_Y_LECTOR_CAMARA_2026-09-12.md).
+- **Importación:** `backend/services/productImportService.ts` confirma cada fila
+  en su propia transacción. Un SKU existente conserva los opcionales omitidos y
+  rechaza una existencia enviada por Excel: el stock se corrige por conteo o
+  ajuste en la bodega. Un producto nuevo admite existencia inicial; cuando hay
+  varias bodegas activas, esa entrada necesita ubicación explícita.
+- **Productos e historial:** `DELETE /api/products/:id` devuelve 409 para una ficha
+  propia existente mediante `productDeletionService.ts`. La ficha se conserva;
+  no hay archivado implementado. Ocultar del catálogo público no la archiva ni
+  la retira del inventario/POS.
+- **Ajustes físicos:** `inventoryAdjustmentService.ts` admite pérdida/sobrante
+  justificados. La UI conserva el UUID y el contenido ante un resultado incierto.
+  Sólo una confirmación exacta APPLIED o un rechazo durable REJECTED libera el
+  intento; un error sin ese comprobante no permite reemplazarlo. Un rechazo
+  durable impide que el UUID se aplique después y permite corregir con otro. Reclamo, stock, Kardex, asiento cuando tiene valor y
+  auditoría se confirman juntos. Una compra o devolución requiere su documento
+  y flujo correspondiente; los productos con lote/serie requieren identificar
+  las existencias afectadas. Clientes antiguos sin UUID no tienen esa garantía
+  de reintento idempotente.
+- **Captura decimal de compras:** `utils/bodegaReceivingInput.ts` acepta coma o
+  punto decimal sin borrar caracteres. Parciales y formatos ambiguos permanecen
+  visibles, pero no se envían. Cantidad, costo y abono conservan su precisión.
+- **Pago de compra CASH:** exige turno propio OPEN bajo lock; el preview aplica
+  la misma autoridad. El replay confirmado precede esa validación. Un traspaso
+  de turno calcula el corte después de obtener el lock y audita en la misma
+  transacción mediante `shiftHandoverService.ts`.
+- **Toma física:** `stockCountClosingSnapshot.ts` lee bajo lock el saldo de la
+  bodega y la captura guarda `bookStockAtCapture` con cuatro decimales. El cierre
+  compara ese saldo con el actual a la misma precisión; si cambió, exige volver
+  a contar y guardar, incluso si la cantidad física sigue siendo la misma.
+  Una captura histórica sin ese snapshot también necesita confirmación. `expected`
+  al abrir la toma no sustituye al saldo de captura para calcular el ajuste.
+
+---
+
 ## 🔐 Security & Integrity Loop (OBLIGATORIO antes de entregar código)
 
 Antes de escribir, refactorizar o sugerir código/infra, revisar estas 6 capas
@@ -198,7 +249,7 @@ libro firmado de caja · keyring JWT rotable.
   concurrentes requieren reproducción y reparación específica. Las comprobaciones
   generales no cierran este flujo. Consultar `nortex-rrhh` y el plan D11.
 - **Capa 2:** `Supplier` tiene `deletedAt`; otros agregados siguen pendientes.
-  Product aún tiene borrado físico y cascadas que requieren revisión de históricos.
+  El candidato de bodega bloquea DELETE de Product con 409; archivado e históricos siguen pendientes.
 - **Capa 4:** `Product.price/cost` (Float) y varios campos `Decimal(12,2)/(10,2)`;
   la transición a tipos exactos por agregado sigue pendiente; requiere expansión,
   backfill y reconciliación (los montos del Command Center ya están en 18,4).

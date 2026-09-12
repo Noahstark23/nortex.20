@@ -160,7 +160,8 @@ qaDescribe('QA integración: ajuste manual multi-bodega', () => {
             reason: 'Alta sin ubicación',
         });
 
-        expectStatus(result, 400);
+        expectStatus(result, 409);
+        expect(result.body.outcome).toBe('REJECTED');
         expect(result.body.code).toBe('WAREHOUSE_REQUIRED');
     }, 120_000);
 
@@ -192,7 +193,8 @@ qaDescribe('QA integración: ajuste manual multi-bodega', () => {
             reason: 'Merma sucursal',
         });
 
-        expectStatus(rejected, 400);
+        expectStatus(rejected, 409);
+        expect(rejected.body.outcome).toBe('REJECTED');
         expect(rejected.body.code).toBe('INSUFFICIENT_STOCK');
         expect(String(rejected.body.error ?? '')).toContain('Bodega Ajustes');
 

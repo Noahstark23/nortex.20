@@ -40,6 +40,29 @@ qa('Compras: autoridad compartida, HTTP y MySQL descartable', () => {
     expect(effects.stock - before.stock).toBe(2); expect(effects.purchases).toHaveLength(1);
   });
 
+  it('recibir seis y cerrar cuatro permite facturar seis sin duplicar existencias', async () => {
+    const draft = await api('/api/purchase-orders', owner, 'POST', { supplierId: owner.supplierId,
+      items: [{ productId: owner.productId, quantity: '10', unitCost: '1.234567' }] }, { 'Idempotency-Key': randomUUID() });
+    status(draft, 201); const po = draft.body.data; const itemId = po.items[0].id;
+    status(await api(`/api/purchase-orders/${po.id}/approve`, owner, 'POST'), 200);
+    status(await api(`/api/purchase-orders/${po.id}/receive`, owner, 'POST', { clientEventId: randomUUID(), warehouseId: owner.warehouseId,
+      items: [{ itemId, quantityReceived: '6' }] }), 200);
+    const closed = await api(`/api/purchase-orders/${po.id}/close-short`, owner, 'POST', { clientEventId: randomUUID(),
+      items: [{ itemId, quantity: '4', reasonCode: 'SUPPLIER_SHORTAGE', supplierFault: true }] });
+    status(closed, 200);
+    expect((await prisma.purchaseOrder.findFirstOrThrow({ where: { tenantId: owner.tenantId, id: po.id } })).status).toBe('CLOSED_SHORT');
+    const body = purchaseInput(owner, { purchaseOrderId: po.id, items: [{ productId: owner.productId, purchaseOrderItemId: itemId, quantity: '6', unitCost: '1.234567', purchaseUnit: 'BASE' }] });
+    const before = await invoiceEffects(owner, body.invoiceNumber);
+    const invoice = await api('/api/purchases', owner, 'POST', body, { 'Idempotency-Key': randomUUID() }); status(invoice, 200);
+    const after = await invoiceEffects(owner, body.invoiceNumber);
+    expect(after.stock).toBe(before.stock); expect(after.kardex).toBe(before.kardex);
+    expect(after.purchases).toHaveLength(1); expect(after.purchases[0].total.toFixed(2)).toBe('8.52');
+    const persisted = await prisma.purchaseItem.findFirstOrThrow({ where: { purchaseId: invoice.body.purchase.id, purchase: { tenantId: owner.tenantId } } });
+    expect(persisted.unitCostExact?.toFixed(6)).toBe('1.234567');
+    expect(persisted.quantityExact?.toFixed(4)).toBe('6.0000');
+    status(await api('/api/purchases', owner, 'POST', { ...body, invoiceNumber: `OVER-${randomUUID()}` }), 400);
+  });
+
   it('una clave reutilizada con otro contenido y otra clave con la misma factura no duplican', async () => {
     const body = purchaseInput(owner); const key = randomUUID();
     status(await api('/api/purchases', owner, 'POST', body, { 'Idempotency-Key': key }), 200);

@@ -1,0 +1,35 @@
+{
+  "productCount": 8,
+  "sku": "QA-UX-BROCHA-3",
+  "stock": {
+    "total": 2,
+    "principal": 0,
+    "reserve": 2
+  },
+  "purchaseCount": 1,
+  "commandCount": 1,
+  "commandHasUUID": true,
+  "auditCount": 1,
+  "movementCount": 1,
+  "movement": [
+    {
+      "quantity": 2,
+      "before": 0,
+      "after": 2,
+      "isReserve": true
+    }
+  ],
+  "paymentMethod": "CREDIT",
+  "status": "PENDING_PAYMENT",
+  "dueDate": "2026-10-12",
+  "subtotal": "110.00",
+  "tax": "16.50",
+  "total": "126.50",
+  "balanceDue": "126.50",
+  "itemCount": 1,
+  "itemQuantity": "2.0000",
+  "itemUnitCost": "55.000000",
+  "itemWarehouseIsReserve": true,
+  "journalCount": 1,
+  "journalsBalanced": true
+}

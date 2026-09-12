@@ -76,7 +76,7 @@ export const legacyPublicOrderQuantity = (quantity: Decimal.Value): number => {
 };
 
 const productRules = (product: PublicOrderProductAuthority) =>
-    effectiveSaleModeAndStep(product.saleMode, product.quantityStep?.toString() ?? null);
+    effectiveSaleModeAndStep(product.saleMode, product.quantityStep?.toString() ?? null, product.unit);
 
 const validateForProduct = (
     product: PublicOrderProductAuthority,

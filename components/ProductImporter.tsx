@@ -1,9 +1,9 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { Upload, Download, FileSpreadsheet, AlertCircle, CheckCircle, XCircle, Loader2, X, Columns3 } from 'lucide-react';
 // xlsx (~430 KB) se importa DINÁMICAMENTE dentro de cada handler: solo baja al
 // navegador cuando alguien importa/exporta un Excel, nunca en el bundle inicial.
 import {
-    parseWorkbookRows, acceptedHeaders, importInChunks,
+    parseWorkbookRows, acceptedHeaders, importInChunks, buildImportedProductPayload,
     type ParsedRow, type ColumnResolution, type CanonicalField,
 } from '../utils/importProducts';
 import { formatMoney } from '../utils/money';
@@ -21,10 +21,12 @@ interface ProductImporterProps {
     onSuccess: () => void;
 }
 
+interface ImportWarehouse { id: string; name: string; isActive: boolean; isDefault?: boolean }
+
 /** Etiquetas humanas de los campos canónicos para el resumen de mapeo. */
 const FIELD_LABELS: Record<CanonicalField, string> = {
     sku: 'Código', nombre: 'Nombre', precio: 'Precio', costo: 'Costo',
-    stock: 'Existencia', minStock: 'Mínimo', categoria: 'Categoría',
+    stock: 'Existencia', minStock: 'Mínimo', marca: 'Marca', categoria: 'Categoría',
     unidad: 'Unidad', descripcion: 'Descripción',
     modoVenta: 'Forma de venta', pasoCantidad: 'Paso', familiaProducto: 'Familia operativa',
     unidadEmpaque: 'Unidad de empaque', tamanoEmpaque: 'Tamaño de empaque',
@@ -38,6 +40,7 @@ interface ImportSummary {
     /** Rechazados: los inválidos del archivo + los errores del servidor. */
     rejected: { excelRow: number | null; sku: string; motivo: string }[];
     failedChunks: number;
+    uncertain: { excelRow: number | null; sku: string; reason: string }[];
 }
 
 const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess }) => {
@@ -52,12 +55,65 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     const [filter, setFilter] = useState<PreviewFilter>('ALL');
     const [limit, setLimit] = useState(PREVIEW_PAGE_SIZE);
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const importingRef = useRef(false);
+    const [includeInitialStock, setIncludeInitialStock] = useState(false);
+    const [warehouses, setWarehouses] = useState<ImportWarehouse[]>([]);
+    const [warehouseId, setWarehouseId] = useState('');
+    const [warehousesLoading, setWarehousesLoading] = useState(false);
+    const [warehousesError, setWarehousesError] = useState('');
+    const [warehouseReload, setWarehouseReload] = useState(0);
+    const [fileError, setFileError] = useState('');
+    const initialWarehouseReady = !warehousesLoading && !warehousesError && warehouses.some(warehouse => warehouse.id === warehouseId);
+    useEffect(() => {
+        if (!includeInitialStock) return;
+        const controller = new AbortController();
+        let active = true;
+        setWarehousesLoading(true);
+        setWarehousesError('');
+        void fetch('/api/warehouses', {
+            headers: { Authorization: `Bearer ${localStorage.getItem('nortex_token')}` },
+            signal: controller.signal,
+        }).then(async response => {
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error || 'No pudimos cargar las bodegas. Reintentá.');
+            if (!Array.isArray(data.data)) throw new Error('No pudimos leer la lista de bodegas. Reintentá.');
+            if (!active) return;
+            const available: ImportWarehouse[] = data.data.filter((warehouse: ImportWarehouse) =>
+                warehouse?.isActive === true && typeof warehouse.id === 'string' && typeof warehouse.name === 'string');
+            setWarehouses(available);
+            setWarehouseId(current => available.some(warehouse => warehouse.id === current)
+                ? current : available.length === 1 ? available[0].id : '');
+            if (!available.length) setWarehousesError('No hay bodegas activas. Activá una bodega y reintentá la carga.');
+        }).catch(error => {
+            if (!active) return;
+            setWarehouses([]);
+            setWarehouseId('');
+            setWarehousesError(error instanceof Error ? error.message : 'No pudimos cargar las bodegas. Reintentá.');
+        }).finally(() => { if (active) setWarehousesLoading(false); });
+        return () => { active = false; controller.abort(); };
+    }, [includeInitialStock, warehouseReload]);
+    // En actualización comercial la columna de existencias no se envía;
+    // tampoco debe impedir corregir un precio por un dato que se conserva.
+    const effectiveRows = rows.map(row => {
+        const errors = includeInitialStock ? row.errors : row.errors.filter(error => !error.startsWith('Existencia'));
+        return { ...row, errors, valid: errors.length === 0 };
+    });
+    const requestClose = () => { if (!importingRef.current && !loading) onClose(); };
+    useEffect(() => {
+        const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') requestClose(); };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [loading, onClose]);
 
     // Manejar archivo — el parseo/validación vive en utils/importProducts.ts
     // (puro y testeado): sinónimos de encabezados nicas, dinero con "C$"/comas,
     // códigos en notación científica, duplicados dentro del archivo.
     const handleFile = (file: File) => {
+        if (importingRef.current) return;
         setLoading(true);
+        setRows([]);
+        setResolution(null);
+        setFileError('');
         setSummary(null);
         const reader = new FileReader();
 
@@ -68,7 +124,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 const workbook = XLSX.read(data, { type: 'binary' });
                 const sheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[sheetName];
-                const jsonData = XLSX.utils.sheet_to_json(worksheet) as Record<string, unknown>[];
+                const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' }) as Record<string, unknown>[];
 
                 const result = parseWorkbookRows(jsonData);
                 setRows(result.rows);
@@ -78,12 +134,13 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 setFilter('ALL');
                 setLimit(PREVIEW_PAGE_SIZE);
             } catch (error) {
-                alert('Error leyendo archivo. Verificá que sea un Excel/CSV válido.');
+                setFileError('No pudimos leer el archivo. Verificá que sea un Excel/CSV válido.');
             } finally {
                 setLoading(false);
             }
         };
 
+        reader.onerror = () => { setLoading(false); setFileError('No pudimos leer el archivo. Volvé a seleccionarlo.'); };
         reader.readAsBinaryString(file);
     };
 
@@ -109,7 +166,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
             {
                 sku: 'CEM001',
                 nombre: 'Cemento Canal 42.5kg',
-                categoria: 'Construcción',
+                categoria: 'Construcción', marca: 'Ejemplo',
                 precio: 385.00,
                 costo: 330.00,
                 stock: 40,
@@ -118,7 +175,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 descripcion: 'Cemento gris uso general',
                 modoVenta: 'COUNTED',
                 pasoCantidad: 1,
-                familiaProducto: 'AGRO_INPUT',
+                familiaProducto: 'GENERAL',
                 unidadEmpaque: '',
                 tamanoEmpaque: '',
                 precioEmpaque: '',
@@ -156,7 +213,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                 descripcion: 'Analgésico / antipirético',
                 modoVenta: 'COUNTED',
                 pasoCantidad: 1,
-                familiaProducto: 'VETERINARY',
+                familiaProducto: 'GENERAL',
                 unidadEmpaque: 'caja',
                 tamanoEmpaque: 100,
                 precioEmpaque: 300,
@@ -213,8 +270,9 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     // solo POST y el tope de 500 del server se descubría al final, con 0
     // productos cargados y un alert).
     const handleImport = async () => {
-        const validRows = rows.filter(r => r.valid);
-        if (validRows.length === 0) return;
+        const validRows = effectiveRows.filter(r => r.valid);
+        if (validRows.length === 0 || importingRef.current || (includeInitialStock && !initialWarehouseReady)) return;
+        importingRef.current = true;
 
         setImporting(true);
         setProgress({ done: 0, total: validRows.length });
@@ -230,26 +288,8 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                         'Authorization': `Bearer ${token}`
                     },
                     body: JSON.stringify({
-                        products: chunk.map(r => ({
-                            sku: r.data.sku,
-                            name: r.data.nombre,
-                            category: r.data.categoria,
-                            price: r.data.precio,
-                            cost: r.data.costo,
-                            stock: r.data.stock,
-                            minStock: r.data.minStock,
-                            unit: r.data.unidad,
-                            description: r.data.descripcion,
-                            saleMode: r.data.modoVenta,
-                            quantityStep: r.data.pasoCantidad,
-                            productFamily: r.data.familiaProducto,
-                            ...(resolution?.mapping.unidadEmpaque ? { packUnit: r.data.unidadEmpaque } : {}),
-                            ...(resolution?.mapping.tamanoEmpaque ? { packSize: r.data.tamanoEmpaque } : {}),
-                            ...(resolution?.mapping.precioEmpaque ? { packPrice: r.data.precioEmpaque } : {}),
-                            ...(resolution?.mapping.requiereLote ? { requiresBatchTracking: r.data.requiereLote } : {}),
-                            ...(resolution?.mapping.ivaExento ? { ivaExento: r.data.ivaExento } : {}),
-                            excelRow: r.excelRow,
-                        }))
+                        products: chunk.map(row => buildImportedProductPayload(row, { includeInitialStock })),
+                        ...(includeInitialStock ? { warehouseId } : {}),
                     })
                 });
                 const data = await res.json();
@@ -261,17 +301,22 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
         // Resumen: rechazados del archivo (con su fila real) + errores del server.
         const rejected: ImportSummary['rejected'] = [
-            ...rows.filter(r => !r.valid).map(r => ({
+            ...effectiveRows.filter(r => !r.valid).map(r => ({
                 excelRow: r.excelRow,
                 sku: r.data.sku || '—',
                 motivo: r.errors.join(' · '),
             })),
-            ...result.serverErrors.map(msg => ({ excelRow: null, sku: '—', motivo: msg })),
+            ...result.serverErrors.filter(message => !message.startsWith('Lote de ')).map(motivo => {
+                const match = motivo.match(/^Fila (\d+)/);
+                const excelRow = match ? Number(match[1]) : null;
+                return { excelRow, sku: rows.find(row => row.excelRow === excelRow)?.data.sku ?? '—', motivo };
+            }),
         ];
-        setSummary({ created: result.created, updated: result.updated, rejected, failedChunks: result.failedChunks });
+        setSummary({ created: result.created, updated: result.updated, rejected, failedChunks: result.failedChunks, uncertain: result.uncertainRows });
+        importingRef.current = false;
         setImporting(false);
         setProgress(null);
-        if (result.created + result.updated > 0) onSuccess();
+        if (result.created + result.updated > 0 || result.uncertainRows.length > 0) onSuccess();
     };
 
     // Descargar los rechazados como Excel para corregir y re-subir SOLO eso.
@@ -279,6 +324,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         if (!summary || summary.rejected.length === 0) return;
         const XLSX = await import('xlsx');
         const sheetRows = summary.rejected.map(r => ({
+            ...rows.find(row => row.excelRow === r.excelRow)?.source,
             fila_excel: r.excelRow ?? '',
             codigo: r.sku,
             motivo: r.motivo,
@@ -289,9 +335,22 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         XLSX.writeFile(workbook, 'productos_rechazados_nortex.xlsx');
     };
 
-    const counts = useMemo(() => countPreviewRows(rows), [rows]);
-    const issues = useMemo(() => summarizePreviewIssues(rows), [rows]);
-    const selection = useMemo(() => selectPreviewRows(rows, filter, limit), [rows, filter, limit]);
+    const downloadUncertain = async () => {
+        if (!summary?.uncertain.length) return;
+        const XLSX = await import('xlsx');
+        const workbook = XLSX.utils.book_new();
+        const pending = summary.uncertain.map(row => ({
+            ...rows.find(source => source.excelRow === row.excelRow)?.source,
+            fila_excel: row.excelRow ?? '', codigo: row.sku,
+            estado: 'SIN CONFIRMAR: verificar en catálogo antes de reenviar', motivo: row.reason,
+        }));
+        XLSX.utils.book_append_sheet(workbook, XLSX.utils.json_to_sheet(pending), 'Por verificar');
+        XLSX.writeFile(workbook, 'productos_por_verificar_nortex.xlsx');
+    };
+
+    const counts = useMemo(() => countPreviewRows(effectiveRows), [effectiveRows]);
+    const issues = useMemo(() => summarizePreviewIssues(effectiveRows), [effectiveRows]);
+    const selection = useMemo(() => selectPreviewRows(effectiveRows, filter, limit), [effectiveRows, filter, limit]);
     const visibleRows = selection.visible;
     const matchingRows = selection.matching;
     const hiddenRows = selection.hidden;
@@ -300,7 +359,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     const missingCols = resolution?.missing.filter(f => f !== 'sku') ?? [];
 
     return (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-50 p-0 sm:p-4" onClick={onClose}>
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-stretch sm:items-center justify-center z-50 p-0 sm:p-4" onClick={requestClose}>
             {/*
               Altura en `dvh`, no `vh`: en iOS la barra dinámica achica el viewport
               y `90vh` se pasaba de largo, recortando la cabecera. El alto lo
@@ -309,7 +368,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
               sola línea y dejaba de cuadrar apenas el título envolvía.
             */}
             <div
-                className="bg-surface-800 rounded-none sm:rounded-2xl w-full max-w-6xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col overflow-hidden shadow-2xl border-0 sm:border border-surface-700"
+                role="dialog" aria-modal="true" aria-label="Importar productos" className="nx-dark-context bg-surface-800 rounded-none sm:rounded-2xl w-full max-w-6xl h-[100dvh] sm:h-auto sm:max-h-[90dvh] flex flex-col overflow-hidden shadow-2xl border-0 sm:border border-surface-700"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
@@ -322,7 +381,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                         <p className="hidden sm:block text-sm text-surface-400 mt-1">Carga hasta 500 productos desde Excel/CSV con validación automática</p>
                     </div>
                     <button
-                        onClick={onClose}
+                        onClick={requestClose}
                         aria-label="Cerrar importador"
                         className="shrink-0 flex h-11 w-11 items-center justify-center hover:bg-surface-700 rounded-lg text-surface-400 hover:text-white transition-colors"
                     >
@@ -332,6 +391,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                 {/* Body */}
                 <div className="p-4 sm:p-6 space-y-4 sm:space-y-6 overflow-y-auto flex-1 min-h-0">
+                    {fileError && <p role="alert" className="rounded-lg bg-red-950/60 p-3 text-red-300">{fileError}</p>}
                     {/* Upload Zone */}
                     {rows.length === 0 && !summary && (
                         <div>
@@ -355,7 +415,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                             <span className="hidden sm:inline">Arrastra tu archivo Excel/CSV aquí</span>
                                         </p>
                                         <p className="hidden sm:block text-sm text-surface-400 mb-4">o haz click para seleccionar</p>
-                                        <p className="text-xs text-surface-500">.xlsx, .xls o .csv · hasta 500 productos</p>
+                                        <p className="text-xs text-surface-500">.xlsx, .xls o .csv · envío en lotes de 200</p>
                                     </>
                                 )}
                             </div>
@@ -405,11 +465,16 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                             {summary.failedChunks > 0 && (
                                 <div className="bg-red-950/40 border border-red-800/50 rounded-lg p-3 text-sm text-red-300">
-                                    {summary.failedChunks} lote{summary.failedChunks > 1 ? 's' : ''} no se pudo enviar (¿se cayó el internet?).
-                                    Los productos ya creados quedaron guardados; volvé a subir el archivo — los existentes solo se actualizan, no se duplican.
+                                    {summary.failedChunks} lote{summary.failedChunks > 1 ? 's' : ''} sin confirmación del servidor.
+                                    No tenemos confirmación del resultado de esas filas. Verificá sus códigos en el catálogo antes de volver a enviarlas.
                                 </div>
                             )}
 
+                            {summary.uncertain.length > 0 && <div role="alert" className="rounded-lg border border-amber-700 p-3 text-sm text-amber-300">
+                                <p className="font-semibold">{summary.uncertain.length} filas sin confirmar</p>
+                                <ul className="mt-2 max-h-40 overflow-y-auto">{summary.uncertain.map((row, index) => <li key={index}>Fila {row.excelRow ?? '—'} · {row.sku}: {row.reason}</li>)}</ul>
+                                <button type="button" onClick={downloadUncertain} className="mt-3 rounded-control border border-amber-700 px-3 py-2 font-semibold">Descargar filas sin confirmar</button>
+                            </div>}
                             {summary.rejected.length > 0 && (
                                 <div className="bg-surface-900/60 rounded-xl border border-surface-700 overflow-hidden">
                                     <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 border-b border-surface-700">
@@ -466,7 +531,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                     Importar otro archivo
                                 </button>
                                 <button
-                                    onClick={onClose}
+                                    onClick={requestClose}
                                     className="px-6 py-2.5 bg-brand-600 hover:bg-brand-700 rounded-lg text-white font-bold transition-colors"
                                 >
                                     Listo
@@ -475,6 +540,30 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                         </div>
                     )}
 
+                    {rows.length > 0 && !summary && <div className="space-y-2 rounded-lg border border-surface-600 p-4">
+                        <label htmlFor="catalog-import-purpose" className="block text-sm font-semibold text-white">Qué querés importar</label>
+                        <select id="catalog-import-purpose" disabled={importing} value={includeInitialStock ? 'initial' : 'catalog'} onChange={event => { if (!importingRef.current) setIncludeInitialStock(event.target.value === 'initial'); }} className="nx-form-field w-full rounded-control border bg-surface-900 p-3 text-slate-100">
+                            <option value="catalog">Actualizar catálogo y precios</option>
+                            <option value="initial">Cargar existencias iniciales de productos nuevos</option>
+                        </select>
+                        <p className="text-sm text-surface-300">{includeInitialStock ? 'Las existencias sólo se cargan al crear códigos nuevos, en la bodega que elijás. Un código existente se rechaza si trae stock. Los productos con lotes se reciben desde Compras o Lotes.' : 'Las existencias actuales se conservan. Los productos nuevos se crean sin stock; registrá su entrada después desde Compras.'}</p>
+                        {includeInitialStock && <div className="space-y-2 pt-2">
+                            <label htmlFor="catalog-import-warehouse" className="block text-sm font-semibold text-surface-300">Bodega de las existencias iniciales</label>
+                            <select id="catalog-import-warehouse" value={warehouseId} disabled={importing || warehousesLoading || Boolean(warehousesError)} aria-describedby="catalog-import-warehouse-status" onChange={event => { if (!importingRef.current) setWarehouseId(event.target.value); }} className="nx-form-field w-full rounded-control border bg-surface-900 p-3 text-slate-100 disabled:opacity-60">
+                                <option value="">{warehousesLoading ? 'Cargando bodegas…' : 'Seleccioná una bodega'}</option>
+                                {warehouses.map(warehouse => <option key={warehouse.id} value={warehouse.id}>{warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}</option>)}
+                            </select>
+                            <div id="catalog-import-warehouse-status">
+                                {warehousesLoading && <p role="status" className="text-sm text-surface-300">Consultando bodegas activas…</p>}
+                                {warehousesError && <div className="space-y-2">
+                                    <p role="alert" className="text-sm text-red-300">{warehousesError}</p>
+                                    <button type="button" disabled={importing || warehousesLoading} onClick={() => { if (!importingRef.current) setWarehouseReload(current => current + 1); }} className="rounded-control border border-surface-600 px-3 py-2 text-sm font-semibold text-surface-300 disabled:opacity-60">Reintentar carga de bodegas</button>
+                                </div>}
+                            </div>
+                        </div>}
+                        <p className="text-xs text-surface-400">Sólo se cambian las celdas con valor, incluidos precio y costo si vienen en el archivo. En cantidades, la coma o el punto separan decimales: 0,125 equivale a 0.125. No uses separadores de miles.</p>
+                        <p className="text-xs text-surface-400">Guardá los códigos como texto en Excel para conservar sus ceros iniciales.</p>
+                    </div>}
                     {/* Preview Table */}
                     {rows.length > 0 && !summary && (
                         <div>
@@ -546,7 +635,8 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                     );
                                 })}
                                 <button
-                                    onClick={() => { setRows([]); setResolution(null); }}
+                                    disabled={importing}
+                                    onClick={() => { if (!importingRef.current) { setRows([]); setResolution(null); } }}
                                     className="nx-fluid-press ml-auto min-h-11 px-2 text-sm text-surface-400 hover:text-white underline"
                                 >
                                     Cargar otro archivo
@@ -657,7 +747,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                                             <span className="block text-xs text-red-300 mt-0.5">{r.errors.join(' · ')}</span>
                                                         )}
                                                     </td>
-                                                    <td className="px-3 py-2 align-top text-surface-400">{r.data.categoria}</td>
+                                                    <td className="px-3 py-2 align-top text-surface-400">{r.data.categoria}{r.data.marca && <span className="block">{r.data.marca}</span>}</td>
                                                     <td className={`px-3 py-2 align-top text-right font-semibold ${r.valid ? 'text-emerald-400' : 'text-red-300'}`}>
                                                         {r.valid ? `${formatMoney(r.data.precio)}` : '—'}
                                                     </td>
@@ -665,7 +755,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                                                     <td className="px-3 py-2 align-top text-right text-white font-bold">
                                                         {r.data.stock} {r.data.unidad}
                                                         <span className="block text-[10px] text-surface-500">
-                                                            {r.data.modoVenta === 'MEASURED' ? 'Medido' : 'Contado'} · paso {r.data.pasoCantidad}
+                                                            {r.data.modoVenta === 'LEGACY' ? 'Configuración actual' : r.data.modoVenta === 'MEASURED' ? 'Medido' : 'Contado'} · paso {r.data.pasoCantidad}
                                                         </span>
                                                         {(r.data.unidadEmpaque || r.data.requiereLote || r.data.ivaExento) && (
                                                             <span className="block text-[10px] text-surface-500">
@@ -742,14 +832,14 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                         </div>
                         <div className="flex gap-3">
                             <button
-                                onClick={onClose}
+                                onClick={requestClose} disabled={importing}
                                 className="nx-fluid-press min-h-11 px-4 sm:px-6 py-2.5 bg-surface-700 hover:bg-surface-600 rounded-lg text-white font-medium transition-colors"
                             >
                                 Cancelar
                             </button>
                             <button
                                 onClick={handleImport}
-                                disabled={validCount === 0 || importing}
+                                disabled={validCount === 0 || importing || (includeInitialStock && !initialWarehouseReady)}
                                 className="nx-fluid-press min-h-11 flex-1 sm:flex-none justify-center px-4 sm:px-6 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:bg-brand-800 disabled:opacity-50 rounded-lg text-white font-bold transition-colors flex items-center gap-2"
                             >
                                 {importing ? (

@@ -6,6 +6,7 @@
  * validación antes de persistir o mover inventario.
  */
 import Decimal from 'decimal.js';
+import { resolveProductQuantityRules } from './productQuantityRules';
 import {
     QUANTITY_DECIMAL_PLACES,
     QuantityValidationError,
@@ -127,9 +128,9 @@ const parseUnitCost = (value: unknown): Decimal => {
     return cost;
 };
 
-/** D6: solo COUNTED explícito exige enteros; el legado null conserva fracciones. */
+/** Nuevas órdenes usan la misma regla de unidad base que catálogo y compras. */
 export const purchaseOrderRulesForProduct = (
-    product: Pick<PurchaseOrderProductAuthority, 'saleMode' | 'quantityStep'>,
+    product: Pick<PurchaseOrderProductAuthority, 'saleMode' | 'quantityStep'> & { unit?: string | null },
 ): PurchaseOrderQuantityRules => {
     if (product.saleMode !== null && product.saleMode !== 'COUNTED' && product.saleMode !== 'MEASURED') {
         throw new PurchaseOrderQuantityError(
@@ -137,12 +138,7 @@ export const purchaseOrderRulesForProduct = (
             'El producto tiene un modo de cantidad inválido',
         );
     }
-    const saleMode: SaleMode = product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
-    return {
-        saleMode,
-        quantityStep: product.quantityStep?.toString()
-            || (saleMode === 'COUNTED' ? '1' : '0.0001'),
-    };
+    return resolveProductQuantityRules(product);
 };
 
 const quantityError = (error: unknown, label: string): never => {
@@ -271,7 +267,9 @@ export const purchaseOrderRulesForReceipt = (
                 { productId: product.id },
             );
         }
-        return purchaseOrderRulesForProduct(product);
+        // Una orden histórica sin snapshot pudo pedir fracciones bajo la regla
+        // anterior. No reinterpretamos su contrato al recibirla.
+        return purchaseOrderRulesForProduct({ saleMode: product.saleMode, quantityStep: product.quantityStep });
     }
     if (typeof item.unitAtOrder !== 'string' || item.unitAtOrder.trim() === '') {
         throw new PurchaseOrderQuantityError(
