@@ -140,6 +140,7 @@ model Tenant {
 
   // NortexGPT: aislamiento y activación por negocio.
   assistantConfig        AssistantTenantConfig?
+  assistantBudgetRequests AssistantBudgetRequest[]
   assistantConversations AssistantConversation[]
   assistantMessages      AssistantMessage[]
   assistantAttachments   AssistantAttachment[]
@@ -186,6 +187,7 @@ model User {
   password  String
   name      String
   role      String    @default("EMPLOYEE") // OWNER, ADMIN, MANAGER, CASHIER, VIEWER
+  assistantBudgetOwner Boolean @default(false) // Granted by Nortex or new-tenant registration; never inferred from HR.
   status    String    @default("ACTIVE") // ACTIVE, DISABLED
   lastLogin DateTime?
   invitedBy String?
@@ -245,7 +247,28 @@ model AssistantTenantConfig {
   promotionsEnabled Boolean @default(false)
   privateWhatsappEnabled Boolean @default(false)
   monthlyBudgetUsd  Decimal @default(10) @db.Decimal(18, 6)
+  /// Entitlement aprobado por Nortex. El default también protege configuraciones legacy de US$10.
+  approvedMonthlyBudgetUsd Decimal @default(2) @db.Decimal(18, 6)
   tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+model AssistantBudgetRequest {
+  id             String @id @default(cuid())
+  tenantId       String
+  requestedBy    String
+  requestKey     String @db.VarChar(191)
+  requestedUsd   Decimal @db.Decimal(18, 6)
+  reason         String @db.VarChar(500)
+  status         String @default("PENDING") @db.VarChar(16)
+  decidedBy      String?
+  decisionReason String? @db.VarChar(500)
+  decidedAt      DateTime?
+  createdAt      DateTime @default(now())
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([status, createdAt, id])
 }
 
 model AssistantConversation {
@@ -2019,6 +2042,7 @@ model Shift {
 
   @@index([tenantId])
   @@index([tenantId, status, startTime])
+  @@index([tenantId, status, endTime])
   @@index([userId])
   @@index([employeeId])
   @@unique([tenantId, closeEventId])
@@ -2102,6 +2126,7 @@ model CashMovement {
   @@index([shiftId])
   @@index([createdAt])
   @@index([tenantId, shiftId, isVoided])
+  @@index([tenantId, shiftId, createdAt, id])
 }
 
 // Cabeza de la cadena del libro por tenant. El UPDATE con increment toma

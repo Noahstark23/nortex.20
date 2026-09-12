@@ -1,5 +1,7 @@
 # Nortex — Programa HRIS completo para Nicaragua
 
+> **Prioridad de producto, 2026-09-09:** W02 de la [meta del equipo administrativo](META_NORTEX_EQUIPO_ADMINISTRATIVO.md): planilla preparada y revisada para pequeños negocios. Conservar este plan de dominio y su motor; priorizar privacidad, integridad y separación cálculo/persistencia antes de ampliar talento. Las capacidades enumeradas son base de código, no herramientas del asistente ya habilitadas ni certificación laboral. Pago/asientos requieren reparación y pruebas de los riesgos D11; las reglas variables necesitan revisión humana vigente.
+
 > Estado: **plan maestro actualizado**
 >
 > Alcance: cumplimiento laboral, operación de personal y gestión de talento
@@ -34,14 +36,14 @@ secuenciales y reversibles. No habrá un cambio masivo de RR. HH.
 
 - Nortex es un ERP/POS multi-tenant para PyMEs de Nicaragua.
 - El tenant proviene exclusivamente del JWT autenticado.
-- Nómina y beneficios mueven dinero real: usan Decimal, transacciones y auditoría.
+- Nómina y beneficios mueven dinero real: las nuevas operaciones deben usar Decimal, transacciones y auditoría atómicas; el fail-soft contable legacy sigue pendiente de endurecimiento.
 - MySQL 8, Prisma 6.4.1, Express y React/Vite son el stack canónico.
 - El producto usa español nicaragüense y voseo.
 - RR. HH. necesita permisos más finos que los roles generales actuales.
 
 ### Supuestos de producto
 
-- La primera versión integral se optimiza para empresas de 5 a 250 colaboradores.
+- La prioridad actual incluye micro y pequeños negocios, incluso sin empleados para los trabajos contables/financieros. El rango anterior de 5 a 250 colaboradores queda como hipótesis de expansión; no es un mínimo comercial ni capacidad de nómina acreditada.
 - La relación laboral asalariada es el caso principal; contratistas se modelan
   después sin mezclarlos con nómina laboral.
 - Nicaragua es la jurisdicción inicial. Toda tasa, calendario o regla variable se

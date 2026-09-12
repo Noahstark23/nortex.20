@@ -1,5 +1,7 @@
 # Plan de desarrollo: RAG de Nortex y estabilidad operativa
 
+> **Dirección actualizada, 2026-09-09:** la [meta del equipo administrativo](META_NORTEX_EQUIPO_ADMINISTRATIVO.md) ordena el producto alrededor de contabilidad, RRHH y finanzas, con objetivo de precio US$20/negocio/mes. Este plan conserva C00/D00–D14 como infraestructura y deuda necesarias. [Arquitectura propuesta](ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md). No cambia los topes IA, precios ni autorizaciones de despliegue.
+
 **Estado: plan de desarrollo reconciliado con el producto `484f58a` y la promoción `07f30c9`; implementación, despliegue y pendientes separados. Actualización: 2026-09-08.**
 
 Este documento integra tres revisiones: investigación de RAG, contraste de contratos del asistente y pendientes de desarrollo/infraestructura, más revisión final del plan. La actualización documental no implementa las tareas pendientes ni certifica producción. La autorización de publicar/desplegar proviene de la solicitud del usuario y sigue sujeta a las compuertas técnicas. Conserva React/Vite, Express, Prisma 6.4.1, MySQL 8, Node 22.23.2, npm, la rama y los cambios actuales. El [manifiesto de 30 archivos revisados](evidence/nortexgpt/rag-plan-20260908/code-manifest.json) identifica el corte de código mediante hashes. Ese manifiesto corresponde a la investigación anterior al merge. El [manifiesto del candidato integrado](releases/evidence/2026-09-08-consolidated/qa-source-manifest.json) y la [verificación local](releases/evidence/2026-09-08-consolidated/local-verification.json) identifican la nueva evidencia. Consultar [estado actual](ESTADO_ACTUAL_NORTEX.md) y [equipo por dominio](EQUIPO_DESARROLLO_NORTEX.md) para coordinar el siguiente lote.
@@ -29,6 +31,12 @@ Este documento integra tres revisiones: investigación de RAG, contraste de cont
 
 ## 1. Decisión recomendada
 
+El RAG aporta conocimiento revisado a los trabajos W01–W03; MCP aporta otro canal autorizado. El coordinador de encargos durables y las herramientas administrativas son capacidades nuevas, descritas en A01–A05 de la meta. Conservar el orquestador acotado actual y sus checkpoints; no confundirlo con seguimiento multi-día ni reconstruirlo.
+
+**Primer incremento W01 local:** [revisión semanal de caja](NORTEXGPT_REVISION_SEMANAL_CAJA_2026-09-09.md) implementa `review_weekly_cash` con fuentes, diferencias y recuperación de la consulta existente. Falta completar investigación de causas, excepciones asignadas y aceptación humana. La agenda A01 se amplía después de demostrar esta necesidad; piloto/costo empiezan con cada entrega útil, sin esperar al final de A07.
+
+**W01B, 2026-09-12:** [investigación de soporte](NORTEXGPT_INVESTIGACION_CIERRES_2026-09-12.md) incorpora desglose del cierre, movimientos actuales y pendientes humanos con una referencia exacta, sin reconstruir tender ni causas. El siguiente incremento debe contratar asignación y resolución revisada de excepciones; el piloto y la aceptación completa siguen pendientes.
+
 Construir **RAG de ayuda oficial con publicación revisada, búsqueda verificable y fuentes que se puedan abrir**. Mejorar primero contenido, permisos, recuperación y evaluación; comparar después MySQL FULLTEXT y contexto completo autorizado. Añadir embeddings o reranking únicamente si resuelven errores medidos dentro del presupuesto y la capacidad operativa disponibles.
 
 El núcleo conserva tres fronteras:
@@ -46,7 +54,7 @@ La búsqueda semántica no reemplaza datos actuales, autorización, catálogo de
 | Ayuda | `knowledge.ts:18-54`: 12 artículos; roles, sección y versión. | Ampliar procedimientos y formalizar revisión/publicación/retirada. |
 | Recuperación | `knowledge.ts:62-73`: coincidencia exacta en sección y keywords, top 2; no busca en el cuerpo. | Baseline, vocabulario revisado, búsqueda sobre texto completo y calibración de rechazo/ambigüedad. |
 | Citas | `shared/assistant.ts:14`, `NortexAssistantPanel.tsx:100`: etiqueta de fuente; `nortex-help:<id>` no abre una versión. | Resolver pasajes mediante endpoint autenticado, manteniendo compatibilidad de citas anteriores. |
-| Cita operativa | `operations/tools.ts:25` entrega texto/citas; `AssistantOperationalEvidence.tsx:44-59` no los renderiza. | Reproducir `search_help → run → interfaz`, corregir y conservar prueba de conducta. Es un hallazgo estático, no una reproducción ejecutada aquí. |
+| Cita operativa | Reparación local posterior: se reprodujo la omisión y el componente ahora muestra ayuda, abstención y referencias. | Ver `tests/assistantOperationalEvidence.test.tsx`; apertura del pasaje versionado y promoción del candidato siguen pendientes. |
 | Orquestación | `operations/orchestrator.ts:47-137`: feedback de herramientas, checkpoints, cuatro llamadas/60 segundos y fallback. | Evaluar selección de herramientas y soporte de afirmaciones con Haiku real; no reconstruir el orquestador. |
 | Respaldo de respuestas | `orchestrator.ts:28-31,99-104` valida IDs y presencia de números. | Comprobar relación entre afirmación y fuente: una cifra presente puede atribuirse al sujeto o período equivocado. |
 | Permisos e historial | `access.ts:31-74`, `conversations.ts`, `runService.ts`: usuario activo, tenant y rol vigente/original. | Añadir vigencia documental a historial, checkpoints, citas y caché antes de ampliar el corpus. |
@@ -137,7 +145,7 @@ Claude ofrece citas nativas, pero no son compatibles con `output_config.format` 
 
 ### 5.1 Presupuesto
 
-- Mantener US$20/mes total del piloto y US$10 por negocio; QA tiene su propio tope observado de US$5. No sumarlos como autorización de US$25: toda llamada de este trabajo debe contabilizarse dentro del límite total acordado.
+- Mantener US$20/mes total del piloto. Decisión posterior del usuario: US$2 iniciales por negocio/mes; ampliación mediante solicitud del dueño y aprobación de Nortex, hasta el máximo vigente de US$10. QA configura US$2 por negocio sintético y conserva el techo adicional del workspace (US$5, revalidar en Console). No sumarlos como autorización de US$25: toda llamada de este trabajo debe contabilizarse dentro del límite total acordado.
 - `AssistantBudget` es global dentro de una base MySQL, no entre QA, staging y producción. Primera solución: asignaciones conservadoras por entorno y credencial, con registro de gasto/reservas inciertas y suma de asignaciones ≤US$20. Ejemplo propuesto: QA US$5, staging sin llamadas pagadas y piloto hasta US$15 mientras se consume la asignación QA; US$10 por tenant sigue siendo un máximo, no una cuota adicional. D05 implementa topes por entorno que sólo puedan reducir el máximo global y verifica que ningún adaptador quede fuera. Redistribuir sólo saldo no consumido ni reservado tras conciliación. Si luego se necesita reparto dinámico, diseñar una autoridad única; no conectar la compuerta descartable a la base de producción. El límite de Console es una defensa adicional, no la sincronización de los buckets.
 - Haiku 4.5 conserva tarifa estándar de US$1/millón de tokens de entrada y US$5/millón de salida, según fuente consultada. Ejemplo ilustrativo: una llamada de 6.000 tokens de entrada y 800 de salida cuesta US$0,01, sin caché ni adicionales. Una consulta puede contener varias llamadas; esto no es un gasto observado ni una promesa de capacidad mensual. [Precios oficiales](https://platform.claude.com/docs/en/about-claude/pricing)
 - Reservar antes de cada llamada y vincular a ejecución o trabajo. El código de operaciones ya registra `runId`; interpretar texto y extraer facturas requieren mantener su propia trazabilidad, no fabricar un run inexistente.
@@ -172,6 +180,8 @@ Comparar siempre con el mismo corpus autorizado, mismos documentos y versión, m
 
 ## 6. Backlog de desarrollo y dependencias
 
+Relación con la meta: A00 usa C00/D00/D06/D08/D09; A01 añade encargos durables; A02/W01 usa lecturas contables y D01–D04; A03/W02 y A04/W03 dependen de D11 y contratos específicos; A05 añade MCP; A06 coordinación y A07 piloto conservan D05/D12/D13. Reposición/vencimientos/promociones siguen en D12, con sus propios criterios y evaluación. RRHH ya no queda relegado como expansión genérica, pero sus efectos requieren seguridad e integridad demostradas.
+
 Cada fila es un paquete de entregas pequeñas, no un único PR gigante. Prioridad alta significa atacar o reproducir pronto el flujo afectado; no bloquear ayuda de lectura independiente por un módulo ajeno.
 
 | ID / prioridad | Entrega | Dependencias | Condición de cierre |
@@ -198,6 +208,8 @@ Cada fila es un paquete de entregas pequeñas, no un único PR gigante. Priorida
 La fuente de documentos puede desarrollarse mientras infraestructura mejora; no se necesita terminar todas las extracciones para medir ayuda. La activación de cada capacidad depende sólo de sus garantías y del entorno que utiliza.
 
 ## 7. Pendientes heredados que no se deben perder
+
+**Contraste de lectura del 2026-09-09 para W01–W03:** `getEstadoResultados` y `getBalanceGeneral` en `accounting.ts` siembran cuentas al consultar; separar inicialización antes de exponerlos como lectura. `POST /api/payroll/calculate` persiste planilla/adelantos; no es preview puro. El pago de nómina en `server.ts` captura fallos del asiento y consulta PAGADO antes de la transacción. `getShiftSnapshot` en `salesReportService.ts` es la base preferida de lectura de cierre; `closeShiftWithReport` ejecuta el cierre. Son observaciones de código, no incidentes nuevos reproducidos ni reparaciones ejecutadas. D11 debe probar efectos, fechas Managua, paginación y permisos antes de conectarlos al asistente.
 
 La tabla conserva riesgos y ubicaciones del corte anterior al merge. Sus números de línea son históricos: D11 debe ubicarlos por ruta/símbolo en `484f58a` y adjudicar si la integración los conserva o ya corrigió. No atribuir a producción un patrón histórico ni repetir una reparación existente. **No se reprodujeron nuevos incidentes en esta actualización documental.** D11 empieza con una prueba que adjudique cada caso; no conectar nuevas herramientas a estos caminos hasta aclarar su contrato.
 

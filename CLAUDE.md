@@ -1,7 +1,9 @@
 # CLAUDE.md — Guía para agentes en Nortex
 
 
-> **Punto de entrada vigente:** [estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md),
+> **Punto de entrada vigente:** [meta del equipo administrativo](docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md),
+> [arquitectura propuesta](docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md),
+> [estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md),
 > [plan de estabilidad y RAG](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md)
 > y [equipo de desarrollo](docs/EQUIPO_DESARROLLO_NORTEX.md).
 > Los informes fechados conservan su corte histórico. Código, QA local, CI,
@@ -13,6 +15,35 @@ farmacias, distribuidoras/misceláneas, prestamistas). Stack: **React + Vite** (
 **Express + Prisma** (backend, `backend/server.ts` + `backend/routes/*`), **MySQL 8**
 (InnoDB; migraciones con backticks — NO PostgreSQL), **TypeScript** con verificación de tipos; `tsconfig.json` aún no activa `strict`.
 Maneja **dinero e inventario reales** → la integridad y la seguridad no son negociables.
+
+## Meta de producto — 2026-09-09
+
+Nortex busca ofrecer contabilidad, RRHH y finanzas coordinadas a pequeños negocios
+de Nicaragua, con un objetivo de precio de US$20 por negocio/mes, todavía sujeto a
+validación de alcance y costos. El POS conserva la operación rápida. NortexGPT y
+el futuro MCP comparten servicios del dominio; no duplican dinero ni inventario.
+La unidad de entrega es un trabajo terminado y comprobado: W01 revisión de cierre
+semanal, W02 planilla revisada y W03 planificación de caja; coordinación W04 después.
+
+Primer incremento W01 local: `review_weekly_cash` lee snapshots de cierres con
+fuentes y diferencias NIO/USD, usando runs privados existentes. No representa aún
+el encargo completo ni conciliación aceptada. [Alcance y QA](docs/NORTEXGPT_REVISION_SEMANAL_CAJA_2026-09-09.md).
+W01B añade `inspect_cash_close`: desglose histórico separado de movimientos actuales,
+referencia exacta y pendientes humanos privados. CASH bruto no acredita tender;
+no reconstruir esperado ni causas con ventas actuales. [Contrato y evidencia](docs/NORTEXGPT_INVESTIGACION_CIERRES_2026-09-12.md).
+Demostrar este valor precede a construir la agenda genérica A01; medir piloto y
+costos por cada entrega útil.
+
+Los encargos durables propuestos conservan pendientes y enlazan intentos acotados
+de IA, propuestas y comprobantes. No reemplazan la contabilidad con memoria ni
+ejecutan compras/pagos por reiniciar un worker. Especialistas lógicos reciben sólo
+las herramientas y datos necesarios; no invocar tres modelos por cada consulta.
+Las herramientas de nómina, conciliación y cierre necesitan contratos propios y
+QA; no están habilitadas por nombrar al asistente «contador» o «RRHH».
+
+Separar precio comercial de presupuesto IA. Los US$20 del servicio no cambian
+tarifas, cobros ni topes existentes. Registrar resultado, alcance, evidencia,
+intervención humana y costo por encargo, conservando gates y C00/D00–D14.
 
 ## Estación local segura
 
@@ -234,6 +265,22 @@ libro firmado de caja · keyring JWT rotable.
 | Delivery | `backend/routes/pedidos|motorizados|driver` (Red Nortex; wallet del repartidor con libro firmado) |
 
 ---
+
+## Presupuesto de NortexGPT
+
+US$2 iniciales por negocio/mes, ampliables hasta US$10 mediante solicitud del
+dueño y aprobación de Nortex. `approvedMonthlyBudgetUsd` es la autorización;
+`monthlyBudgetUsd` conserva el límite operativo y su valor legacy no autoriza
+US$10. El máximo global permanece US$20. No hay cobro automático, liberación de
+UNKNOWN ni reinicio de gasto al aprobar. Revalidar permisos bajo locks y auditar
+la decisión atómicamente. El estado de plataforma se muestra sin saldos ajenos.
+Código local y activación productiva se acreditan por separado.
+
+La gestión requiere `User.OWNER` o `User.ADMIN` con `assistantBudgetOwner=true`.
+Los cargos y vínculos de `Employee` no conceden esa autoridad. El alta de un negocio
+la fija en el servidor; cuentas ADMIN anteriores requieren verificación puntual
+de Nortex y concesión/revocación por SUPER_ADMIN independiente, auditada en la misma
+transacción. No inferir dueño desde RRHH ni concederla por migración masiva.
 
 ## Convenciones del repo
 

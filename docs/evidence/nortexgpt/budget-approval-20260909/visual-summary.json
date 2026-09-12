@@ -1,0 +1,30 @@
+{
+  "scope": "Componentes reales con transporte simulado en harness local, distinto de HTTP/MySQL",
+  "steps": [
+    "Dueño consulta límite y reserva",
+    "Solicitud 5.00 queda pendiente",
+    "Nortex revisa negocio, importe y motivo",
+    "Aprobación muestra resultado sin cobro"
+  ],
+  "viewports": [
+    {
+      "width": 1280,
+      "height": 900,
+      "documentScrollWidth": 1280
+    },
+    {
+      "width": 390,
+      "height": 844,
+      "documentScrollWidth": 390
+    }
+  ],
+  "theme": "light",
+  "externalCalls": 0,
+  "paidAiCalls": 0,
+  "productionEffects": 0,
+  "limitations": [
+    "No sustituye navegador autenticado contra backend ni dispositivos físicos",
+    "No acredita calidad de modelo",
+    "Capturas observadas en herramientas de la sesión; no guardadas en este expediente"
+  ]
+}

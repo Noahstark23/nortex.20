@@ -97,9 +97,13 @@ el lanzador del backend. Una capacidad queda activa sólo si ambos coinciden.
 | Promociones (`promotionsEnabled`) | **deshabilitada** |
 | WhatsApp privado / comercial | **deshabilitados** |
 
-Presupuestos: las constantes del servidor no se tocan — **US$20 globales** y
-**US$10 por negocio**. La configuración por negocio de QA se fija en **US$5**,
-más conservadora, para quedar dentro del tope del workspace `Nortex-QA`.
+Presupuestos del candidato con solicitudes: **US$20 globales** y **US$2 iniciales
+por negocio al mes**. El dueño puede solicitar hasta US$10; Nortex revisa y
+aprueba desde SuperAdmin, sin cobro automático. Una ampliación no borra consumo
+ni reservas, no aumenta el máximo global y no habilita capacidades. La preparación
+sintética fija US$2 en configuración y aprobación. El límite del workspace del
+proveedor sigue siendo una protección adicional; no reemplaza las reservas.
+El límite aprobado nuevo requiere aplicar el schema aditivo antes del ensayo.
 
 ## 4. Arrancar y detener el backend de QA
 

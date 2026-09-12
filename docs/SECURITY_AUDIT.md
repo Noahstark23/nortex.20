@@ -292,7 +292,25 @@ offline; asientos espejo exactos. Ver detalle por módulo en la corrida de agent
 |---|---|---|---|---|---|
 | S77 | Integridad de política | La exención de billing "nunca bloquear el POS" protegía `/api/cash-registers` — **ruta del frontend que no existe en la API** — mientras las rutas reales de caja (`/api/shifts/*`, `/api/cash-movements`) y de cobro de fiado (`/api/credits/payment`) quedaban tras el paywall: al vencer el trial, abrir caja daba 402 → **el POS sí se bloqueaba**, contradiciendo la promesa textual de los emails de trial. El test fijaba la ruta fantasma (CI verde, prod rota) | `billingExempt.ts:17` · `tests/billingExempt.test.ts:16` | 🔴 Alta (retención: expulsa al usuario activado justo el día 30) | ✅ CORREGIDO (2026-08-20): prefijos reales `/api/shifts` + `/api/cash-movements` + `/api/credits`; el test ahora fija las rutas reales del backend |
 
-## Acciones del CEO (no las puede hacer un agente)
+## Candidato NortexGPT 2026-09-12 — autoridad de presupuesto (S78–S79)
+
+Alcance: parche local basado en `ead043c2aa27e25e6522e97b3cdc2c3a4e585783`;
+scan `cde7904a-845d-43e5-9a41-637773d1dfe1`, 39 fuentes cambiadas y controles de
+soporte. Los números de línea siguientes pertenecen al snapshot original
+`b2755e59efd408428e57276014a2df078852994d54ac60c8a2061616760715d2`.
+
+| ID | Descripción | Archivo:línea original | Severidad | Estado y evidencia |
+|---|---|---|---|---|
+| S78 | La autoridad para leer presupuesto/historial dependía del cargo editable de RRHH | `backend/services/assistant/budgetAuthority.ts:9`; sink `budgetRequests.ts:50` | Media, confianza media | Trazado estático; reparado localmente con concesión User explícita. Integración final pendiente. |
+| S79 | El mismo dato de RRHH concedía autoridad para crear una solicitud del dueño | `backend/services/assistant/budgetAuthority.ts:9`; sink `budgetRequests.ts:75` | Media, confianza media | Misma causa, operación independiente. Aprobación SUPER_ADMIN y topes conservados; reparación local, integración final pendiente. |
+
+La revisión automática bloqueó la reproducción dinámica y después la petición de
+QA canónica al agente. No se reintentó por otra vía. No se afirma reproducción
+HTTP exitosa, acceso entre negocios, evasión del presupuesto ni incidente real.
+La revisión estática independiente del parche no encontró otro defecto concreto.
+[Contrato, pruebas ejecutadas y límites del cierre](NORTEXGPT_SUBIDA_QA_SEGURIDAD_2026-09-12.md).
+
+## Acciones históricas del CEO (conservar fecha y verificar estado antes de actuar)
 
 1. **🔴 ROTAR YA `JWT_SECRET`** (estaba en `.env.backup`/git). Con el keyring se hace sin
    downtime: generar uno nuevo, ponerlo primero en `JWT_SECRETS`, dejar el viejo un tiempo

@@ -5,6 +5,25 @@ description: "Dominio de nómina y RRHH de Nortex — Ley 185 de Nicaragua tal c
 
 # Nómina y RRHH en Nortex (Ley 185 Nicaragua)
 
+## Meta de producto — 2026-09-09
+
+W02 de la [meta del equipo administrativo](../../../docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md)
+es preparar y revisar planilla para pequeños negocios, dentro de una conversación
+con contabilidad/finanzas. No crear otro motor ni un modelo permanente por papel.
+El registro actual de herramientas del asistente no opera nómina ni RRHH; la
+[arquitectura](../../../docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md) es propuesta.
+
+Antes de conectar el flujo, separar cálculo puro, propuesta, revisión y pago:
+`POST /api/payroll/calculate` ya escribe planilla/adelantos; no es un preview READ.
+El pago legacy consulta PAGADO antes de la transacción y puede continuar si falla
+el asiento. Reproducir, reparar y comprobar concurrencia/rollback/auditoría antes
+de habilitar pago; la marca PAGADO no prueba transferencia bancaria externa.
+
+Mantener permisos específicos por herramienta y por empleado, minimizar contexto
+y revalidar revocación en historial/adjuntos/encargos. El financiero recibe sólo
+agregados autorizados; un coordinador no hereda todo el expediente. Reglas vigentes
+con revisor humano y expected independientes, sin decisiones laborales automáticas.
+
 La nómina mueve el dinero más sensible del sistema: salarios de gente real. Las
 fórmulas viven en **UN solo motor puro** y todo lo demás orquesta. Leer `AGENTS.md` y `CLAUDE.md`. Esta guía describe el código; las fórmulas y tasas
 requieren revisión humana contra fuentes oficiales vigentes. No acredita

@@ -15,6 +15,9 @@ import { actionOrderDraftSchema,actionWriteoffDraftSchema,actionSupplierReturnDr
 import { promotionDraftSchema } from '../../promotions/management.js';
 import { prepareAssistantAction } from '../actions/service.js';
 import type { AssistantActionKind } from '../../../../shared/assistantOperations.js';
+import { canReadShiftReport } from '../../../lib/salesReport.js';
+import { reviewWeeklyCash, weeklyCashReviewQuerySchema } from './weeklyCashReview.js';
+import { inspectCashClose, cashCloseInvestigationQuerySchema } from './cashCloseInvestigation.js';
 
 interface ToolDependencies {db?:PrismaClient;now?:()=>Date;extraTools?:OperationTool[]}
 const asJson=(value:unknown):JsonValue=>JSON.parse(JSON.stringify(value));
@@ -23,6 +26,18 @@ export async function createOperationTools(principal:AssistantPrincipal,deps:Too
   await assertAssistantAccess(principal,'operations',db);
   const authorize=async(ctx:ToolContext)=>{if(ctx.principal.tenantId!==principal.tenantId||ctx.principal.userId!==principal.userId||ctx.principal.role!==principal.role)throw new AssistantRunError(403,'TOOL_PRINCIPAL_CHANGED','La identidad de la consulta cambió.');await ctx.assertActive();await assertAssistantAccess(principal,'operations',db);};
   const registry:OperationTool[]=[{name:'search_help',label:'Ayuda revisada',description:'Recuperar ayuda aprobada de Nortex con referencias; no consultar datos operativos aquí.',kind:'READ',schema:z.object({query:z.string().trim().min(1).max(500)}).strict(),async execute(ctx,args){await authorize(ctx);const {query}=z.object({query:z.string()}).parse(args);return{data:asJson(retrieveAssistantHelp(query,principal.role))};}}];
+  if (canReadShiftReport(principal.role)) registry.push({
+    name: 'inspect_cash_close', label: 'Soporte del cierre de caja', kind: 'READ',
+    description: 'Investigar un cierre concreto por shiftId obtenido de review_weekly_cash y, si está disponible, reportHash de su fuente exacta. Separar snapshot histórico de movimientos actuales y sus anulaciones. Ventas brutas CASH no equivalen al efectivo recibido: el snapshot puede omitir crédito de tienda aplicado. No reconstruir esperado ni atribuir causas, culpas o conciliación por coincidencia de importes. Mostrar pendientes humanos y referencias; no confirma ni corrige.',
+    schema: cashCloseInvestigationQuerySchema,
+    async execute(ctx, args) { await authorize(ctx); return { data: asJson(await inspectCashClose(principal, args, { db, now: deps.now })) }; },
+  });
+  if (canReadShiftReport(principal.role)) registry.push({
+    name: 'review_weekly_cash', label: 'Revisión de cierres de caja', kind: 'READ',
+    description: 'Revisar cierres por fecha de cierre Managua, hasta siete días. Sin fechas: últimos siete días completos. Comparar contado con esperado de cada snapshot íntegro; señalar faltantes, sobrantes, reportes faltantes y turnos aún abiertos. NIO y USD separados. Es una revisión histórica, no saldo actual, conciliación contable ni cierre de caja. No atribuir causas. Los datos inválidos o incompletos no son cero.',
+    schema: weeklyCashReviewQuerySchema,
+    async execute(ctx, args) { await authorize(ctx); return { data: asJson(await reviewWeeklyCash(principal, args, { db, now: deps.now })) }; },
+  });
   if(caps.overview)registry.push({name:'get_business_overview',label:'Datos del negocio',description:'Consultar cifras autorizadas de ventas, gastos, saldos y existencias. Los saldos son actuales, no históricos.',kind:'READ',schema:assistantPeriodSchema,async execute(ctx,args){await authorize(ctx);return{data:asJson(await getAssistantOverview(principal,args,db))};}});
   if([...ASSISTANT_BUSINESS_SALES_ROLES,...ASSISTANT_OWN_SALES_ROLES].includes(principal.role))registry.push({name:'audit_business_health',label:'Comparación del negocio',description:'Comparar ventas y métricas autorizadas con un período equivalente y el mismo corte; no atribuir causas automáticamente.',kind:'READ',schema:auditBusinessHealthQuerySchema,async execute(ctx,args){await authorize(ctx);return{data:asJson(await auditBusinessHealth(principal,args,{db,now:deps.now}))};}});
   if(caps.inventory){

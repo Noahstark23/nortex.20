@@ -1,0 +1,16 @@
+{
+  "command": "mise exec -- npm run test:mutation",
+  "passed": true,
+  "files": 65,
+  "total": 5803,
+  "counts": {
+    "Ignored": 20,
+    "Killed": 5779,
+    "Timeout": 4
+  },
+  "score": 100,
+  "threshold": 100,
+  "sourceMismatches": [],
+  "scopeGuardPassed": true,
+  "elapsedSeconds": 475
+}

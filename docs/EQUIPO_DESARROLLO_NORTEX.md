@@ -1,5 +1,7 @@
 # Equipo de desarrollo de Nortex
 
+Dirección actualizada el 2026-09-09: [meta del equipo administrativo](META_NORTEX_EQUIPO_ADMINISTRATIVO.md) y [arquitectura](ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md). Contador, RRHH y financiero son papeles del producto que se construirá; los perfiles siguientes desarrollan y verifican ese producto. No crear procesos/modelos adicionales por cada nombre ni confundir agentes con revisores profesionales humanos.
+
 Configuración del 2026-09-08. Son perfiles de agentes disponibles por tarea, no empleados ni procesos permanentes. Codex los registra en `.codex/config.toml` y Claude en `.claude/agents/`. Conservan el modelo predeterminado del entorno; no añaden proveedores, presupuesto de IA ni permisos externos. Los perfiles nuevos se cargan en una sesión que vuelva a leer la configuración. La revisión de esta entrega usa los agentes existentes, con ownership explícito.
 
 ## Responsabilidad y entrega
@@ -33,3 +35,18 @@ Codex conserva `max_threads=6` y `max_depth=1`: como máximo el integrador y cin
 5. Integrador: consolidar cada lote, actualizar estado/evidencia y ejecutar la promoción manual solo con sus requisitos satisfechos.
 
 Prioridades, dependencias y aceptación detalladas: [plan de desarrollo](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md). Estado verificable: [estado actual](ESTADO_ACTUAL_NORTEX.md). La fecha de cada tarea se fija después del baseline y de disponer de sus revisores; no se promete una fecha comercial por conteo de agentes.
+
+## Entregas del equipo administrativo — A00–A07
+
+| Resultado | Editor de dominio por lote | Revisión y dependencias |
+|---|---|---|
+| A00/A01: encargos, evidencia, recuperación y cola | Plataforma para persistencia/worker; Inteligencia para coordinación, con archivos separados | Integrador de schema/contratos; QA de reinicio/revocación/idempotencia; Clean Code revisa límites |
+| A02/W01: cierre semanal explicado | Finanzas para servicio de lectura; Inteligencia para herramienta | QA con expected independiente y responsable contable; POS para panel/carrito |
+| A03/W02: planilla revisada | Finanzas con especialidad RRHH y skill `nortex-rrhh`; dueño único por módulo | Revisor laboral/contable humano; riesgos D11 de cálculo/privacidad para preparar. Pago separado exige atomicidad/concurrencia/rollback |
+| A04/W03: planificación de caja | Finanzas | QA/Contabilidad verifican fuentes, cobertura y escenarios; Inteligencia sólo interpreta resultados |
+| A05: conectar IA por MCP | Inteligencia para adaptador; Plataforma para identidad delegada, archivos distintos | Revisión de seguridad y QA en cada cliente; scopes y consentimiento antes de datos privados |
+| A06/A07: coordinación y piloto | Integración organiza lotes y Producto conduce medición | Dueños de dominio, QA y revisores identificados; costo y resultado observados |
+
+Estos son encargos para perfiles existentes, no una instalación de perfiles nuevos. Antes de cada lote, el integrador concreta archivos permitidos y contrato; la tabla no concede edición simultánea de archivos compartidos. Un mismo perfil puede cubrir varios dominios en lotes secuenciales. La presencia de agentes de desarrollo no sustituye revisión humana de normas, etiquetas ni resultados del piloto.
+
+Primero especificar y caracterizar la lectura `getShiftSnapshot` de W01. El cierre real y el pago de nómina no se invocan para obtener una explicación. La rama y el candidato actual se preservan; este documento no solicita crear worktrees ni publicar cambios.

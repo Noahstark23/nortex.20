@@ -1,0 +1,10 @@
+{
+  "scope": [
+    "backend/services/assistant/budgetPolicy.ts"
+  ],
+  "counts": {
+    "Killed": 20
+  },
+  "total": 20,
+  "fullMutation": "passed; see full-mutation-summary.json"
+}

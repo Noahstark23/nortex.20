@@ -1,0 +1,38 @@
+{
+  "scanId": "cde7904a-845d-43e5-9a41-637773d1dfe1",
+  "sealedAt": "2026-09-12T19:00:04.947220Z",
+  "snapshotDigest": "codex-security-snapshot/v1:sha256:b2755e59efd408428e57276014a2df078852994d54ac60c8a2061616760715d2",
+  "sourceFilesReviewed": 39,
+  "validation": "static",
+  "dynamicReproduction": "not_executed_automatic_security_review_block",
+  "rootCauses": 1,
+  "instances": [
+    {
+      "title": "ADMIN can self-grant the new owner-only budget history permission through HR",
+      "severity": {
+        "level": "medium",
+        "rationale": "A routine administrative HR capability can grant a narrower owner capability. Scope is the same tenant's budget history or pending request slot; independent approval and monthly caps still hold."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Independent source/control/sink review; runtime reproduction was not completed."
+      },
+      "findingId": "csf_6d6205615d87ba31f8dee670"
+    },
+    {
+      "title": "ADMIN can self-grant authority to submit owner budget requests through HR",
+      "severity": {
+        "level": "medium",
+        "rationale": "A routine administrative HR capability can grant a narrower owner capability. Scope is the same tenant's budget history or pending request slot; independent approval and monthly caps still hold."
+      },
+      "confidence": {
+        "level": "medium",
+        "rationale": "Independent source/control/sink review; runtime reproduction was not completed."
+      },
+      "findingId": "csf_2c116017d22d84cafe65ae6e"
+    }
+  ],
+  "remediation": "implemented_local_after_scan",
+  "postRemediationRequiredGate": "not_executed_automatic_security_review_block",
+  "productionAccess": false
+}

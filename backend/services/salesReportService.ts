@@ -13,7 +13,6 @@ import {
     canReadShiftReport,
     foldSalesReportData,
     parseReturnedItems,
-    parseShiftCloseReportPayload,
     saleVatFromSnapshot,
     type ExpenseDailyAggregateInput,
     type ReturnRecordInput,
@@ -27,7 +26,8 @@ import {
     type SalesReportRange,
     type SalesReportScope,
 } from '../lib/salesReport.js';
-import { hashShiftCloseReport, type ShiftCloseReportPayload } from '../lib/shiftCloseReport.js';
+import { validateShiftSnapshot, type ShiftSnapshotDbRow, type ShiftReportSnapshotView } from './shiftSnapshotValidation.js';
+export type { ShiftReportSnapshotView } from './shiftSnapshotValidation.js';
 
 export interface SalesReportPrincipal {
     tenantId: string;
@@ -72,18 +72,6 @@ export interface SalesDocumentData {
 
 export interface SalesExportData extends SalesDocumentData {
     returns: SalesReportData['returns'];
-}
-
-export interface ShiftReportSnapshotView {
-    id: string;
-    shiftId: string;
-    folio: string;
-    businessDate: string;
-    version: number;
-    contentHash: string;
-    createdAt: string;
-    documentUrl: string;
-    report: ShiftCloseReportPayload;
 }
 
 export interface SalesReportService {
@@ -841,17 +829,6 @@ async function fetchTransactions(
     return { page, pageSize, total, totalPages: Math.ceil(total / pageSize), items };
 }
 
-interface ShiftSnapshotDbRow {
-    id: unknown;
-    shiftId: unknown;
-    folio: unknown;
-    businessDate: unknown;
-    version: unknown;
-    report: unknown;
-    contentHash: unknown;
-    createdAt: unknown;
-}
-
 export function createSalesReportService(db: ReportDb = prisma): SalesReportService {
     return {
         getReport: (context, range) => buildReport(db, context, range),
@@ -947,45 +924,7 @@ export function createSalesReportService(db: ReportDb = prisma): SalesReportServ
             if (!row) {
                 throw new SalesReportError('SHIFT_REPORT_NOT_FOUND', 404, 'El reporte de cierre no existe.');
             }
-            let rawReport = row.report;
-            if (typeof rawReport === 'string') {
-                try {
-                    rawReport = JSON.parse(rawReport);
-                } catch {
-                    rawReport = null;
-                }
-            }
-            const report = parseShiftCloseReportPayload(rawReport);
-            const folio = dbText(row.folio, '');
-            const date = dbText(row.businessDate, '');
-            const version = dbCount(row.version);
-            const contentHash = dbText(row.contentHash, '');
-            if (
-                !report
-                || report.shift.id !== shiftId
-                || report.folio !== folio
-                || report.businessDate !== date
-                || report.version !== version
-                || !/^[a-f0-9]{64}$/i.test(contentHash)
-                || hashShiftCloseReport(report) !== contentHash
-            ) {
-                throw new SalesReportError(
-                    'SHIFT_REPORT_INTEGRITY_FAILED',
-                    409,
-                    'El reporte de cierre no superó la verificación de integridad.',
-                );
-            }
-            return {
-                id: dbText(row.id, ''),
-                shiftId,
-                folio,
-                businessDate: date,
-                version,
-                contentHash,
-                createdAt: dbDate(row.createdAt).toISOString(),
-                documentUrl: `/api/reports/shifts/${encodeURIComponent(shiftId)}/document`,
-                report,
-            };
+            return validateShiftSnapshot(row, shiftId);
         },
     };
 }

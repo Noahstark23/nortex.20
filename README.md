@@ -2,15 +2,17 @@
 
 ERP/POS multi-tenant para comercios de Nicaragua: ventas, inventario, caja, fiado, compras y contabilidad, con capacidades por tipo de negocio. La aplicación usa React/PWA, Express, Prisma y MySQL 8.
 
-La prioridad del ciclo iniciado el 2026-09-04 es validar activación y recurrencia en ferreterías y farmacias, consolidar el núcleo y preparar asistencia RAG por web/WhatsApp. El código existente no equivale a una capacidad validada en producción.
+La meta acordada el 2026-09-09 es ofrecer un equipo administrativo accesible de contabilidad, recursos humanos y finanzas, con un objetivo de precio de US$20 por negocio al mes. Nortex debe completar trabajos comprobables, conservar pendientes y acompañar decisiones desde una conversación. Precio y sostenibilidad están por validar; esta documentación no cambia suscripciones ni cobros. El código existente no equivale a una capacidad validada en producción.
 
 ## Empezar por aquí
 
+- [Meta del equipo administrativo](docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md): propósito, trabajos W01–W04, entregas A00–A07, responsables y aceptación.
+- [Arquitectura e infraestructura propuestas](docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md): encargos durables, servicios, privacidad, MCP, carga y recuperación.
 - [Estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md): corte de código, QA, CI y bloqueos de promoción.
 - [Equipo de desarrollo](docs/EQUIPO_DESARROLLO_NORTEX.md): perfiles de Codex/Claude, responsabilidades y reglas de integración.
 
 - [RAG y consolidación de cuatro clientes](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md): desarrollo por etapas, recuperación, rendimiento y revisión humana.
-- [Plan de transformación](docs/PLAN_TRANSFORMACION_TOTAL_2026.md): prioridades, fases, responsables, métricas y aceptación.
+- [Plan de transformación anterior](docs/PLAN_TRANSFORMACION_TOTAL_2026.md): conservar backlog y evidencia comercial, subordinados a la meta vigente.
 - [Auditoría general del 4 de septiembre](docs/AUDITORIA_GENERAL_2026-09-04.md): evidencia local, hallazgos y límites.
 - [Índice de documentación](docs/README.md): planes de dominio, historial y estados de verificación.
 - [Reglas de trabajo](AGENTS.md) y [guía de dominio](CLAUDE.md): leer antes de modificar el producto.

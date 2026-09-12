@@ -10,6 +10,8 @@ import '@testing-library/jest-dom/vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import NortexAssistantLauncher from '../components/assistant/NortexAssistantLauncher';
 import { VentaEnCursoProvider, useReportarVenta, useVentaEnCurso } from '../components/VentaEnCursoContext';
+import type { AssistantRunDTO } from '../shared/assistantOperations';
+import { cashCloseInvestigationMessage } from '../shared/assistantCashCloseInvestigation';
 import type { AssistantCapabilities, AssistantMessageDTO, AssistantProposalDTO } from '../shared/assistant';
 
 const caps: AssistantCapabilities = { enabled: true, help: true, overview: true, inventory: true, invoiceRead: true, invoicePrepare: true, invoiceConfirm: true, extractionEnabled: true, executionEnabled: true, purchasePrepare: true, accessScope: 'OWNER' };
@@ -47,7 +49,132 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+function installCashReview(status: AssistantRunDTO['status'] = 'SUCCEEDED') {
+    const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+    const run: AssistantRunDTO = { id: 'run-cash', conversationId: 'c1', requestId: 'request-cash', status, version: 1, iterations: 0, steps: [], createdAt: '2026-09-09T15:00:00Z', updatedAt: '2026-09-09T15:00:00Z',
+        result: { text: 'Cierre disponible para revisar.', degraded: true, actionProposalIds: [], evidence: [{ id: 'e1', tool: 'review_weekly_cash', label: 'Caja', data: {
+            kind: 'WEEKLY_CASH_REVIEW', status: 'ok', checkedAt: '2026-09-09T15:00:00Z', scope: 'business', truncated: false,
+            period: { startDate: '2026-09-02', endDate: '2026-09-08', cutoff: '2026-09-09T06:00:00Z', timeZone: 'America/Managua', completeDays: true },
+            rows: [{ shiftId: 'shift-qa', status: 'BALANCED', closedAt: '2026-09-09T02:00:00Z', businessDate: '2026-09-08', folio: 'Z-QA', message: 'Reporte guardado.', source: { id: 'report-qa', version: 1, contentHash: 'a'.repeat(64), documentUrl: '/api/reports/shifts/shift-qa/document' }, cash: { expectedNio: '100.00', countedNio: '100.00', differenceNio: '0.00', expectedUsd: '0.0000', countedUsd: '0.0000', differenceUsd: '0.0000' } }],
+            counts: { closed: 1, verified: 1, differences: 0, missingReports: 0, invalidReports: 0, open: 0 }, totals: { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' }, warnings: [], evidence: [],
+        } }] } };
+    fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+        if (url.endsWith('/capabilities')) return ok({ ...caps, operations: true, cashReview: true });
+        if (url.endsWith('/runs/run-cash')) return ok(run);
+        if (url.endsWith('/messages') && JSON.parse(String(options?.body)).text === 'Revisar caja QA') return ok({ id: 'message-cash', role: 'assistant', text: 'Consulta de caja.', operationalRunId: 'run-cash', createdAt: '2026-09-09T15:00:00Z' });
+        return base(url, options);
+    });
+}
+
 describe('NortexGPT dentro del negocio', () => {
+    it('investiga el cierre por el mismo chat y conserva borrador, carrito y ruta al cerrar y retomar', async () => {
+        installCashReview();
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
+        await open(); await sendMessage('Revisar caja QA');
+        const button = await screen.findByRole('button', { name: 'Investigar este cierre' });
+        await waitFor(() => expect(button).toBeEnabled());
+        fireEvent.change(screen.getByLabelText('Tu consulta'), { target: { value: 'Mi siguiente consulta pendiente' } });
+        fireEvent.click(button); await screen.findByText('Ventas no son utilidad.');
+        const requests = fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'));
+        expect(requests).toHaveLength(2);
+        expect(requests[1][0]).toBe('/api/assistant/conversations/c1/messages');
+        expect(JSON.parse(String(requests[1][1].body)).text).toBe(cashCloseInvestigationMessage('shift-qa', 'a'.repeat(64)));
+        expect(screen.getByLabelText('Tu consulta')).toHaveValue('Mi siguiente consulta pendiente');
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' })); await open();
+        expect(screen.getByLabelText('Tu consulta')).toHaveValue('Mi siguiente consulta pendiente');
+        expect(screen.getByLabelText('Carrito')).toHaveTextContent('3:150'); expect(screen.getByLabelText('Ruta')).toHaveTextContent('/app/pos');
+        expect(fetcher.mock.calls.some(([url]) => /\/confirm$|\/shifts\/close$|\/purchases$|\/document$/.test(String(url)))).toBe(false);
+    });
+    it.each(['PENDING', 'RUNNING'] as const)('bloquea investigar mientras la consulta está %s', async status => {
+        installCashReview(status); mount(); await open(); await sendMessage('Revisar caja QA');
+        const button = await screen.findByRole('button', { name: 'Investigar este cierre' }); expect(button).toBeDisabled(); fireEvent.click(button);
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(1);
+    });
+    it('bloquea investigar con una revisión de compra editada y conserva sus cambios', async () => {
+        installCashReview(); mount(); await open(); await sendMessage('Revisar caja QA'); await screen.findByRole('button', { name: 'Investigar este cierre' });
+        fireEvent.click(screen.getByRole('tab', { name: 'Factura' }));
+        fireEvent.click(screen.getByText('Retomar una lectura o comprobar una compra'));
+        fireEvent.change(screen.getByLabelText('Referencia'), { target: { value: 'p1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar referencia' }));
+        await waitFor(() => expect(screen.getByLabelText('Cantidad 1')).toBeEnabled()); fireEvent.change(screen.getByLabelText('Cantidad 1'), { target: { value: '50' } });
+        fireEvent.click(screen.getByRole('tab', { name: 'Consultar' }));
+        const button = screen.getByRole('button', { name: 'Investigar este cierre' }); expect(button).toBeDisabled(); fireEvent.click(button);
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(1);
+        fireEvent.click(screen.getByRole('tab', { name: 'Factura' })); expect(screen.getByLabelText('Cantidad 1')).toHaveValue('50');
+    });
+    it('bloquea un cierre anterior mientras otra consulta del chat sigue activa', async () => {
+        installCashReview(); const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url.endsWith('/messages') && JSON.parse(String(options?.body)).text === 'Otra consulta') return ok({ id: 'm-active', role: 'assistant', text: 'Consulta pendiente.', operationalRunId: 'run-active', createdAt: '2026-09-09T15:00:00Z' });
+            if (url.endsWith('/runs/run-active')) return ok({ id: 'run-active', conversationId: 'c1', requestId: 'request-active', status: 'RUNNING', version: 1, iterations: 0, steps: [], createdAt: '2026-09-09T15:00:00Z', updatedAt: '2026-09-09T15:00:00Z' });
+            return base(url, options);
+        });
+        mount(); await open(); await sendMessage('Revisar caja QA'); await screen.findByRole('button', { name: 'Investigar este cierre' });
+        await sendMessage('Otra consulta'); await screen.findByText('NortexGPT está trabajando');
+        expect(screen.getByRole('button', { name: 'Investigar este cierre' })).toBeDisabled();
+    });
+    it('bloquea investigar mientras se lee una factura sin abandonar el turno consultado', async () => {
+        installCashReview(); mount(); await open(); await sendMessage('Revisar caja QA'); await screen.findByRole('button', { name: 'Investigar este cierre' });
+        fireEvent.click(screen.getByRole('tab', { name: 'Factura' }));
+        fireEvent.change(screen.getByLabelText('Adjuntar factura'), { target: { files: [new File(['synthetic'], 'qa.png', { type: 'image/png' })] } });
+        await screen.findByText('Factura en espera para lectura.'); fireEvent.click(screen.getByRole('tab', { name: 'Consultar' }));
+        expect(screen.getByRole('button', { name: 'Investigar este cierre' })).toBeDisabled();
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(1);
+    });
+    it('bloquea otra investigación después de una respuesta perdida conservando la identidad pendiente', async () => {
+        installCashReview(); const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => { if (url.endsWith('/messages') && JSON.parse(String(options?.body)).text.startsWith('Investigá')) throw new Error('Respuesta perdida'); return base(url, options); });
+        mount(); await open(); await sendMessage('Revisar caja QA'); fireEvent.click(await screen.findByRole('button', { name: 'Investigar este cierre' }));
+        await screen.findByRole('button', { name: 'Reintentar mensaje pendiente' });
+        const button = screen.getByRole('button', { name: 'Investigar este cierre' }); expect(button).toBeDisabled(); fireEvent.click(button);
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(2);
+    });
+
+    it('el acceso a revisión de caja envía la consulta y conserva carrito y ruta', async () => {
+        const original = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url.endsWith('/capabilities')) return ok({ ...caps, operations: true, cashReview: true });
+            return original(url, options);
+        });
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
+        await open();
+        fireEvent.click(screen.getByRole('button', { name: 'Revisar cierres de caja' }));
+        await waitFor(() => expect(fetcher.mock.calls.some(([url, options]) => String(url).endsWith('/messages') && JSON.parse(String(options?.body)).text === 'Revisá mis cierres de caja de la última semana')).toBe(true));
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' }));
+        expect(screen.getByLabelText('Carrito')).toHaveTextContent('3:150');
+        expect(screen.getByLabelText('Ruta')).toHaveTextContent('/app/pos');
+        expect(fetcher.mock.calls.some(([url]) => /\/confirm$|\/shifts\/close$|\/purchases$/.test(String(url)))).toBe(false);
+    });
+    it('sin permiso de caja oculta el acceso sugerido', async () => {
+        mount(); await open();
+        expect(screen.queryByRole('button', { name: 'Revisar cierres de caja' })).not.toBeInTheDocument();
+    });
+    it('solicitar presupuesto desde el panel conserva la venta y no registra una compra', async () => {
+        const original = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        const budget = { month: '2026-09', limitUsd: '2.000000', spentUsd: '0.050000', reservedUsd: '0.000000', remainingUsd: '1.950000', blocked: false,
+            platformAvailable: true, availabilityReason: null, canRequest: true, maxLimitUsd: '10', requests: [] };
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url.endsWith('/capabilities')) return ok({ ...caps, budgetManage: true });
+            if (url.endsWith('/budget')) return ok(budget);
+            if (url.endsWith('/budget/requests')) {
+                const input = JSON.parse(String(options?.body));
+                return ok({ id: 'request-budget-qa', requestedUsd: input.requestedUsd, reason: input.reason, status: 'PENDING', createdAt: '2026-09-09T06:00:00Z', decidedAt: null, decisionReason: null });
+            }
+            return original!(url, options);
+        });
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
+        await open();
+        fireEvent.click(screen.getByText('Uso y presupuesto de NortexGPT'));
+        await screen.findByText('US$ 1.95');
+        fireEvent.change(screen.getByLabelText('Nuevo límite mensual en US$'), { target: { value: '5.00' } });
+        fireEvent.change(screen.getByLabelText('Motivo del aumento'), { target: { value: 'Necesitamos revisar más productos del negocio.' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Solicitar aumento a Nortex' }));
+        await waitFor(() => expect(fetcher.mock.calls.filter(([url, options]) => String(url).endsWith('/budget/requests') && options?.method === 'POST')).toHaveLength(1));
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' }));
+        expect(screen.getByLabelText('Carrito')).toHaveTextContent('3:150');
+        expect(screen.getByLabelText('Ruta')).toHaveTextContent('/app/pos');
+        expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/confirm') || String(url).endsWith('/purchases'))).toBe(false);
+    });
     it('conserva la captura y ofrece foto o texto al cerrar y retomar el panel', async () => {
         const base = fetcher.getMockImplementation() as (...args: any[]) => any;
         fetcher.mockImplementation((url, options) => url.endsWith('/messages') ? Promise.resolve(ok(captured())) : base(url, options));

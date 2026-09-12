@@ -259,19 +259,13 @@ import {
     normalizeTenantCapabilities,
     suggestedCapabilitiesForBusinessType,
 } from '../utils/tenantCapabilities.js';
+import { mountAssistantRoutes } from './routes/assistantMounts.js';
 import onboardingRouter from './routes/onboarding.js';
 import operationalAlertsRouter from './routes/operationalAlerts.js';
-import assistantRouter from './routes/assistant.js';
-import { buildAssistantDocumentsRouter } from './routes/assistantDocuments.js';
-import { createAssistantProposalsRouter } from './routes/assistantProposals.js';
 import promotionsRouter from './routes/promotions.js';
 import { executeProductBulkEdit, ProductBulkEditError } from './services/productBulkEditService.js';
 import { withPromotionPriceVersion } from './services/promotions/productVersion.js';
-import { createAssistantCatalogRouter } from './routes/assistantCatalog.js';
-import { createAssistantActionsRouter } from './routes/assistantActions.js';
-import { createAssistantOperationsRouter } from './routes/assistantOperations.js';
-import { createAssistantStatusRouter } from './routes/assistantStatus.js';
-import { buildAssistantPrivateWhatsappRouter, buildAssistantPrivateWhatsappWebhookRouter } from './routes/assistantPrivateWhatsapp.js';
+import { buildAssistantPrivateWhatsappWebhookRouter } from './routes/assistantPrivateWhatsapp.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -623,7 +617,7 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     email: email,
                     password: hashedPassword,
                     name: companyName,
-                    role: 'ADMIN'
+                    role: 'ADMIN', assistantBudgetOwner: true
                 }
             });
 
@@ -1461,14 +1455,7 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/operational-alerts', operationalAlertsRouter);
 app.use('/api/promotions', promotionsRouter);
-app.use('/api/assistant', assistantRouter);
-app.use('/api/assistant', buildAssistantDocumentsRouter());
-app.use('/api/assistant', createAssistantOperationsRouter());
-app.use('/api/assistant', createAssistantStatusRouter());
-app.use('/api/assistant', createAssistantActionsRouter());
-app.use('/api/assistant/private-whatsapp', buildAssistantPrivateWhatsappRouter());
-app.use('/api/assistant', createAssistantCatalogRouter());
-app.use('/api/assistant', createAssistantProposalsRouter());
+mountAssistantRoutes(app);
 
 // ── Pulso del día del POS (gamificación honesta) ─────────────────────────────
 // Los números REALES del negocio como motor del loop de venta: cuánto llevás

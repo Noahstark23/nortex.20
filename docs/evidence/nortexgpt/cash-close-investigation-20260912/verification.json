@@ -1,0 +1,413 @@
+{
+  "schemaVersion": 1,
+  "delivery": "W01B: investigate cash-close support",
+  "recordedAt": "2026-09-12T18:32:35.156687+00:00",
+  "candidate": {
+    "workspace": "/Users/stark/Developer/Nortex/candidates/release-20260908",
+    "head": "ead043c2aa27e25e6522e97b3cdc2c3a4e585783",
+    "branch": "codex/caja-nica-retention",
+    "containsUncommittedChanges": true,
+    "identity": "HEAD plus explicit file hashes. No commit or release created."
+  },
+  "status": {
+    "implementation": "LOCAL_INCREMENT_IMPLEMENTED",
+    "generalQa": "PASSED_WITH_EXPLICIT_SKIPS",
+    "requiredMysql": "PASSED_ZERO_SKIPS",
+    "mutation": "PASSED_CONFIGURED_SCOPE",
+    "modelEvaluation": "NOT_RUN",
+    "humanPilot": "NOT_RUN",
+    "fullW01Acceptance": false,
+    "remoteCi": "NOT_RUN",
+    "staging": "NOT_DEPLOYED",
+    "production": "NOT_DEPLOYED"
+  },
+  "commands": {
+    "quality": "mise exec -- sh scripts/ci-local-safe.sh",
+    "integration": "mise exec -- npm run test:integration:required",
+    "mutationFull": "mise exec -- npm run test:mutation",
+    "mutationTarget": "mise exec -- npx --no-install stryker run /tmp/nortex-cash-close-money-stryker.json",
+    "prisma": "mise exec -- npx --no-install prisma validate / generate --schema backend/prisma/schema.prisma; each command used a synthetic DATABASE_URL in its child environment"
+  },
+  "qa": {
+    "general": {
+      "filesPassed": 419,
+      "filesSkipped": 39,
+      "testsPassed": 6154,
+      "testsSkipped": 422,
+      "failed": 0,
+      "typescript": "passed",
+      "prismaVersion": "6.4.1",
+      "prismaGenerate": "passed",
+      "prismaValidate": "passed",
+      "designFiles": 111,
+      "design": "passed",
+      "build": "passed",
+      "buildSeconds": 3.97
+    },
+    "mysql": {
+      "version": "8",
+      "disposable": true,
+      "suites": 40,
+      "passed": 436,
+      "skipped": 0,
+      "phaseCases": 32
+    },
+    "mutation": {
+      "total": 5918,
+      "killed": 5894,
+      "timeout": 4,
+      "ignored": 20,
+      "survived": 0,
+      "noCoverage": 0,
+      "modules": 67,
+      "score": 100,
+      "threshold": 100,
+      "fullFunctionsProtected": 14,
+      "newMoneyFunctionFloor": 26,
+      "newMoneyFunctionRange": "cashCloseInvestigation.ts:28-35",
+      "targetKilled": 26,
+      "targetTotal": 26,
+      "allReportSourcesMatchCurrent": true
+    },
+    "productChangesAfterGeneralQa": [],
+    "logs": {
+      "quality": {
+        "localPath": "reports/cash-close-investigation/quality.log",
+        "sha256": "0afc41cb52a905b86a9b5619f4f555c475a9b1de04cbb30f92703ddf160d98fb",
+        "lastModifiedUtc": "2026-09-12T18:23:06.589746+00:00"
+      },
+      "integration": {
+        "localPath": "reports/cash-close-investigation/integration.log",
+        "sha256": "33c4ddd682dce9fbbeb67860b41b24aa8bd499ee3e00dcbc009f8b0021be542b",
+        "lastModifiedUtc": "2026-09-12T18:24:12.193782+00:00"
+      },
+      "mutationFull": {
+        "localPath": "reports/cash-close-investigation/mutation-full.log",
+        "sha256": "97cccd729055a98444f989f016028e18db5d18a6e8b716f3a2ec2bc2ab5757e2",
+        "lastModifiedUtc": "2026-09-12T18:31:44.678967+00:00"
+      },
+      "prismaValidate": {
+        "localPath": "reports/cash-close-investigation/prisma-validate.log",
+        "sha256": "90583799a8ea8e4709943e438b724fa5163329fd98e9248e31f58a9bbc3f5bc1",
+        "lastModifiedUtc": "2026-09-12T18:18:41.016528+00:00"
+      },
+      "prismaGenerate": {
+        "localPath": "reports/cash-close-investigation/prisma-generate.log",
+        "sha256": "226d225b229508bb83df235b99d5de0f6109e1f13110e2ee2548e12e7d48bc88",
+        "lastModifiedUtc": "2026-09-12T18:18:42.426463+00:00"
+      }
+    }
+  },
+  "verifiedBehavior": [
+    "Button preserves exact shift ID and optional source hash through the existing message/run path",
+    "Canonical investigation bypasses paid interpretation and preserves budget; malformed requests do not query",
+    "Snapshot and current CashMovement rows remain separate; no expected-cash reconstruction from gross CASH sales",
+    "Existing store credit close tested through closeShiftWithReport: gross CASH 100, store credit 40, opening 100, expected 160",
+    "Source mismatch conflict, absent/invalid snapshots, missing/foreign identifiers and database failures distinguished",
+    "Current movement list bounded; no sales listing, descriptions, names, notes, costs or unverified foreign Expense reference",
+    "Current authentication and own Shift.userId / business report scope verified; private run replay/recovery tested",
+    "Before/after business rows unchanged: no cash, inventory, accounting, purchase or audit effects from inspection",
+    "Deadline checked after tool return, even when event-loop timers have not fired",
+    "Pending human checks persisted as private run evidence; no automatic assignment or accepted reconciliation"
+  ],
+  "visual": {
+    "kind": "REAL_COMPONENTS_WITH_SYNTHETIC_DATA",
+    "fullAuthenticatedPosBrowserFlow": false,
+    "desktop": {
+      "requestedWidth": 1280,
+      "measuredClientWidth": 1274,
+      "scrollWidth": 1274
+    },
+    "mobile": {
+      "requestedWidth": 390,
+      "measuredClientWidth": 384,
+      "scrollWidth": 384
+    },
+    "buttonFlowObserved": true,
+    "referenceExpansionObserved": true,
+    "usesPanelShellMaterial": true,
+    "physicalDevice": false,
+    "initialHarnessNote": "Initial standalone harness omitted the opaque shell ancestor. Final captures use the panel shell material; no product CSS was changed based on that nonrepresentative capture.",
+    "previewStopped": true,
+    "viewportReset": true,
+    "temporaryTabClosed": true
+  },
+  "modularity": {
+    "newProductModules": {
+      "backend/services/assistant/operations/cashCloseInvestigation.ts": 139,
+      "backend/services/assistant/operations/cashCloseInvestigationRequest.ts": 8,
+      "shared/assistantCashCloseInvestigation.ts": 34,
+      "components/assistant/AssistantCashCloseInvestigation.tsx": 85
+    },
+    "extractions": [],
+    "monoliths": [
+      {
+        "path": "backend/server.ts",
+        "lines": 14118,
+        "sha256": "80095f052ffff283e20f8fb2a760fe628d32771fedf321781652427c19b3f95c",
+        "unchangedSincePriorW01Baseline": true
+      },
+      {
+        "path": "components/POS.tsx",
+        "lines": 5924,
+        "sha256": "9eea83e57975c822f7247e6d480d83925a8a0f7ddb6374c4b8b7702dfb544ce9",
+        "unchangedSincePriorW01Baseline": true
+      }
+    ],
+    "newDependencies": 0,
+    "newPrismaClients": 0,
+    "budgetsRaised": false,
+    "additiveIndex": "CashMovement(tenantId,shiftId,createdAt,id)",
+    "runtimeSchemaPath": "db push; migration SQL documents expansion, no remote DDL applied"
+  },
+  "preservation": {
+    "baselinePath": "/Users/stark/Developer/Nortex/release-evidence/20260912-cash-investigation-before.json",
+    "baselineSha256": "690965d33921477887e591653c583c30327694061d9b3c689bb307af070863a1",
+    "headUnchanged": true,
+    "branchOrWorktreeChanged": false,
+    "originalWorkspaceWrittenByTask": false,
+    "historicalManifestsRewritten": false
+  },
+  "resolvedFindings": [
+    "NFD normalization could alter opaque IDs/hashes; parser now preserves them and rejects unsupported characters",
+    "A late tool result could be published after the deadline; post-return deadline and authorization check added",
+    "Monetary coercion paths lacked tests; invalid numbers/objects now explicitly rejected and mutation-covered",
+    "A proposed-tool statement in architecture was reconciled with the implemented tools and remaining acceptance work"
+  ],
+  "limits": [
+    "Cash snapshot v1 lacks per-sale historical tender/store-credit component and ledger head at close",
+    "Movement categories and amount matches do not prove individual historical membership, cause, payment or responsibility",
+    "Assignments, reviewed resolution, human acceptance and full W01 case lifecycle remain pending",
+    "Human model evaluation, pilot time savings, physical-device and full authenticated browser flow not performed",
+    "No new production backup/restore, load test or EXPLAIN plan accredited by this phase",
+    "No paid provider calls, customer messages, commit, push, merge or deployment"
+  ],
+  "files": [
+    {
+      "path": ".claude/skills/nortex-rag/SKILL.md",
+      "sha256": "9c325f2be5970f7d22054d49c2894726fa5012ed9a4950aa7821388e48a9ff15",
+      "baselineSha256": "23b77e609f9490a8708be27abb0224ebb378799c280e050807f56106a78eb055",
+      "lines": 392
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "560cce1c37fd33ce7e12ed0d31176ff8838e205cf8b58f320bbe49a2b6318339",
+      "baselineSha256": "a1485486e1719d98677391738862ad9711970043eaf3e17f74c1d09b3cbe9721",
+      "lines": 53
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "ec845456001dc40fba4641f750486181b413382b2339eff39099a9df20f886b8",
+      "baselineSha256": "a93b47c5c897598d478a29260fedcb145524f2b802451db91bd7750337d7b8b5",
+      "lines": 336
+    },
+    {
+      "path": "backend/prisma/migrations/20260912010000_cash_close_investigation_index/migration.sql",
+      "sha256": "e4c74c8f3de2133d26ec94294a02506edd70b5938d28bc894e54339cb8a8ae49",
+      "baselineSha256": null,
+      "lines": 4
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "d4cddda24aa76521ebfb483404378409240e7ea3be573d056bb744c306451978",
+      "baselineSha256": "cf62a24d533bfcf1d8990ddbd799f702f6b61b53349bf5819130dc5afa4c1bc2",
+      "lines": 3747
+    },
+    {
+      "path": "backend/services/assistant/operations/cashCloseInvestigation.ts",
+      "sha256": "241978b2b793406ec96e97b289c8b5c1cf89ca9aa6a788f102b862b51c24f30d",
+      "baselineSha256": null,
+      "lines": 139
+    },
+    {
+      "path": "backend/services/assistant/operations/cashCloseInvestigationRequest.ts",
+      "sha256": "d2f855289d57b182cc940617826ccbfcc39e6bb1cc61a290ab37766377ae84eb",
+      "baselineSha256": null,
+      "lines": 8
+    },
+    {
+      "path": "backend/services/assistant/operations/fallback.ts",
+      "sha256": "351ee9b3499a1ff15efa46977db19d89ec761a192b26fc076c0e6f08c2b1062b",
+      "baselineSha256": "8d083adeb6727fb35a5b5a58892d29177c740d4a97d3dd5e9b9de357ce612ba0",
+      "lines": 60
+    },
+    {
+      "path": "backend/services/assistant/operations/orchestrator.ts",
+      "sha256": "4110953f2133fa5ff90a26fb0933174a05a62ed6ed965419b098976ffcf217ba",
+      "baselineSha256": "354bd2fa9bba5b0333eaa06af3541fcf2226775246a1e21ee1afafd59ffe6352",
+      "lines": 143
+    },
+    {
+      "path": "backend/services/assistant/operations/routing.ts",
+      "sha256": "d00144a4eb272c82268f3a019bc43147afe1cf8a8c6388e1cca8852de4bf8275",
+      "baselineSha256": "5c4fb4e959010d7cdd8c0ecbf257b306d68f7e5b18df145d68697b5b5aaf0095",
+      "lines": 19
+    },
+    {
+      "path": "backend/services/assistant/operations/tools.ts",
+      "sha256": "0c21f71c8da0486df31e843e06117ef433fb0eadc94d5773305ddc9485327e41",
+      "baselineSha256": "42306abaac26b97a0cdafd76940123526b93f901f4e900591cf184092b623fd5",
+      "lines": 65
+    },
+    {
+      "path": "components/assistant/AssistantCashCloseInvestigation.tsx",
+      "sha256": "917d0557b1bf2cd310d6b96f9f08d488c4da0aa92a4733f551e74c23322c169e",
+      "baselineSha256": null,
+      "lines": 85
+    },
+    {
+      "path": "components/assistant/AssistantOperationalEvidence.tsx",
+      "sha256": "e81db33f229388a03369bf64b73bbf94d2dbe350807409d7126b877a4e5d47b9",
+      "baselineSha256": "95edc8d26204ffe6723b130d4c9f311d2d4bc044cb92a7b527b56e30b5b4774d",
+      "lines": 80
+    },
+    {
+      "path": "components/assistant/AssistantRunView.tsx",
+      "sha256": "aa22c7fbb4a21d5d3da39eb3340061dc845bfaa8da6a76558a369763614004c8",
+      "baselineSha256": "39c7be1e1196b38c87fe7eb16e7d769bc8a4bf883bc7ae5d82d4340f2c6874a8",
+      "lines": 20
+    },
+    {
+      "path": "components/assistant/AssistantWeeklyCashReview.tsx",
+      "sha256": "73fcb9ef4fa62ab4876fdbeda94beb5e89e3bb602cfca9500239ed2059bb84fc",
+      "baselineSha256": "fa3c326c7511079aef09b64b8db9546257ce344d0900bd70b9bfb946d6357a5e",
+      "lines": 95
+    },
+    {
+      "path": "components/assistant/NortexAssistantPanel.tsx",
+      "sha256": "43725cac027a84bd1bcc2e6cdb01f2aeba389cf402212883f25a640ad0e3ea80",
+      "baselineSha256": "4605deb86cf0bd033c3d9a0faa38cd0c6be8d33ee16f03ceb752cbff4be79f02",
+      "lines": 136
+    },
+    {
+      "path": "docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md",
+      "sha256": "f7b96efb70ef09960124186546ffc7676e9a7f126572943224216a035b233e5e",
+      "baselineSha256": "ea0e78f67c1341f80d9a781fd86f92481df361171c23eadce49aca6a889b4647",
+      "lines": 230
+    },
+    {
+      "path": "docs/ESTADO_ACTUAL_NORTEX.md",
+      "sha256": "a83ef0c75deecd47df2373c2fd4bc2aea6e04057fe048480af76abc0fad3dd9b",
+      "baselineSha256": "a047858c19447af4c44507fa395280092ee703ec69c2b960f33200569ec46dfd",
+      "lines": 63
+    },
+    {
+      "path": "docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md",
+      "sha256": "0f44e1e8d0874a4209ff42a44fd6e2953c7132117dbd9d242ce397e02225673b",
+      "baselineSha256": "4d6e00aeefc02b7605d75b223a43cad696378d270a3a8614456db63277fd3622",
+      "lines": 132
+    },
+    {
+      "path": "docs/NORTEXGPT_INVESTIGACION_CIERRES_2026-09-12.md",
+      "sha256": "7ea1057ba08c3abcc39958c1b9d8b0559330dfa36bf7dc2fc6e09831bcb87a33",
+      "baselineSha256": null,
+      "lines": 51
+    },
+    {
+      "path": "docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md",
+      "sha256": "688fc9eace32abee29569faaa3eb4a02c2a5d8c3081d27217d04272436f98a42",
+      "baselineSha256": "69cb963112dc8654f9568cb8bd2eb309b0f16233b5415010c5b0865ff648f998",
+      "lines": 270
+    },
+    {
+      "path": "docs/README.md",
+      "sha256": "4620fad339e7839dce693aea1d586c03bcf7b513eedfef8afbf35c8d051bdd34",
+      "baselineSha256": "f0551541a1d37966378b93665fe82d531789bc20b061fab4a48954ba65f420b4",
+      "lines": 56
+    },
+    {
+      "path": "scripts/check-mutation-scope.cjs",
+      "sha256": "072f47f20f863bd28dfb93695e320ef9000565d0812ae74d6b00b246d9085ad5",
+      "baselineSha256": "34d5393d203f94fc33892c18d803ae5646daa277c55002773aef09e48f67f5c3",
+      "lines": 449
+    },
+    {
+      "path": "scripts/quality-gate-contract.mjs",
+      "sha256": "87f297ddb304fdf2edfc6b20058cf5799325a4dad4dc29f69d725ed7a61f5a7e",
+      "baselineSha256": "aab456598dfcc46fa2cc4d02047f5b93527953345498f6da62311ad52f590fae",
+      "lines": 72
+    },
+    {
+      "path": "shared/assistantCashCloseInvestigation.ts",
+      "sha256": "ea9a44d28472d644975979e7df41bdf8b5632dd0ed144aa143792d86d7d6a25f",
+      "baselineSha256": null,
+      "lines": 34
+    },
+    {
+      "path": "stryker.config.json",
+      "sha256": "d33071b9250b7a599dab38c8898f8fbbb4eee965fd9d9484cacf8cbf00a96d1e",
+      "baselineSha256": "a26aa432349d28a725031786e518531a1b8b855df1bad5a958201063760611f2",
+      "lines": 149
+    },
+    {
+      "path": "tests/assistantCashCloseInvestigation.integration.test.ts",
+      "sha256": "d6babb1c1e37a4eee875a145f0b1633bfe7f9ce5d216276151fdcdbc046a4eb9",
+      "baselineSha256": null,
+      "lines": 284
+    },
+    {
+      "path": "tests/assistantCashCloseInvestigation.test.ts",
+      "sha256": "072cbdccbc518db34285683438016eee55873fc893d0916310fb1d69176fe56d",
+      "baselineSha256": null,
+      "lines": 139
+    },
+    {
+      "path": "tests/assistantCashCloseInvestigationRequest.test.ts",
+      "sha256": "1bdb8624f3b0dd8e7f89c7d7223f0386a44a85cac560b752b105bbfc3b6497f9",
+      "baselineSha256": null,
+      "lines": 201
+    },
+    {
+      "path": "tests/assistantCashCloseInvestigationView.test.tsx",
+      "sha256": "da5b553335c090f2fe62768e30cb6af5e213dca1630c269f92069efa2cd40450",
+      "baselineSha256": null,
+      "lines": 99
+    },
+    {
+      "path": "tests/assistantOperationsTools.test.ts",
+      "sha256": "93619da0320d31fdb4a18e13b9a05692846931deeffae1eecc394fd8bdb41e11",
+      "baselineSha256": "4ef69c18be7cef30f2b90269badc1c8d685cad9a0cff2cb21ae70eb675faaa66",
+      "lines": 57
+    },
+    {
+      "path": "tests/assistantPanel.test.tsx",
+      "sha256": "7e8b1ae1202fce35043213e8ebb106122c6eff43140c813587ae25358430a1ab",
+      "baselineSha256": "3b296468fdcdec1aadca21381c6f7a127428889f9fa48bca5604a6663b121b37",
+      "lines": 535
+    },
+    {
+      "path": "tests/assistantWeeklyCashReviewView.test.tsx",
+      "sha256": "b8ec604ae3954f0ea35d1723c51a087dd70482b06d44aac849ac80b64e0075d3",
+      "baselineSha256": "80d9cfc88727291386c6fb5cb2d7e5ae4fcef7ec08f0ddf33bab0b99e7ddd46f",
+      "lines": 156
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "docs/evidence/nortexgpt/cash-close-investigation-20260912/desktop.png",
+      "sha256": "5906467d650f55aabc548e00f017e4a82166ed651aa0a62781f78ba7baaaa75b"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/cash-close-investigation-20260912/mobile.png",
+      "sha256": "4e37d022759b828529a0e8136f7325ae0db4fb343ddea6dd4bc464f5a4f530b9"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/cash-close-investigation-20260912/mobile-reference.png",
+      "sha256": "1ef75e53417630c2a4e2c398cfcef5aac1c802fcee3cf2e4a43a0d0233161077"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/cash-close-investigation-20260912/mutation-summary.json",
+      "sha256": "5cf3d6ce9b35406a0bed2d9cebd53fb883c386916101412f107bf2a9ae5c221e"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/cash-close-investigation-20260912/integration-summary.json",
+      "sha256": "bca4fb0a04eaf4a499021d52f8c181a119cfd935b47300db87456fb398d1c38f"
+    }
+  ],
+  "finalArtifactChecks": {
+    "sourceAndArtifactHashesVerified": 38,
+    "localLinksVerified": 185,
+    "brokenLocalLinks": 0,
+    "diffCheck": "passed"
+  }
+}

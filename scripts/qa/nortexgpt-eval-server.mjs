@@ -118,7 +118,7 @@ console.log(JSON.stringify({
     ? { propagated: true, envVar: 'ANTHROPIC_API_KEY', fingerprint: credential.fingerprint, length: credential.length }
     : { propagated: false, reason: credential.reason, effect: 'las consultas devolverán el respaldo determinista' },
   capabilities: { conversation: true, operations: true, extraction: false, execution: false, actionPrepare: false, promotions: false, privateWhatsapp: false, whatsappBusiness: false },
-  serverBudgets: { globalUsd: '20', perTenantUsd: '10' },
+  serverBudgets: { globalUsd: '20', defaultTenantUsd: '2', maximumApprovedTenantUsd: '10' },
   log: path.relative(process.cwd(), logPath),
 }, null, 2));
 console.log('\nBackend de QA listo. Ctrl+C para detenerlo.');

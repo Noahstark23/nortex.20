@@ -155,6 +155,17 @@ La autorización debe identificar el SHA completo; no inferirla de un verde loca
 
 ## Equipo y documentación vigente
 
+- La dirección de producto está en `docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md`:
+  contabilidad, RRHH y finanzas coordinadas para pequeños negocios. Cada lote
+  identifica el trabajo que permite terminar, datos, permisos, resultado y prueba.
+  Los especialistas del producto no son los agentes que desarrollan el código.
+- `docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md` define infraestructura
+  propuesta. Encargos durables, MCP y herramientas administrativas siguen siendo
+  entregas por implementar; no atribuirles los resultados de QA del POS.
+- US$20 como precio objetivo del servicio no modifica tarifas ni aumenta los
+  topes de IA: US$2 iniciales por negocio, hasta US$10 con aprobación de Nortex,
+  y US$20 globales en la etapa actual. Cada encargo comparte presupuesto entre
+  especialistas. Mantener las limitaciones entre entornos/canales documentadas.
 - Consultar `docs/ESTADO_ACTUAL_NORTEX.md` y `docs/EQUIPO_DESARROLLO_NORTEX.md` antes
   de repartir trabajo. Los perfiles no otorgan ownership ni autorización externa.
 - Las cifras de un informe histórico conservan su fecha/candidato. Actualizar la

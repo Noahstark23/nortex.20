@@ -1,0 +1,70 @@
+{
+  "status": "PASSED",
+  "startedUtc": "2026-09-09T06:07:28.698Z",
+  "syntheticOnly": true,
+  "aiCalls": 0,
+  "aiCostUsd": 0,
+  "scenarios": [
+    {
+      "name": "legacy",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    },
+    {
+      "name": "column",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    },
+    {
+      "name": "table",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    },
+    {
+      "name": "mirror",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": true
+    }
+  ],
+  "resourceLimits": {
+    "memoryMiB": 512,
+    "cpus": 0.5
+  },
+  "cleanup": true,
+  "mysqlImageId": "sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+  "baseCommit": "ead043c2aa27e25e6522e97b3cdc2c3a4e585783",
+  "oldSchemaSha256": "d8a475e58fb1503a9d46e119d97334092f955d5bbca11622fb2f37c6614fc4d6",
+  "schemaSha256": "5e67d5635c04075fd72ad37c76c5f93f4399e0faea72c733bd0c943bf8f8400a",
+  "migrationSha256": "f7a5ad9dc98c76a6beb06f269a06484be10f37f0ab8d36bb6c5deb4c67805ea4",
+  "scriptSha256": "99dd0155a7d66fc4eacbc4e9c6e295938eaf9aaf43fd6e08a3270163262f3e8b",
+  "mysqlVersion": "8.0.46",
+  "completedUtc": "2026-09-09T06:08:59.555Z"
+}

@@ -6,6 +6,8 @@ import FluidSheet from '../ui/FluidSheet';
 import { useVentaEnCurso } from '../VentaEnCursoContext';
 import type { NortexAssistantController } from '../../hooks/useNortexAssistant';
 import type { AssistantAction } from '../../shared/assistant';
+import type { AssistantRunDTO } from '../../shared/assistantOperations';
+import { cashCloseInvestigationMessage } from '../../shared/assistantCashCloseInvestigation';
 import { formatMoney } from '../../utils/money';
 import { AssistantInvoiceReview, useAssistantInvoiceReviewState } from './AssistantInvoiceReview';
 import { assistantJobMessage } from './assistantJobMessage';
@@ -15,6 +17,7 @@ import { AssistantRunView } from './AssistantRunView';
 import { AssistantActionReview } from './AssistantActionReview';
 import { AssistantDailyBrief } from './AssistantDailyBrief';
 import { AssistantPurchaseIntake } from './AssistantPurchaseIntake';
+import { AssistantBudgetPanel } from './AssistantBudgetPanel';
 import { assistantButtonClass, assistantInputClass } from './AssistantCatalogSelect';
 
 export default function NortexAssistantPanel({ controller, open, onClose }: { controller: NortexAssistantController; open: boolean; onClose: () => void }) {
@@ -51,6 +54,8 @@ export default function NortexAssistantPanel({ controller, open, onClose }: { co
     const recoverShared = async () => { if (conversationBlocked) return; if (sharedConversation) await controller.recoverConversation(sharedConversation); if (sharedExtraction) { await controller.recover('extractions', sharedExtraction); setTab('invoice'); } };
     const openPurchases = () => { if (sale.hayVenta) { setSaleWarning(true); return; } onClose(); navigate('/app/purchases'); };
     const submit = () => { if (!text.trim() || conversationBlocked) return; const message = text; setText(''); void controller.send(message); };
+    const investigationBlocked = conversationBlocked || Object.values<AssistantRunDTO>(operational?.runs ?? {}).some(run => run.status === 'PENDING' || run.status === 'RUNNING');
+    const investigateCashClose = (shiftId: string, reportHash?: string) => { if (investigationBlocked) return; void controller.send(cashCloseInvestigationMessage(shiftId, reportHash)); };
     const actionDisabled = (action: AssistantAction) => {
         if (busy || pendingMessage || reading || !capabilities?.invoiceRead) return true;
         if (action.type === 'REVIEW_PURCHASE') return !action.proposalId || (protectedReview && proposal?.id !== action.proposalId);
@@ -80,6 +85,7 @@ export default function NortexAssistantPanel({ controller, open, onClose }: { co
                 {operational?.proposal && <button type="button" role="tab" aria-selected={tab === 'action'} className={assistantButtonClass} onClick={() => setTab('action')}>Revisar acción</button>}
             </div>
             <div className="min-h-0 space-y-4 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5" role="tabpanel" aria-label={tab === 'chat' ? 'Consultar' : tab === 'invoice' ? 'Factura' : 'Revisar acción'}>
+                {capabilities.budgetManage && <details className="nx-shell-control rounded-card border p-3"><summary className="nx-shell-text min-h-tap cursor-pointer text-sm font-semibold">Uso y presupuesto de NortexGPT</summary><AssistantBudgetPanel request={controller.request} sessionKey={`${controller.sessionKey}:${capabilities.accessScope}`} /></details>}
                 {(sharedConversation || sharedExtraction) && <details className="nx-shell-control rounded-card border p-3"><summary className="nx-shell-text min-h-tap cursor-pointer text-sm">Referencia recibida por WhatsApp</summary><p className="nx-shell-muted text-sm">Se comprobará tu acceso antes de recuperar el documento. Guardá cualquier revisión actual para conservar sus cambios.</p><button type="button" disabled={conversationBlocked} className={assistantButtonClass} onClick={() => void recoverShared()}>Retomar referencia compartida</button></details>}
                 {saleWarning && <section className="nx-shell-control space-y-2 rounded-card border p-4"><h3 tabIndex={-1} ref={warningRef} className="nx-shell-text font-bold">Tenés una venta abierta</h3><p className="nx-shell-muted text-sm">Terminá o aparcá la venta antes de abrir Compras. Podés seguir revisando la factura aquí.</p><button type="button" className={assistantButtonClass} onClick={() => { setSaleWarning(false); onClose(); }}>Seguir vendiendo</button></section>}
                 {error && <p role="alert" className="nx-tone-warning rounded-control border p-3 text-sm">{error}</p>}
@@ -88,6 +94,7 @@ export default function NortexAssistantPanel({ controller, open, onClose }: { co
                     {operational?.brief && <AssistantDailyBrief brief={operational.brief} busy={conversationBlocked} onDismiss={itemId => void operational.dismiss(itemId)} onAsk={message => void controller.send(message)} />}
                     {messages.length === 0 && <div className="space-y-3"><p className="nx-shell-text text-sm">Te ayudo con los datos y funciones disponibles para tu rol. Las consultas no cambian tu negocio.</p><div className="flex flex-wrap gap-2">
                         {capabilities.overview && <button type="button" className={assistantButtonClass} disabled={conversationBlocked} onClick={() => void controller.send('¿Cómo va mi negocio hoy?')}>¿Cómo va mi negocio hoy?</button>}
+                        {capabilities.cashReview && <button type="button" className={assistantButtonClass} disabled={conversationBlocked} onClick={() => void controller.send('Revisá mis cierres de caja de la última semana')}>Revisar cierres de caja</button>}
                         {capabilities.inventory && <button type="button" className={assistantButtonClass} disabled={conversationBlocked} onClick={() => void controller.send('¿Qué existencias y vencimientos requieren atención?')}>Existencias y vencimientos</button>}
                         {capabilities.help && <button type="button" className={assistantButtonClass} disabled={conversationBlocked} onClick={() => void controller.send('¿Cómo registro una compra?')}><BookOpen size={16} /> Cómo registrar una compra</button>}
                     </div></div>}
@@ -96,7 +103,7 @@ export default function NortexAssistantPanel({ controller, open, onClose }: { co
                         {message.overview && <section aria-label="Datos del negocio" className="space-y-3"><p className="nx-shell-muted text-xs">Período: {message.overview.startDate} al {message.overview.endDate} · Managua<br />{message.overview.scope}<br />Consultado: {new Date(message.overview.checkedAt).toLocaleString('es-NI', { timeZone: 'America/Managua' })}</p>
                             <dl className="space-y-3">{message.overview.metrics.map(metric => <div key={metric.key} className="nx-shell-border border-t pt-2"><dt className="nx-shell-text text-sm font-semibold">{metric.label}</dt><dd className={metric.status === 'unavailable' || metric.value === null ? 'nx-tone-warning' : 'nx-shell-text'}>{metric.status === 'unavailable' || metric.value === null ? 'No disponible' : metric.unit === 'money' ? formatMoney(metric.value) : metric.value}</dd><dd className="nx-shell-muted break-words text-xs">Fuente: {metric.source}</dd></div>)}</dl>
                         </section>}
-                        {message.operationalRunId && operational && (operational.runs[message.operationalRunId] ? <AssistantRunView run={operational.runs[message.operationalRunId]} busy={operational.busy} onCancel={() => void operational.changeRun(message.operationalRunId!, 'cancel')} onRecover={() => void operational.changeRun(message.operationalRunId!, 'recover')} onReview={reviewAction} /> : <div className="space-y-2"><p role="status" className="nx-shell-muted text-sm">Comprobando el avance de esta consulta…</p><button type="button" className={assistantButtonClass} onClick={() => void operational.refreshRun(message.operationalRunId!)}>Comprobar consulta</button></div>)}
+                        {message.operationalRunId && operational && (operational.runs[message.operationalRunId] ? <AssistantRunView run={operational.runs[message.operationalRunId]} busy={operational.busy} onCancel={() => void operational.changeRun(message.operationalRunId!, 'cancel')} onRecover={() => void operational.changeRun(message.operationalRunId!, 'recover')} onReview={reviewAction} onInvestigate={investigateCashClose} investigationDisabled={investigationBlocked} /> : <div className="space-y-2"><p role="status" className="nx-shell-muted text-sm">Comprobando el avance de esta consulta…</p><button type="button" className={assistantButtonClass} onClick={() => void operational.refreshRun(message.operationalRunId!)}>Comprobar consulta</button></div>)}
                         {!!message.citations?.length && <ul aria-label="Fuentes de ayuda" className="nx-shell-muted space-y-2 text-xs">{message.citations.map(citation => <li key={citation.id}>{citation.title} · {citation.section} · Versión {citation.version}</li>)}</ul>}
                     </article>)}</div>
                     {purchaseIntake && capabilities.invoiceRead && <AssistantPurchaseIntake intake={purchaseIntake} actions={controller.actions} disabled={actionDisabled} onAction={action => void actOnPurchase(action)} />}

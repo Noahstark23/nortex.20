@@ -2,8 +2,14 @@ import { z } from 'zod';
 import { normalizeAssistantText } from '../knowledge.js';
 import { managuaDay,shiftCivilDay } from './analyticsPeriod.js';
 import type { OperationTool,RunCheckpoint,RunResult,ToolOutput } from './contracts.js';
+import { weeklyCashReviewRequest } from './weeklyCashReviewRequest.js';
+import { cashCloseInvestigationRequest } from './cashCloseInvestigationRequest.js';
 
 function requests(text:string,now:Date):Array<{name:string;args:unknown}> {
+  const investigation = cashCloseInvestigationRequest(text);
+  if (investigation !== undefined) return investigation === null ? [] : [{ name: 'inspect_cash_close', args: investigation }];
+  const cashReview = weeklyCashReviewRequest(text, now);
+  if (cashReview !== undefined) return cashReview === null ? [] : [{ name: 'review_weekly_cash', args: cashReview }];
   const normalized=normalizeAssistantText(text),dates=text.match(/\d{4}-\d{2}-\d{2}/g)??[];
   const unparsedPeriod=/\b(semana|mes|mensual|anual|ano|ultimos|ultimas)\b/.test(normalized)&&!dates.length;
   if(unparsedPeriod||dates.length>2||dates.some(date=>!z.iso.date().safeParse(date).success))return [];
@@ -36,10 +42,19 @@ export async function deterministicRunFallback(text:string,now:Date,checkpoint:R
       if(JSON.stringify(data).length>18000)throw new Error('Fallback output limit');
       const evidence={id:`e${checkpoint.evidence.length+1}`,tool:tool.name,label:tool.label,data};
       checkpoint.evidence.push(evidence);checkpoint.steps[checkpoint.steps.length-1]={...step,status:'SUCCEEDED',evidenceId:evidence.id};
-    } catch {
-      await deps.assertActive();checkpoint.steps[checkpoint.steps.length-1]={...step,status:'FAILED',errorCode:'TOOL_UNAVAILABLE'};
+    } catch (error) {
+      const code = request.name === 'inspect_cash_close' && error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' && /^CASH_CLOSE_[A-Z_]+$/.test(error.code) ? error.code : 'TOOL_UNAVAILABLE';
+      await deps.assertActive();checkpoint.steps[checkpoint.steps.length-1]={...step,status:'FAILED',errorCode:code};
     }
     await deps.onCheckpoint(checkpoint);
   }
+  if (cashCloseInvestigationRequest(text) !== undefined) return {
+    text: checkpoint.steps.some(step => step.errorCode === 'CASH_CLOSE_SOURCE_CHANGED')
+      ? 'El reporte cambió desde la revisión seleccionada. Pedí una nueva revisión de cierres antes de investigarlo.'
+      : checkpoint.evidence.some(item => item.tool === 'inspect_cash_close')
+        ? 'Consulté directamente las fuentes de este cierre. El desglose guardado y los movimientos actuales tienen cortes distintos. Revisá los pendientes: esta lectura no determina la causa de una diferencia ni modifica la caja.'
+        : 'No pude obtener un cierre autorizado con esa referencia. Elegí Investigar este cierre desde una revisión de caja vigente; no se modificó ningún registro.',
+    evidence: checkpoint.evidence, actionProposalIds: checkpoint.actionProposalIds, degraded: true,
+  };
   return {text:checkpoint.evidence.length?'El análisis de IA no está disponible. Conservé las consultas verificadas y sus fuentes para que las revisés. Los datos no disponibles siguen señalados; no se confirmó ninguna acción.':'El análisis de IA no está disponible y no pude obtener fuentes para esta pregunta. Podés indicar el tema y fechas AAAA-MM-DD, o continuar en los módulos habituales de Nortex.',evidence:checkpoint.evidence,actionProposalIds:checkpoint.actionProposalIds,degraded:true};
 }

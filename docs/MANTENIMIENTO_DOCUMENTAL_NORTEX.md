@@ -2,10 +2,18 @@
 
 El estado actual se consulta en [ESTADO_ACTUAL_NORTEX](ESTADO_ACTUAL_NORTEX.md). Esta revisión reconcilia guías operativas, skills y plan contra el candidato `484f58a`; no transforma todos los informes antiguos en documentación vigente ni afirma revisar cada hecho legal, comercial o histórico.
 
+## Dirección vigente — 2026-09-09
+
+La [meta del equipo administrativo](META_NORTEX_EQUIPO_ADMINISTRATIVO.md) gobierna resultados y prioridad; la [arquitectura propuesta](ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md) describe contratos por implementar. A00–A07 relaciona entregas con C00/D00–D14 y los planes de dominio. Actualizar entradas y skills afectadas; conservar cifras y evidencia histórica. La meta de precio US$20 no cambia precios ni presupuestos por editar un MD.
+
+La ampliación documental del 09/09 conserva el manifiesto de presupuesto previo como snapshot histórico. Los MD incluidos allí pueden tener un hash nuevo por esta ampliación; no reescribir el manifiesto para atribuirle pruebas anteriores. El lote documental tendrá su propia evidencia y comprobará que el código previo permanece igual.
+
 ## Autoridad y propietarios
 
 | Documento | Propietario | Cuándo revisarlo |
 |---|---|---|
+| Meta del equipo administrativo | Producto | Cambian resultados, prioridades, alcance comercial o criterio de valor |
+| Arquitectura administrativa | Integración + Plataforma + dominios | Se acuerdan contratos o una propuesta se implementa con evidencia |
 | AGENTS.md y CLAUDE.md | Integración | Cambian contratos comunes, seguridad, QA o ubicación de dominio |
 | Estado actual y expediente de release | Integración + QA | Cambia candidato, evidencia o entorno observado |
 | Plan C00/D00–D14 | Producto + responsables de dominio | Se implementa o adjudica una tarea; registrar evidencia, no solo marcar checkbox |

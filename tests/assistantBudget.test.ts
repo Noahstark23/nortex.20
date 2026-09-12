@@ -1,6 +1,7 @@
 import { beforeEach,describe,expect,it,vi } from 'vitest';
 import Decimal from 'decimal.js';
 vi.mock('../backend/services/assistant/access.js',()=>({assertAssistantAccess:vi.fn().mockResolvedValue(undefined)}));
+import { assertAssistantAccess } from '../backend/services/assistant/access.js';
 import { reserveAssistantBudget,settleAssistantBudget,tokenCostUsd,budgetMonth,MAX_EXTRACTION_RESERVATION_USD } from '../backend/services/assistant/budget.js';
 const principal={tenantId:'tenant',userId:'user',role:'OWNER'};
 function database() {
@@ -28,9 +29,21 @@ describe('contabilidad exacta del presupuesto IA',()=>{
   });
   it('reserva en ambos buckets y bloquea exceder el límite del tenant',async()=>{
     const {db,buckets}=database();const deps={db,now:()=>new Date('2026-09-05')};
-    for(let i=0;i<40;i++)await reserveAssistantBudget(principal,'0.25',deps);
-    expect(buckets.get('tenant:tenant:2026-09').reservedUsd.toString()).toBe('10');expect(buckets.get('global:2026-09').reservedUsd.toString()).toBe('10');
+    for(let i=0;i<8;i++)await reserveAssistantBudget(principal,'0.25',deps);
+    expect(buckets.get('tenant:tenant:2026-09').reservedUsd.toString()).toBe('2');expect(buckets.get('global:2026-09').reservedUsd.toString()).toBe('2');
     await expect(reserveAssistantBudget(principal,'0.25',deps)).rejects.toMatchObject({code:'BUDGET_EXHAUSTED'});
+  });
+  it('consumo help de ADMIN no exige gestión ni consulta autoridad de Employee',async()=>{
+    const {db,buckets,tx}=database();const actor={...principal,role:'ADMIN'};
+    const query=tx.$queryRaw.getMockImplementation()!;
+    tx.$queryRaw.mockImplementation(async(input:any)=>{
+      if(input.sql.includes('Employee'))throw new Error('La reserva no depende de RRHH');
+      return query(input);
+    });
+    const usage=await reserveAssistantBudget(actor,'0.25',{db,capability:'help',now:()=>new Date('2026-09-05')});
+    expect(usage).toMatchObject({userId:actor.userId,tenantId:actor.tenantId,status:'RESERVED'});
+    expect(buckets.get('tenant:tenant:2026-09').reservedUsd.toString()).toBe('0.25');
+    expect(assertAssistantAccess).toHaveBeenCalledWith(actor,'help',expect.anything());
   });
   it('settle duplicado registra una sola vez y devuelve sobrante de reserva',async()=>{
     const {db,buckets,usages}=database();const deps={db,now:()=>new Date('2026-09-05')};const row=await reserveAssistantBudget(principal,'0.25',deps);

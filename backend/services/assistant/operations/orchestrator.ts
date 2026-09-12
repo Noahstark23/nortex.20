@@ -6,6 +6,7 @@ import type { AssistantPrincipal } from '../../../../shared/assistant.js';
 import { reserveAssistantBudget, settleAssistantBudget } from '../budget.js';
 import { AssistantRunError, type OperationTool, type RunCheckpoint, type RunResult, type JsonValue } from './contracts.js';
 import { deterministicRunFallback } from './fallback.js';
+import { cashCloseInvestigationRequest } from './cashCloseInvestigationRequest.js';
 
 export const MAX_OPERATION_ITERATIONS = 4;
 export const MAX_OPERATION_DURATION_MS = 60_000;
@@ -58,9 +59,13 @@ export async function runAssistantOrchestrator(input:OrchestratorInput,deps:Orch
   if(tools.size!==deps.tools.length||[...tools.keys()].some(name=>name==='respond_with_evidence'||!/^[a-z_]{1,64}$/.test(name)||/confirm|execute|sql/.test(name)))throw new AssistantRunError(500,'INVALID_TOOL_REGISTRY','El catálogo operativo requiere revisión.');
   const fallback=()=>deterministicRunFallback(input.text,now(),checkpoint,tools,{assertActive:deps.assertActive,onCheckpoint:deps.onCheckpoint,execute:async(tool,args,stepId)=>{
     const assertActive=async()=>{if(now().getTime()>=deadline)throw new AssistantRunError(408,'RUN_TIMEOUT','La consulta alcanzó su tiempo máximo.');await deps.assertActive();};
-    await assertActive();return withinDeadline(tool.execute({principal:input.principal,conversationId:input.conversationId,runId:input.runId,toolCallId:stepId,assertActive},args),deadline-now().getTime());
+    await assertActive();
+    const output = await withinDeadline(tool.execute({principal:input.principal,conversationId:input.conversationId,runId:input.runId,toolCallId:stepId,assertActive},args),deadline-now().getTime());
+    await assertActive();return output;
   }});
   // Una clave ausente no produjo consumo incierto: no reservar ni liquidar una llamada inexistente.
+  // La referencia elegida por la persona conserva su identidad y no necesita una interpretación pagada.
+  if (cashCloseInvestigationRequest(input.text) !== undefined) return fallback();
   if(!deps.create&&!process.env.ANTHROPIC_API_KEY)return fallback();
   while(checkpoint.iterations<MAX_OPERATION_ITERATIONS&&now().getTime()<deadline) {
     await deps.assertActive();

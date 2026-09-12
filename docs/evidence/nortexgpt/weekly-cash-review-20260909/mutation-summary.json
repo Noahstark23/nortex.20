@@ -1,0 +1,504 @@
+{
+  "score": 100,
+  "breakThreshold": 100,
+  "scope": "Configured pure functions only; not repository-wide coverage. Existing ignored mutants are not detected mutants.",
+  "full": {
+    "sourceReport": "reports/mutation/mutation.json",
+    "reportSha256": "37521939ff201fa4be7ad06dc16d95245f9b238225473568accfa6913773210e",
+    "sourceMatchesCurrent": true,
+    "counts": {
+      "Ignored": 20,
+      "Killed": 5868,
+      "Timeout": 4
+    },
+    "total": 5892,
+    "modules": 66,
+    "files": [
+      {
+        "path": "backend/services/nicaLabor.ts",
+        "sourceSha256": "931c5ededd63ea021ff667f2221c73b375dfff8fe4ef78bdd9c9edc889802480",
+        "mutants": {
+          "Ignored": 20,
+          "Killed": 106,
+          "Timeout": 2
+        }
+      },
+      {
+        "path": "backend/lib/batchWarehouseLedger.ts",
+        "sourceSha256": "c2ac2b82443f065dbf1ffa59635a978289981b9135cf5fe61f65a10aa7d8b272",
+        "mutants": {
+          "Killed": 165
+        }
+      },
+      {
+        "path": "backend/lib/batchWarehouseReadiness.ts",
+        "sourceSha256": "5fc589fac53dbcf60502859debe6f3e025df42748186678a3289134a970d9d69",
+        "mutants": {
+          "Killed": 496
+        }
+      },
+      {
+        "path": "backend/lib/htmlSecurity.ts",
+        "sourceSha256": "8757bf76253bd7243f7a70aef63ff66dd45678366094bb7891707dff59213f7e",
+        "mutants": {
+          "Killed": 27
+        }
+      },
+      {
+        "path": "backend/lib/managuaBusinessDate.ts",
+        "sourceSha256": "1eb19210717ee2894b01d6fd036dc59688cb065f69f00d02db7f02f2783c469b",
+        "mutants": {
+          "Killed": 40
+        }
+      },
+      {
+        "path": "backend/lib/manualBatchMovements.ts",
+        "sourceSha256": "aaabe7f5d4be66850ff18d389b35a45b0b4075fba08cd829b5f11f52a4b67508",
+        "mutants": {
+          "Killed": 112
+        }
+      },
+      {
+        "path": "backend/lib/offlineSaleReplay.ts",
+        "sourceSha256": "20d50cdea8de1375c605094a5870b9cf3a53e926f5ddb0dcadcec3f893861246",
+        "mutants": {
+          "Killed": 58
+        }
+      },
+      {
+        "path": "backend/lib/paymentAccounts.ts",
+        "sourceSha256": "064c6ce0502789c4c24e319eb20986636d773cb025dae63c85543f7ed412529a",
+        "mutants": {
+          "Killed": 11
+        }
+      },
+      {
+        "path": "backend/lib/pharmacyExpiryAlerts.ts",
+        "sourceSha256": "ac43003aa9e2107633a49f4a9ecea8a72ac6bc91149c9c734790a2548e579ef0",
+        "mutants": {
+          "Killed": 31
+        }
+      },
+      {
+        "path": "backend/lib/procurementMatch.ts",
+        "sourceSha256": "02ec45d5c5e0cf4ee2b0c53d47b326806759f1cb743d30ab576ec9e150bc6599",
+        "mutants": {
+          "Killed": 310
+        }
+      },
+      {
+        "path": "backend/lib/procurementReceipts.ts",
+        "sourceSha256": "e1444df9e3f8adb17e3f5658338a8656a6fe5bdd3428c5b27fd0c8c058391fa0",
+        "mutants": {
+          "Killed": 269
+        }
+      },
+      {
+        "path": "backend/lib/productBatchHold.ts",
+        "sourceSha256": "de3f9e30eabc255a4d7f379d6362c1f279a10589aacb0b2735b986d2e0343882",
+        "mutants": {
+          "Killed": 142
+        }
+      },
+      {
+        "path": "backend/lib/productBatchIdentity.ts",
+        "sourceSha256": "17d606bb643b21798dd0e16e2823c36dc70b0082020c8d0b5ac14b745f92ef5b",
+        "mutants": {
+          "Killed": 41
+        }
+      },
+      {
+        "path": "backend/lib/purchaseMoney.ts",
+        "sourceSha256": "cd428dd9ad327fe96a4a4b64ae614f78854fc372db3b5257008fb91cf52647b7",
+        "mutants": {
+          "Killed": 21
+        }
+      },
+      {
+        "path": "backend/lib/purchaseOrderAvailability.ts",
+        "sourceSha256": "09e8e8fbcfeb519122be80a0a4ea767c245c8230e2a3847f0c6d4097ba62a819",
+        "mutants": {
+          "Killed": 16
+        }
+      },
+      {
+        "path": "backend/lib/purchaseOrderCloseShort.ts",
+        "sourceSha256": "6ee34c6d08158c198bf127b31c4601ba6d923b408d96b4cae2dfb76fc26b53c9",
+        "mutants": {
+          "Killed": 157
+        }
+      },
+      {
+        "path": "backend/lib/reportMoney.ts",
+        "sourceSha256": "1bfdb36f458e0b6ea7960b2665b568e2a3ddc60d69d0dec7b8bfbb4f525c2a68",
+        "mutants": {
+          "Killed": 73
+        }
+      },
+      {
+        "path": "backend/lib/saleCorrections.ts",
+        "sourceSha256": "53e3d8e58eb4aee0cd1ae2adf43dac050112f58167dc113c29f9a4676106c06a",
+        "mutants": {
+          "Killed": 51
+        }
+      },
+      {
+        "path": "backend/lib/salesQuantityReport.ts",
+        "sourceSha256": "e84fa3a193572890b66b174d4258c9ae63640b81d9e41a3e2fa8780d66a37911",
+        "mutants": {
+          "Killed": 67
+        }
+      },
+      {
+        "path": "backend/lib/scaleLabelTelemetry.ts",
+        "sourceSha256": "56e94fe358acbea730068ad2625aeea9041791c12e521aec040f0dfdb37be6a2",
+        "mutants": {
+          "Killed": 31
+        }
+      },
+      {
+        "path": "backend/lib/stockTransferCommand.ts",
+        "sourceSha256": "b75a5098d3b1474c0c05b662ddd12cf60a6e4e2fd90431882ce66bec7c9cd16b",
+        "mutants": {
+          "Killed": 160
+        }
+      },
+      {
+        "path": "backend/lib/supplierPayments.ts",
+        "sourceSha256": "f31a9631c9afb9a031f38fe3e661107532d1cabf1ea4cd904cf537c9ae6bf4a4",
+        "mutants": {
+          "Killed": 156
+        }
+      },
+      {
+        "path": "backend/services/accounting.ts",
+        "sourceSha256": "5cd52ebb2eb43181eec946e142ee896d1b609999cb1491c6ea96659679e9e8b0",
+        "mutants": {
+          "Killed": 232
+        }
+      },
+      {
+        "path": "backend/services/assistant/budget.ts",
+        "sourceSha256": "7b1adb5cdeeb0cea357d3c748346140ac261a859a43dc675b3f4d6c26e1aba45",
+        "mutants": {
+          "Killed": 15
+        }
+      },
+      {
+        "path": "backend/services/assistant/budgetPolicy.ts",
+        "sourceSha256": "d7dbbe668c64fed69ed74356144db1efe7de3a645ff422a54980edbbcec5c6f9",
+        "mutants": {
+          "Killed": 20
+        }
+      },
+      {
+        "path": "backend/services/assistant/operations/weeklyCashReviewSummary.ts",
+        "sourceSha256": "4747f7d94d0bb7fc2b7bfd8befce3c60b2de04f39cf7d17c1029c637c158c0ec",
+        "mutants": {
+          "Killed": 89
+        }
+      },
+      {
+        "path": "backend/services/assistant/proposalValidation.ts",
+        "sourceSha256": "18e9b85108fe64faac5433ccf397d922fa7ee3919a8e3039b936a8f2aeac2f22",
+        "mutants": {
+          "Killed": 14
+        }
+      },
+      {
+        "path": "backend/services/batchWriteoffValue.ts",
+        "sourceSha256": "51f595d000c5f9eae581f8098e904fc7d3a5ad0b367c6f0a2f619c5716d147f4",
+        "mutants": {
+          "Killed": 13
+        }
+      },
+      {
+        "path": "backend/services/journalPosting.ts",
+        "sourceSha256": "b5667a5abc7685300c62260bc2386729ce6de014589c59c1dc073176d0f98eba",
+        "mutants": {
+          "Killed": 175
+        }
+      },
+      {
+        "path": "backend/services/legacyShiftCloseService.ts",
+        "sourceSha256": "92b481dc12c28806d8d2bd98998f24e1b5f92ae6f25867217ebe28bcae740fab",
+        "mutants": {
+          "Killed": 9
+        }
+      },
+      {
+        "path": "backend/services/loanMath.ts",
+        "sourceSha256": "7fbbfa3c30cf9aca1949a3d12ced412a2e460225e4107270eb69fd0bf6d148f4",
+        "mutants": {
+          "Killed": 12
+        }
+      },
+      {
+        "path": "backend/services/nicaTax.ts",
+        "sourceSha256": "b825c29ec8aa7446b2a01854b0651388dbe1b590bf6885eb118b73b0ca37c870",
+        "mutants": {
+          "Killed": 7
+        }
+      },
+      {
+        "path": "backend/services/pedidoTrackingService.ts",
+        "sourceSha256": "e16cb2c5646c85f588eb74728b558507b774ac7993c26d432508edcc3946f7bf",
+        "mutants": {
+          "Killed": 5
+        }
+      },
+      {
+        "path": "backend/services/productBulkEditPrice.ts",
+        "sourceSha256": "3d00bba6d6af72b2167a6087c7448d24798b0c7b777848d6f2934c8247c07daf",
+        "mutants": {
+          "Killed": 5
+        }
+      },
+      {
+        "path": "backend/services/promotions/totals.ts",
+        "sourceSha256": "189ef4049917a4673b062e90fab694da1529ea5ca3f7b6bd4c860c15f29b4670",
+        "mutants": {
+          "Killed": 5
+        }
+      },
+      {
+        "path": "backend/services/purchaseRegistrationAuthority.ts",
+        "sourceSha256": "2f747fe783579f65a7bf8cc2dc9ce05114a4d1ecc0627f277cb3698e4699071e",
+        "mutants": {
+          "Killed": 26
+        }
+      },
+      {
+        "path": "backend/services/purchaseSalePriceService.ts",
+        "sourceSha256": "2112a414da44df05c2829b52ce5a7f0a197a3f61b160c347c9cd6c17a66083b5",
+        "mutants": {
+          "Killed": 68
+        }
+      },
+      {
+        "path": "backend/services/returnService.ts",
+        "sourceSha256": "53fff695852b994918b90ece92125b4dae8e2cfec2a77b312357e19358d8cc58",
+        "mutants": {
+          "Killed": 264
+        }
+      },
+      {
+        "path": "backend/services/saleCancellation.ts",
+        "sourceSha256": "8cdd123426d852abea280cafd9bdacc37e2f2ee731deedb3bc40ddb4f24b8336",
+        "mutants": {
+          "Killed": 73
+        }
+      },
+      {
+        "path": "backend/services/sellerReport.ts",
+        "sourceSha256": "e891f79959537da44a925353638a103cc718f2064a8beedf5a44a2cdf3acc845",
+        "mutants": {
+          "Killed": 59
+        }
+      },
+      {
+        "path": "backend/services/shiftIdentity.ts",
+        "sourceSha256": "e5b0be271a8d988ade285c85b4b220d64bf4e3e6acc3fd51962664de12419682",
+        "mutants": {
+          "Killed": 68
+        }
+      },
+      {
+        "path": "backend/services/stockService.ts",
+        "sourceSha256": "5777ce21166998c6b6d43acbdf7d0c6a1d1513b10487ce56660b242cf5da554f",
+        "mutants": {
+          "Killed": 5
+        }
+      },
+      {
+        "path": "backend/services/stripe.ts",
+        "sourceSha256": "892c2b06e55925fc2e8d6d16e9c9bc36c90e61c7ca9adb646761d6eb2b52bc70",
+        "mutants": {
+          "Killed": 17
+        }
+      },
+      {
+        "path": "backend/validation/saleCorrectionSchemas.ts",
+        "sourceSha256": "8b7eeed43ebed42d29a93cfdba53b9bb35425a137efed83215d4baafc56058da",
+        "mutants": {
+          "Killed": 50
+        }
+      },
+      {
+        "path": "backend/validation/schemas.ts",
+        "sourceSha256": "098590cfd0d9a6d5051594f2097eb328fa5a9129cb2eb20d3ea1965136e75952",
+        "mutants": {
+          "Killed": 8
+        }
+      },
+      {
+        "path": "utils/calc-laborales.ts",
+        "sourceSha256": "b0d81b880e1f39858d08602cf5abe639b99b8ce3af4589d803851cabad1665e1",
+        "mutants": {
+          "Killed": 88,
+          "Timeout": 1
+        }
+      },
+      {
+        "path": "utils/cartPersistence.ts",
+        "sourceSha256": "02ab77fb1cc0c7648677d40cf11b56b658d2fc2ea073704d33efd8df3567977b",
+        "mutants": {
+          "Killed": 337
+        }
+      },
+      {
+        "path": "utils/fiscalRegime.ts",
+        "sourceSha256": "5b93c04e0e208f717f6fa5632aa605e43c78fa3284c08b4cf65927dc96fd30e9",
+        "mutants": {
+          "Killed": 85
+        }
+      },
+      {
+        "path": "utils/legacySaleMode.ts",
+        "sourceSha256": "7cf8abccdcc69ca28be07004435739b027dc68b2d7dd9366e3892bbe27b66983",
+        "mutants": {
+          "Killed": 33
+        }
+      },
+      {
+        "path": "utils/margen.ts",
+        "sourceSha256": "e4b05a17635d8b32c4183ec31a382e69aa3cefc0b0eae71bb33fd0408dd6c53d",
+        "mutants": {
+          "Killed": 70
+        }
+      },
+      {
+        "path": "utils/measuredReportExport.ts",
+        "sourceSha256": "f35ce43910567fd09f67feabbb07f40751012a96dc67cc8d80ca5af77a67e024",
+        "mutants": {
+          "Killed": 3
+        }
+      },
+      {
+        "path": "utils/money.ts",
+        "sourceSha256": "5e3bfe180fe905ea664d56c9d3ec53b557b3cbfba97658b072876aa846f9463c",
+        "mutants": {
+          "Killed": 56
+        }
+      },
+      {
+        "path": "utils/posActivation.ts",
+        "sourceSha256": "20a819b1c10152d5ffb8a2d609f6c2465086fdabba559035ed992eb40b339ef4",
+        "mutants": {
+          "Killed": 192
+        }
+      },
+      {
+        "path": "utils/posCash.ts",
+        "sourceSha256": "d1f9b46436c791903d4cc3985538def5ef2b702b435d7044fea1987983b289bf",
+        "mutants": {
+          "Killed": 99
+        }
+      },
+      {
+        "path": "utils/posProductMapper.ts",
+        "sourceSha256": "77559822a8dc05c4c84db059cf487c150357736c6ab6bb2c3cc0ca067cc7f4ac",
+        "mutants": {
+          "Killed": 46
+        }
+      },
+      {
+        "path": "utils/posSearch.ts",
+        "sourceSha256": "1d2b0433e8d9d947a1663534b457df6436428fd38763d52888de239674e6e1ef",
+        "mutants": {
+          "Killed": 103
+        }
+      },
+      {
+        "path": "utils/postSalePrintCash.ts",
+        "sourceSha256": "6a90c26920b44b6aaea40ebee61fbe6c301c8955cba746cf0ee57adb6616ba82",
+        "mutants": {
+          "Killed": 23
+        }
+      },
+      {
+        "path": "utils/pricing.ts",
+        "sourceSha256": "868c91851c1201d627c66d41921d302c98ad03bc1d942249fdc030b99d7901d2",
+        "mutants": {
+          "Killed": 40
+        }
+      },
+      {
+        "path": "utils/productFamilyPresets.ts",
+        "sourceSha256": "5409b52ea1d4dd4485d68000be94bac748ac21644e5a7dcbb657753f4d3a6855",
+        "mutants": {
+          "Killed": 45
+        }
+      },
+      {
+        "path": "utils/purchasePackaging.ts",
+        "sourceSha256": "a2baf4fabe8da80dc77bf8e2fd16a189016003fbcd629d4f4fc8d4438d71c3dc",
+        "mutants": {
+          "Killed": 117
+        }
+      },
+      {
+        "path": "utils/quantity.ts",
+        "sourceSha256": "340aee6e2dc177fe94806eddfa6fe20bce90ce75063bf74411e524c88f1d40dd",
+        "mutants": {
+          "Killed": 257
+        }
+      },
+      {
+        "path": "utils/scaleLabels.ts",
+        "sourceSha256": "e046ce3ba38fbb5b9c25ce02ba72567cb4fa6d4cb1787120fc0d7b4b15cfe15a",
+        "mutants": {
+          "Killed": 369,
+          "Timeout": 1
+        }
+      },
+      {
+        "path": "utils/stockAlert.ts",
+        "sourceSha256": "b5dcec7ea84a5ee23be87ff203c190d07fc188febd3c3522999be25c96bb3954",
+        "mutants": {
+          "Killed": 106
+        }
+      },
+      {
+        "path": "utils/stockTransferQuantity.ts",
+        "sourceSha256": "a0090ac4e2c962ab5eb84f22c325ef934d4b7ccab96c8ea2da7089a015b038d7",
+        "mutants": {
+          "Killed": 18
+        }
+      },
+      {
+        "path": "backend/lib/shiftCloseReport.ts",
+        "sourceSha256": "89db4c8799f2b764a7f91fbfa6ab2e8de84ae89e60aa9951fa42c9362733af67",
+        "mutants": {
+          "Killed": 1
+        }
+      },
+      {
+        "path": "backend/services/promotions/pricing.ts",
+        "sourceSha256": "9f84a28fc7018143fdff27e26bdf56df589fd6c2e8b2c47c5c92d9334ff3eb2b",
+        "mutants": {
+          "Killed": 1
+        }
+      }
+    ]
+  },
+  "weeklyCashTarget": {
+    "sourceReport": "reports/weekly-cash-review/mutation-target/mutation.json",
+    "reportSha256": "6303d3bc0a0ab07964409ee4524ca4a78048f4b596a66c01a99f79ffb69b97ac",
+    "sourceMatchesCurrent": true,
+    "counts": {
+      "Killed": 89
+    },
+    "total": 89,
+    "modules": 1,
+    "files": [
+      {
+        "path": "backend/services/assistant/operations/weeklyCashReviewSummary.ts",
+        "sourceSha256": "4747f7d94d0bb7fc2b7bfd8befce3c60b2de04f39cf7d17c1029c637c158c0ec",
+        "mutants": {
+          "Killed": 89
+        }
+      }
+    ]
+  }
+}

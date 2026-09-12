@@ -10,6 +10,8 @@ export interface AssistantCapabilities {
   purchasePrepare?: boolean;
   operations?: boolean; dailyBrief?: boolean; actionPrepare?: boolean; actionConfirm?: boolean;
   promotionManage?: boolean; privateWhatsapp?: boolean;
+  budgetManage?: boolean;
+  cashReview?: boolean;
 }
 export interface AssistantCitation { id: string; title: string; section: string; version: string; path: string }
 export interface AssistantMetric { key: string; label: string; value: string | null; unit: 'money' | 'count'; status: 'ok' | 'unavailable'; source: string }

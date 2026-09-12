@@ -1,0 +1,431 @@
+{
+  "schemaVersion": 1,
+  "delivery": "W01 initial read-only weekly cash review",
+  "implementationDate": "2026-09-09",
+  "artifactReviewDate": "2026-09-12",
+  "candidate": {
+    "workspace": "/Users/stark/Developer/Nortex/candidates/release-20260908",
+    "branch": "codex/caja-nica-retention",
+    "head": "ead043c2aa27e25e6522e97b3cdc2c3a4e585783",
+    "containsUncommittedChanges": true,
+    "identity": "HEAD plus explicit source hashes below; no commit or deployment created"
+  },
+  "status": {
+    "implementation": "LOCAL_INCREMENT_IMPLEMENTED",
+    "generalQa": "PASSED_WITH_EXPLICIT_SKIPS",
+    "requiredMysql": "PASSED_ZERO_SKIPS",
+    "mutation": "PASSED_CONFIGURED_SCOPE",
+    "realProvider": "NOT_RUN",
+    "humanPilot": "NOT_RUN",
+    "w01Complete": false,
+    "remoteCi": "NOT_RUN",
+    "staging": "NOT_DEPLOYED",
+    "production": "NOT_DEPLOYED"
+  },
+  "commands": {
+    "general": "mise exec -- sh scripts/ci-local-safe.sh",
+    "mysql": "mise exec -- npm run test:integration:required",
+    "mutationTarget": "mise exec -- npx --no-install stryker run /tmp/nortex-weekly-cash-review-stryker.json",
+    "mutationFull": "mise exec -- npm run test:mutation",
+    "prismaValidate": "mise exec -- npx --no-install prisma validate --schema backend/prisma/schema.prisma (synthetic DATABASE_URL in child; no database connection)"
+  },
+  "qa": {
+    "general": {
+      "passedFiles": 416,
+      "skippedFiles": 38,
+      "passedTests": 6024,
+      "skippedTests": 390,
+      "failedTests": 0,
+      "prismaGenerate": "6.4.1 passed",
+      "prismaValidate": "passed",
+      "typescript": "passed",
+      "design": {
+        "passed": true,
+        "files": 110
+      },
+      "build": {
+        "passed": true,
+        "seconds": 3.55
+      }
+    },
+    "mysql": {
+      "version": "8",
+      "disposable": true,
+      "suites": 39,
+      "passed": 404,
+      "skipped": 0,
+      "w01Cases": 36,
+      "schemaUpgrade": "Existing closed shifts retained while applying the additive index through db push twice"
+    },
+    "mutation": {
+      "score": 100,
+      "breakThreshold": 100,
+      "total": 5892,
+      "modules": 66,
+      "killed": 5868,
+      "timeout": 4,
+      "ignored": 20,
+      "survived": 0,
+      "noCoverage": 0,
+      "weeklyTargetKilled": 89,
+      "weeklyTargetTotal": 89,
+      "sourceMatchesReport": true,
+      "protectedFullFunctionFloors": {
+        "checkedSnapshotCash": 38,
+        "summarizeCashReviewRows": 51
+      }
+    },
+    "logs": {
+      "general": {
+        "localPath": "reports/weekly-cash-review/quality-complete.log",
+        "sha256": "535aeffa26ee3c9c2c963685047a221d001cc3efe4eb8e035333bb53cbbf7d68",
+        "lastModifiedUtc": "2026-09-09T09:36:09.156379+00:00"
+      },
+      "mysql": {
+        "localPath": "reports/weekly-cash-review/integration-final.log",
+        "sha256": "a54de87225c5082f3a86594c5f45ce091fb109ad61823eeadecbd5e0cf742632",
+        "lastModifiedUtc": "2026-09-09T09:32:47.477670+00:00"
+      },
+      "mutationTarget": {
+        "localPath": "reports/weekly-cash-review/mutation-target-final.log",
+        "sha256": "fdc96071e227bb0ed176cf5366f2d1ce4d7f9aee1b63c05d41405f172a9650c8",
+        "lastModifiedUtc": "2026-09-09T09:30:19.994145+00:00"
+      },
+      "mutationFull": {
+        "localPath": "reports/weekly-cash-review/mutation-full.log",
+        "sha256": "e4db85a27320e48495fb5634371aac967e9cd7c2d064382a701a0a2a66a0c3a1",
+        "lastModifiedUtc": "2026-09-09T09:39:15.527221+00:00"
+      },
+      "prismaValidate": {
+        "localPath": "reports/weekly-cash-review/prisma-validate.log",
+        "sha256": "90583799a8ea8e4709943e438b724fa5163329fd98e9248e31f58a9bbc3f5bc1",
+        "lastModifiedUtc": "2026-09-09T09:35:28.135273+00:00"
+      },
+      "routing": {
+        "localPath": "reports/weekly-cash-review/routing-final.log",
+        "sha256": "2b6560280b433fb06af47b8cf4505ecc23ee5800ca65575b96a14bdea62bf732",
+        "lastModifiedUtc": "2026-09-09T09:32:18.462652+00:00"
+      },
+      "panel": {
+        "localPath": "reports/weekly-cash-review/panel.log",
+        "sha256": "7d0d416c3fe0c55eb5c7f3d79152d0a45160328323fd24a6668efe0d2d71a089",
+        "lastModifiedUtc": "2026-09-09T09:27:58.349400+00:00"
+      }
+    },
+    "productSourcesModifiedAfterGeneralQa": []
+  },
+  "behaviorEvidence": [
+    "Authenticated own-shift or authorized business scope; other tenants/users/disabled or revoked users denied",
+    "Missing, invalid, truncated and failed sources never become zero totals",
+    "Decimal NIO 2 / USD 4; shortages and surpluses separated; report endTime and Managua cutoff checked",
+    "No shift, cash movement, journal, stock, audit or purchase mutation during review",
+    "Durable HTTP run recovery and panel cart/route preservation tested independently of visual harness",
+    "Mixed periods request clarification; purchase package phrases preserve purchase capture"
+  ],
+  "visual": {
+    "type": "REAL_COMPONENTS_WITH_SYNTHETIC_DATA",
+    "fullAuthenticatedBrowserFlow": false,
+    "desktop": {
+      "requestedWidth": 1280,
+      "measuredClientWidth": 1280,
+      "scrollWidth": 1280
+    },
+    "mobile": {
+      "requestedWidth": 390,
+      "measuredClientWidth": 384,
+      "scrollWidth": 384
+    },
+    "referenceExpansionObserved": true,
+    "physicalDevice": false
+  },
+  "modularity": {
+    "extraction": {
+      "source": "backend/services/salesReportService.ts",
+      "beforeLines": 994,
+      "afterLines": 933,
+      "deltaLines": -61,
+      "destination": "backend/services/shiftSnapshotValidation.ts",
+      "destinationLines": 95,
+      "combinedDeltaLines": 34
+    },
+    "unchangedMonoliths": {
+      "backend/server.ts": 14118,
+      "components/POS.tsx": 5924
+    },
+    "newDependencies": 0,
+    "newPrismaClients": 0,
+    "budgetsRaised": false
+  },
+  "preservation": {
+    "candidateHeadUnchanged": true,
+    "baselinePath": "/Users/stark/Developer/Nortex/release-evidence/20260909-weekly-review-before.json",
+    "baselineSha256": "d2f682cf3483d52bd2e5ef92cb8a21b3d1cbb0211c296c6eb63c184362ba2ee5",
+    "originalWorkspaceWrittenByThisTask": false,
+    "originalStatusMatchesEarlierSnapshot": false,
+    "originalStatusNote": "The original workspace has additional unrelated dirty paths at final verification. This task worked only in the existing candidate and did not alter or restore them. Status equality is not claimed.",
+    "branchOrWorktreeOperations": false,
+    "historicalManifestsRewritten": false
+  },
+  "limitations": [
+    "W01 still requires investigation of differences, assigned exceptions and human acceptance",
+    "No paid AI call, real-provider evaluation, customer message or human savings result",
+    "No load test, EXPLAIN plan, restoration test or physical-device validation for this increment",
+    "General skipped tests are not passed tests; mutation score only covers configured protected modules",
+    "Evidence is local; no remote CI, staging or production promotion",
+    "Budgets unchanged: US$2 initial monthly AI per tenant, increase by Nortex approval, US$20 global per database"
+  ],
+  "resolvedDuringQa": [
+    "Purchase package routing and mixed day/week period selection",
+    "Partial-day cutoff visibility",
+    "Mutation boundaries and exact error-code assertions; redundant absence condition removed",
+    "Temporary visual harness root import broke an intermediate TypeScript run; harness removed from repo before final passing gate"
+  ],
+  "files": [
+    {
+      "path": ".claude/skills/nortex-rag/SKILL.md",
+      "sha256": "23b77e609f9490a8708be27abb0224ebb378799c280e050807f56106a78eb055",
+      "baselineSha256": "95d07796dfa6650a8bbb213da5713ce90c2253de5215d576211e681c33664b3e",
+      "lines": 384
+    },
+    {
+      "path": ".gitignore",
+      "sha256": "a1485486e1719d98677391738862ad9711970043eaf3e17f74c1d09b3cbe9721",
+      "baselineSha256": "ee27f0b3c265eaffe9f00d46ecd7fb7a0844b2dfb79e9cb852912415604ee1a9",
+      "lines": 52
+    },
+    {
+      "path": "CLAUDE.md",
+      "sha256": "a93b47c5c897598d478a29260fedcb145524f2b802451db91bd7750337d7b8b5",
+      "baselineSha256": "c57724e8ac7188285af92356e4e892944603a160e13b3d73ee50e665d6b77ee1",
+      "lines": 333
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "cf62a24d533bfcf1d8990ddbd799f702f6b61b53349bf5819130dc5afa4c1bc2",
+      "baselineSha256": "5e67d5635c04075fd72ad37c76c5f93f4399e0faea72c733bd0c943bf8f8400a",
+      "lines": 3746
+    },
+    {
+      "path": "backend/services/assistant/access.ts",
+      "sha256": "9e75994a4e8d9e279787845fbbfce5f69e7d1a396b045f0799a6edc3aa97f7d8",
+      "baselineSha256": "a68304066d87bb5d1f3c00bce70bc6aaa7826fde86537fc42ea56642c5891315",
+      "lines": 94
+    },
+    {
+      "path": "backend/services/assistant/operations/fallback.ts",
+      "sha256": "8d083adeb6727fb35a5b5a58892d29177c740d4a97d3dd5e9b9de357ce612ba0",
+      "baselineSha256": "a3dc07f5c0012dc2d2abf01c34981972cd829e834d751cd17831825129451ebe",
+      "lines": 48
+    },
+    {
+      "path": "backend/services/assistant/operations/routing.ts",
+      "sha256": "5c4fb4e959010d7cdd8c0ecbf257b306d68f7e5b18df145d68697b5b5aaf0095",
+      "baselineSha256": "eac17846c0bf80a0bd9e86674ecc413a5e9c81045225a90ce4f5910c178d0a0f",
+      "lines": 17
+    },
+    {
+      "path": "backend/services/assistant/operations/tools.ts",
+      "sha256": "42306abaac26b97a0cdafd76940123526b93f901f4e900591cf184092b623fd5",
+      "baselineSha256": "573a2f17f60c779170c42df2b1a38acbe329bbe017ea0c10fb4e61513a6b92f1",
+      "lines": 58
+    },
+    {
+      "path": "backend/services/salesReportService.ts",
+      "sha256": "8c6866df8eaff9dee546824a6e09611b4c2d51abea544f14d17ef77941e63b41",
+      "baselineSha256": "f4d45122db2b29492feeafa0b653617afe5a61b55d4c7e4379fe5a1568ec7e5a",
+      "lines": 933
+    },
+    {
+      "path": "components/assistant/AssistantOperationalEvidence.tsx",
+      "sha256": "95edc8d26204ffe6723b130d4c9f311d2d4bc044cb92a7b527b56e30b5b4774d",
+      "baselineSha256": "9f133ca9059509f0c5c525e16ef351ea6b0b976909475133d309eeb0a1dea890",
+      "lines": 78
+    },
+    {
+      "path": "components/assistant/NortexAssistantPanel.tsx",
+      "sha256": "4605deb86cf0bd033c3d9a0faa38cd0c6be8d33ee16f03ceb752cbff4be79f02",
+      "baselineSha256": "26d625e8c7c413225de92b30a24975ec6b56fedf7d550ed46f580700da03696a",
+      "lines": 132
+    },
+    {
+      "path": "docs/ESTADO_ACTUAL_NORTEX.md",
+      "sha256": "a047858c19447af4c44507fa395280092ee703ec69c2b960f33200569ec46dfd",
+      "baselineSha256": "9892543b11a51c0484c644d5f57cc0e141269fb652748633ff5c8f3d02c07abe",
+      "lines": 61
+    },
+    {
+      "path": "docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md",
+      "sha256": "69cb963112dc8654f9568cb8bd2eb309b0f16233b5415010c5b0865ff648f998",
+      "baselineSha256": "b4e9038b883549edb414be65974b621a35fbe1c4a344e679a2b2a1ef2fa8b2d0",
+      "lines": 268
+    },
+    {
+      "path": "docs/README.md",
+      "sha256": "f0551541a1d37966378b93665fe82d531789bc20b061fab4a48954ba65f420b4",
+      "baselineSha256": "79f7ddab9f53fa09b3034490c4e238382eeedb4ae3c23b18705ae6257bac7d01",
+      "lines": 55
+    },
+    {
+      "path": "scripts/check-mutation-scope.cjs",
+      "sha256": "34d5393d203f94fc33892c18d803ae5646daa277c55002773aef09e48f67f5c3",
+      "baselineSha256": "e7c77daa726dc793ca74611a74e73f4ecc6c4ca82d33e33e4aae5b57134a8f67",
+      "lines": 446
+    },
+    {
+      "path": "scripts/quality-gate-contract.mjs",
+      "sha256": "aab456598dfcc46fa2cc4d02047f5b93527953345498f6da62311ad52f590fae",
+      "baselineSha256": "66aeeef6a8e8b16ccef5635cb67fb8e44a357d77c6bd9b10e9d2faf22d860060",
+      "lines": 71
+    },
+    {
+      "path": "shared/assistant.ts",
+      "sha256": "86f4179e5f4ad375c50ab177c8be42c5b805cfa772a3a14a29c76a9e493ad1d2",
+      "baselineSha256": "7e2a0bdeebbe099500542899a8d6f25206d4f28dedfe12f09b8c51cc82a25eba",
+      "lines": 57
+    },
+    {
+      "path": "stryker.config.json",
+      "sha256": "a26aa432349d28a725031786e518531a1b8b855df1bad5a958201063760611f2",
+      "baselineSha256": "590dbe7eb60f946861d352fd8f0825b82267f3b064f4840778aed9e416f723d3",
+      "lines": 148
+    },
+    {
+      "path": "tests/assistantConversationOperations.test.ts",
+      "sha256": "95622f22aeb81ad24860c5e8648625cb35374ae08c826ae42a5a01172ba11eda",
+      "baselineSha256": "a7f401e444f0d422c7136d5386feaf6d5320afce6c7e60d1eecbbadc925a969a",
+      "lines": 24
+    },
+    {
+      "path": "tests/assistantOperationsTools.test.ts",
+      "sha256": "4ef69c18be7cef30f2b90269badc1c8d685cad9a0cff2cb21ae70eb675faaa66",
+      "baselineSha256": "3ea389f2ad09c54d3b0e1c01c2a7868d5a7d5441d3d902c49b53a7889d81c5bf",
+      "lines": 55
+    },
+    {
+      "path": "tests/assistantPanel.test.tsx",
+      "sha256": "3b296468fdcdec1aadca21381c6f7a127428889f9fa48bca5604a6663b121b37",
+      "baselineSha256": "37ea376fe474af6bb8448da62908b539f1b06d6c784f55c1716e3842d3946256",
+      "lines": 453
+    },
+    {
+      "path": "tests/salesReportService.test.ts",
+      "sha256": "9889be30c75ba17c673f4488fb2415e16b14842bf856006c37d922580ee4d539",
+      "baselineSha256": "a01e7f3c2e3e5f34d2d5b7289b1ef5648520bf30c86a6ca74315b86289395842",
+      "lines": 278
+    },
+    {
+      "path": "backend/prisma/migrations/20260909020000_weekly_cash_review_index/migration.sql",
+      "sha256": "baa9253ef8d192ceb7123e6ec884c4e29093c8000e99ef9f8d1ec97f023451fc",
+      "baselineSha256": null,
+      "lines": 2
+    },
+    {
+      "path": "backend/services/assistant/operations/weeklyCashReview.ts",
+      "sha256": "1cb6d54f47802dd7d4f0358e1f02cccdd60207eb07816010f8e4c3e9221aadfb",
+      "baselineSha256": null,
+      "lines": 108
+    },
+    {
+      "path": "backend/services/assistant/operations/weeklyCashReviewRequest.ts",
+      "sha256": "c56c30e634863f5485fc4d171a9d62bcfdbd5f44d30b8332fc6fcc5aa72472ac",
+      "baselineSha256": null,
+      "lines": 37
+    },
+    {
+      "path": "backend/services/assistant/operations/weeklyCashReviewSummary.ts",
+      "sha256": "4747f7d94d0bb7fc2b7bfd8befce3c60b2de04f39cf7d17c1029c637c158c0ec",
+      "baselineSha256": null,
+      "lines": 44
+    },
+    {
+      "path": "backend/services/shiftSnapshotValidation.ts",
+      "sha256": "3d132905f420db6365d211083a8061a1e53ffd8140f8445357e5d3fbdbcc1d3c",
+      "baselineSha256": null,
+      "lines": 95
+    },
+    {
+      "path": "components/assistant/AssistantWeeklyCashReview.tsx",
+      "sha256": "fa3c326c7511079aef09b64b8db9546257ce344d0900bd70b9bfb946d6357a5e",
+      "baselineSha256": null,
+      "lines": 91
+    },
+    {
+      "path": "docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md",
+      "sha256": "ea0e78f67c1341f80d9a781fd86f92481df361171c23eadce49aca6a889b4647",
+      "baselineSha256": "237543d2391e6b086442bdb5281fa5a2a9c9a83c7f88843b1e257c85db9a16ca",
+      "lines": 228
+    },
+    {
+      "path": "docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md",
+      "sha256": "4d6e00aeefc02b7605d75b223a43cad696378d270a3a8614456db63277fd3622",
+      "baselineSha256": "5d94bd81ce88965ab3eeba8502f71cdab5e63e82a48a1cdc92fd9605673d73d1",
+      "lines": 130
+    },
+    {
+      "path": "docs/NORTEXGPT_REVISION_SEMANAL_CAJA_2026-09-09.md",
+      "sha256": "57d331574728a44f52c42823efcdcca18db28fab283126b78d9dd519e59821b6",
+      "baselineSha256": null,
+      "lines": 57
+    },
+    {
+      "path": "shared/assistantWeeklyCashReview.ts",
+      "sha256": "6b0a8f81fd041f544abed567f043b6cbebde8fa06900d945292cb261d486cf2c",
+      "baselineSha256": null,
+      "lines": 37
+    },
+    {
+      "path": "tests/assistantWeeklyCashReview.integration.test.ts",
+      "sha256": "fb6db00d95e7529812302d25e8636f901ce8da58c7dd6a0961e15aa749aed4d7",
+      "baselineSha256": null,
+      "lines": 342
+    },
+    {
+      "path": "tests/assistantWeeklyCashReview.test.ts",
+      "sha256": "f4f32f5b9960fbbe72642d2f8de839a4971e76f5e6109cef81f89baf36d7e37b",
+      "baselineSha256": null,
+      "lines": 184
+    },
+    {
+      "path": "tests/assistantWeeklyCashReviewRequest.test.ts",
+      "sha256": "450652cbee140d7f3783b2022f01d98137f5fc95bd68b0ccfd09b096bbca486e",
+      "baselineSha256": null,
+      "lines": 53
+    },
+    {
+      "path": "tests/assistantWeeklyCashReviewView.test.tsx",
+      "sha256": "80d9cfc88727291386c6fb5cb2d7e5ae4fcef7ec08f0ddf33bab0b99e7ddd46f",
+      "baselineSha256": null,
+      "lines": 142
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "docs/evidence/nortexgpt/weekly-cash-review-20260909/desktop.png",
+      "sha256": "22417ea956e448e9953f4ac88bfd9b0cfa5d172d48d7fbcf25dc89ab54c2253e"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/weekly-cash-review-20260909/mobile.png",
+      "sha256": "66b634484d3d8c8eb8fe19bbf29a30e740f46cc348de8aa9441cbff8c69688c0"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/weekly-cash-review-20260909/mobile-reference.png",
+      "sha256": "a2ab6136a2391b49b2fc68a4d38bed737a98767f6edbfb3dc1f5557d3c8b8a59"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/weekly-cash-review-20260909/integration-summary.json",
+      "sha256": "c513cfecf9cbcdea2549d7160e6d8ff42872e8959dc6b0b3a79d8969824ba428"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/weekly-cash-review-20260909/mutation-summary.json",
+      "sha256": "93f3c656279abc6d8653aefc8b475fbbf1e8873c41250dddab0e93f62ceccb81"
+    }
+  ],
+  "finalArtifactChecks": {
+    "diffCheck": "passed",
+    "sourceAndArtifactHashesVerified": 41,
+    "localDocumentLinksVerified": 182,
+    "brokenLocalLinks": 0,
+    "temporaryPreviewPort44185Listening": false,
+    "finalIndependentReview": "Mixed periods request clarification; yesterday+today preserves both dates; package phrases preserve capture. No further defect found in this bounded check."
+  }
+}

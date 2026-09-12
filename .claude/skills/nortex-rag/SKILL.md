@@ -5,6 +5,44 @@ description: Avanzar el RAG de ayuda de NortexGPT y sus canales privado/comercia
 
 # NortexGPT y WhatsApp — método de trabajo del RAG
 
+## Dirección del equipo administrativo — 2026-09-09
+
+La [meta vigente](../../../docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md) organiza
+contabilidad, RRHH y finanzas en trabajos verificables W01–W03. RAG explica
+procedimientos aprobados; MySQL y los servicios aportan hechos/cálculos. Usar la
+[arquitectura propuesta](../../../docs/ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md)
+para encargos durables y MCP; su documentación no los convierte en código activo.
+
+Conservar conversación, encargo, intento IA y propuesta como conceptos separados.
+No inventar `runId` ni extender un run de 60 segundos a días. Los especialistas
+son perfiles lógicos con herramientas mínimas; comparten presupuesto, no invocan
+tres modelos por consulta ni acumulan permisos. US$20 de precio objetivo del
+servicio es distinto de US$2 iniciales de IA por negocio y del techo global US$20.
+
+La gestión del presupuesto usa `User.OWNER` o `User.ADMIN` con la concesión
+persistida `assistantBudgetOwner`. Nunca derivarla de cargos o vínculos editables
+de RRHH. Para ADMIN anteriores, Nortex verifica la identidad y concede/revoca con
+auditoría; no hay backfill automático. Ese permiso no condiciona el consumo normal
+autorizado ni reinicia los buckets. Ver [QA y seguridad](../../../docs/NORTEXGPT_SUBIDA_QA_SEGURIDAD_2026-09-12.md).
+
+El primer incremento W01 usa `review_weekly_cash` sobre snapshots de cierres, con rangos de 1–7 días Managua, límites de filas/bytes, validación de hash/ecuaciones y faltantes/sobrantes NIO/USD separados. Reutiliza runs privados; no cierra turnos, no asigna excepciones ni reconstruye causas. Ver [entrega W01](../../../docs/NORTEXGPT_REVISION_SEMANAL_CAJA_2026-09-09.md). No confundir cajas/presentaciones de una compra con revisión de efectivo; períodos mezclados requieren aclaración.
+
+W01B incorpora `inspect_cash_close`: conservar `shiftId` y hash elegidos mediante
+el comando exacto, sin invocar al proveedor para resolver ese enlace. Mostrar
+snapshot y movimientos actuales en secciones distintas; `cashSalesNio` es bruto
+y puede incluir crédito de tienda, no tender histórico. No sumar estas fuentes
+para reconstruir esperado, inferir crédito residual ni atribuir causas.
+Los `pendingChecks` viven en la evidencia privada del run; no son asignaciones,
+recordatorios ni conciliaciones aceptadas. Ver [W01B](../../../docs/NORTEXGPT_INVESTIGACION_CIERRES_2026-09-12.md).
+
+Antes de exponer herramientas contables/laborales, caracterizar efectos reales:
+`getEstadoResultados`/`getBalanceGeneral` siembran cuentas; calcular nómina persiste
+datos. `read_daily_brief` también genera caché persistente: READ interno no prueba
+`readOnlyHint` MCP. Separar inicialización/lectura/preparación. OAuth delegado y
+herramientas administrativas no existen todavía; no exponer confirmación al modelo.
+El RAG administrativo requiere fuentes oficiales revisadas, vigencia/jurisdicción
+y retirada; nunca ingerir salarios, expedientes o planes internos al corpus común.
+
 ## Corte verificado y prioridad de desarrollo — 2026-09-08
 
 Partir del [estado actual](../../../docs/ESTADO_ACTUAL_NORTEX.md), del
@@ -29,9 +67,10 @@ edición paralela sobre el mismo dominio.
 - `assistant/knowledge.ts` sigue teniendo 12 artículos con rol/sección/versión,
   ranking por tokens exactos en sección y palabras clave, top 2. No busca el
   cuerpo ni representa una biblioteca documental amplia.
-- El chat muestra etiquetas de fuente. La vía `search_help → run` necesita
-  reproducir y corregir el renderer de citas/pasajes; ninguna etiqueta constituye
-  por sí sola una fuente consultable ni prueba de soporte semántico.
+- El chat muestra etiquetas de fuente. La vía `search_help → run → UI` tiene
+  reparación y QA locales en el lote de presupuesto del 09/09: muestra texto y
+  referencias. Abrir un pasaje autenticado/versionado y promover ese lote siguen
+  pendientes; una etiqueta no prueba soporte semántico.
 - El orquestador operativo ya recibe resultados y permite lectura/preparación.
   Conservarlo; el control de IDs y números de evidencia es parcial y no demuestra
   que una afirmación se desprenda de su fuente.
@@ -101,7 +140,13 @@ Ver [entrega operativa](../../../docs/NORTEXGPT_OPERATIVO_2026-09-05.md).
 
 Los interruptores son independientes y permanecen apagados por defecto. Reservar
 presupuesto antes de cada llamada del asistente, incluida interpretación de texto,
-sin superar US$20/mes entre los negocios piloto (US$10 por negocio). Un costo
+sin superar US$20/mes entre los negocios piloto. El límite inicial es US$2 por
+negocio/mes; el dueño solicita una ampliación y Nortex la aprueba hasta US$10,
+sin cobros automáticos ni habilitar capacidades. Leer `budgetPolicy.ts` y
+`budgetRequests.ts`: `monthlyBudgetUsd` legacy no acredita una aprobación;
+`approvedMonthlyBudgetUsd` limita también configuraciones anteriores. Mantener
+gasto y reservas al aprobar, auditoría en la misma transacción y revalidar
+identidad después de los locks. El saldo propio no acredita saldo global. Un costo
 desconocido conserva su reserva. Operar inicialmente un único proceso de extracción.
 Archivos privados fuera del contenido público: 10 MB, 10 páginas/imágenes, 200
 renglones; chat 30 días y originales no confirmados 7 días. Los originales de una

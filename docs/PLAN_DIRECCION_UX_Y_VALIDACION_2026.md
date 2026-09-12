@@ -1,5 +1,7 @@
 # Nortex: dirección de producto, experiencia y validación operativa
 
+> **Dirección vigente, 2026-09-09:** [meta del equipo administrativo](META_NORTEX_EQUIPO_ADMINISTRATIVO.md). Evaluar W01 cuentas semanales claras, W02 planilla revisada y W03 planificación de caja, conservando el POS y todos los criterios E01–E08. La bandeja de encargos muestra pendientes, evidencia y resultado; preparar y registrar son estados distintos. Las cifras, fechas y candidatos de este informe mantienen su alcance histórico.
+
 Fecha: 2026-09-04. Estado: **PLAN DE TRABAJO, con implementación y evidencia local parciales**. Alcance: usuarios reales, UX, diseño, números, permisos, datos y entrega. Este documento mantiene el plan; no acredita producción ni instala skills.
 
 Complementa el [plan de transformación](PLAN_TRANSFORMACION_TOTAL_2026.md): detalla T03/T04 (activación), T05 (farmacia), T14 (modularidad), T15 (operación), T17 (contabilidad) y T18 (integración). La prioridad comercial sigue siendo ferreterías y farmacias. Los módulos usados por otros clientes también se mantienen y validan.

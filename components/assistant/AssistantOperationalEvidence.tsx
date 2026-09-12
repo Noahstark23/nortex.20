@@ -1,6 +1,8 @@
 import React from 'react';
 import type { AssistantJson, AssistantJsonObject, AssistantToolEvidence } from '../../shared/assistantOperations';
 import { formatMoney } from '../../utils/money';
+import { AssistantWeeklyCashReview } from './AssistantWeeklyCashReview';
+import { AssistantCashCloseInvestigation } from './AssistantCashCloseInvestigation';
 
 const object = (value: AssistantJson | undefined): AssistantJsonObject | null => value && typeof value === 'object' && !Array.isArray(value) ? value : null;
 const readable = (value: AssistantJson | undefined) => typeof value === 'string' || typeof value === 'number' ? String(value) : 'No disponible';
@@ -41,13 +43,30 @@ function Period({ value }: { value: AssistantJson | undefined }) {
     const period = object(value); if (!period) return null;
     return <p className="nx-shell-muted text-xs">Período: {readable(period.startDate)} al {readable(period.endDate)} · Managua{period.completeDays === false ? ' · Período en curso' : ''}</p>;
 }
-export function AssistantOperationalEvidence({ evidence }: { evidence: AssistantToolEvidence }) {
+function HelpEvidence({ data }: { data: AssistantJsonObject }) {
+    const citations = Array.isArray(data.citations) ? data.citations.flatMap(value => {
+        const citation = object(value);
+        if (!citation || !['id', 'title', 'section', 'version'].every(key => typeof citation[key] === 'string' && String(citation[key]).trim().length > 0)) return [];
+        return [{ id: String(citation.id), title: String(citation.title), section: String(citation.section), version: String(citation.version) }];
+    }) : [];
+    return <>
+        <p className="nx-shell-text whitespace-pre-line break-words text-sm">{typeof data.text === 'string' && data.text.trim() ? data.text : 'La ayuda no está disponible en esta consulta.'}</p>
+        {citations.length > 0 && <ul aria-label="Fuentes de ayuda" className="nx-shell-muted space-y-2 break-words text-xs">{citations.map((citation, index) => <li key={`${citation.id}:${citation.version}:${index}`}>{citation.title} · {citation.section} · Versión {citation.version}</li>)}</ul>}
+    </>;
+}
+export function AssistantOperationalEvidence({ evidence, onInvestigate, investigationDisabled }: { evidence: AssistantToolEvidence; onInvestigate?: (shiftId: string, reportHash?: string) => void; investigationDisabled?: boolean }) {
     const label = sourceTitles[evidence.tool] ?? evidence.label;
     const data = object(evidence.data); const comparison = object(data?.comparison); const rows = Array.isArray(data?.rows) ? data.rows.map(object).filter(Boolean) : [];
     const fields = typeof data?.kind === 'string' ? columns[data.kind] : undefined;
+    if (data?.kind === 'CASH_CLOSE_INVESTIGATION') return <AssistantCashCloseInvestigation data={data} />;
+    if (data?.kind === 'WEEKLY_CASH_REVIEW') return <section aria-label="Fuente: Revisión de cierres de caja" className="nx-shell-control min-w-0 space-y-3 rounded-card border p-3">
+        <AssistantWeeklyCashReview data={data} onInvestigate={onInvestigate} investigationDisabled={investigationDisabled} />
+        <p className="nx-shell-muted text-xs">Consultado: {typeof data.checkedAt === 'string' && Number.isFinite(new Date(data.checkedAt).getTime()) ? new Date(data.checkedAt).toLocaleString('es-NI', { timeZone: 'America/Managua' }) : 'Fecha no disponible'} · Managua</p>
+    </section>;
     return <section aria-label={`Fuente: ${label}`} className="nx-shell-control min-w-0 space-y-3 rounded-card border p-3">
         <h4 className="nx-shell-text font-semibold">{label}</h4>
         {data ? <>
+            {evidence.tool === 'search_help' && <HelpEvidence data={data} />}
             <Period value={data.period} />{typeof data.checkedAt === 'string' && <p className="nx-shell-muted text-xs">Consultado: {Number.isFinite(new Date(data.checkedAt).getTime()) ? new Date(data.checkedAt).toLocaleString('es-NI', { timeZone: 'America/Managua' }) : 'Fecha no disponible'} · Managua</p>}
             {data.status === 'unavailable' && <p className="nx-tone-warning text-sm">No se pudo consultar esta información. No equivale a cero.</p>}
             <Metrics value={data.metrics} />

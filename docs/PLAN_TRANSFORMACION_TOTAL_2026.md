@@ -1,5 +1,7 @@
 # Nortex: plan de transformación y validación comercial
 
+> **Sucesor de dirección, 2026-09-09:** [meta del equipo administrativo accesible](META_NORTEX_EQUIPO_ADMINISTRATIVO.md). Contabilidad, RRHH y finanzas coordinadas, con objetivo de precio US$20/negocio/mes. Este documento conserva hipótesis y backlog T00–T19 de su fecha; A00–A07 decide la secuencia nueva y C00/D00–D14 conserva estabilidad/RAG. Las cifras de usuarios y plazos siguientes son históricos; no reiniciarlos ni tratarlos como medición actual.
+
 > Avance local, 2026-09-04: [reparación E01–E08 y verificación por módulo](VERIFICACION_MODULOS_2026-09-04.md). Contabilidad por canal, recuperación offline, fechas, permisos, activación, catálogo y QA transaccional implementados. Piloto, brechas M01–M07 y publicación siguen separados.
 
 Fecha: 2026-09-04. Estado: **programa priorizado con implementación local parcial de T04/T14; evidencia local en el informe por módulo y validación comercial pendiente**.

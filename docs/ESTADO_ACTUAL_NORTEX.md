@@ -1,5 +1,11 @@
 # Estado actual de Nortex
 
+**Incremento local del 2026-09-12:** [W01B investiga el soporte de un cierre](NORTEXGPT_INVESTIGACION_CIERRES_2026-09-12.md). `inspect_cash_close` separa fuentes históricas/actuales y conserva pendientes humanos en el run privado; no acredita conciliación ni despliegue. [La revisión final](NORTEXGPT_SUBIDA_QA_SEGURIDAD_2026-09-12.md) añade autoridad presupuestaria explícita en User; migración probada, compuerta final bloqueada por el servicio de seguridad. El estado productivo fechado más abajo no cambia por esta entrega.
+
+**Dirección actualizada el 2026-09-09:** [meta del equipo administrativo](META_NORTEX_EQUIPO_ADMINISTRATIVO.md) y [arquitectura propuesta](ARQUITECTURA_EQUIPO_ADMINISTRATIVO_2026-09-09.md). Contabilidad, RRHH y finanzas coordinadas, con objetivo de precio US$20/negocio/mes. La actualización original fue documental; posteriormente se implementó y probó localmente el [primer incremento W01](NORTEXGPT_REVISION_SEMANAL_CAJA_2026-09-09.md). No hubo llamadas IA ni promoción nuevas. Las cifras de infraestructura y release siguientes conservan su fecha de observación.
+
+El [lote documental](evidence/administrative-goal-20260909/verification.json) identifica los 15 Markdown afectados y preserva la evidencia de QA anterior; no equivale a implementar A00–A07.
+
 Revisión documental: 2026-09-08 (cierre de promoción en UTC del 09/09). Candidato desplegado: `07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc`. Corte de producto verificado: `484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b`, [PR 207](https://github.com/Noahstark23/nortex.20/pull/207). Este documento es el punto de entrada mantenido; los informes fechados describen su propio candidato. La actualización posterior de guías y perfiles necesita su propia comprobación; no cambia los resultados de producto ya registrados.
 
 ## Evidencia por estado
@@ -28,8 +34,20 @@ El tamaño sigue siendo deuda de mantenimiento. El riesgo de caída también dep
 
 Prioridad inmediata **C00**: mantener la restauración SQL ya ensayada, acreditar recuperación de adjuntos antes de habilitarlos, ventanas de observación, carga representativa fuera de producción, conciliación de venta/caja y primeros lotes de modularización. Los objetivos se fijan antes de medir aceptación; no se promete disponibilidad ni número de clientes sin evidencia.
 
+## Lote local posterior: presupuesto de NortexGPT
+
+US$2 iniciales por negocio/mes y ampliación mediante solicitud y aprobación de
+Nortex, sin cobro automático. Código, UI y QA local del candidato posterior están
+en [el informe del presupuesto](NORTEXGPT_PRESUPUESTO_Y_QA_2026-09-09.md):
+5.899 pruebas generales y 368 casos de integración obligatoria sin omisiones.
+También se corrigió la ayuda invisible en respuestas operativas. El servidor
+local baja a 14.118 líneas; las cifras de 14.131 anteriores corresponden al
+candidato desplegado. Este lote aún no acredita evaluación Haiku, piloto, CI,
+staging ni producción nuevos.
+
 ## Desarrollo siguiente
 
+- **A00–A07 / nueva meta:** encargos durables y W01 revisión de cierre semanal; W02 planilla revisada, W03 caja/compromisos, MCP y coordinación posterior. Primera herramienta de caja implementada y probada localmente: `review_weekly_cash`. El expediente completo, contabilidad/RRHH/finanzas coordinados y OAuth MCP siguen pendientes. [Meta y aceptación](META_NORTEX_EQUIPO_ADMINISTRATIVO.md).
 - [Plan de estabilidad y RAG](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md): C00 y D00–D14 con dependencias y criterios.
 - [Equipo de desarrollo](EQUIPO_DESARROLLO_NORTEX.md): responsabilidades y propiedad de archivos.
 - [Capacidad del Droplet](CAPACIDAD_DROPLET_NORTEX_2026-09-08.md) y [auditoría de escalado](SCALING_AUDIT.md): mediciones y deuda.

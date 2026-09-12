@@ -29,7 +29,8 @@ import path from 'node:path';
 import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
 import prisma from '../../backend/lib/prisma.js';
-import { budgetMonth, GLOBAL_BUDGET_USD, TENANT_BUDGET_USD } from '../../backend/services/assistant/budget.js';
+import { DEFAULT_TENANT_BUDGET_USD, MAX_APPROVED_TENANT_BUDGET_USD } from '../../backend/services/assistant/budgetPolicy.js';
+import { budgetMonth, GLOBAL_BUDGET_USD } from '../../backend/services/assistant/budget.js';
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
 
 /** Campo que acredita el consumo, escrito en la reserva. */
@@ -205,7 +206,7 @@ export async function verifyEvaluationReport(reportPath: string, deps: { db?: ty
       ? 'AssistantUsage.runId está disponible: el consumo se acredita por ejecución.'
       : 'AssistantUsage.runId no está en el cliente Prisma generado. Aplicá la migración y corré `prisma generate`; sin eso el consumo por ejecución no se acredita.',
     monthsInspected: [...months],
-    serverLimits: { globalUsd: GLOBAL_BUDGET_USD, perTenantUsd: TENANT_BUDGET_USD },
+    serverLimits: { globalUsd: GLOBAL_BUDGET_USD, defaultTenantUsd: DEFAULT_TENANT_BUDGET_USD, maximumApprovedTenantUsd: MAX_APPROVED_TENANT_BUDGET_USD },
     monthlyTotals: { scope: 'mes_completo_no_por_ejecucion', rows: budgets.map(row => ({ scope: row.scope, month: row.month, limitUsd: row.limitUsd.toString(), reservedUsd: row.reservedUsd.toString(), spentUsd: row.spentUsd.toString(), blocked: row.blocked })) },
     findings, humanReview: 'pending',
     disclaimer: 'Los totales son del mes completo, no de una ejecución. La reserva máxima es un techo, no un gasto. Sin enlace explícito el consumo por ejecución no se acredita.',

@@ -1,0 +1,117 @@
+{
+  "status": "PASSED",
+  "startedUtc": "2026-09-12T19:02:49.357Z",
+  "syntheticOnly": true,
+  "aiCalls": 0,
+  "aiCostUsd": 0,
+  "scenarios": [
+    {
+      "name": "legacy",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "legacyAdminEmployeeOwnerNotGranted": true,
+      "newUserAuthorityDefaultFalse": true,
+      "partialExplicitAuthorityPreserved": false,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    },
+    {
+      "name": "column",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "legacyAdminEmployeeOwnerNotGranted": true,
+      "newUserAuthorityDefaultFalse": true,
+      "partialExplicitAuthorityPreserved": false,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    },
+    {
+      "name": "table",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "legacyAdminEmployeeOwnerNotGranted": true,
+      "newUserAuthorityDefaultFalse": true,
+      "partialExplicitAuthorityPreserved": false,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    },
+    {
+      "name": "mirror",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "legacyAdminEmployeeOwnerNotGranted": true,
+      "newUserAuthorityDefaultFalse": true,
+      "partialExplicitAuthorityPreserved": false,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": true
+    },
+    {
+      "name": "authority",
+      "status": "PASSED",
+      "legacyTablesCompared": 135,
+      "legacyConfigTenDollarsPreserved": true,
+      "approvedDefaultTwoDollars": true,
+      "reservedSpentAndUnknownPreserved": true,
+      "legacyAdminEmployeeOwnerNotGranted": true,
+      "newUserAuthorityDefaultFalse": true,
+      "partialExplicitAuthorityPreserved": true,
+      "exactSchemaIndexesForeignKeys": true,
+      "uniqueAndForeignKeyRejections": true,
+      "repeatPreflightAndDbPush": true,
+      "sqlMirrorNeedsNoCorrection": false
+    }
+  ],
+  "resourceLimits": {
+    "memoryMiB": 512,
+    "cpus": 0.5
+  },
+  "cleanup": true,
+  "mysqlImageId": "sha256:7dcddc01f13bab2f15cde676d44d01f61fc9f99fe7785e86196dfc07d358ae2b",
+  "baseCommit": "ead043c2aa27e25e6522e97b3cdc2c3a4e585783",
+  "headCommit": "ead043c2aa27e25e6522e97b3cdc2c3a4e585783",
+  "oldSchemaSha256": "d8a475e58fb1503a9d46e119d97334092f955d5bbca11622fb2f37c6614fc4d6",
+  "schemaSha256": "1354ae51a44d65f3719fef087a7724c49438eb5312a568b3dfd93cf7eb37bd28",
+  "migrationSha256": "f7a5ad9dc98c76a6beb06f269a06484be10f37f0ab8d36bb6c5deb4c67805ea4",
+  "migrations": [
+    {
+      "path": "backend/prisma/migrations/20260909010000_assistant_budget_approval/migration.sql",
+      "sha256": "f7a5ad9dc98c76a6beb06f269a06484be10f37f0ab8d36bb6c5deb4c67805ea4"
+    },
+    {
+      "path": "backend/prisma/migrations/20260909020000_weekly_cash_review_index/migration.sql",
+      "sha256": "baa9253ef8d192ceb7123e6ec884c4e29093c8000e99ef9f8d1ec97f023451fc"
+    },
+    {
+      "path": "backend/prisma/migrations/20260912010000_cash_close_investigation_index/migration.sql",
+      "sha256": "e4c74c8f3de2133d26ec94294a02506edd70b5938d28bc894e54339cb8a8ae49"
+    },
+    {
+      "path": "backend/prisma/migrations/20260912020000_assistant_budget_owner_authority/migration.sql",
+      "sha256": "4a99bebfb4702b326517204ceaaf996277fc8b71a316a21dc9d8c608bdead2f0"
+    }
+  ],
+  "mirrorSqlSha256": "250d9cc07f3c716d00c0e9d3a6a21d88ee23e86b1250291967b84baf8dcd8594",
+  "scriptSha256": "867c141ea8949b5ecc62b30feda42d7e4a47c7d4d73b245257a00778e4344b8b",
+  "mysqlVersion": "8.0.46",
+  "completedUtc": "2026-09-12T19:05:25.971Z"
+}

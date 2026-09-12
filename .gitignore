@@ -46,3 +46,8 @@ tmp-backups/
 reports/assistant-evaluation/
 # Evidencia local efímera de integración (fixtures y respuestas de QA).
 reports/quality-*/
+
+# QA local del presupuesto y ensayo de upgrade, sin incluir datos en el artefacto.
+reports/assistant-budget*
+reports/weekly-cash-review/
+reports/cash-close-investigation/
