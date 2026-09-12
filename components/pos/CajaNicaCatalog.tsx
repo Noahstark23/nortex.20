@@ -140,7 +140,7 @@ export const CajaNicaCatalog = memo<CajaNicaCatalogProps>(({
                                 const recentlyAdded = recentlyAddedId === product.id;
                                 const quantity = quantitiesByProduct?.get(product.id);
                                 const inCart = typeof quantity === 'number' && Number.isFinite(quantity) && quantity > 0;
-                                const descriptor = product.productFamily?.trim() || (product.sku ? `SKU ${product.sku}` : '');
+                                const descriptor = [product.brand, product.sku ? `SKU ${product.sku}` : ''].filter(Boolean).join(' · ');
                                 const stockLabel = blocked ? 'Agotado' : `${stockFormatter.format(product.stock)} en existencia · ${unit}`;
 
                                 return (

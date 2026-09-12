@@ -2313,6 +2313,8 @@ model Product {
   name        String
   sku         String // Código único del producto
   description String? @db.Text
+  // Marca comercial opcional; independiente del nombre y de la familia operativa.
+  brand       String? @db.VarChar(100)
   category    String?
 
   // Precios
@@ -2395,6 +2397,7 @@ model Product {
   @@index([tenantId, isPublished, name])
   @@index([tenantId, isPublished, category, name])
   @@index([category])
+  @@index([tenantId, brand])
   @@fulltext([name, category])
   @@index([tenantId, name])
 }
@@ -2756,6 +2759,8 @@ model StockCountItem {
   expected  Float // snapshot del stock del sistema al crear el conteo
   counted   Float? // conteo físico capturado (null = aún no contado)
   diff      Float     @default(0) // counted - expected (calculado al cerrar)
+  // Saldo local observado bajo el mismo lock que la captura; null exige reconteo.
+  bookStockAtCapture Decimal? @db.Decimal(18, 4)
   countedAt DateTime?
 
   count   StockCount @relation(fields: [countId], references: [id], onDelete: Cascade)

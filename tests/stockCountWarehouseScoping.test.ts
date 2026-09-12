@@ -74,7 +74,8 @@ describe('conteos físicos por bodega', () => {
         expect(component).toContain('warehouseId: createWarehouseId');
         expect(component).toContain('creating || !createFormValid');
         expect(component).toContain('Bodega a contar');
-        expect(component).toContain('Ubicación histórica/no especificada');
+        expect(component).toContain('Este conteo histórico no tiene ubicación');
+        expect(component).toContain('Cancelalo y creá uno nuevo eligiendo la bodega');
         expect(component).toContain('Esa bodega ya tiene una toma abierta');
         expect(component).toContain("CLOSING: { label: 'Cerrando'");
     });

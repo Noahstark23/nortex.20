@@ -1,17 +1,18 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useRef } from 'react';
 import {
     AlertTriangle, CheckCircle, ChevronDown, ChevronUp, ClipboardList,
     History, PackageCheck, Plus, RefreshCw, X, XCircle,
 } from 'lucide-react';
 import Decimal from 'decimal.js';
-import { formatMoney, sanitizeDecimalInput } from '../utils/money';
+import { bodegaReceivingAttempt, readBodegaReceivingDraft, writeBodegaReceivingDraft, type BodegaReceivingAttempt } from '../utils/bodegaReceivingDraft';
+import { formatMoney } from '../utils/money';
+import { BODEGA_DECIMAL_HINT, normalizeBodegaDecimalInput, parseBodegaDecimalInput } from '../utils/bodegaReceivingInput';
 import { formatQuantityValue, validateNonNegativeQuantity, validateQuantity } from '../utils/quantity';
 import {
     orderedQuantityForItem,
     purchaseOrderRulesForProduct,
     purchaseOrderRulesForReceipt,
     receivedQuantityForItem,
-    sanitizePurchaseQuantityInput,
 } from '../utils/purchaseOrderQuantities';
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
@@ -272,7 +273,7 @@ const formatReceiptDate = (value: string): string => new Date(value).toLocaleStr
 
 const isValidCost = (value: string): boolean => {
     try {
-        const parsed = new Decimal(value);
+        const parsed = parseBodegaDecimalInput(value);
         return parsed.isFinite() && !parsed.isNegative() && parsed.decimalPlaces() <= 6;
     } catch {
         return false;
@@ -290,7 +291,16 @@ const receiptRules = (item: POItem) => purchaseOrderRulesForReceipt(
     },
 );
 
+interface SavedReceiptDraft { drafts: Record<string, ReceiptDraft>; warehouseId: string; clientEventId: string; supplierDeliveryRef: string }
+interface SavedOrderForms { supplierId: string; rows: PORow[]; attempt: BodegaReceivingAttempt | null; receipts: Record<string, SavedReceiptDraft> }
+
 const PurchaseOrders: React.FC = () => {
+    const [initialDraft] = useState(() => readBodegaReceivingDraft<SavedOrderForms>('orders'));
+    const createAttempt = useRef<BodegaReceivingAttempt | null>(initialDraft?.attempt ?? null);
+    const savedReceipts = useRef<Record<string, SavedReceiptDraft>>(initialDraft?.receipts ?? {});
+    const searchRequest = useRef(0);
+    const receiptWarehouseRequest = useRef(0);
+    const formSending = useRef(false);
     const {
         isBodeguero,
         canManagePurchaseOrders,
@@ -306,10 +316,12 @@ const PurchaseOrders: React.FC = () => {
     const [cancelToConfirm, setCancelToConfirm] = useState<PO | null>(null);
     const [busy, setBusy] = useState<string | null>(null);
 
-    const [supplierId, setSupplierId] = useState('');
-    const [rows, setRows] = useState<PORow[]>([]);
+    const [supplierId, setSupplierId] = useState(initialDraft?.supplierId ?? '');
+    const [rows, setRows] = useState<PORow[]>(Array.isArray(initialDraft?.rows) ? initialDraft.rows : []);
     const [search, setSearch] = useState('');
     const [results, setResults] = useState<ProductLite[]>([]);
+    const [searchError, setSearchError] = useState('');
+    const [suppliersError, setSuppliersError] = useState('');
     const [receiptDrafts, setReceiptDrafts] = useState<Record<string, ReceiptDraft>>({});
     const [receiptWarehouses, setReceiptWarehouses] = useState<WarehouseOption[]>([]);
     const [receiptWarehouseId, setReceiptWarehouseId] = useState('');
@@ -329,6 +341,13 @@ const PurchaseOrders: React.FC = () => {
     const [lastReceiptNotice, setLastReceiptNotice] = useState<{ receiptNumber: string; replay: boolean } | null>(null);
     const [lastCloseShortNotice, setLastCloseShortNotice] = useState<{ orderNumber: string; replay: boolean } | null>(null);
     const { toast, showToast, dismissToast } = useToast();
+    const persistOrdersDraft = () => writeBodegaReceivingDraft('orders', { supplierId, rows, attempt: createAttempt.current, receipts: savedReceipts.current } satisfies SavedOrderForms);
+    useEffect(() => { persistOrdersDraft(); }, [supplierId, rows]);
+    useEffect(() => {
+        if (!receiving || !receiptClientEventId) return;
+        savedReceipts.current[receiving.id] = { drafts: receiptDrafts, warehouseId: receiptWarehouseId, clientEventId: receiptClientEventId, supplierDeliveryRef };
+        persistOrdersDraft();
+    }, [receiving, receiptDrafts, receiptWarehouseId, receiptClientEventId, supplierDeliveryRef]);
 
     const load = useCallback(async () => {
         setOrdersLoading(true);
@@ -356,15 +375,19 @@ const PurchaseOrders: React.FC = () => {
         void requestWithTimeout('/api/suppliers', { headers: headers() })
             .then(async response => {
                 const data: any = await response.json().catch(() => []);
-                if (response.ok) setSuppliers(Array.isArray(data) ? data : []);
+                if (response.ok) { setSuppliers(Array.isArray(data) ? data : []); setSuppliersError(''); }
+                else setSuppliersError(data.error || 'No se pudieron cargar los proveedores.');
             })
             .catch(() => {
+                setSuppliersError('No pudimos conectar para cargar los proveedores.');
                 showToast({ tone: 'error', title: 'No se cargaron los proveedores', message: 'Revisá tu conexión e intentá de nuevo.' });
             });
     }, [canManagePurchaseOrders, load, showToast]);
 
     const searchProducts = async (query: string) => {
+        const requestId = ++searchRequest.current;
         setSearch(query);
+        setSearchError('');
         if (query.trim().length < 2) {
             setResults([]);
             return;
@@ -375,15 +398,20 @@ const PurchaseOrders: React.FC = () => {
                 `/api/products?search=${encodeURIComponent(query)}&page=1&pageSize=8`,
                 { headers: headers() },
             );
-            if (!response.ok) return;
+            if (requestId !== searchRequest.current) return;
+            if (!response.ok) { setResults([]); setSearchError('No se pudo buscar. Volvé a escribir para reintentar.'); return; }
             const data: any = await response.json();
+            if (requestId !== searchRequest.current) return;
             setResults(Array.isArray(data) ? data : Array.isArray(data.products) ? data.products : []);
         } catch {
+            if (requestId !== searchRequest.current) return;
             setResults([]);
+            setSearchError('No pudimos conectar para buscar el producto.');
         }
     };
 
     const createPO = async () => {
+        if (busy || formSending.current) return;
         if (!supplierId || rows.length === 0) {
             showToast({ tone: 'warning', title: 'Faltan datos', message: 'Seleccioná un proveedor y agregá al menos un producto.' });
             return;
@@ -391,14 +419,14 @@ const PurchaseOrders: React.FC = () => {
 
         const invalidRow = rows.find(row => {
             try {
-                validateQuantity(row.quantity, purchaseOrderRulesForProduct(row));
+                validateQuantity(parseBodegaDecimalInput(row.quantity).toString(), purchaseOrderRulesForProduct(row));
                 return !isValidCost(row.unitCost);
             } catch {
                 return true;
             }
         });
         if (invalidRow) {
-            showToast({ tone: 'warning', title: 'Revisá los productos', message: 'Las cantidades deben ser mayores que cero y los costos no pueden ser negativos.' });
+            showToast({ tone: 'warning', title: 'Revisá los productos', message: `Las cantidades deben ser mayores que cero y los costos no pueden ser negativos. ${BODEGA_DECIMAL_HINT}` });
             return;
         }
         const items = rows.map(row => ({
@@ -409,12 +437,16 @@ const PurchaseOrders: React.FC = () => {
             unitCost: row.unitCost,
         }));
 
+        formSending.current = true;
         setBusy('create');
         try {
+            const payload = JSON.stringify({ supplierId, items });
+            createAttempt.current = bodegaReceivingAttempt(payload, createAttempt.current);
+            persistOrdersDraft();
             const response = await requestWithTimeout('/api/purchase-orders', {
                 method: 'POST',
-                headers: headers(),
-                body: JSON.stringify({ supplierId, items }),
+                headers: { ...headers(), 'Idempotency-Key': createAttempt.current.key },
+                body: payload,
             });
             const data: any = await response.json().catch(() => ({}));
             if (!response.ok) {
@@ -422,6 +454,7 @@ const PurchaseOrders: React.FC = () => {
                 return;
             }
 
+            createAttempt.current = null;
             setShowCreate(false);
             setRows([]);
             setSupplierId('');
@@ -434,6 +467,7 @@ const PurchaseOrders: React.FC = () => {
                 message: 'Conservamos los datos para que podás volver a intentar.',
             });
         } finally {
+            formSending.current = false;
             setBusy(null);
         }
     };
@@ -466,7 +500,8 @@ const PurchaseOrders: React.FC = () => {
         }
     };
 
-    const loadReceiptWarehouses = async () => {
+    const loadReceiptWarehouses = async (savedWarehouseId = '') => {
+        const requestId = ++receiptWarehouseRequest.current;
         setReceiptWarehousesLoading(true);
         setReceiptWarehouseError('');
         setReceiptWarehouses([]);
@@ -474,6 +509,7 @@ const PurchaseOrders: React.FC = () => {
         try {
             const response = await requestWithTimeout('/api/warehouses', { headers: headers() });
             const data: any = await response.json().catch(() => ({}));
+            if (requestId !== receiptWarehouseRequest.current) return;
             if (!response.ok) {
                 setReceiptWarehouseError(data.error || 'No se pudieron cargar las bodegas activas.');
                 return;
@@ -482,18 +518,20 @@ const PurchaseOrders: React.FC = () => {
             const available = (Array.isArray(data.data) ? data.data : [])
                 .filter((warehouse: WarehouseOption) => warehouse.isActive);
             setReceiptWarehouses(available);
-            setReceiptWarehouseId(soleActiveReceiptWarehouseId(available));
+            setReceiptWarehouseId(available.some(warehouse => warehouse.id === savedWarehouseId) ? savedWarehouseId : soleActiveReceiptWarehouseId(available));
             if (available.length === 0) {
                 setReceiptWarehouseError('No hay una bodega activa. Pedile a un administrador que active una.');
             }
         } catch {
+            if (requestId !== receiptWarehouseRequest.current) return;
             setReceiptWarehouseError('No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
         } finally {
-            setReceiptWarehousesLoading(false);
+            if (requestId === receiptWarehouseRequest.current) setReceiptWarehousesLoading(false);
         }
     };
 
-    const closeReceipt = () => {
+    const resetReceipt = () => {
+        receiptWarehouseRequest.current++;
         setReceiving(null);
         setReceiptDrafts({});
         setReceiptWarehouseId('');
@@ -501,17 +539,24 @@ const PurchaseOrders: React.FC = () => {
         setReceiptWarehouseError('');
         setReceiptClientEventId('');
         setSupplierDeliveryRef('');
+        setReceiptWarehousesLoading(false);
+    };
+
+    const closeReceipt = () => {
+        if (!busy && !formSending.current) resetReceipt();
     };
 
     const openReceipt = (po: PO) => {
+        if (busy || formSending.current) return;
         setReceiving(po);
-        // El UUID nace al abrir y sobrevive todos los reintentos de este diálogo.
-        setReceiptClientEventId(newReceiptClientEventId());
-        setSupplierDeliveryRef('');
-        setReceiptDrafts(Object.fromEntries(
+        // Reabrir un borrador conserva su identidad, incluso tras una respuesta perdida.
+        const saved = savedReceipts.current[po.id];
+        setReceiptClientEventId(saved?.clientEventId || newReceiptClientEventId());
+        setSupplierDeliveryRef(saved?.supplierDeliveryRef || '');
+        setReceiptDrafts(saved?.drafts ?? Object.fromEntries(
             po.items.map(item => [item.id, emptyReceipt()]),
         ) as Record<string, ReceiptDraft>);
-        void loadReceiptWarehouses();
+        void loadReceiptWarehouses(saved?.warehouseId);
     };
 
     const toggleReceiptTimeline = async (po: PO, forceReload = false) => {
@@ -547,7 +592,7 @@ const PurchaseOrders: React.FC = () => {
     };
 
     const receive = async () => {
-        if (!receiving || busy) return;
+        if (!receiving || busy || formSending.current) return;
         setReceiptWarehouseError('');
 
         if (!receiptWarehouseId) {
@@ -572,16 +617,16 @@ const PurchaseOrders: React.FC = () => {
             let rejected: Decimal;
             try {
                 accepted = draft.quantity.trim()
-                    ? validateNonNegativeQuantity(draft.quantity, receiptRules(item))
+                    ? validateNonNegativeQuantity(parseBodegaDecimalInput(draft.quantity).toString(), receiptRules(item))
                     : new Decimal(0);
                 rejected = draft.quantityRejected.trim()
-                    ? validateNonNegativeQuantity(draft.quantityRejected, receiptRules(item))
+                    ? validateNonNegativeQuantity(parseBodegaDecimalInput(draft.quantityRejected).toString(), receiptRules(item))
                     : new Decimal(0);
             } catch {
                 showToast({
                     tone: 'warning',
                     title: 'Cantidad de inspección inválida',
-                    message: `Revisá lo aceptado, lo rechazado y el paso de ${item.productName}.`,
+                    message: `Revisá lo aceptado, lo rechazado y el paso de ${item.productName}. ${BODEGA_DECIMAL_HINT}`,
                 });
                 return;
             }
@@ -635,6 +680,7 @@ const PurchaseOrders: React.FC = () => {
             return;
         }
 
+        formSending.current = true;
         setBusy(receiving.id);
         try {
             // El contrato anterior, `JSON.stringify({ warehouseId: receiptWarehouseId, items })`,
@@ -673,15 +719,18 @@ const PurchaseOrders: React.FC = () => {
                         ? `Las existencias ingresaron a ${warehouseName} y el Kardex quedó actualizado.`
                         : 'Las existencias y el Kardex quedaron actualizados.',
             });
-            closeReceipt();
+            delete savedReceipts.current[receiving.id];
+            persistOrdersDraft();
+            resetReceipt();
             void load();
         } catch (error: any) {
             showToast({
                 tone: 'error',
                 title: error?.name === 'AbortError' ? 'La conexión tardó demasiado' : 'Error de conexión',
-                message: 'Revisá el estado de la orden antes de volver a intentar.',
+                message: 'Conservamos la recepción y su referencia. Reintentá desde este borrador para comprobarla sin duplicar existencias.',
             });
         } finally {
+            formSending.current = false;
             setBusy(null);
         }
     };
@@ -819,7 +868,7 @@ const PurchaseOrders: React.FC = () => {
                         <RefreshCw size={16} />
                     </button>
                     {canManagePurchaseOrders && (
-                        <button onClick={() => setShowCreate(true)} className="px-4 py-2 bg-brand text-white rounded-lg font-bold text-sm flex items-center gap-1.5">
+                        <button disabled={Boolean(busy)} onClick={() => { if (!formSending.current) setShowCreate(true); }} className="px-4 py-2 bg-brand text-white rounded-lg font-bold text-sm flex items-center gap-1.5 disabled:opacity-50">
                             <Plus size={16} /> Nueva OC
                         </button>
                     )}
@@ -892,6 +941,9 @@ const PurchaseOrders: React.FC = () => {
                                         {(po.closeShorts?.length ?? 0) > 0 && ` · ${po.closeShorts?.length} cierre${po.closeShorts?.length === 1 ? '' : 's'}`}
                                         {expandedOrderId === po.id ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
                                     </button>
+                                )}
+                                {canManagePurchaseOrders && ['PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED_SHORT'].includes(po.status) && po.items.some(item => receivedQuantityForItem(item).greaterThan(0)) && (
+                                    <a href={`/app/purchases?purchaseOrderId=${encodeURIComponent(po.id)}`} className="inline-flex min-h-11 items-center rounded-lg bg-sky-500/15 px-3 py-1.5 text-xs font-bold text-sky-300">Facturar lo recibido</a>
                                 )}
                                 {canManagePurchaseOrders && po.status === 'DRAFT' && (
                                     <>
@@ -1086,11 +1138,11 @@ const PurchaseOrders: React.FC = () => {
             </div>
 
             {canManagePurchaseOrders && showCreate && (
-                <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { if (!busy) setShowCreate(false); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="new-po-title" className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={event => event.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { if (!busy && !formSending.current) setShowCreate(false); }}>
+                    <fieldset disabled={Boolean(busy)} role="dialog" aria-modal="true" aria-labelledby="new-po-title" className="min-w-0 bg-slate-900 border border-slate-700 rounded-xl w-full max-w-lg p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={event => event.stopPropagation()}>
                         <div className="flex justify-between items-center">
                             <h2 id="new-po-title" className="font-bold text-white">Nueva Orden de Compra</h2>
-                            <button onClick={() => setShowCreate(false)} disabled={Boolean(busy)} className="text-slate-400 disabled:opacity-50" aria-label="Cerrar"><X size={18} /></button>
+                            <button onClick={() => { if (!formSending.current) setShowCreate(false); }} disabled={Boolean(busy)} className="text-slate-400 disabled:opacity-50" aria-label="Cerrar"><X size={18} /></button>
                         </div>
                         <div>
                             <label htmlFor="po-supplier" className="block text-xs font-semibold uppercase tracking-wide text-slate-400">Proveedor *</label>
@@ -1101,10 +1153,11 @@ const PurchaseOrders: React.FC = () => {
                                 disabled={suppliers.length === 0}
                                 className="mt-1 w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm disabled:text-slate-500"
                             >
-                                <option value="">{suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
+                                <option value="">{suppliersError ? 'No se pudieron cargar proveedores' : suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
                                 {suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
                             </select>
-                            {suppliers.length === 0 && (
+                            {suppliersError && <p role="alert" className="mt-2 text-xs text-red-300">{suppliersError} Volvé a abrir el módulo para reintentar; el borrador se conserva.</p>}
+                            {!suppliersError && suppliers.length === 0 && (
                                 <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
                                     <span>Necesitás un proveedor para crear la orden.</span>
                                     <a href="/app/suppliers" className="shrink-0 font-bold text-amber-300 underline decoration-amber-500/60 underline-offset-2 hover:text-amber-200">
@@ -1114,7 +1167,8 @@ const PurchaseOrders: React.FC = () => {
                             )}
                         </div>
                         <div>
-                            <input value={search} onChange={event => void searchProducts(event.target.value)} placeholder="Buscar producto para agregar…" className="w-full px-3 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm" />
+                            <input value={search} onChange={event => void searchProducts(event.target.value)} placeholder="Buscar producto para agregar…" className="w-full px-3 py-2.5 border rounded-control text-sm bg-surface-900 nx-form-field" />
+                            {searchError && <p role="alert" className="mt-2 text-xs text-red-300">{searchError}</p>}
                             {results.length > 0 && (
                                 <div className="mt-1 bg-slate-800 border border-slate-700 rounded-lg divide-y divide-slate-700 max-h-40 overflow-y-auto">
                                     {results.map(product => (
@@ -1128,6 +1182,7 @@ const PurchaseOrders: React.FC = () => {
                                                         quantity: purchaseOrderRulesForProduct(product).quantityStep,
                                                         unitCost: String(product.cost ?? 0),
                                                     }]);
+                                                searchRequest.current++;
                                                 setSearch('');
                                                 setResults([]);
                                             }}
@@ -1142,28 +1197,30 @@ const PurchaseOrders: React.FC = () => {
                         {rows.map((row, index) => (
                             <div key={row.id} className="flex gap-2 items-center text-sm">
                                 <span className="flex-1 text-slate-200 truncate">{row.name} <span className="text-xs text-slate-500">({row.unit || 'unidad'})</span></span>
-                                <input inputMode="decimal" value={row.quantity} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, quantity: sanitizePurchaseQuantityInput(event.target.value) } : candidate))} className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-mono text-right" aria-label={`Cantidad de ${row.name}`} />
-                                <input inputMode="decimal" value={row.unitCost} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, unitCost: sanitizeDecimalInput(event.target.value) } : candidate))} className="w-20 px-2 py-1.5 bg-slate-800 border border-slate-700 rounded text-white font-mono text-right" aria-label={`Costo de ${row.name}`} />
+                                <input inputMode="decimal" value={row.quantity} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, quantity: normalizeBodegaDecimalInput(event.target.value) } : candidate))} className="w-20 px-2 py-1.5 border rounded font-mono text-right bg-surface-900 rounded-control nx-form-field" aria-label={`Cantidad de ${row.name}`} />
+                                <input inputMode="decimal" value={row.unitCost} onChange={event => setRows(current => current.map((candidate, i) => i === index ? { ...candidate, unitCost: normalizeBodegaDecimalInput(event.target.value) } : candidate))} className="w-20 px-2 py-1.5 border rounded font-mono text-right bg-surface-900 rounded-control nx-form-field" aria-label={`Costo de ${row.name}`} />
                                 <button onClick={() => setRows(current => current.filter((_, i) => i !== index))} className="text-red-400" aria-label={`Quitar ${row.name}`}><X size={14} /></button>
                             </div>
                         ))}
+                        <p className="text-xs text-slate-400">{BODEGA_DECIMAL_HINT}</p>
                         <button onClick={() => void createPO()} disabled={busy === 'create'} className="w-full py-2.5 bg-brand text-white rounded-lg font-bold text-sm disabled:opacity-60">
                             {busy === 'create' ? 'Creando…' : 'Crear borrador'}
                         </button>
-                    </div>
+                    </fieldset>
                 </div>
             )}
 
             {receiving && (
                 <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4" onClick={() => { if (!busy) closeReceipt(); }}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="receive-po-title" className="bg-slate-900 border border-slate-700 rounded-xl w-full max-w-xl p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={event => event.stopPropagation()}>
+                    <fieldset disabled={Boolean(busy)} role="dialog" aria-modal="true" aria-labelledby="receive-po-title" className="min-w-0 bg-slate-900 border border-slate-700 rounded-xl w-full max-w-xl p-5 space-y-4 max-h-[90vh] overflow-y-auto" onClick={event => event.stopPropagation()}>
                         <div className="flex justify-between items-center">
                             <h2 id="receive-po-title" className="font-bold text-white">Recibir {receiving.orderNumber}</h2>
                             <button onClick={closeReceipt} disabled={Boolean(busy)} className="text-slate-400 disabled:opacity-50" aria-label="Cerrar"><X size={18} /></button>
                         </div>
                         <p className="text-xs text-slate-400">
-                            Separá lo aceptado de lo rechazado. Solo lo aceptado actualiza existencias, lotes y Kardex.
+                            Separá lo aceptado de lo rechazado. Solo lo aceptado actualiza existencias, lotes y Kardex. Podés cerrar y volver a este borrador sin perder lo digitado.
                         </p>
+                        <p className="text-xs text-slate-400">{BODEGA_DECIMAL_HINT}</p>
 
                         <div className="rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-3">
                             <label htmlFor="receipt-warehouse" className="mb-1.5 block text-sm font-semibold text-slate-200">
@@ -1217,6 +1274,13 @@ const PurchaseOrders: React.FC = () => {
                                 className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2.5 text-sm text-white focus:border-emerald-500 focus:outline-none"
                             />
                         </div>
+                        <button type="button" disabled={Boolean(busy)} className="min-h-11 rounded-control border border-emerald-500/30 px-3 py-2 text-sm font-semibold text-emerald-300" onClick={() => {
+                            setReceiptDrafts(current => Object.fromEntries(receiving.items.map(item => [item.id, {
+                                ...emptyReceipt(), ...current[item.id], quantity: openPurchaseOrderQuantityForItem(item).toString(),
+                                quantityRejected: '', rejectionReasonCode: '', rejectionNotes: '', supplierFault: '',
+                            }])));
+                        }}>Todo lo pendiente llegó bien</button>
+                        <p className="text-xs text-slate-400">Este botón completa cantidades. Revisalas y completá los lotes antes de confirmar.</p>
                         {receiving.items.map(item => {
                             const pending = openPurchaseOrderQuantityForItem(item);
                             const draft = receiptDrafts[item.id] ?? emptyReceipt();
@@ -1234,7 +1298,7 @@ const PurchaseOrders: React.FC = () => {
                                                 <input
                                                     id={`accepted-${item.id}`}
                                                     value={draft.quantity}
-                                                    onChange={event => updateReceipt(item.id, { quantity: sanitizePurchaseQuantityInput(event.target.value) })}
+                                                    onChange={event => updateReceipt(item.id, { quantity: normalizeBodegaDecimalInput(event.target.value) })}
                                                     inputMode="decimal"
                                                     placeholder="0"
                                                     className="w-full rounded border border-emerald-800/70 bg-slate-900 px-2 py-2 text-right font-mono text-white"
@@ -1248,7 +1312,7 @@ const PurchaseOrders: React.FC = () => {
                                                 <input
                                                     id={`rejected-${item.id}`}
                                                     value={draft.quantityRejected}
-                                                    onChange={event => updateReceipt(item.id, { quantityRejected: sanitizePurchaseQuantityInput(event.target.value) })}
+                                                    onChange={event => updateReceipt(item.id, { quantityRejected: normalizeBodegaDecimalInput(event.target.value) })}
                                                     inputMode="decimal"
                                                     placeholder="0"
                                                     className="w-full rounded border border-red-800/70 bg-slate-900 px-2 py-2 text-right font-mono text-white"
@@ -1346,7 +1410,7 @@ const PurchaseOrders: React.FC = () => {
                                     ? 'Cargando bodegas…'
                                     : 'Confirmar recepción'}
                         </button>
-                    </div>
+                    </fieldset>
                 </div>
             )}
 

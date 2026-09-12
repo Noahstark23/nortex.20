@@ -23,6 +23,7 @@ export interface ProductoBuscable {
     name: string;
     sku: string;
     category?: string;
+    brand?: string | null;
 }
 
 export interface EntradaIndice<T> {
@@ -78,11 +79,11 @@ export function indexarProductos<T extends ProductoBuscable>(productos: T[], ant
     return productos.map(producto => {
         const previous = anteriores.get(producto.id);
         const reusable = previous && previous.producto.name === producto.name
-            && previous.producto.sku === producto.sku && previous.producto.category === producto.category;
+            && previous.producto.sku === producto.sku && previous.producto.category === producto.category && previous.producto.brand === producto.brand;
         return {
             // Siempre el producto actual: reutilizar texto nunca conserva stock/precio viejos.
             producto,
-            texto: reusable ? previous.texto : normalizar(`${producto.name} ${producto.sku} ${producto.category ?? ''}`),
+            texto: reusable ? previous.texto : normalizar([producto.name, producto.brand, producto.sku, producto.category].filter(Boolean).join(' ')),
             skuNormalizado: reusable && previous.skuNormalizado !== undefined ? previous.skuNormalizado : normalizar(producto.sku),
         };
     });

@@ -120,7 +120,7 @@ export type NavSection = (typeof NAV_SECTIONS)[number];
  * Rutas SATÉLITE: pantallas que no tienen ítem propio en el menú pero pertenecen
  * a uno que sí lo tiene.
  *
- * El problema que resuelven: al entrar a Bodegas o a Series, ningún ítem del
+ * El problema que resuelven: al entrar a Series, ningún ítem del
  * sidebar quedaba marcado y todas las secciones aparecían plegadas —el usuario
  * no sabía dónde estaba ni cómo volver, y no había breadcrumb ni botón atrás—.
  * Se llegaba a un callejón sin salida desde el propio menú.
@@ -130,7 +130,6 @@ export type NavSection = (typeof NAV_SECTIONS)[number];
  * testear sin montar React.
  */
 export const RUTAS_SATELITE: Readonly<Record<string, string>> = {
-    '/app/warehouses': '/app/inventory',
     '/app/serials': '/app/inventory',
 };
 
@@ -148,7 +147,7 @@ export function esRutaDe(navPath: string, ruta: string): boolean {
 export function navPathForRoute(ruta: string, role = ''): string {
     // Para BODEGUERO, Inventario es una subvista operativa de su destino
     // principal "Bodegas y existencias". El resto de roles conserva la
-    // atribución histórica inversa (Bodegas como satélite de Mis Productos).
+    // destino propio de cada entrada; Series continúa bajo Mis Productos.
     if (role === 'BODEGUERO') {
         if (esRutaDe('/app/inventory', ruta) && !esRutaDe('/app/inventory-count', ruta)) {
             return '/app/warehouses';

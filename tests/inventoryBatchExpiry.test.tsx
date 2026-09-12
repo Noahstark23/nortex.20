@@ -24,6 +24,7 @@ beforeEach(() => {
     localStorage.setItem('nortex_token', 'synthetic-fixture');
     vi.stubGlobal('fetch', vi.fn(async (input: unknown) => {
         const { pathname } = new URL(String(input), 'http://localhost');
+        if (pathname === '/api/warehouses/product/medicine-a/stock') return ok({success:true,data:{productId:product.id,totalStock:'5.0000',unit:'unidad',warehouses:[{id:'warehouse-a',name:'Principal',isActive:true,isDefault:true,stock:'5.0000',implicit:false}],hasMore:false}});
         if (pathname === '/api/products') return ok({ products: [product], total: 1 });
         if (pathname === '/api/inventory/batches/medicine-a') return ok(batches);
         if (pathname === '/api/warehouses') return ok({ data: [{ id: 'warehouse-a', name: 'Principal', isActive: true, isDefault: true }] });
@@ -40,7 +41,8 @@ afterEach(() => {
 
 async function openBatches() {
     render(<MemoryRouter initialEntries={['/app/inventory']}><Inventory /></MemoryRouter>);
-    fireEvent.click((await screen.findAllByRole('button', { name: 'Más acciones de Medicamento QA' }))[0]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Ver Medicamento QA' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Más acciones de Medicamento QA' }));
     fireEvent.click(screen.getByRole('menuitem', { name: 'Lotes y vencimientos' }));
     const dialog = await screen.findByRole('dialog', { name: 'Lotes de Medicamento QA' });
     await within(dialog).findByText('HOY-MEDIANOCHE');

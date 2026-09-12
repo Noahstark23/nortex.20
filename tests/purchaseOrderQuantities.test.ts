@@ -47,6 +47,12 @@ const expectCode = (action: () => unknown, code: string) => {
 };
 
 describe('cantidades exactas en órdenes de compra', () => {
+    it.each(['unidad', 'caja', 'cajas'])('una nueva OC de %s sin configuración exige enteros', (unit) => {
+        const legacy = { ...counted, unit, saleMode: null, quantityStep: null };
+        expectCode(() => normalizePurchaseOrderLines([{ productId: legacy.id, quantity: '1.5', unitCost: '10' }], [legacy]), 'INVALID_LINE');
+        const [line] = normalizePurchaseOrderLines([{ productId: legacy.id, quantity: '2', unitCost: '10' }], [legacy]);
+        expect(line.saleModeAtOrder).toBe('COUNTED'); expect(line.quantityStepAtOrder).toBe('1');
+    });
     it('acepta 37.5 kg y congela unidad, modo y paso autoritativos', () => {
         const [line] = normalizePurchaseOrderLines(
             [{ productId: measured.id, quantity: '37.5', unitCost: '41.20', saleMode: 'COUNTED' }],

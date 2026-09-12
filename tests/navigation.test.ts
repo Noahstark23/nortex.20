@@ -28,16 +28,16 @@ describe('esRutaDe', () => {
 });
 
 describe('navPathForRoute', () => {
-    it('Bodegas se atribuye a Mis Productos', () => {
-        expect(navPathForRoute('/app/warehouses')).toBe('/app/inventory');
+    it('Bodegas conserva su propia entrada de menú', () => {
+        expect(navPathForRoute('/app/warehouses')).toBe('/app/warehouses');
     });
 
     it('Series se atribuye a Mis Productos', () => {
         expect(navPathForRoute('/app/serials')).toBe('/app/inventory');
     });
 
-    it('una subruta del satélite también se atribuye', () => {
-        expect(navPathForRoute('/app/warehouses/abc')).toBe('/app/inventory');
+    it('una subruta de Bodegas conserva su contexto', () => {
+        expect(navPathForRoute('/app/warehouses/abc')).toBe('/app/warehouses/abc');
     });
 
     it('una ruta normal se devuelve tal cual', () => {

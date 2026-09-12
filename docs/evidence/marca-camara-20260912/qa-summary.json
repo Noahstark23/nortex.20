@@ -1,0 +1,33 @@
+{
+  "node": "22.23.2",
+  "prisma": "6.4.1",
+  "prismaGenerate": true,
+  "typescript": true,
+  "design": {
+    "passed": true,
+    "files": 104
+  },
+  "build": true,
+  "generalVitest": {
+    "passed": true,
+    "suitesPassed": 376,
+    "testsPassed": 5149,
+    "suitesSkipped": 43,
+    "testsSkipped": 368,
+    "skippedCountedAsPassed": false
+  },
+  "requiredIntegration": {
+    "passed": true,
+    "suites": 44,
+    "tests": 382,
+    "skipped": 0
+  },
+  "migrationUpgrade": {
+    "existingProducts": 1351,
+    "existingWarehouseBalances": 1248,
+    "identicalBeforeAfter": true
+  },
+  "physicalCamera": "Not available; no physical device validation",
+  "deployment": "Not performed",
+  "prismaValidate": true
+}

@@ -391,6 +391,17 @@ export async function applyStockDelta(
         );
     }
 
+    // Product ya está bloqueado por el UPDATE: conservar Product → Warehouse
+    // también para callers sin pre-lock (ventas). Si se desactivó la ubicación,
+    // la excepción revierte el delta en esta misma transacción.
+    const activeWarehouse = await tx.$queryRaw<Array<{ id: string; isDefault: boolean | number }>>(Prisma.sql`
+        SELECT id, isDefault FROM \`Warehouse\`
+        WHERE id = ${warehouseId} AND tenantId = ${tenantId} AND isActive = TRUE
+        FOR SHARE
+    `);
+    if (!activeWarehouse[0]) throw new StockError('WAREHOUSE_NOT_FOUND', 'La bodega está inactiva o ya no está disponible. Revisá la ubicación antes de reintentar.');
+    isDefault = Boolean(activeWarehouse[0].isDefault);
+
     // Read-back consistente: el row-lock del UPDATE impide que otra tx
     // modifique la fila antes de nuestro COMMIT.
     const after = await tx.product.findFirstOrThrow({

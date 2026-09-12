@@ -32,17 +32,19 @@ export interface RegisterPurchaseOptions {
 
 async function resolvePurchaseShift(db: any, principal: PurchasePrincipal, paymentMethod: string, required = true) {
     if (paymentMethod !== 'CASH') return null;
-    const shift = await db.shift.findFirst({
-        where: { tenantId: principal.tenantId, userId: principal.userId, status: 'OPEN' },
-        orderBy: { startTime: 'desc' },
+    // Igual que una venta: la responsabilidad de la gaveta debe pertenecer al
+    // usuario actual. El lock impide un traspaso/cierre entre elegir y debitar.
+    // El preview también usa esta autoridad, sin reservar ni mover dinero.
+    const [owned] = await db.$queryRaw`
+        SELECT id FROM \`Shift\`
+        WHERE tenantId = ${principal.tenantId} AND userId = ${principal.userId} AND status = 'OPEN'
+        ORDER BY startTime DESC, id DESC LIMIT 1 FOR UPDATE`;
+    const shift = owned ? await db.shift.findFirst({
+        where: { id: owned.id, tenantId: principal.tenantId, userId: principal.userId, status: 'OPEN' },
         include: { user: { select: { name: true } } },
-    }) ?? await db.shift.findFirst({
-        where: { tenantId: principal.tenantId, status: 'OPEN' },
-        orderBy: { startTime: 'desc' },
-        include: { user: { select: { name: true } } },
-    });
+    }) : null;
     if (!shift && required) throw new SupplierPaymentError('SIN_CAJA_ABIERTA',
-        'No hay caja abierta. Abrí una caja para registrar una compra de contado, o registrala a crédito.');
+        'No hay caja abierta a tu nombre. Abrí una caja o tomá el turno a tu nombre antes de pagar de contado; también podés registrar la compra a crédito.');
     return shift;
 }
 

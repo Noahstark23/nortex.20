@@ -48,6 +48,7 @@ interface FakeOptions {
     tracked?: boolean;
     sourceStock?: string;
     destinationStock?: string;
+    productRules?: { unit: string; saleMode: string | null; quantityStep: string | null };
 }
 
 const existingTransfer = (overrides: Partial<StockTransferRecord> = {}): StockTransferRecord => {
@@ -204,8 +205,10 @@ const fakeTx = (options: FakeOptions = {}) => {
             return [{
                 id: 'product-a',
                 name: 'Carne',
-                saleMode: 'MEASURED',
-                quantityStep: '0.0001',
+                // La respuesta conserva la proyección real del SELECT.
+                ...(sql.includes('`unit`') ? { unit: options.productRules?.unit ?? 'kg' } : {}),
+                saleMode: options.productRules ? options.productRules.saleMode : 'MEASURED',
+                quantityStep: options.productRules ? options.productRules.quantityStep : '0.0001',
                 requiresBatchTracking: options.tracked ?? false,
             }];
         }),
@@ -283,6 +286,26 @@ describe('StockTransferService', () => {
         expect(fake.events).toEqual(['actor:tenant-a:ACTIVE', 'replay-read']);
         expect(mocks.resolveBatchWarehouseLedgerMode).not.toHaveBeenCalled();
         expect(fake.raw.stockTransfer.create).not.toHaveBeenCalled();
+    });
+
+    it('consulta la unidad autoritativa y rechaza una transferencia nueva de cajas fraccionarias', async () => {
+        const fake = fakeTx({ productRules: { unit: 'caja', saleMode: null, quantityStep: null } });
+        await expect(executeStockTransfer({ tx: fake.tx, tenantId: 'tenant-a', userId: 'user-a', request }))
+            .rejects.toMatchObject({ code: 'COUNTED_REQUIRES_INTEGER', httpStatus: 422 });
+        expect(fake.raw.productStock.updateMany).not.toHaveBeenCalled();
+        expect(fake.raw.kardexMovement.createMany).not.toHaveBeenCalled();
+        expect(fake.raw.auditLog.create).not.toHaveBeenCalled();
+    });
+
+    it('preserva replay de cajas fraccionarias ya transferidas antes del cambio', async () => {
+        const fake = fakeTx({
+            existing: existingTransfer(),
+            productRules: { unit: 'caja', saleMode: null, quantityStep: null },
+        });
+        const result = await executeStockTransfer({ tx: fake.tx, tenantId: 'tenant-a', userId: 'user-a', request });
+        expect(result).toMatchObject({ replay: true, transfer: { id: 'transfer-existing' } });
+        expect(fake.events).toEqual(['actor:tenant-a:ACTIVE', 'replay-read']);
+        expect(fake.raw.productStock.updateMany).not.toHaveBeenCalled();
     });
 
     it('falla cerrado si el actor no está ACTIVE en el tenant', async () => {

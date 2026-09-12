@@ -69,3 +69,11 @@ autorización para trabajo ya autorizado.
   para cerrar una reparación. Release sigue `docs/runbooks/release-promotion.md`:
   CI terminal, staging del mismo SHA y autorización de producción son evidencias
   separadas. Un reporte histórico no sustituye ninguna de ellas.
+
+## Catálogo y bodega: candidato 2026-09-12
+
+Aplicar los contratos de cantidades, importación, ajustes y conteos de `CLAUDE.md`.
+La marca es opcional e independiente del nombre. La cámara identifica productos;
+no modifica existencias por detectar un código. Una captura se acepta una vez y se
+descarta al cambiar la sesión. Ver `docs/MARCAS_Y_LECTOR_CAMARA_2026-09-12.md`.
+La QA física del lector y la promoción del candidato requieren evidencia propia.

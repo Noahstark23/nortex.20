@@ -3,6 +3,7 @@ import type { z } from 'zod';
 import { CreatePurchaseSchema } from '../validation/schemas';
 import { normalizeCalendarDateInput } from '../lib/calendarDate';
 import { calculatePurchaseOrderInvoiceAvailability } from '../lib/purchaseOrderAvailability';
+import { purchaseOrderRulesForReceipt } from '../../utils/purchaseOrderQuantities';
 import { calculatePurchaseMoney } from '../lib/purchaseMoney';
 import { resolveOperationalWarehouse } from './stockService';
 import { resolvePurchaseLine } from '../../utils/purchasePackaging';
@@ -83,6 +84,11 @@ export async function preparePurchaseContext(tx: any, principal: PurchasePrincip
             productName: string;
             quantityReceived: number | string;
             quantityReceivedExact: Decimal | null;
+            quantityOrdered: number | string;
+            quantityOrderedExact: Decimal | null;
+            unitAtOrder: string | null;
+            saleModeAtOrder: string | null;
+            quantityStepAtOrder: Decimal | null;
         }[];
         receipts: {
             items: { productId: string; quantity: number; quantityExact: Decimal | null }[];
@@ -102,6 +108,11 @@ export async function preparePurchaseContext(tx: any, principal: PurchasePrincip
                         productName: true,
                         quantityReceived: true,
                         quantityReceivedExact: true,
+                        quantityOrdered: true,
+                        quantityOrderedExact: true,
+                        unitAtOrder: true,
+                        saleModeAtOrder: true,
+                        quantityStepAtOrder: true,
                     },
                 },
                 receipts: {
@@ -119,7 +130,7 @@ export async function preparePurchaseContext(tx: any, principal: PurchasePrincip
         if (linkedPurchaseOrder.supplierId !== supplierId) {
             throw new Error('OC_DE_OTRO_PROVEEDOR');
         }
-        if (!['PARTIALLY_RECEIVED', 'RECEIVED'].includes(linkedPurchaseOrder.status)) {
+        if (!['PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED_SHORT'].includes(linkedPurchaseOrder.status)) {
             throw new Error(`OC_ESTADO:${linkedPurchaseOrder.status}`);
         }
     }
@@ -206,9 +217,19 @@ export async function preparePurchaseContext(tx: any, principal: PurchasePrincip
             throw new Error(`Producto no encontrado: ${item.productId}`);
         }
 
+        const orderCandidates = linkedPurchaseOrder?.items.filter(orderItem => orderItem.productId === item.productId) ?? [];
+        const orderItem = item.purchaseOrderItemId
+            ? orderCandidates.find(candidate => candidate.id === item.purchaseOrderItemId)
+            : orderCandidates.length === 1 ? orderCandidates[0] : undefined;
+        if (linkedPurchaseOrder && !orderItem) throw new Error(`ITEM_OC_INVALIDO|${product.name}`);
+        // La factura de una recepción conserva su unidad y regla histórica;
+        // inferir el modo nuevo del catálogo puede impedir facturar lo ya recibido.
+        const quantityAuthority = orderItem
+            ? { ...product, ...purchaseOrderRulesForReceipt(orderItem, product), unit: orderItem.unitAtOrder ?? product.unit }
+            : product;
         let resolvedLine: ReturnType<typeof resolvePurchaseLine>;
         try {
-            resolvedLine = resolvePurchaseLine({ quantity: item.quantity, unitCost: item.unitCost, purchaseUnit: item.purchaseUnit }, product);
+            resolvedLine = resolvePurchaseLine({ quantity: item.quantity, unitCost: item.unitCost, purchaseUnit: item.purchaseUnit }, quantityAuthority);
         } catch (error) {
             if (error instanceof QuantityValidationError) {
                 throw new QuantityValidationError(error.code, `${product.name}: ${error.message}`);
@@ -253,7 +274,7 @@ export async function preparePurchaseContext(tx: any, principal: PurchasePrincip
             quantityExact: exactQuantity.toFixed(),
             baseQuantity: exactQuantity,
             stockQuantity: exactQuantity.toNumber(),
-            unit: product.unit,
+            unit: quantityAuthority.unit,
             unitCost:    unitCost.toFixed(2),
             unitCostExact: resolvedLine.baseUnitCost
                 .toDecimalPlaces(6, Decimal.ROUND_HALF_UP)

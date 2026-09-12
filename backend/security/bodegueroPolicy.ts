@@ -33,9 +33,11 @@ const ALLOWED_PATTERNS: Array<{ method: string; pattern: RegExp }> = [
     // Contexto mínimo no financiero del negocio para el shell autenticado.
     { method: 'GET', pattern: /^\/api\/tenant\/info$/ },
     { method: 'GET', pattern: /^\/api\/products$/ },
+    { method: 'GET', pattern: /^\/api\/products\/by-barcode\/[^/]+$/ },
     { method: 'GET', pattern: /^\/api\/products\/categories$/ },
     { method: 'GET', pattern: /^\/api\/kardex\/[^/]+$/ },
     { method: 'GET', pattern: /^\/api\/warehouses$/ },
+    { method: 'GET', pattern: /^\/api\/warehouses\/product\/[^/]+\/stock$/ },
     { method: 'GET', pattern: /^\/api\/warehouses\/[^/]+\/stock$/ },
     { method: 'GET', pattern: /^\/api\/stock-transfers$/ },
     { method: 'POST', pattern: /^\/api\/stock-transfers$/ },

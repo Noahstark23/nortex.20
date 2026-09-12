@@ -42,7 +42,7 @@ const receivedPurchaseOrder = {
         quantityOrderedExact: '8.0000',
         quantityReceivedExact: '5.0000',
         unitCost: '91.25',
-        unitAtOrder: 'lb',
+        unitAtOrder: 'lb', saleModeAtOrder: 'MEASURED', quantityStepAtOrder: '0.01',
     }],
     receipts: [],
 };

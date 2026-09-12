@@ -7,6 +7,7 @@ interface ApiProductWithImage {
 interface ApiProductForPos extends ApiProductWithImage {
     id: unknown;
     name: unknown;
+    brand?: unknown;
     sku: unknown;
     price: unknown;
     cost?: unknown;
@@ -57,6 +58,7 @@ export function mapApiProductForPos(product: ApiProductForPos): Product {
     return {
         id: String(product.id),
         name: String(product.name),
+        brand: optionalString(product.brand),
         sku: String(product.sku),
         price: Number(product.price),
         costPrice: Number(product.cost),

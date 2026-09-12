@@ -1,0 +1,46 @@
+{
+  "candidate": "Nortex stock experience V2, 2026-09-12",
+  "toolchain": { "node": "22.23.2", "prisma": "6.4.1", "database": "MySQL 8 local disposable" },
+  "prismaGenerate": { "passed": true, "exitCode": 0 },
+  "typescript": { "passed": true, "exitCode": 0 },
+  "generalVitest": {
+    "passed": true, "exitCode": 0,
+    "passedSuites": 371, "passedTests": 5126,
+    "skippedSuites": 42, "skippedTests": 362,
+    "skippedTestsCountedAsPassed": false
+  },
+  "requiredIntegration": {
+    "passed": true, "exitCode": 0,
+    "passedSuites": 43, "passedTests": 376, "skippedTests": 0,
+    "allRequiredReportsValidated": true,
+    "databaseAndUserIsolatedFromDemo": true,
+    "evidence": "integration-summary.json"
+  },
+  "finalFrontendVerification": {
+    "scope": "Synchronous clearing of the confirmed draft before parent unmount, preservation of the entry warehouse for the next draft, and final warehouse/count contrast fixes",
+    "typescript": { "passed": true, "exitCode": 0 },
+    "generalVitest": { "passed": true, "exitCode": 0, "passedSuites": 371, "passedTests": 5126, "skippedTests": 362 },
+    "design": { "passed": true, "exitCode": 0, "filesReviewed": 103 },
+    "build": { "passed": true, "exitCode": 0 },
+    "integrationScope": "Backend, schema and financial arithmetic did not change after the passing 43-suite integration gate; that gate was not unnecessarily repeated."
+  },
+  "finalContrastChange": {
+    "files": ["components/StockCount.tsx", "components/inventory/StockCountWorkspace.css"],
+    "scope": "Guidance and create-button contrast; no domain or arithmetic changes",
+    "targetedVitest": {
+      "passed": true, "exitCode": 0, "passedSuites": 4, "passedTests": 25, "skippedTests": 0,
+      "suites": ["tests/stockCountCapture.test.tsx", "tests/stockCountingExperience.test.tsx", "tests/stockCountResponsive.test.ts", "tests/stockCountWarehouseScoping.test.ts"]
+    },
+    "design": { "passed": true, "exitCode": 0, "filesReviewed": 103 },
+    "build": { "passed": true, "exitCode": 0 },
+    "broaderChecks": "This targeted contrast check preceded the last draft correction. The final full frontend checks above include both changes. Prisma and backend integration scopes remained unchanged."
+  },
+  "uiReceiptReadOnlyVerification": "ui-receipt-evidence.json",
+  "uiReplayReadOnlyFingerprint": "ui-replay-fingerprint.json",
+  "earlierGeneralFailure": "Three obsolete UI selectors failed in the first run. Authors updated the selectors while preserving behavior assertions; the full subsequent run passed. The last incomplete-form validation change is included in that full passing run.",
+  "limits": {
+    "mutationTestingV2": "Not executed; V1 mutation evidence remains separate",
+    "ciStagingProduction": "Not executed",
+    "realBusinessData": "Not used; all database verification used synthetic fixtures"
+  }
+}

@@ -203,7 +203,7 @@ describe('contrato semántico del tema frontend', () => {
     });
 
     it('mantiene tinta semántica en iconos descendientes de rellenos sólidos', () => {
-        expect(quickAddProduct).toMatch(/bg-brand-600[\s\S]{0,300}<Zap size=\{20\} className="text-brand-on" \/>/);
+        expect(quickAddProduct).not.toContain('<Zap size={20}'); // El alta simplificada retiró ese icono.
 
         // Los toasts de pedidos se sustituyeron por el panel operativo: no se
         // debe mantener una aserción sobre UI eliminada, pero sí conservar que

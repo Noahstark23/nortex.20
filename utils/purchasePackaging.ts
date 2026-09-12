@@ -10,8 +10,8 @@ import {
     parseQuantity,
     validateQuantity,
     QuantityValidationError,
-    type SaleMode,
 } from './quantity.js';
+import { resolveProductQuantityRules } from './productQuantityRules.js';
 
 export type PurchaseUnit = 'BASE' | 'PACK';
 
@@ -44,13 +44,6 @@ export interface ResolvedPurchaseLine {
     /** Factor leído del producto; siempre 1 para BASE. */
     authoritativeFactor: Decimal;
 }
-
-const quantityRules = (product: PurchaseProductAuthority): { saleMode: SaleMode; quantityStep: Decimal.Value } => ({
-    // D6: solo COUNTED explícito exige enteros; null legado conserva fracciones.
-    saleMode: product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
-    quantityStep: product.quantityStep?.toString()
-        || (product.saleMode === 'COUNTED' ? '1' : '0.0001'),
-});
 
 const positiveCost = (input: unknown): Decimal => {
     if (typeof input !== 'string' && typeof input !== 'number' && !(input instanceof Decimal)) {
@@ -110,7 +103,7 @@ export const resolvePurchaseLine = (
 
     const baseQuantity = validateQuantity(
         visibleQuantity.mul(authoritativeFactor).toString(),
-        quantityRules(product),
+        resolveProductQuantityRules(product),
     );
     const baseUnitCost = visibleUnitCost.div(authoritativeFactor);
 
@@ -132,7 +125,7 @@ export const purchaseQuantityInputStep = (
     product: PurchaseProductAuthority,
     purchaseUnit: PurchaseUnit,
 ): string => {
-    const baseStep = new Decimal(quantityRules(product).quantityStep);
+    const baseStep = new Decimal(resolveProductQuantityRules(product).quantityStep);
     if (purchaseUnit !== 'PACK' || product.packSize === null || product.packSize === undefined) {
         return baseStep.toString();
     }

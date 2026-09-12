@@ -199,7 +199,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
   // ── Navegación en 5 secciones (rediseño Fase 2) ───────────────────────────
   const { sections: sectionGroups, loose: looseItems } = groupBySection(navItems);
-  // P0-3 — Bodegas y Series no tienen ítem propio en el menú: se atribuyen a
+  // P0-3 — Series no tiene ítem propio en el menú: se atribuye a
   // "Mis Productos" (utils/navigation.ts). Sin esto, entrar ahí dejaba el
   // sidebar sin NINGÚN ítem marcado y con todas las secciones plegadas: el
   // usuario no sabía dónde estaba ni cómo volver.

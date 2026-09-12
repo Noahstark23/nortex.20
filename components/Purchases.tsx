@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { calculatePurchaseMoney } from '../backend/lib/purchaseMoney';
+import { bodegaReceivingAttempt, bodegaReceivingDraftKey, readBodegaReceivingDraft, writeBodegaReceivingDraft, type BodegaReceivingAttempt } from '../utils/bodegaReceivingDraft';
 import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
@@ -6,7 +8,8 @@ import {
     ShoppingCart, Wallet, Printer, Eye, Stamp, Loader2, GitCompareArrows,
     LockKeyhole, RotateCcw, SlidersHorizontal, Receipt
 } from 'lucide-react';
-import { formatMoney, sanitizeDecimalInput } from '../utils/money';
+import { formatMoney } from '../utils/money';
+import { BODEGA_DECIMAL_HINT, normalizeBodegaDecimalInput, parseBodegaDecimalInput } from '../utils/bodegaReceivingInput';
 import Decimal from 'decimal.js';
 import { formatQuantityValue } from '../utils/quantity';
 import {
@@ -28,12 +31,14 @@ import {
     type PurchaseTaxTreatment,
 } from '../utils/purchaseTaxTreatment';
 import { PURCHASE_NO_TAX_REASON_LABELS } from '../utils/purchaseTaxTreatmentLabels';
+import { purchaseOrderRulesForReceipt } from '../utils/purchaseOrderQuantities';
+import ReceivingWorkspace, { type ReceivingDocument } from './inventory/ReceivingWorkspace';
 
 // ==========================================
 // TYPES
 // ==========================================
 
-interface Supplier {
+export interface Supplier {
     id: string;
     name: string;
     contactName?: string;
@@ -42,12 +47,12 @@ interface Supplier {
     fiscalCategory?: string | null;
 }
 
-interface Product {
+export interface PurchaseEntryProduct {
     id: string;
     name: string;
     sku: string;
     price: number;
-    cost: number;
+    cost?: number;
     stock: number;
     unit: string;
     saleMode?: 'COUNTED' | 'MEASURED' | null;
@@ -59,7 +64,9 @@ interface Product {
     requiresBatchTracking?: boolean;
 }
 
-interface CartItem {
+type Product = PurchaseEntryProduct;
+
+export interface CartItem {
     cartKey: string;
     productId: string;
     purchaseOrderItemId?: string;
@@ -97,9 +104,12 @@ interface PurchaseOrderItemLite {
     quantityReceivedExact?: number | string | null;
     unitCost: number | string;
     unitAtOrder?: string | null;
+    unitCostExact?: number | string | null;
+    saleModeAtOrder?: string | null;
+    quantityStepAtOrder?: number | string | null;
 }
 
-interface PurchaseOrderLite {
+export interface PurchaseOrderLite {
     id: string;
     supplierId: string;
     orderNumber: string;
@@ -151,7 +161,7 @@ interface Purchase {
     createdAt: string;
 }
 
-interface PurchaseFormErrors {
+export interface PurchaseFormErrors {
     supplierId?: string;
     warehouseId?: string;
     invoiceNumber?: string;
@@ -162,7 +172,7 @@ interface PurchaseFormErrors {
     noTaxReason?: string;
 }
 
-interface WarehouseOption {
+export interface WarehouseOption {
     id: string;
     name: string;
     isDefault: boolean;
@@ -286,8 +296,8 @@ const hasPackConfiguration = (
     && Number(product.packSize) > 0,
 );
 const resolveCartLine = (item: CartItem) => resolvePurchaseLine({
-    quantity: item.quantity,
-    unitCost: item.unitCost,
+    quantity: parseBodegaDecimalInput(item.quantity).toString(),
+    unitCost: parseBodegaDecimalInput(item.unitCost).toString(),
     purchaseUnit: item.purchaseUnit,
 }, item);
 const exactPurchaseQuantity = (item: Pick<Purchase['items'][number], 'quantity' | 'quantityExact'>) =>
@@ -477,7 +487,45 @@ const exceptionTypeLabel = (type: string): string => ({
 // MAIN COMPONENT
 // ==========================================
 
-export default function Purchases() {
+interface PurchaseFormDraft {
+    selectedSupplier: string; selectedWarehouseId: string; selectedPO: string;
+    invoiceNumber: string; purchaseDate: string; paymentMethod: 'CASH' | 'CREDIT';
+    taxTreatment?: PurchaseTaxTreatment; noTaxReason?: PurchaseNoTaxReason | '';
+    dueDate: string; notes: string; cart: CartItem[]; attempt: BodegaReceivingAttempt | null;
+}
+
+interface PurchasesProps {
+    embedded?: boolean;
+    entryContext?: { product: PurchaseEntryProduct; warehouseId?: string };
+    onClose?: () => void;
+    onCompleted?: () => void;
+    onBusyChange?: (busy: boolean) => void;
+}
+
+const hasPurchaseDraft = (draft: PurchaseFormDraft | null) => Boolean(draft && (
+    draft.cart?.length || draft.invoiceNumber || draft.selectedSupplier || draft.selectedPO || draft.notes
+));
+
+export default function Purchases({ embedded = false, entryContext, onClose, onCompleted, onBusyChange }: PurchasesProps = {}) {
+    const [sessionScope] = useState(() => bodegaReceivingDraftKey('purchase'));
+    const sessionIsCurrent = () => bodegaReceivingDraftKey('purchase') === sessionScope;
+    const requestedOrderId = useRef(embedded || typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('purchaseOrderId') || '').current;
+    const contextKind = entryContext ? `purchase:entry:${entryContext.product.id}:${entryContext.warehouseId || 'any'}` : 'purchase';
+    const [draftOrigin] = useState(() => {
+        const kind = embedded ? contextKind : requestedOrderId ? `purchase:${requestedOrderId}` : 'purchase';
+        const contextual = readBodegaReceivingDraft<PurchaseFormDraft>(kind);
+        if (hasPurchaseDraft(contextual)) return { kind, draft: contextual, contextual: embedded };
+        const general = embedded ? readBodegaReceivingDraft<PurchaseFormDraft>('purchase') : null;
+        return hasPurchaseDraft(general) ? { kind: 'purchase', draft: general, contextual: false } : { kind, draft: contextual, contextual: embedded };
+    });
+    const initialDraft = draftOrigin.draft;
+    const [draftKind, setDraftKind] = useState(draftOrigin.kind);
+    const [draftChoice, setDraftChoice] = useState(embedded && hasPurchaseDraft(initialDraft));
+    const contextApplied = useRef(false);
+    const callbacks = useRef({ onClose, onCompleted, onBusyChange });
+    callbacks.current = { onClose, onCompleted, onBusyChange };
+    const requestedOrderLoaded = useRef(!requestedOrderId || initialDraft?.selectedPO === requestedOrderId);
+    const [requestedOrderError, setRequestedOrderError] = useState('');
     const currentRole = currentSessionRole();
     const canEditPurchaseSalePrice = roleCapabilitiesFor(currentRole).canManageProducts;
     const canCreatePurchase = PURCHASE_CREATE_ROLES.has(currentRole);
@@ -491,28 +539,34 @@ export default function Purchases() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
     const [purchases, setPurchases] = useState<Purchase[]>([]);
+    const [purchaseHistoryError, setPurchaseHistoryError] = useState(false);
     const [loading, setLoading] = useState(true);
 
     // New Purchase form
-    const [selectedSupplier, setSelectedSupplier] = useState('');
+    const [selectedSupplier, setSelectedSupplier] = useState(typeof initialDraft?.selectedSupplier === 'string' ? initialDraft.selectedSupplier : '');
     const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
-    const [selectedWarehouseId, setSelectedWarehouseId] = useState('');
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState(typeof initialDraft?.selectedWarehouseId === 'string' && initialDraft.selectedWarehouseId ? initialDraft.selectedWarehouseId : entryContext?.warehouseId || '');
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLite[]>([]);
-    const [selectedPO, setSelectedPO] = useState('');
-    const [invoiceNumber, setInvoiceNumber] = useState('');
-    const [purchaseDate, setPurchaseDate] = useState(() => localCalendarDateInputValue());
-    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CASH');
-    // Traslación declarada de la factura. Arranca en el default histórico y solo
-    // el operador la cambia: la categoría fiscal del proveedor sugiere, no manda.
-    const [taxTreatment, setTaxTreatment] = useState<PurchaseTaxTreatment>(PURCHASE_TAX_TRASLADADO);
-    const [noTaxReason, setNoTaxReason] = useState<PurchaseNoTaxReason | ''>('');
-    const [dueDate, setDueDate] = useState('');
-    const [notes, setNotes] = useState('');
-    const [cart, setCart] = useState<CartItem[]>([]);
+    const [selectedPO, setSelectedPO] = useState(typeof initialDraft?.selectedPO === 'string' ? initialDraft.selectedPO : '');
+    const [invoiceNumber, setInvoiceNumber] = useState(typeof initialDraft?.invoiceNumber === 'string' ? initialDraft.invoiceNumber : '');
+    const [purchaseDate, setPurchaseDate] = useState(() => initialDraft?.purchaseDate || localCalendarDateInputValue());
+    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>(initialDraft?.paymentMethod === 'CREDIT' ? 'CREDIT' : 'CASH');
+    const [dueDate, setDueDate] = useState(typeof initialDraft?.dueDate === 'string' ? initialDraft.dueDate : '');
+    const [notes, setNotes] = useState(typeof initialDraft?.notes === 'string' ? initialDraft.notes : '');
+    const [cart, setCart] = useState<CartItem[]>(Array.isArray(initialDraft?.cart) ? initialDraft.cart : []);
+    const [taxTreatment, setTaxTreatment] = useState<PurchaseTaxTreatment>(initialDraft?.taxTreatment || PURCHASE_TAX_TRASLADADO);
+    const [noTaxReason, setNoTaxReason] = useState<PurchaseNoTaxReason | ''>(initialDraft?.noTaxReason || '');
     const [productSearch, setProductSearch] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const registrationInFlight = useRef(false);
     // Un reintento del mismo formulario conserva la identidad tras perder la respuesta.
-    const registrationAttempt = useRef<{ payload: string; key: string } | null>(null);
+    const registrationAttempt = useRef<BodegaReceivingAttempt | null>(initialDraft?.attempt ?? null);
+    const [draftSaved, setDraftSaved] = useState(false);
+    const persistDraft = () => sessionIsCurrent() && !draftChoice && writeBodegaReceivingDraft(draftKind, {
+        selectedSupplier, selectedWarehouseId, selectedPO, invoiceNumber, purchaseDate,
+        paymentMethod, taxTreatment, noTaxReason, dueDate, notes, cart, attempt: registrationAttempt.current,
+    } satisfies PurchaseFormDraft);
+    useEffect(() => { setDraftSaved(persistDraft()); }, [draftChoice, draftKind, selectedSupplier, selectedWarehouseId, selectedPO, invoiceNumber, purchaseDate, paymentMethod, taxTreatment, noTaxReason, dueDate, notes, cart]);
     const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
     const [paymentToConfirm, setPaymentToConfirm] = useState<PaymentDialogState | null>(null);
     const [supplierPaymentForm, setSupplierPaymentForm] = useState<SupplierPaymentForm>(EMPTY_SUPPLIER_PAYMENT_FORM);
@@ -578,7 +632,7 @@ export default function Purchases() {
             const [suppRes, prodRes, purchRes, poRes, warehouseRes] = await Promise.all([
                 fetch('/api/suppliers', { headers, signal: controller.signal }),
                 fetch('/api/products', { headers, signal: controller.signal }),
-                fetch('/api/purchases', { headers, signal: controller.signal }),
+                embedded ? Promise.resolve({ ok: true, json: async () => [] } as Response) : fetch('/api/purchases', { headers, signal: controller.signal }),
                 fetch('/api/purchase-orders', { headers, signal: controller.signal }),
                 fetch('/api/warehouses', { headers, signal: controller.signal }),
             ]);
@@ -596,6 +650,7 @@ export default function Purchases() {
                         : Number(product.packSize),
                 })) : []);
             }
+            setPurchaseHistoryError(!purchRes.ok);
             if (purchRes.ok) setPurchases(await purchRes.json());
             if (poRes.ok) {
                 const poData = await poRes.json();
@@ -628,6 +683,7 @@ export default function Purchases() {
                 });
             }
         } catch (e: any) {
+            setPurchaseHistoryError(true);
             console.error('Error fetching data:', e);
             showToast({
                 tone: 'error',
@@ -638,7 +694,7 @@ export default function Purchases() {
             window.clearTimeout(timeoutId);
             setLoading(false);
         }
-    }, [headers, showToast]);
+    }, [headers, showToast, embedded]);
 
     useEffect(() => { void fetchAll(); }, [fetchAll]);
 
@@ -842,8 +898,10 @@ export default function Purchases() {
 
     const addToCart = (product: Product) => {
         setCart(currentCart => {
-            const existing = currentCart.find(c => c.productId === product.id);
+            const existing = !product.requiresBatchTracking && currentCart.find(c => c.productId === product.id);
             if (existing) {
+                try { parseBodegaDecimalInput(existing.quantity); parseBodegaDecimalInput(existing.unitCost); }
+                catch { return currentCart; }
                 return currentCart.map(c =>
                     c.productId === product.id
                         ? (() => {
@@ -862,14 +920,16 @@ export default function Purchases() {
             }
 
             const initialQuantity = new Decimal(product.quantityStep || 1).toString();
+            const initialCost = typeof product.cost === 'number' && Number.isFinite(product.cost)
+                ? new Decimal(product.cost).toDecimalPlaces(6).toString() : '';
             return [...currentCart, {
-                cartKey: product.id,
+                cartKey: product.requiresBatchTracking ? crypto.randomUUID() : product.id,
                 productId: product.id,
                 productName: product.name,
                 sku: product.sku,
                 quantity: initialQuantity,
-                unitCost: new Decimal(product.cost).toDecimalPlaces(2).toString(),
-                totalCost: new Decimal(initialQuantity).mul(product.cost).toDecimalPlaces(2).toString(),
+                unitCost: initialCost,
+                totalCost: initialCost ? new Decimal(initialQuantity).mul(initialCost).toDecimalPlaces(2).toString() : '0',
                 currentSalePrice: product.price,
                 salePrice: '',
                 currentStock: product.stock,
@@ -909,10 +969,7 @@ export default function Purchases() {
                 if (c.cartKey !== cartKey) return c;
                 const updated = { ...c, [field]: value };
                 if (field === 'quantity' || field === 'unitCost') {
-                    updated.totalCost = new Decimal(updated.quantity || 0)
-                        .mul(updated.unitCost || 0)
-                        .toDecimalPlaces(2)
-                        .toString();
+                    try { updated.totalCost = parseBodegaDecimalInput(updated.quantity).mul(parseBodegaDecimalInput(updated.unitCost)).toDecimalPlaces(2).toString(); } catch { updated.totalCost = '0'; }
                 }
                 return updated;
             });
@@ -924,6 +981,8 @@ export default function Purchases() {
         setCart(currentCart => currentCart.map(item => {
             if (item.cartKey !== cartKey || item.purchaseUnit === purchaseUnit) return item;
             if (!hasPackConfiguration(item)) return item;
+            try { parseBodegaDecimalInput(item.quantity); parseBodegaDecimalInput(item.unitCost); }
+            catch { return item; }
 
             const factor = new Decimal(item.packSize!);
             // El costo visible cambia de "por unidad base" a "por empaque" (o
@@ -950,12 +1009,41 @@ export default function Purchases() {
         setCart(currentCart => currentCart.filter(c => c.cartKey !== cartKey));
     };
 
+    useEffect(() => {
+        if (!entryContext || loading || draftChoice || contextApplied.current || !sessionIsCurrent()) return;
+        contextApplied.current = true;
+        if (!hasPurchaseDraft(initialDraft)) {
+            const loaded = products.find(product => product.id === entryContext.product.id);
+            addToCart({ ...entryContext.product, cost: Number.isFinite(loaded?.cost) ? loaded!.cost : entryContext.product.cost });
+        }
+    }, [entryContext, draftChoice, loading, products]);
+
+    const continueSavedDraft = () => {
+        contextApplied.current = true;
+        setDraftChoice(false);
+    };
+
+    const preserveAndReceiveContext = () => {
+        if (!entryContext || registrationInFlight.current) return;
+        contextApplied.current = true;
+        setDraftKind(contextKind);
+        setSelectedSupplier(''); setSelectedPO(''); setInvoiceNumber('');
+        setPurchaseDate(localCalendarDateInputValue()); setPaymentMethod('CASH'); setTaxTreatment(PURCHASE_TAX_TRASLADADO); setNoTaxReason(''); setDueDate(''); setNotes('');
+        setSelectedWarehouseId(entryContext.warehouseId || (warehouses.length === 1 ? warehouses[0].id : ''));
+        setCart([]); setFormErrors({}); registrationAttempt.current = null;
+        const loaded = products.find(product => product.id === entryContext.product.id);
+        addToCart({ ...entryContext.product, cost: Number.isFinite(loaded?.cost) ? loaded!.cost : entryContext.product.cost });
+        setDraftChoice(false);
+    };
+
+    const closeReceiving = () => { if (!registrationInFlight.current) callbacks.current.onClose?.(); };
+
     // Una factura vinculada a una OC registra el dinero, no vuelve a ingresar
     // mercadería: el stock y los lotes pertenecen al acto de recepción.
     const purchaseOrdersForSupplier = useMemo(() =>
         purchaseOrders.filter(po =>
             po.supplierId === selectedSupplier &&
-            ['PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status) &&
+            ['PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED_SHORT'].includes(po.status) &&
             availablePurchaseOrderItems(po).length > 0
         ), [purchaseOrders, selectedSupplier]);
 
@@ -980,11 +1068,15 @@ export default function Purchases() {
             return;
         }
 
-        setSelectedPO(poId);
-        setCart(receivedItems.map(item => {
+        try {
+        const nextCart = receivedItems.map(item => {
             const product = products.find(candidate => candidate.id === item.productId);
             const quantity = new Decimal(item.availableQuantity).toString();
-            const unitCost = new Decimal(item.unitCost).toString();
+            const unitCost = new Decimal(item.unitCostExact ?? item.unitCost).toString();
+            const rules = purchaseOrderRulesForReceipt(item, {
+                id: item.productId, name: item.productName, unit: product?.unit || item.unitAtOrder || 'unidad',
+                saleMode: product?.saleMode ?? null, quantityStep: product?.quantityStep ?? null,
+            });
             return {
                 cartKey: item.id,
                 productId: item.productId,
@@ -997,9 +1089,9 @@ export default function Purchases() {
                 currentSalePrice: product?.price ?? null,
                 salePrice: '',
                 currentStock: product?.stock ?? 0,
-                unit: product?.unit || 'unidad',
-                saleMode: product?.saleMode,
-                quantityStep: product?.quantityStep,
+                unit: item.unitAtOrder || product?.unit || 'unidad',
+                saleMode: rules.saleMode,
+                quantityStep: rules.quantityStep,
                 purchaseUnit: 'BASE',
                 packUnit: product?.packUnit,
                 packSize: product?.packSize,
@@ -1014,9 +1106,31 @@ export default function Purchases() {
                 invoicedQuantity: item.invoicedQuantity,
                 availableQuantity: item.availableQuantity,
             };
-        }));
+        });
+        setSelectedPO(poId);
+        setCart(nextCart);
         setFormErrors(current => ({ ...current, items: undefined }));
+        } catch (error) {
+            setFormErrors(current => ({ ...current, items: error instanceof Error ? error.message : 'No pudimos leer las cantidades de esta orden.' }));
+        }
     };
+
+    useEffect(() => {
+        if (loading || requestedOrderLoaded.current || !requestedOrderId || !canCreatePurchase) return;
+        requestedOrderLoaded.current = true;
+        const order = purchaseOrders.find(candidate => candidate.id === requestedOrderId);
+        if (!order) {
+            setRequestedOrderError('No pudimos cargar la orden solicitada. Revisá Órdenes de compra antes de registrar esta factura.');
+            return;
+        }
+        setSelectedSupplier(order.supplierId);
+        setSelectedPO(order.id);
+        if (availablePurchaseOrderItems(order).length === 0) {
+            setRequestedOrderError('Esta orden no tiene cantidades recibidas pendientes de facturar. Revisá sus facturas en el historial.');
+            return;
+        }
+        linkPurchaseOrder(order.id);
+    }, [loading, purchaseOrders, products, requestedOrderId, canCreatePurchase]);
 
     const changeSupplier = (supplierId: string) => {
         setSelectedSupplier(supplierId);
@@ -1075,7 +1189,7 @@ export default function Purchases() {
     // ==========================================
 
     const handleSubmit = async () => {
-        if (submitting) return;
+        if (!sessionIsCurrent() || !canCreatePurchase || loading || draftChoice || submitting || registrationInFlight.current || requestedOrderError) return;
 
         const errors: PurchaseFormErrors = {};
         if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
@@ -1101,7 +1215,7 @@ export default function Purchases() {
             }
         });
         if (invalidItem) {
-            errors.items = `Revisá cantidad y costo de ${invalidItem.productName}.`;
+            errors.items = `Revisá cantidad y costo de ${invalidItem.productName}. ${BODEGA_DECIMAL_HINT}`;
         }
 
         const invalidPrecision = cart.find(item => {
@@ -1156,13 +1270,12 @@ export default function Purchases() {
                 title: 'Revisá los datos de la compra',
                 message: Object.values(errors)[0],
             });
-            window.setTimeout(() => {
-                document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
-            }, 0);
             return;
         }
 
         setFormErrors({});
+        registrationInFlight.current = true;
+        callbacks.current.onBusyChange?.(true);
         setSubmitting(true);
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
@@ -1199,9 +1312,8 @@ export default function Purchases() {
                         };
                     })
                 });
-            if (!registrationAttempt.current || registrationAttempt.current.payload !== payload) {
-                registrationAttempt.current = { payload, key: crypto.randomUUID() };
-            }
+            registrationAttempt.current = bodegaReceivingAttempt(payload, registrationAttempt.current);
+            persistDraft();
             const res = await fetch('/api/purchases', {
                 method: 'POST',
                 headers: { ...headers, 'Idempotency-Key': registrationAttempt.current.key },
@@ -1211,27 +1323,38 @@ export default function Purchases() {
 
             const data = await res.json().catch(() => ({}));
 
+            if (!sessionIsCurrent()) return;
+
             if (res.ok) {
                 registrationAttempt.current = null;
+                const clearedDraft: PurchaseFormDraft = {
+                    selectedSupplier: '', selectedWarehouseId: warehouses.length === 1 ? warehouses[0].id : '',
+                    selectedPO: '', invoiceNumber: '', purchaseDate: localCalendarDateInputValue(),
+                    paymentMethod: 'CASH', taxTreatment: PURCHASE_TAX_TRASLADADO, noTaxReason: '', dueDate: '', notes: '', cart: [], attempt: null,
+                };
+                // El panel puede desmontarse en onCompleted, antes del próximo efecto.
+                // Solo se retira el borrador que acaba de confirmar esta sesión.
+                writeBodegaReceivingDraft(draftKind, clearedDraft);
                 showToast({
                     tone: 'success',
                     title: 'Compra registrada',
                     message: data.message || 'El inventario y los saldos quedaron actualizados.',
                 });
                 // Reset form
-                setSelectedSupplier('');
-                setSelectedWarehouseId(warehouses.length === 1 ? warehouses[0].id : '');
-                setSelectedPO('');
-                setInvoiceNumber('');
-                setPurchaseDate(localCalendarDateInputValue());
-                setPaymentMethod('CASH');
+                setSelectedSupplier(clearedDraft.selectedSupplier);
+                setSelectedWarehouseId(clearedDraft.selectedWarehouseId);
+                setSelectedPO(clearedDraft.selectedPO);
+                setInvoiceNumber(clearedDraft.invoiceNumber);
+                setPurchaseDate(clearedDraft.purchaseDate);
+                setPaymentMethod(clearedDraft.paymentMethod);
+                setDueDate(clearedDraft.dueDate);
+                setNotes(clearedDraft.notes);
+                setCart(clearedDraft.cart);
                 setTaxTreatment(PURCHASE_TAX_TRASLADADO);
                 setNoTaxReason('');
-                setDueDate('');
-                setNotes('');
-                setCart([]);
                 setFormErrors({});
                 void fetchAll();
+                callbacks.current.onCompleted?.();
             } else {
                 const details = data?.details && typeof data.details === 'object' ? data.details : {};
                 setFormErrors({
@@ -1246,7 +1369,7 @@ export default function Purchases() {
                 });
                 showToast({
                     tone: 'error',
-                    title: res.status === 409 ? 'Esta factura ya fue registrada' : 'No se pudo registrar la compra',
+                    title: data.code === 'FACTURA_DUPLICADA' || (typeof data.error === 'string' && data.error.startsWith('Ya existe la factura #')) ? 'Esta factura ya fue registrada' : 'No se pudo registrar la compra',
                     message: firstValidationMessage(data) || data.error || `El servidor respondió ${res.status}.`,
                 });
             }
@@ -1261,6 +1384,8 @@ export default function Purchases() {
             });
         } finally {
             window.clearTimeout(timeoutId);
+            registrationInFlight.current = false;
+            if (sessionIsCurrent()) callbacks.current.onBusyChange?.(false);
             setSubmitting(false);
         }
     };
@@ -1316,7 +1441,7 @@ export default function Purchases() {
         let normalizedAmount: string | undefined;
         if (!settleAll) {
             try {
-                const amount = new Decimal(supplierPaymentForm.amount.trim());
+                const amount = parseBodegaDecimalInput(supplierPaymentForm.amount);
                 const balance = effectivePurchaseBalance(purchase);
                 if (!amount.isFinite() || amount.lessThanOrEqualTo(0)) {
                     setSupplierPaymentError('Ingresá un monto mayor que cero.');
@@ -1525,7 +1650,7 @@ export default function Purchases() {
         (sum, purchase) => sum.plus(effectivePurchaseBalance(purchase)),
         new Decimal(0),
     );
-    const totalPurchasesMonth = purchases.reduce(
+    const totalLoadedPurchases = purchases.reduce(
         (sum, purchase) => sum.plus(purchase.total),
         new Decimal(0),
     );
@@ -1536,6 +1661,49 @@ export default function Purchases() {
     // ==========================================
     // RENDER
     // ==========================================
+
+    const updateReceivingDocument = (patch: Partial<ReceivingDocument>) => {
+        if (registrationInFlight.current) return;
+        if (patch.supplierId !== undefined) changeSupplier(patch.supplierId);
+        if (patch.purchaseOrderId !== undefined) linkPurchaseOrder(patch.purchaseOrderId);
+        if (patch.warehouseId !== undefined) setSelectedWarehouseId(patch.warehouseId);
+        if (patch.invoiceNumber !== undefined) setInvoiceNumber(patch.invoiceNumber);
+        if (patch.date !== undefined) setPurchaseDate(patch.date);
+        if (patch.paymentMethod !== undefined) setPaymentMethod(patch.paymentMethod);
+        if (patch.dueDate !== undefined) setDueDate(patch.dueDate);
+        if (patch.taxTreatment !== undefined) changeTaxTreatment(patch.taxTreatment);
+        if (patch.noTaxReason !== undefined) setNoTaxReason(patch.noTaxReason);
+        if (patch.notes !== undefined) setNotes(patch.notes);
+        setFormErrors({});
+    };
+
+    const receivingView = <ReceivingWorkspace
+        embedded={embedded} loading={loading} submitting={submitting} canEditSalePrice={canEditPurchaseSalePrice}
+        canSubmit={sessionIsCurrent() && canCreatePurchase && !loading && !requestedOrderError}
+        cart={cart} document={{ supplierId: selectedSupplier, warehouseId: selectedWarehouseId, purchaseOrderId: selectedPO, invoiceNumber, date: purchaseDate, paymentMethod, taxTreatment, noTaxReason, dueDate, notes }}
+        suppliers={suppliers} warehouses={warehouses} orders={purchaseOrdersForSupplier}
+        errors={formErrors} contextError={requestedOrderError} draftSaved={draftSaved}
+        search={productSearch} products={filteredProducts} totals={cartTotals}
+        resolveLine={resolveCartLine} hasPack={hasPackConfiguration}
+        onDocumentChange={updateReceivingDocument} onSearch={setProductSearch} onAdd={addToCart}
+        onUpdate={updateCartItem} onPurchaseUnit={updatePurchaseUnit} onRemove={removeFromCart}
+        onSubmit={() => void handleSubmit()} onClose={embedded ? closeReceiving : undefined}
+    />;
+
+    if (embedded) return <div className="nx-light-context receiving-embedded-host">
+        <ToastViewport toast={toast} onDismiss={dismissToast} />
+        {!canCreatePurchase ? <div className="receiving-draft-choice"><h2>No tenés permiso para registrar compras</h2><button type="button" className="nx-fluid-press" onClick={closeReceiving}>Volver al inventario</button></div> : draftChoice ? (
+            <section className="receiving-draft-choice" aria-labelledby="receiving-draft-choice-title">
+                <header><h2 id="receiving-draft-choice-title">Tenés una compra pendiente</h2><button type="button" className="nx-fluid-press receiving-icon-button" aria-label="Cerrar recepción" onClick={closeReceiving}><X size={20} /></button></header>
+                <p>{initialDraft?.invoiceNumber ? `Factura ${initialDraft.invoiceNumber}` : 'Borrador sin número de factura'} · {initialDraft?.cart?.length || 0} producto(s)</p>
+                <p>Podés continuar lo digitado. Tu borrador se conserva hasta que lo registres.</p>
+                <div><button type="button" className="nx-fluid-press receiving-submit" onClick={continueSavedDraft}>Continuar borrador</button>
+                    {entryContext && !draftOrigin.contextual ? <button type="button" className="nx-fluid-press receiving-secondary" onClick={preserveAndReceiveContext}>Conservar y recibir este producto</button>
+                        : <button type="button" className="nx-fluid-press receiving-secondary" onClick={closeReceiving}>Conservar y volver</button>}
+                </div>
+            </section>
+        ) : receivingView}
+    </div>;
 
     return (
         <div className="nx-light-context nx-workspace h-full overflow-y-auto bg-slate-50 text-slate-950">
@@ -1559,21 +1727,23 @@ export default function Purchases() {
                     {/* KPI Cards */}
                     <div className="grid w-full grid-cols-2 gap-3 sm:w-auto">
                         <div className="nx-list-surface min-w-36 px-4 py-2 text-left">
-                            <p className="text-xs font-medium text-slate-500">Compras del mes</p>
-                            <p className="mt-0.5 text-lg font-semibold tabular-nums text-slate-950">{loading ? '…' : formatCurrency(totalPurchasesMonth)}</p>
+                            <p className="text-xs font-medium text-slate-500">Total de compras cargadas</p>
+                            <p className="mt-0.5 text-lg font-semibold tabular-nums text-slate-950">{loading ? '…' : purchaseHistoryError ? 'No disponible' : formatCurrency(totalLoadedPurchases)}</p>
                         </div>
                         <div className={`min-w-36 rounded-card border px-4 py-2 text-left shadow-sm ${totalDebt.greaterThan(0) ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
-                            <p className="text-xs font-medium text-slate-500">Cuentas por pagar</p>
-                            <p className={`mt-0.5 text-lg font-semibold tabular-nums ${totalDebt.greaterThan(0) ? 'text-amber-700' : 'text-emerald-700'}`}>{loading ? '…' : formatCurrency(totalDebt)}</p>
+                            <p className="text-xs font-medium text-slate-500">Saldo de compras cargadas</p>
+                            <p className={`mt-0.5 text-lg font-semibold tabular-nums ${totalDebt.greaterThan(0) ? 'text-amber-700' : 'text-emerald-700'}`}>{loading ? '…' : purchaseHistoryError ? 'No disponible' : formatCurrency(totalDebt)}</p>
                         </div>
                     </div>
                 </div>
 
+                <p className="mt-3 text-xs text-slate-500">{purchaseHistoryError ? 'No pudimos actualizar el historial. No se pueden confirmar sus totales.' : 'El historial muestra hasta 100 compras recientes. Los totales corresponden a esas compras; puede haber facturas anteriores pendientes.'}</p>
                 {/* TABS */}
                 <div className="mt-5 flex max-w-full w-fit gap-1 overflow-x-auto rounded-control border border-slate-200 bg-slate-100 p-1">
                     {canCreatePurchase && (
                         <button
                             type="button"
+                            disabled={submitting}
                             onClick={() => setActiveTab('new')}
                             aria-pressed={activeTab === 'new'}
                             className={`nx-fluid-press flex min-h-11 items-center gap-2 rounded-control px-4 py-2 text-sm font-medium ${activeTab === 'new' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-900'}`}
@@ -1583,6 +1753,7 @@ export default function Purchases() {
                     )}
                     <button
                         type="button"
+                        disabled={submitting}
                         onClick={() => setActiveTab('history')}
                         aria-pressed={activeTab === 'history'}
                         className={`nx-fluid-press flex min-h-11 items-center gap-2 rounded-control px-4 py-2 text-sm font-medium ${activeTab === 'history' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-900'}`}
@@ -1594,6 +1765,7 @@ export default function Purchases() {
                     </button>
                     <button
                         type="button"
+                        disabled={submitting}
                         onClick={() => setActiveTab('matches')}
                         aria-pressed={activeTab === 'matches'}
                         className={`nx-fluid-press flex min-h-11 items-center gap-2 rounded-control px-4 py-2 text-sm font-medium ${activeTab === 'matches' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-900'}`}
@@ -1610,19 +1782,6 @@ export default function Purchases() {
 
             {/* CONTENT */}
             <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
-                {activeTab === 'new' && Object.values(formErrors).some(Boolean) && (
-                    <div role="alert" className="mb-4 flex items-start gap-3 rounded-card border border-red-200 bg-red-50 px-4 py-3 text-red-800">
-                        <AlertTriangle size={19} className="mt-0.5 shrink-0 text-red-600" />
-                        <div>
-                            <p className="font-semibold">Hay datos que necesitan tu atención</p>
-                            <ul className="mt-1 list-disc pl-4 text-sm text-red-700">
-                                {[...new Set(Object.values(formErrors).filter(Boolean))].map(message => (
-                                    <li key={message}>{message}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    </div>
-                )}
                 {activeTab === 'matches' ? (
                     <section className="space-y-5" aria-labelledby="procurement-match-title">
                         <div className="nx-canvas-card flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
@@ -1786,575 +1945,7 @@ export default function Purchases() {
                     /* ==========================================
                        TAB: NUEVA COMPRA
                        ========================================== */
-                    <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
-                        {/* LEFT: Form + Product Search */}
-                        <div className="space-y-4">
-                            {/* Purchase Info */}
-                            <div className="nx-canvas-card p-5 sm:p-6">
-                                <h3 className="mb-5 flex items-center gap-2 font-semibold text-slate-950">
-                                    <FileText size={18} className="text-emerald-600" />
-                                    Datos de la compra
-                                </h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div>
-                                        <label htmlFor="purchase-supplier" className="mb-1.5 block text-sm font-medium text-slate-700">Proveedor *</label>
-                                        <select
-                                            id="purchase-supplier"
-                                            value={selectedSupplier}
-                                            onChange={(e) => changeSupplier(e.target.value)}
-                                            aria-invalid={Boolean(formErrors.supplierId)}
-                                            className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.supplierId ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                        >
-                                            <option value="">{loading ? 'Cargando proveedores…' : suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
-                                            {suppliers.map(s => (
-                                                <option key={s.id} value={s.id}>{s.name}</option>
-                                            ))}
-                                        </select>
-                                        {formErrors.supplierId && <p className="mt-1 text-xs text-red-600">{formErrors.supplierId}</p>}
-                                        {!loading && suppliers.length === 0 && (
-                                            <div className="mt-2 flex items-center justify-between gap-3 rounded-control border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                                <span>Primero agregá a quien te vende.</span>
-                                                <a href="/app/suppliers" className="shrink-0 font-semibold text-amber-800 underline decoration-amber-400 underline-offset-2 hover:text-amber-900">
-                                                    Crear proveedor
-                                                </a>
-                                            </div>
-                                        )}
-                                    </div>
-                                    {!selectedPO && (
-                                        <div>
-                                            <label htmlFor="purchase-warehouse" className="mb-1.5 block text-sm font-medium text-slate-700">Bodega donde entrará la mercadería *</label>
-                                            <select
-                                                id="purchase-warehouse"
-                                                value={effectiveSelectedWarehouseId}
-                                                onChange={(e) => {
-                                                    setSelectedWarehouseId(e.target.value);
-                                                    setFormErrors(current => ({ ...current, warehouseId: undefined }));
-                                                }}
-                                                aria-invalid={Boolean(formErrors.warehouseId)}
-                                                required
-                                                className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.warehouseId ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                            >
-                                                <option value="">{loading ? 'Cargando bodegas…' : 'Seleccionar bodega destino…'}</option>
-                                                {warehouses.map(warehouse => (
-                                                    <option key={warehouse.id} value={warehouse.id}>
-                                                        {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            <p className="mt-1 text-xs text-slate-500">El stock se sumará solo en esta ubicación.</p>
-                                            {formErrors.warehouseId && <p className="mt-1 text-xs text-red-600">{formErrors.warehouseId}</p>}
-                                            {!loading && warehouses.length === 0 && (
-                                                <p role="alert" className="mt-1 text-xs text-red-600">No hay una bodega activa disponible. Reintentá la carga antes de procesar el ingreso.</p>
-                                            )}
-                                        </div>
-                                    )}
-                                    {purchaseOrdersForSupplier.length > 0 && (
-                                        <div>
-                                            <label htmlFor="purchase-order-link" className="mb-1.5 block text-sm font-medium text-slate-700">Orden de compra (opcional)</label>
-                                            <select
-                                                id="purchase-order-link"
-                                                value={selectedPO}
-                                                onChange={(event) => linkPurchaseOrder(event.target.value)}
-                                                className="min-h-11 w-full rounded-control border border-slate-200 bg-white px-3 py-2.5 text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
-                                            >
-                                                <option value="">Compra directa, sin OC</option>
-                                                {purchaseOrdersForSupplier.map(po => (
-                                                    <option key={po.id} value={po.id}>
-                                                        {po.orderNumber} · {po.status === 'RECEIVED' ? 'Recibida' : po.status === 'PARTIALLY_RECEIVED' ? 'Recepción parcial' : 'Aprobada'}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                    )}
-                                    <div>
-                                        <label htmlFor="purchase-invoice-number" className="mb-1.5 block text-sm font-medium text-slate-700"># Factura Proveedor *</label>
-                                        <input
-                                            id="purchase-invoice-number"
-                                            value={invoiceNumber}
-                                            onChange={(e) => {
-                                                setInvoiceNumber(e.target.value);
-                                                setFormErrors(current => ({ ...current, invoiceNumber: undefined }));
-                                            }}
-                                            placeholder="FAC-001234"
-                                            aria-invalid={Boolean(formErrors.invoiceNumber)}
-                                            className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 font-mono text-slate-900 outline-none focus:ring-2 ${formErrors.invoiceNumber ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                        />
-                                        {formErrors.invoiceNumber && <p className="mt-1 text-xs text-red-600">{formErrors.invoiceNumber}</p>}
-                                    </div>
-                                    <div>
-                                        <label htmlFor="purchase-invoice-date" className="mb-1.5 block text-sm font-medium text-slate-700">
-                                            Fecha de la factura *
-                                        </label>
-                                        <input
-                                            id="purchase-invoice-date"
-                                            type="date"
-                                            required
-                                            value={purchaseDate}
-                                            onChange={(event) => {
-                                                setPurchaseDate(event.target.value);
-                                                setFormErrors(current => ({ ...current, date: undefined }));
-                                            }}
-                                            aria-invalid={Boolean(formErrors.date)}
-                                            aria-describedby={formErrors.date ? 'purchase-invoice-date-error' : undefined}
-                                            className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.date ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                        />
-                                        {formErrors.date && (
-                                            <p id="purchase-invoice-date-error" className="mt-1 text-xs text-red-600">
-                                                {formErrors.date}
-                                            </p>
-                                        )}
-                                    </div>
-                                    {selectedPO && (
-                                        <div className="col-span-2 flex items-start gap-2 rounded-control border border-sky-200 bg-sky-50 px-3 py-2.5 text-sm text-sky-800">
-                                            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                                            <span>
-                                                Esta factura queda vinculada a la OC. La recepción maneja el stock y los lotes; aquí solo se registra el dinero y el IVA.
-                                            </span>
-                                        </div>
-                                    )}
-                                    <div>
-                                        <label className="mb-1.5 block text-sm font-medium text-slate-700">Método de pago *</label>
-                                        <div className="flex gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setPaymentMethod('CASH');
-                                                    setDueDate('');
-                                                    setFormErrors(current => ({ ...current, dueDate: undefined }));
-                                                }}
-                                                className={`nx-fluid-press flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control border px-3 py-2.5 text-sm font-medium ${paymentMethod === 'CASH'
-                                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
-                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
-                                            >
-                                                <DollarSign size={16} /> Contado
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setPaymentMethod('CREDIT')}
-                                                className={`nx-fluid-press flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control border px-3 py-2.5 text-sm font-medium ${paymentMethod === 'CREDIT'
-                                                    ? 'border-amber-300 bg-amber-50 text-amber-700 shadow-sm'
-                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
-                                            >
-                                                <CreditCard size={16} /> Credito
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div className="col-span-2">
-                                        <label className="mb-1.5 block text-sm font-medium text-slate-700">IVA de la factura *</label>
-                                        <div className="flex gap-2">
-                                            <button
-                                                type="button"
-                                                aria-pressed={taxTreatment === PURCHASE_TAX_TRASLADADO}
-                                                onClick={() => changeTaxTreatment(PURCHASE_TAX_TRASLADADO)}
-                                                className={`nx-fluid-press flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control border px-3 py-2.5 text-sm font-medium ${taxTreatment === PURCHASE_TAX_TRASLADADO
-                                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 shadow-sm'
-                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
-                                            >
-                                                <Receipt size={16} /> Trae IVA (15%)
-                                            </button>
-                                            <button
-                                                type="button"
-                                                aria-pressed={taxTreatment === PURCHASE_TAX_SIN_TRASLADO}
-                                                onClick={() => changeTaxTreatment(PURCHASE_TAX_SIN_TRASLADO)}
-                                                className={`nx-fluid-press flex min-h-11 flex-1 items-center justify-center gap-2 rounded-control border px-3 py-2.5 text-sm font-medium ${taxTreatment === PURCHASE_TAX_SIN_TRASLADO
-                                                    ? 'border-amber-300 bg-amber-50 text-amber-700 shadow-sm'
-                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300'}`}
-                                            >
-                                                <AlertTriangle size={16} /> No trae IVA
-                                            </button>
-                                        </div>
-                                    </div>
-                                    {taxTreatment === PURCHASE_TAX_SIN_TRASLADO && (
-                                        <div className="col-span-2">
-                                            <label htmlFor="purchase-no-tax-reason" className="mb-1.5 block text-sm font-medium text-slate-700">
-                                                ¿Por qué no trae IVA? *
-                                            </label>
-                                            <select
-                                                id="purchase-no-tax-reason"
-                                                value={noTaxReason}
-                                                onChange={(e) => {
-                                                    setNoTaxReason(e.target.value as PurchaseNoTaxReason | '');
-                                                    setFormErrors(current => ({ ...current, noTaxReason: undefined }));
-                                                }}
-                                                aria-invalid={Boolean(formErrors.noTaxReason)}
-                                                className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.noTaxReason ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                            >
-                                                <option value="">Seleccionar motivo…</option>
-                                                {PURCHASE_NO_TAX_REASONS.map(reason => (
-                                                    <option key={reason} value={reason}>
-                                                        {PURCHASE_NO_TAX_REASON_LABELS[reason]}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            {formErrors.noTaxReason && <p className="mt-1 text-xs text-red-600">{formErrors.noTaxReason}</p>}
-                                            <p className="mt-1.5 text-xs text-slate-500">
-                                                No se registra IVA ni crédito fiscal: el total queda igual al subtotal, tal como dice la factura.
-                                            </p>
-                                        </div>
-                                    )}
-                                    {paymentMethod === 'CREDIT' && (
-                                        <div>
-                                            <label className="mb-1.5 block text-sm font-medium text-slate-700">Fecha de vencimiento *</label>
-                                            <input
-                                                type="date"
-                                                value={dueDate}
-                                                onChange={(e) => {
-                                                    setDueDate(e.target.value);
-                                                    setFormErrors(current => ({ ...current, dueDate: undefined }));
-                                                }}
-                                                aria-invalid={Boolean(formErrors.dueDate)}
-                                                className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.dueDate ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                            />
-                                            {formErrors.dueDate && <p className="mt-1 text-xs text-red-600">{formErrors.dueDate}</p>}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="mt-4">
-                                    <label className="mb-1.5 block text-sm font-medium text-slate-700">Notas (opcional)</label>
-                                    <input
-                                        value={notes}
-                                        onChange={(e) => {
-                                            setNotes(e.target.value);
-                                            setFormErrors(current => ({ ...current, notes: undefined }));
-                                        }}
-                                        placeholder="Ej: Pedido semanal, entrega parcial..."
-                                        maxLength={500}
-                                        aria-invalid={Boolean(formErrors.notes)}
-                                        className={`min-h-11 w-full rounded-control border bg-white px-3 py-2.5 text-slate-900 outline-none focus:ring-2 ${formErrors.notes ? 'border-red-400 focus:border-red-500 focus:ring-red-500/15' : 'border-slate-200 focus:border-emerald-500 focus:ring-emerald-500/15'}`}
-                                    />
-                                    {formErrors.notes && <p className="mt-1 text-xs text-red-600">{formErrors.notes}</p>}
-                                </div>
-                            </div>
-
-                            {/* Product Search + Add */}
-                            <div className={`nx-canvas-card p-5 sm:p-6 ${formErrors.items ? '!border-red-300' : ''}`}>
-                                <h3 className="mb-4 flex items-center gap-2 font-semibold text-slate-950">
-                                    <Package size={18} className="text-emerald-600" />
-                                    Productos recibidos
-                                </h3>
-                                <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                    <input
-                                        value={productSearch}
-                                        onChange={(e) => setProductSearch(e.target.value)}
-                                        disabled={Boolean(selectedPO)}
-                                        placeholder={selectedPO ? 'Los productos vienen de la orden de compra vinculada' : 'Buscar producto por nombre o SKU...'}
-                                        className="min-h-11 w-full rounded-control border border-slate-200 bg-white py-2.5 pl-10 pr-4 text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-500"
-                                    />
-                                    {!selectedPO && filteredProducts.length > 0 && (
-                                        <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-60 overflow-y-auto rounded-control border border-slate-200 bg-white shadow-xl">
-                                            {filteredProducts.map(p => (
-                                                <button
-                                                    key={p.id}
-                                                    onClick={() => addToCart(p)}
-                                                    className="nx-fluid-press flex min-h-12 w-full items-center justify-between border-b border-slate-100 px-4 py-3 text-left hover:bg-slate-50 last:border-0"
-                                                >
-                                                    <div>
-                                                        <span className="font-medium text-slate-950">{p.name}</span>
-                                                        <span className="ml-2 font-mono text-xs text-slate-500">{p.sku}</span>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <span className="text-sm font-medium text-slate-700">Costo: {formatCurrency(p.cost)}</span>
-                                                        <span className="text-xs text-slate-500 ml-2">Stock: {formatQuantityValue(p.stock)} {p.unit}</span>
-                                                    </div>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Cart Items Table */}
-                                {cart.length > 0 && (
-                                    <div className="mt-4 overflow-x-auto rounded-control border border-slate-200">
-                                        <table className="min-w-[980px] w-full">
-                                            <thead>
-                                                <tr className="border-b border-slate-200 bg-slate-50 text-xs uppercase tracking-wide text-slate-500">
-                                                    <th className="text-left py-2 px-2">Producto</th>
-                                                    <th className="text-center py-2 px-2 w-36">Cantidad recibida</th>
-                                                    <th className="text-center py-2 px-2 w-40">Costo informado</th>
-                                                    <th className="text-center py-2 px-2 w-52">Precio de venta</th>
-                                                    <th className="text-right py-2 px-2 w-28">Total</th>
-                                                    <th className="w-10"></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {cart.map(item => {
-                                                    let preview: ReturnType<typeof resolvePurchaseLine> | null = null;
-                                                    try {
-                                                        preview = resolveCartLine(item);
-                                                    } catch {
-                                                        // Mientras se edita un input puede estar temporalmente
-                                                        // vacío/inválido; la validación visible lo reporta al enviar.
-                                                    }
-                                                    const inputStep = purchaseQuantityInputStep(item, item.purchaseUnit);
-                                                    return (
-                                                    <React.Fragment key={item.cartKey}>
-                                                        <tr className="border-b border-slate-100 bg-white last:border-0">
-                                                            <td className="py-3 px-2">
-                                                                <div>
-                                                                    <span className="text-sm font-medium text-slate-950">{item.productName}</span>
-                                                                    <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                                                                        <span className="text-xs text-slate-500 font-mono">{item.sku}</span>
-                                                                        <span className="text-xs text-slate-500">Stock actual: {formatQuantityValue(item.currentStock)} {item.unit}</span>
-                                                                    </div>
-                                                                    {item.purchaseOrderItemId && (
-                                                                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-500 sm:grid-cols-4">
-                                                                            <div><dt className="inline">Ordenado </dt><dd className="inline font-mono text-slate-700">{formatQuantityValue(item.orderedQuantity ?? '0')}</dd></div>
-                                                                            <div><dt className="inline">Recibido </dt><dd className="inline font-mono text-slate-700">{formatQuantityValue(item.receivedQuantity ?? '0')}</dd></div>
-                                                                            <div><dt className="inline">Facturado </dt><dd className="inline font-mono text-slate-700">{formatQuantityValue(item.invoicedQuantity ?? '0')}</dd></div>
-                                                                            <div><dt className="inline">Disponible </dt><dd className="inline font-mono font-bold text-emerald-700">{formatQuantityValue(item.availableQuantity ?? '0')}</dd></div>
-                                                                        </dl>
-                                                                    )}
-                                                                    {hasPackConfiguration(item) && (
-                                                                        <select
-                                                                            value={item.purchaseUnit}
-                                                                            onChange={(event) => updatePurchaseUnit(item.cartKey, event.target.value as PurchaseUnit)}
-                                                                            disabled={Boolean(selectedPO)}
-                                                                            aria-label={`Unidad de compra de ${item.productName}`}
-                                                                            className="mt-2 max-w-full rounded-control border border-slate-200 bg-white px-2 py-1.5 text-xs font-semibold text-slate-700 outline-none focus:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                                                        >
-                                                                            <option value="BASE">Base · {item.unit}</option>
-                                                                            <option value="PACK">Empaque · {item.packUnit} ({formatQuantityValue(item.packSize!)} {item.unit})</option>
-                                                                        </select>
-                                                                    )}
-                                                                </div>
-                                                            </td>
-                                                            <td className="py-3 px-2">
-                                                                <input
-                                                                    type="text"
-                                                                    inputMode="decimal"
-                                                                    value={item.quantity}
-                                                                    onChange={(e) => updateCartItem(item.cartKey, 'quantity', sanitizeDecimalInput(e.target.value))}
-                                                                    aria-label={`Cantidad a facturar de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
-                                                                    aria-invalid={Boolean(formErrors.items)}
-                                                                    className="w-full rounded-control border border-slate-200 bg-white px-2 py-2 text-center text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
-                                                                />
-                                                                <p className="mt-1 text-center text-[11px] text-slate-500">
-                                                                    {item.purchaseUnit === 'PACK'
-                                                                        ? preview
-                                                                            ? `${formatQuantityValue(item.quantity)} ${item.packUnit} = ${formatQuantityValue(preview.baseQuantity)} ${item.unit}`
-                                                                            : `${item.packUnit} de ${formatQuantityValue(item.packSize!)} ${item.unit}`
-                                                                        : `en ${item.unit} · paso ${inputStep}`}
-                                                                </p>
-                                                            </td>
-                                                            <td className="py-3 px-2">
-                                                                <input
-                                                                    type="text"
-                                                                    inputMode="decimal"
-                                                                    value={item.unitCost}
-                                                                    onChange={(e) => updateCartItem(item.cartKey, 'unitCost', sanitizeDecimalInput(e.target.value))}
-                                                                    aria-label={`Costo de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
-                                                                    aria-invalid={Boolean(formErrors.items)}
-                                                                    className="w-full rounded-control border border-slate-200 bg-white px-2 py-2 text-center text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
-                                                                />
-                                                                <p className="mt-1 text-center text-[11px] text-slate-500">
-                                                                    {item.purchaseUnit === 'PACK'
-                                                                        ? preview
-                                                                            ? `por ${item.packUnit} · ${formatCurrency(preview.baseUnitCost.toNumber())}/${item.unit}`
-                                                                            : `costo por ${item.packUnit}`
-                                                                        : `por ${item.unit}`}
-                                                                </p>
-                                                            </td>
-                                                            <td className="py-3 px-2 align-top">
-                                                                <p className="text-center text-xs text-slate-600">
-                                                                    Actual:{' '}
-                                                                    <span className="font-semibold tabular-nums text-slate-900">
-                                                                        {item.currentSalePrice === null
-                                                                            ? 'No disponible'
-                                                                            : formatCurrency(item.currentSalePrice)}
-                                                                    </span>
-                                                                </p>
-                                                                <p className="mt-0.5 text-center text-[11px] text-slate-500">
-                                                                    por {item.unit} base
-                                                                </p>
-                                                                {canEditPurchaseSalePrice ? (
-                                                                    <>
-                                                                        <label
-                                                                            htmlFor={`purchase-sale-price-${item.cartKey}`}
-                                                                            className="mt-2 block text-xs font-medium text-slate-700"
-                                                                        >
-                                                                            Nuevo precio de venta (opcional)
-                                                                        </label>
-                                                                        <input
-                                                                            id={`purchase-sale-price-${item.cartKey}`}
-                                                                            type="text"
-                                                                            inputMode="decimal"
-                                                                            value={item.salePrice}
-                                                                            onChange={(event) => updateCartItem(item.cartKey, 'salePrice', sanitizeDecimalInput(event.target.value))}
-                                                                            aria-label={`Nuevo precio de venta (opcional) de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
-                                                                            aria-invalid={Boolean(formErrors.items)}
-                                                                            placeholder="Conservar actual"
-                                                                            className="mt-1 min-h-11 w-full rounded-control border border-slate-200 bg-white px-2 py-2 text-center text-sm text-slate-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15"
-                                                                        />
-                                                                        <p className="mt-1 text-center text-[11px] text-slate-500">
-                                                                            {cart.filter(candidate => candidate.productId === item.productId).length > 1
-                                                                                ? 'Se sincroniza en todas las líneas de este producto.'
-                                                                                : `Siempre por ${item.unit} base, aunque comprés por empaque.`}
-                                                                        </p>
-                                                                    </>
-                                                                ) : (
-                                                                    <p className="mt-2 rounded-control bg-slate-100 px-2 py-2 text-center text-[11px] text-slate-600">
-                                                                        Solo un administrador puede cambiar el precio de venta.
-                                                                    </p>
-                                                                )}
-                                                            </td>
-                                                            <td className="py-3 px-2 text-right">
-                                                                <span className="text-sm font-semibold tabular-nums text-emerald-700">{formatCurrency(item.totalCost)}</span>
-                                                            </td>
-                                                            <td className="py-3 px-1">
-                                                                <button
-                                                                    onClick={() => removeFromCart(item.cartKey)}
-                                                                    aria-label={`Quitar ${item.productName}`}
-                                                                    className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-red-600 hover:bg-red-50"
-                                                                >
-                                                                    <Trash2 size={15} />
-                                                                </button>
-                                                            </td>
-                                                        </tr>
-                                                        {item.requiresBatchTracking && (
-                                                            <tr className="bg-slate-50">
-                                                                <td colSpan={6} className="border-b border-slate-100 px-3 py-2">
-                                                                    <div className="flex gap-4 items-center">
-                                                                        <div className="flex items-center gap-2">
-                                                                            <span className="rounded-full bg-amber-100 px-2 py-1 text-xs font-semibold text-amber-700">REQUIERE LOTE</span>
-                                                                        </div>
-                                                                        <div className="flex-1 flex gap-3">
-                                                                            <input
-                                                                                type="text"
-                                                                                placeholder="Nº Lote"
-                                                                                value={item.batchNumber || ''}
-                                                                                onChange={(e) => updateCartItem(item.cartKey, 'batchNumber', e.target.value)}
-                                                                                aria-invalid={Boolean(formErrors.items)}
-                                                                                className="min-h-10 flex-1 rounded-control border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500"
-                                                                            />
-                                                                            <input
-                                                                                type="date"
-                                                                                value={item.expiryDate || ''}
-                                                                                onChange={(e) => updateCartItem(item.cartKey, 'expiryDate', e.target.value)}
-                                                                                aria-invalid={Boolean(formErrors.items)}
-                                                                                className="min-h-10 flex-1 rounded-control border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-900 outline-none focus:border-emerald-500"
-                                                                            />
-                                                                        </div>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        )}
-                                                    </React.Fragment>
-                                                    );
-                                                })}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-
-                                {cart.length === 0 && (
-                                    <div className="text-center py-8 text-slate-500">
-                                        <ShoppingCart size={32} className="mx-auto mb-2 opacity-30" />
-                                        <p className="text-sm">Busca y agrega productos a la compra</p>
-                                    </div>
-                                )}
-                                {formErrors.items && (
-                                    <p className="mt-3 flex items-center gap-1.5 text-sm text-red-600">
-                                        <AlertTriangle size={15} /> {formErrors.items}
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* RIGHT: Totals + Submit */}
-                        <div className="space-y-4">
-                            {/* Summary Card */}
-                            <div className="nx-dark-context nx-ticket-surface sticky top-6 rounded-card border p-5 shadow-xl xl:p-6">
-                                <h3 className="mb-5 flex items-center gap-2 font-semibold text-white">
-                                    <Wallet size={18} className="text-emerald-400" />
-                                    Resumen de compra
-                                </h3>
-
-                                <div className="space-y-3">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">Productos</span>
-                                        <span className="text-white font-medium">{cart.length} línea{cart.length === 1 ? '' : 's'}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">Subtotal</span>
-                                        <span className="text-white">{formatCurrency(cartTotals.subtotal)}</span>
-                                    </div>
-                                    {cartTotals.taxableSubtotal !== cartTotals.subtotal && (
-                                        <>
-                                            <div className="flex justify-between text-xs">
-                                                <span className="text-slate-500">Base gravada</span>
-                                                <span className="text-slate-300">{formatCurrency(cartTotals.taxableSubtotal)}</span>
-                                            </div>
-                                            <div className="flex justify-between text-xs">
-                                                <span className="text-slate-500">Productos exentos</span>
-                                                <span className="text-slate-300">{formatCurrency(cartTotals.exemptSubtotal)}</span>
-                                            </div>
-                                        </>
-                                    )}
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">
-                                            {taxTreatment === PURCHASE_TAX_SIN_TRASLADO ? 'IVA (no trasladado)' : 'IVA (15%)'}
-                                        </span>
-                                        <span className="text-white">{formatCurrency(cartTotals.tax)}</span>
-                                    </div>
-                                    {taxTreatment === PURCHASE_TAX_SIN_TRASLADO && (
-                                        <p className="text-xs text-amber-300">
-                                            {noTaxReason
-                                                ? PURCHASE_NO_TAX_REASON_LABELS[noTaxReason]
-                                                : 'Indicá el motivo de la no traslación para registrar.'}
-                                        </p>
-                                    )}
-                                    <div className="flex justify-between border-t border-white/10 pt-4">
-                                        <span className="text-white font-bold text-lg">TOTAL</span>
-                                        <span className="text-emerald-400 font-bold text-xl">{formatCurrency(cartTotals.total)}</span>
-                                    </div>
-                                </div>
-
-                                {paymentMethod === 'CREDIT' && (
-                                    <div className="mt-4 rounded-control border border-amber-400/20 bg-amber-400/10 p-3">
-                                        <p className="text-xs text-amber-300 flex items-center gap-1.5">
-                                            <Clock size={14} />
-                                            Compra a crédito · No se descuenta de caja
-                                        </p>
-                                    </div>
-                                )}
-
-                                {paymentMethod === 'CASH' && (
-                                    <div className="mt-4 rounded-control border border-emerald-400/20 bg-emerald-400/10 p-3">
-                                        <p className="text-xs text-emerald-300 flex items-center gap-1.5">
-                                            <DollarSign size={14} />
-                                            Pago de contado · Se descuenta de caja
-                                        </p>
-                                    </div>
-                                )}
-
-                                <button
-                                    onClick={handleSubmit}
-                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !effectiveSelectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
-                                    aria-busy={submitting}
-                                    className="nx-fluid-press nx-ticket-primary mt-5 flex min-h-12 w-full items-center justify-center gap-2 rounded-control bg-brand py-3.5 text-base font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-300"
-                                >
-                                    {submitting ? (
-                                        <>
-                                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                            Procesando...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Truck size={20} />
-                                            {selectedPO ? 'Registrar factura' : 'Procesar ingreso'}
-                                        </>
-                                    )}
-                                </button>
-
-                                <p className="text-xs text-slate-500 text-center mt-2">
-                                    {selectedPO
-                                        ? 'El stock se actualiza desde la recepción de la OC'
-                                        : 'El stock se actualiza automáticamente'}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                    receivingView
                 ) : loading ? (
                     <div aria-label="Cargando historial de compras" className="space-y-4">
                         <div className="nx-list-surface h-28 animate-pulse bg-slate-100" />
@@ -2751,11 +2342,12 @@ export default function Purchases() {
                                         placeholder="0.00"
                                         value={supplierPaymentForm.amount}
                                         onChange={(event) => {
-                                            setSupplierPaymentForm(current => ({ ...current, amount: sanitizeDecimalInput(event.target.value) }));
+                                            setSupplierPaymentForm(current => ({ ...current, amount: normalizeBodegaDecimalInput(event.target.value) }));
                                             setSupplierPaymentError('');
                                         }}
                                         className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
                                     />
+                                    <span className="block text-xs text-slate-500">{BODEGA_DECIMAL_HINT}</span>
                                 </label>
                                 <label className="space-y-1.5 text-sm text-slate-300">
                                     Método

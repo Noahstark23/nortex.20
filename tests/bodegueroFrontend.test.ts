@@ -29,6 +29,8 @@ describe('capacidades visuales de BODEGUERO', () => {
         expect(inventoryTabsForRole('BODEGUERO').map(tab => tab.to)).toEqual([
             '/app/inventory',
             '/app/warehouses',
+            '/app/purchase-orders',
+            '/app/inventory-count',
         ]);
         expect(inventoryTabsForRole('OWNER').map(tab => tab.to)).toContain('/app/serials');
     });

@@ -179,7 +179,8 @@ const basePurchasesFetch = (options?: {
 
 describe('Procurement Fase 2 en frontend', () => {
     beforeEach(() => {
-        localStorage.clear();
+        localStorage.clear(); sessionStorage.clear();
+        window.history.replaceState({}, '', '/app/purchases');
         localStorage.setItem('nortex_token', 'qa-token');
         localStorage.setItem('nortex_user', JSON.stringify({ role: 'OWNER' }));
         vi.stubGlobal('crypto', {
@@ -547,8 +548,8 @@ describe('Procurement Fase 2 en frontend', () => {
         fireEvent.change(screen.getByLabelText('Proveedor *'), { target: { value: 'supplier-1' } });
         fireEvent.change(await screen.findByLabelText('Orden de compra (opcional)'), { target: { value: 'po-1' } });
 
-        expect(screen.getAllByText('Ordenado')).toHaveLength(2);
-        expect(screen.getAllByText('Disponible')).toHaveLength(2);
+        expect(screen.getByText(/Recibido 5\s*·\s*Facturado 2\s*·\s*Disponible 3/)).toBeTruthy();
+        expect(screen.getByText(/Recibido 7\s*·\s*Facturado 3\s*·\s*Disponible 4/)).toBeTruthy();
         fireEvent.change(screen.getByLabelText('# Factura Proveedor *'), { target: { value: 'FAC-DUP-1' } });
         fireEvent.click(screen.getByRole('button', { name: 'Registrar factura' }));
 

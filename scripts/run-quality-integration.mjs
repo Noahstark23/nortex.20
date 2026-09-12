@@ -11,6 +11,7 @@ import { applyProviderCredential } from './qa/provider-credential.mjs';
 // No heredar proveedores, credenciales de producción ni configuración de despliegue.
 const env = {
   PATH: process.env.PATH, NODE_ENV: 'test', DATABASE_URL: process.env.DATABASE_URL,
+  NORTEX_QA_DATABASE_ACK: process.env.NORTEX_QA_DATABASE_ACK,
   JWT_SECRET: randomBytes(48).toString('hex'), HOST: '127.0.0.1', WHATSAPP_ENABLED: 'false',
   NORTEX_DATA_KEYS: 'qa:' + randomBytes(32).toString('base64'),
   NORTEX_LEDGER_KEYS: 'qa:' + randomBytes(32).toString('base64'),

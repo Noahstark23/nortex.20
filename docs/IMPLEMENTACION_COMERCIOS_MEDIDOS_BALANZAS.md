@@ -87,6 +87,12 @@ Reglas de cantidad:
 - las conversiones automáticas se limitan a pares exactos aprobados: `g ↔ kg`
   y `oz ↔ lb`. No se cruzan sistemas ni se infieren densidades.
 
+> **Actualización 2026-09-12 — candidato local:** la regla nullable anterior se
+> conserva como registro histórico. Para operaciones nuevas, unidad/unidades/
+> caja/cajas sin modo ni paso usan enteros; MEASURED y pasos explícitos prevalecen,
+> y las unidades desconocidas conservan fracciones. Los snapshots históricos y
+> replays no se reinterpretan. Ver [auditoría de bodega y productos](AUDITORIA_BODEGA_PRODUCTOS_2026-09-12.md).
+
 El alta, edición, importación masiva, ajuste, lotes, compras y devoluciones usan
 las mismas reglas contextuales. El stock inicial se mueve mediante la operación
 atómica de stock y genera Kardex; no se escribe como un valor suelto.
@@ -642,6 +648,12 @@ temporales se apagaron, y se verificó que los puertos `3213` y `33309` quedaran
 libres.
 
 ### 8.2 Casos de aceptación obligatorios
+
+> **Actualización 2026-09-12 — candidato local:** la lista siguiente registra la
+> aceptación de esta entrega histórica. La aceptación vigente añade rechazo de
+> fracciones para unidades/cajas sin configuración, respeto de MEASURED/paso
+> explícito y conservación de documentos ya emitidos; ver la
+> [auditoría de bodega y productos](AUDITORIA_BODEGA_PRODUCTOS_2026-09-12.md).
 
 - legado fraccionario sigue funcionando; solo `COUNTED` rechaza `1.5`;
 - el paso medido rechaza múltiplos inexactos y más de 4 decimales;

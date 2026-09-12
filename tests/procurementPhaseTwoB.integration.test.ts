@@ -736,12 +736,30 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     });
     expectStatus(adjustment, 409);
     expect(adjustment.body.code).toBe('BATCH_SELECTION_REQUIRED');
+    expect(adjustment.body.clientEventId).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
+    expect(adjustment.body).toMatchObject({ outcome: 'REJECTED', rejection: {
+      id: expect.any(String), tenantId: tenantAId, userId: tenantAUserId,
+      clientEventId: adjustment.body.clientEventId, productId: productAId, warehouseId: defaultWarehouseAId,
+      quantity: '-1.0000', type: 'ADJUST_LOSS', reason: 'Ajuste agregado que debe bloquearse',
+    } });
     expect(await inventorySnapshot({ tenantId: tenantAId, productId: productAId, batchId: batchAId }))
       .toEqual(beforeAdjust);
     expect(await prisma.kardexMovement.count({ where: { tenantId: tenantAId } }))
       .toBe(countsBeforeAdjust.kardex);
     expect(await prisma.auditLog.count({ where: { tenantId: tenantAId } }))
-      .toBe(countsBeforeAdjust.audits);
+      .toBe(countsBeforeAdjust.audits + 2);
+    // El rechazo tiene evidencia durable propia; no produjo un movimiento.
+    const rejectionAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { id: adjustment.body.rejection.id, tenantId: tenantAId, userId: tenantAUserId, action: 'INVENTORY_ADJUSTMENT_REJECTED' },
+    });
+    const rejectionDetails = JSON.parse(rejectionAudit.details!);
+    expect(rejectionDetails).toMatchObject({ version: 1, outcome: 'REJECTED', httpStatus: 409,
+      code: 'BATCH_SELECTION_REQUIRED', rejection: adjustment.body.rejection });
+    const rejectionClaim = await prisma.auditLog.findFirstOrThrow({
+      where: { id: rejectionDetails.commandId, tenantId: tenantAId, userId: tenantAUserId, action: 'INVENTORY_ADJUSTMENT_COMMAND' },
+    });
+    expect(JSON.parse(rejectionClaim.details!)).toMatchObject({ version: 1, commandType: 'INVENTORY_ADJUSTMENT',
+      resultId: rejectionAudit.id, payloadHash: rejectionDetails.payloadHash });
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantAId } }))
       .toBe(countsBeforeAdjust.journals);
 

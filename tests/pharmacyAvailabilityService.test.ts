@@ -375,9 +375,9 @@ describe('resolvePharmacyProductAvailability', () => {
     });
 
     it('queda integrado en ambos contratos de /api/products sin reemplazar stock físico', () => {
-        const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
-        const start = server.indexOf("app.get('/api/products'");
-        const end = server.indexOf("app.get('/api/products/categories", start);
+        const server = readFileSync(resolve(process.cwd(), 'backend/routes/productCatalog.ts'), 'utf8');
+        const start = server.indexOf("router.get('/'");
+        const end = server.indexOf("router.get('/categories", start);
         const route = server.slice(start, end);
 
         expect(server).toContain('const withPharmacySellableStock = async');

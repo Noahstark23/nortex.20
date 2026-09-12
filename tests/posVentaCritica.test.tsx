@@ -78,6 +78,7 @@ const respuestasBase = (): Record<string, unknown> => ({
     '/api/accounting/exchange-rate/latest': {},
     '/api/agent-banking/agreements': [],
     '/api/scale-labels/active-context': {},
+    '/api/scale-labels/preview': { data: { classification: 'SKU' } },
 });
 
 let respuestas: Record<string, unknown>;
@@ -279,6 +280,32 @@ describe('POS · escanear y armar la venta', () => {
         ]);
     });
 
+    it('una respuesta tardía del lector no agrega a otra sesión', async () => {
+        const originalFetch = globalThis.fetch;
+        let release!: (value: unknown) => void;
+        vi.stubGlobal('fetch', vi.fn((url: any, init?: any) => String(url) === '/api/scale-labels/preview'
+            ? new Promise(resolve => { release = resolve; }) : originalFetch(url, init)));
+        montarPOS(); await buscador(); await asentar(80);
+        fireEvent.click(screen.getByRole('button', { name: 'Escanear con cámara' }));
+        fireEvent.change(screen.getByRole('textbox', { name: 'Código de barras manual' }), { target: { value: PRODUCTO.sku } });
+        fireEvent.click(screen.getByRole('button', { name: 'Usar código' }));
+        await waitFor(() => expect(release).toBeTypeOf('function'));
+        localStorage.setItem('nortex_token', 'otra-sesion-qa');
+        await act(async () => { release(respuestaOk({ data: { classification: 'SKU' } })); });
+        expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
+    });
+    it('cámara usa el lector del POS una vez y bloquea el lector de atrás mientras está abierta', async () => {
+        montarPOS(); await buscador(); await asentar(80);
+        fireEvent.click(screen.getByRole('button', { name: 'Escanear con cámara' }));
+        for (const key of PRODUCTO.sku) fireEvent.keyDown(window, { key });
+        fireEvent.keyDown(window, { key: 'Enter' });
+        expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
+        fireEvent.change(screen.getByRole('textbox', { name: 'Código de barras manual' }), { target: { value: PRODUCTO.sku } });
+        fireEvent.click(screen.getByRole('button', { name: 'Usar código' }));
+        await waitFor(() => expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1'));
+        expect(document.querySelector('[data-camera-scanner]')).toBeNull();
+        expect(posteos.find(p => p.ruta === '/api/sales')).toBeUndefined();
+    });
     it('mantiene legibles y táctiles las acciones rápidas de producto', async () => {
         localStorage.setItem('nortex_ui_mode', 'full');
         montarPOS();

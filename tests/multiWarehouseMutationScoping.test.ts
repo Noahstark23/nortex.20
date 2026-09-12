@@ -15,11 +15,8 @@ function between(source: string, start: string, end: string): string {
     return source.slice(from, to);
 }
 
-const inventoryAdjustRoute = between(
-    server,
-    "app.post('/api/inventory/adjust'",
-    "app.get('/api/inventory/batches/:productId'",
-);
+const inventoryAdjustRoute = read('backend/routes/inventoryAdjustments.ts');
+const inventoryAdjustService = read('backend/services/inventoryAdjustmentService.ts');
 const createStockCountRoute = between(
     server,
     "app.post('/api/stock-counts'",
@@ -43,13 +40,15 @@ const receivePurchaseOrderRoute = between(
 
 describe('aislamiento de mutaciones por bodega', () => {
     it('el ajuste resuelve la ubicación y usa esa fila en stock, Kardex y auditoría', () => {
-        expect(inventoryAdjustRoute).toContain('resolveOperationalWarehouse(');
-        expect(inventoryAdjustRoute).toContain('warehouseId: operationWarehouse.id');
-        expect(inventoryAdjustRoute).toMatch(/FROM \\`ProductStock\\`[\s\S]*warehouseId = \$\{operationWarehouse\.id\}/);
-        expect(inventoryAdjustRoute).toMatch(/applyStockDelta\([\s\S]*warehouseId: operationWarehouse\.id/);
-        expect(inventoryAdjustRoute).toMatch(/kardexMovement\.create\([\s\S]*warehouseId,/);
-        expect(inventoryAdjustRoute).toMatch(/action: 'INVENTORY_ADJUSTMENT'[\s\S]*warehouseId: operationWarehouse\.id/);
-        expect(inventoryAdjustRoute).toContain('BODEGUERO_ADJUSTMENT_TYPE_FORBIDDEN');
+        expect(server).toContain("app.use('/api/inventory/adjust', inventoryAdjustmentsRouter)");
+        expect(inventoryAdjustRoute).toContain('executeInventoryAdjustment(');
+        expect(inventoryAdjustRoute).toContain("checkRole(['OWNER', 'ADMIN', BODEGUERO_ROLE])");
+        expect(inventoryAdjustService).toContain('resolveOperationalWarehouse(tx, principal.tenantId, command.warehouseId)');
+        expect(inventoryAdjustService).toMatch(/productStock\.findFirstOrThrow\([\s\S]*tenantId: principal\.tenantId, productId: product\.id, warehouseId: warehouse\.id/);
+        expect(inventoryAdjustService).toMatch(/applyStockDelta\([\s\S]*warehouseId: warehouse\.id/);
+        expect(inventoryAdjustService).toMatch(/kardexMovement\.create\([\s\S]*warehouseId: warehouse\.id/);
+        expect(inventoryAdjustService).toMatch(/action: 'INVENTORY_ADJUSTMENT'[\s\S]*warehouseId: warehouse\.id/);
+        expect(inventoryAdjustService).toContain("type !== 'ADJUST_LOSS' && type !== 'ADJUST_GAIN'");
     });
 
     it('el snapshot del conteo se toma de ProductStock y queda ligado a una bodega', () => {

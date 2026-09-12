@@ -12,11 +12,13 @@
  * schema reporta como "Invalid input". El texto además no pierde precisión.
  */
 import type { ProductFamily } from './productFamilyPresets';
+import { parseMoneyTextNi } from './importProducts';
 
 export interface ProductFormState {
     name: string;
     sku: string;
     description: string;
+    brand?: string;
     category: string;
     price: string;
     cost: string;
@@ -44,6 +46,11 @@ const opcional = (value: string): string | undefined => {
     const limpio = value.trim();
     return limpio === '' ? undefined : limpio;
 };
+export const normalizeProductQuantityInput = (value: string) => opcional(value)?.replace(',', '.');
+export const normalizeProductMoneyInput = (value: string) => parseMoneyTextNi(value) ?? value.trim();
+const cantidad = normalizeProductQuantityInput;
+const dinero = normalizeProductMoneyInput;
+const dineroOpcional = (value: string) => opcional(value) === undefined ? undefined : dinero(value);
 
 /**
  * Arma el body de POST /api/products a partir del estado del formulario.
@@ -54,21 +61,22 @@ export const buildCreateProductPayload = (form: ProductFormState) => ({
     name: form.name.trim(),
     sku: form.sku.trim().toUpperCase(),
     description: opcional(form.description),
+    brand: opcional(form.brand ?? ''),
     category: opcional(form.category),
     unit: opcional(form.unit) ?? 'unidad',
-    price: form.price.trim(),
-    cost: form.cost.trim(),
-    stock: opcional(form.stock) ?? '0',
-    minStock: opcional(form.minStock) ?? '5',
-    reorderPoint: opcional(form.reorderPoint),
-    maxStock: opcional(form.maxStock),
-    wholesalePrice: opcional(form.wholesalePrice),
-    wholesaleMinQty: opcional(form.wholesaleMinQty),
+    price: dinero(form.price),
+    cost: opcional(form.cost) === undefined ? '0' : dinero(form.cost),
+    stock: cantidad(form.stock) ?? '0',
+    minStock: cantidad(form.minStock) ?? '5',
+    reorderPoint: cantidad(form.reorderPoint),
+    maxStock: cantidad(form.maxStock),
+    wholesalePrice: dineroOpcional(form.wholesalePrice),
+    wholesaleMinQty: cantidad(form.wholesaleMinQty),
     packUnit: opcional(form.packUnit),
-    packSize: opcional(form.packSize),
-    packPrice: opcional(form.packPrice),
+    packSize: cantidad(form.packSize),
+    packPrice: dineroOpcional(form.packPrice),
     saleMode: form.saleMode,
-    quantityStep: opcional(form.quantityStep),
+    quantityStep: cantidad(form.quantityStep),
     productFamily: form.productFamily,
     imageUrl: opcional(form.imageUrl),
     isPublished: form.isPublished,
@@ -81,6 +89,7 @@ export const PRODUCT_FIELD_LABELS: Record<string, string> = {
     name: 'Nombre del producto',
     sku: 'SKU / Código',
     description: 'Descripción',
+    brand: 'Marca',
     category: 'Categoría',
     unit: 'Unidad',
     price: 'Precio de venta',

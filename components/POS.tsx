@@ -29,6 +29,7 @@ import { PosSaleResultSheet } from './pos/PosSaleResultSheet';
 import { PosSaleHeader } from './pos/PosSaleHeader';
 import { PosMobileCheckoutBar } from './pos/PosMobileCheckoutBar';
 import './pos/posWorkspace.css';
+import { useBarcodeInput, useBarcodeSession } from '../hooks/useBarcodeInput';
 import { PosCatalogPane } from './pos/PosCatalogPane';
 import { PosCashSheet } from './pos/PosCashSheet';
 import { CajaNicaCheckout } from './pos/CajaNicaCheckout';
@@ -615,8 +616,7 @@ const POS: React.FC = () => {
     // BARCODE SCANNER STATE
     const [scannerActive, setScannerActive] = useState(true);
     const [lastScanFeedback, setLastScanFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
-    const scanBufferRef = useRef('');
-    const scanTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const beginBarcodeScan = useBarcodeSession();
     const searchRef = useRef<HTMLInputElement>(null);
     const [scaleContext, setScaleContext] = useState<OfflineScaleContext | null>(null);
     const [scaleContextReady, setScaleContextReady] = useState(false);
@@ -1917,7 +1917,7 @@ const POS: React.FC = () => {
             profileVersion: profile.profileVersion,
             product: {
                 id: product.id,
-                name: product.name,
+                name: product.name, brand: product.brand ?? null,
                 unit: product.unit || mapping.sourceUnit,
                 price: product.price,
                 saleMode: product.saleMode ?? null,
@@ -1954,6 +1954,7 @@ const POS: React.FC = () => {
     }, [headers]);
 
     const handleBarcodeScan = useCallback(async (rawCode: string) => {
+        const isCurrentScan = beginBarcodeScan();
         const code = rawCode.trim();
         try {
             let routed: ReturnType<typeof routeScaleLabel> | null = null;
@@ -1963,6 +1964,7 @@ const POS: React.FC = () => {
                 const preview = navigator.onLine
                     ? await requestScalePreview(code, routed.label.profileId)
                     : previewFromOfflineContext(code, routed.label.profileId);
+                if (!isCurrentScan()) return;
                 acceptScalePreview(code, preview);
                 return;
             }
@@ -1973,7 +1975,8 @@ const POS: React.FC = () => {
             if (navigator.onLine && /^\d{13}$/.test(code)) {
                 try {
                     const preview = await requestScalePreview(code);
-                    acceptScalePreview(code, preview);
+                    if (!isCurrentScan()) return;
+                acceptScalePreview(code, preview);
                     void refreshScaleContext();
                     return;
                 } catch (error) {
@@ -1983,6 +1986,7 @@ const POS: React.FC = () => {
 
             // El router siempre intenta perfiles antes que SKU. Solo si ninguno
             // reconoce el código se permite el match exacto de catálogo.
+            if (!isCurrentScan()) return;
             const found = products.find(product => product.sku.toUpperCase() === code.toUpperCase());
             if (found) {
                 if (permiteStockNegativo !== true && Number.isFinite(found.stock) && found.stock <= 0) {
@@ -2008,6 +2012,7 @@ const POS: React.FC = () => {
             }
             throw new Error(`SKU "${code}" no encontrado`);
         } catch (error) {
+            if (!isCurrentScan()) return;
             trackQuantityStepFailure(error, 'scale_label');
             const message = error instanceof ScaleLabelError
                 ? error.message
@@ -2015,9 +2020,9 @@ const POS: React.FC = () => {
             playErrorBeep();
             setLastScanFeedback({ message, type: 'error' });
         } finally {
-            window.setTimeout(() => setLastScanFeedback(null), 3500);
+            window.setTimeout(() => { if (isCurrentScan()) setLastScanFeedback(null); }, 3500);
         }
-    }, [acceptScalePreview, addToCart, avisarProductoAgotado, permiteStockNegativo, previewFromOfflineContext, products, refreshScaleContext, requestScalePreview, scaleContext, scaleContextReady]);
+    }, [beginBarcodeScan, acceptScalePreview, addToCart, avisarProductoAgotado, permiteStockNegativo, previewFromOfflineContext, products, refreshScaleContext, requestScalePreview, scaleContext, scaleContextReady]);
 
     const confirmDuplicateScaleLabel = useCallback(() => {
         if (!pendingDuplicateScaleLabel) return;
@@ -2061,41 +2066,7 @@ const POS: React.FC = () => {
         }
     }, [appendScalePreview, pendingScaleLabelOverride]);
 
-    // ÚNICO listener global del lector wedge. Los inputs quedan fuera para que
-    // Enter siga confirmando formularios y no venda accidentalmente lo escrito.
-    useEffect(() => {
-        if (!scannerActive) return;
-        const handleScannerKey = (event: KeyboardEvent) => {
-            if (document.querySelector('[data-operational-alerts]')) {
-                scanBufferRef.current = '';
-                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-                return;
-            }
-            const target = event.target as HTMLElement;
-            const isInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
-            if (isInput) return;
-
-            if (event.key === 'Enter') {
-                const code = scanBufferRef.current.trim();
-                scanBufferRef.current = '';
-                if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-                if (code.length >= 2) {
-                    event.preventDefault();
-                    void handleBarcodeScan(code);
-                }
-                return;
-            }
-            if (event.key.length !== 1 || event.ctrlKey || event.metaKey || event.altKey) return;
-            scanBufferRef.current += event.key;
-            if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-            scanTimerRef.current = setTimeout(() => { scanBufferRef.current = ''; }, 120);
-        };
-        window.addEventListener('keydown', handleScannerKey, true);
-        return () => {
-            window.removeEventListener('keydown', handleScannerKey, true);
-            if (scanTimerRef.current) clearTimeout(scanTimerRef.current);
-        };
-    }, [handleBarcodeScan, scannerActive]);
+    useBarcodeInput(handleBarcodeScan, scannerActive);
 
     // ── Quitar con deshacer (P0-4) ─────────────────────────────────────────
     // Borrar una línea no pedía confirmación ni ofrecía vuelta atrás, y el
@@ -2504,7 +2475,7 @@ const POS: React.FC = () => {
     // ==========================================
     useEffect(() => {
         const handleHotkey = (e: KeyboardEvent) => {
-            if (document.querySelector('[data-operational-alerts]')) return;
+            if (document.querySelector('[data-operational-alerts], [data-camera-scanner]')) return;
             const paymentSheetShortcut = ['F2', 'F4', 'F7', 'F8', 'F9'].includes(e.key) || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'k' || e.key === 'Enter'));
             if ((showPaymentOptions || showCashPreModal) && paymentSheetShortcut) {
                 e.preventDefault();
@@ -2776,7 +2747,7 @@ const POS: React.FC = () => {
             // Map to frontend Product and add to cart
             const newProd: Product = {
                 id: data.id,
-                name: data.name,
+                name: data.name, brand: data.brand ?? null,
                 sku: data.sku,
                 price: data.price,
                 costPrice: data.cost,
@@ -4720,7 +4691,7 @@ const POS: React.FC = () => {
                 </div>
             )}
 
-            <PosCatalogPane
+            <PosCatalogPane onCameraCode={handleBarcodeScan}
                 products={products}
                 quantitiesByProduct={cart.reduce((map, item) => map.set(item.id, (map.get(item.id) ?? 0) + item.quantity), new Map<string, number>())}
                 indiceProductos={indiceProductos}
@@ -5155,7 +5126,7 @@ const POS: React.FC = () => {
                                         title={item.name}
                                         className="nx-pos-line-name text-[15px] font-semibold text-slate-100 leading-snug line-clamp-2"
                                     >
-                                        {item.name}
+                                        {item.name}{item.brand && <span className="block text-xs font-medium text-slate-400">{item.brand}</span>}
                                     </h4>
 
                                     {/* FILA 2 · precio · cantidad · total · quitar */}

@@ -20,15 +20,16 @@
  */
 
 import Decimal from 'decimal.js';
-import { validateQuantity } from './quantity';
+import { MAX_QUANTITY, validateQuantity } from './quantity';
 
-export type ImportedSaleMode = 'COUNTED' | 'MEASURED';
+export type ImportedSaleMode = 'COUNTED' | 'MEASURED' | 'LEGACY';
 export type ImportedProductFamily = 'GENERAL' | 'MEAT' | 'POULTRY' | 'ANIMAL_FEED' | 'AGRO_INPUT' | 'VETERINARY';
 
 export interface ParsedProduct {
     sku: string;
     nombre: string;
     categoria: string;
+    marca?: string;
     precio: number;
     costo: number;
     stock: number;
@@ -51,11 +52,15 @@ export interface ParsedRow {
     data: ParsedProduct;
     valid: boolean;
     errors: string[];
+    /** Sólo las celdas presentes pueden convertirse en cambios de catálogo. */
+    providedFields: CanonicalField[];
+    transportValues: Partial<Record<CanonicalField, string>>;
+    source: Record<string, unknown>;
 }
 
 export type CanonicalField =
     | 'sku' | 'nombre' | 'precio' | 'costo' | 'stock'
-    | 'minStock' | 'categoria' | 'unidad' | 'descripcion'
+    | 'minStock' | 'marca' | 'categoria' | 'unidad' | 'descripcion'
     | 'modoVenta' | 'pasoCantidad' | 'familiaProducto'
     | 'unidadEmpaque' | 'tamanoEmpaque' | 'precioEmpaque'
     | 'requiereLote' | 'ivaExento';
@@ -79,6 +84,7 @@ export interface ParseResult {
 /** minúsculas, sin tildes/diéresis, sin puntuación, espacios colapsados. */
 export function normalizeKey(header: string): string {
     return String(header)
+        .replace(/([a-z])([A-Z])/g, '$1 $2')
         .normalize('NFD')
         .replace(/[\u0300-\u036f]/g, '')   // tildes fuera: Código → codigo
         .toLowerCase()
@@ -99,6 +105,7 @@ const SYNONYMS: Record<CanonicalField, string[]> = {
     costo: ['costo', 'cost', 'costo compra', 'costo de compra', 'costo unitario', 'compra', 'p costo', 'pc', 'costprice'],
     stock: ['stock', 'existencia', 'existencias', 'cantidad', 'inventario', 'qty', 'cant', 'disponible', 'unidades'],
     minStock: ['minstock', 'min stock', 'stock minimo', 'minimo', 'min', 'reorden', 'punto de reorden'],
+    marca: ['marca', 'brand', 'marca comercial'],
     categoria: ['categoria', 'category', 'rubro', 'familia', 'linea', 'grupo', 'departamento', 'seccion', 'tipo'],
     unidad: ['unidad', 'unit', 'medida', 'unidad de medida', 'um', 'presentacion', 'empaque'],
     // 'descripcion' es secundaria: si el archivo NO trae columna de nombre,
@@ -108,11 +115,11 @@ const SYNONYMS: Record<CanonicalField, string[]> = {
     pasoCantidad: ['paso cantidad', 'paso de cantidad', 'quantity step', 'quantitystep', 'incremento', 'precision cantidad'],
     // `familia` solo conserva su significado histórico de categoría. Para la
     // clasificación operativa nueva exigimos un encabezado no ambiguo.
-    familiaProducto: ['familia producto', 'familia de producto', 'product family', 'productfamily', 'giro producto'],
+    familiaProducto: ['familia producto', 'familia de producto', 'familia operativa', 'product family', 'productfamily', 'giro producto'],
     unidadEmpaque: ['unidad empaque', 'unidad de empaque', 'pack unit', 'packunit', 'tipo empaque', 'empaque compra'],
     tamanoEmpaque: ['tamano empaque', 'tamano de empaque', 'pack size', 'packsize', 'unidades por empaque', 'contenido empaque', 'factor empaque'],
     precioEmpaque: ['precio empaque', 'precio de empaque', 'precio por empaque', 'pack price', 'packprice'],
-    requiereLote: ['requiere lote', 'seguimiento lote', 'seguimiento de lote', 'control lote', 'control de lote', 'batch tracking', 'requires batch tracking', 'lote'],
+    requiereLote: ['requiere lote', 'seguimiento lote', 'seguimiento de lote', 'control lote', 'control de lote', 'control por lote', 'batch tracking', 'requires batch tracking', 'lote'],
     ivaExento: ['iva exento', 'exento iva', 'exento de iva', 'ivaexento', 'tax exempt'],
 };
 
@@ -162,10 +169,10 @@ export function acceptedHeaders(field: CanonicalField): string[] {
  * Parsea un monto "a la nica". Devuelve null si es ilegible — el caller decide
  * si eso rechaza la fila (precio) o usa default (costo/stock vacíos).
  */
-export function parseMoneyNi(raw: unknown): number | null {
+export function parseMoneyTextNi(raw: unknown): string | null {
     if (raw === null || raw === undefined) return null;
     if (typeof raw === 'number') {
-        return Number.isFinite(raw) ? raw : null;
+        return Number.isFinite(raw) ? String(raw) : null;
     }
     let s = String(raw)
         .replace(/\u00A0/g, ' ')               // NBSP de Excel
@@ -196,8 +203,13 @@ export function parseMoneyNi(raw: unknown): number | null {
     // Solo punto (o nada): el punto ya es decimal (385.00).
 
     if (!/^-?\d+(\.\d+)?$/.test(s)) return null;
-    const n = parseFloat(s);
-    return Number.isFinite(n) ? n : null;
+    const value = new Decimal(s);
+    return value.isFinite() && Number.isFinite(value.toNumber()) ? value.toFixed() : null;
+}
+
+export function parseMoneyNi(raw: unknown): number | null {
+    const value = parseMoneyTextNi(raw);
+    return value === null ? null : Number(value);
 }
 
 /**
@@ -207,13 +219,14 @@ export function parseMoneyNi(raw: unknown): number | null {
 export function normalizeSku(raw: unknown): string {
     if (raw === null || raw === undefined) return '';
     if (typeof raw === 'number') {
-        return Number.isFinite(raw) ? raw.toFixed(0) : '';
+        return Number.isSafeInteger(raw) && raw >= 0 ? String(raw) : '';
     }
     const s = String(raw).trim();
     // "7.43E+12" / "7,43E+12" pegado como texto
     if (/^\d+([.,]\d+)?e\+?\d+$/i.test(s)) {
-        const n = Number(s.replace(',', '.'));
-        if (Number.isFinite(n)) return n.toFixed(0);
+        const n = new Decimal(s.replace(',', '.'));
+        if (n.isFinite() && n.isInteger() && n.lessThan('1e100')) return n.toFixed(0);
+        return '';
     }
     return s.toUpperCase();
 }
@@ -222,6 +235,7 @@ const text = (value: unknown): string =>
     value === null || value === undefined ? '' : String(value).trim();
 
 const SALE_MODE_ALIASES: Record<string, ImportedSaleMode> = {
+    legacy: 'LEGACY', legado: 'LEGACY',
     counted: 'COUNTED', contado: 'COUNTED', unidad: 'COUNTED', unidades: 'COUNTED', piezas: 'COUNTED', pieza: 'COUNTED',
     measured: 'MEASURED', medido: 'MEASURED', peso: 'MEASURED', 'por peso': 'MEASURED',
     pesable: 'MEASURED', granel: 'MEASURED', medida: 'MEASURED', 'por medida': 'MEASURED',
@@ -267,7 +281,7 @@ export function parseBooleanNi(raw: unknown): boolean | null {
 }
 
 /** Decimal de cantidad (hasta 4 d.p.); `,` se admite como separador decimal. */
-export function parseQuantityNi(raw: unknown): number | null {
+function parseQuantityTextNi(raw: unknown, allowZero = false): string | null {
     if (raw === null || raw === undefined || text(raw) === '') return null;
     let normalized = text(raw).replace(/\s+/g, '');
     if (normalized.includes(',') && normalized.includes('.')) {
@@ -282,11 +296,17 @@ export function parseQuantityNi(raw: unknown): number | null {
     if (!/^\d+(\.\d+)?$/.test(normalized)) return null;
     try {
         const value = new Decimal(normalized);
-        if (!value.isFinite() || !value.greaterThan(0) || value.decimalPlaces() > 4) return null;
-        return value.toNumber();
+        if (!value.isFinite() || value.isNegative() || (!allowZero && value.isZero())
+            || value.decimalPlaces() > 4 || value.greaterThan(MAX_QUANTITY)) return null;
+        return value.toFixed();
     } catch {
         return null;
     }
+}
+
+export function parseQuantityNi(raw: unknown): number | null {
+    const value = parseQuantityTextNi(raw);
+    return value === null ? null : Number(value);
 }
 
 // ── Parseo de filas ──────────────────────────────────────────────────────────
@@ -308,8 +328,19 @@ export function parseProductRows(
     const seenSku = new Map<string, number>(); // sku → fila Excel donde apareció
 
     const rows: ParsedRow[] = jsonData.map((raw, i) => {
-        const excelRow = firstDataRow + i;
+        const excelRow = Number.isInteger(raw.__rowNum__) ? Number(raw.__rowNum__) + 1 : firstDataRow + i;
         const errors: string[] = [];
+        const providedFields = (Object.keys(mapping) as CanonicalField[])
+            .filter(field => text(cell(raw, mapping[field])) !== '');
+        const transportValues: Partial<Record<CanonicalField, string>> = {};
+        for (const field of ['precio', 'costo', 'precioEmpaque'] as const) {
+            const value = parseMoneyTextNi(cell(raw, mapping[field]));
+            if (value !== null) transportValues[field] = value;
+        }
+        for (const field of ['stock', 'minStock', 'pasoCantidad', 'tamanoEmpaque'] as const) {
+            const value = parseQuantityTextNi(cell(raw, mapping[field]), field === 'stock' || field === 'minStock');
+            if (value !== null) transportValues[field] = value;
+        }
 
         const sku = normalizeSku(cell(raw, mapping.sku));
         const nombre = text(cell(raw, mapping.nombre));
@@ -323,17 +354,21 @@ export function parseProductRows(
         const costoRaw = cell(raw, mapping.costo);
         const costo = (costoRaw === undefined || text(costoRaw) === '') ? 0 : parseMoneyNi(costoRaw);
         const stockRaw = cell(raw, mapping.stock);
-        const stock = (stockRaw === undefined || text(stockRaw) === '') ? 0 : parseMoneyNi(stockRaw);
+        const stock = text(stockRaw) === '' ? 0 : transportValues.stock === undefined ? null : Number(transportValues.stock);
         const minRaw = cell(raw, mapping.minStock);
-        const minStock = (minRaw === undefined || text(minRaw) === '') ? 5 : parseMoneyNi(minRaw);
+        const minStock = text(minRaw) === '' ? 5 : transportValues.minStock === undefined ? null : Number(transportValues.minStock);
 
+        const marca = text(cell(raw, mapping.marca));
+        if (marca.length > 100) errors.push('Marca: máximo 100 caracteres');
         const categoria = text(cell(raw, mapping.categoria)) || 'General';
         const unidad = text(cell(raw, mapping.unidad)) || 'unidad';
         const descripcion = text(cell(raw, mapping.descripcion));
         const modoRaw = cell(raw, mapping.modoVenta);
-        const modoVenta = text(modoRaw) === '' ? 'COUNTED' : parseImportedSaleMode(modoRaw);
+        const modoVenta = text(modoRaw) === ''
+            ? (['g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro'].includes(unidad.toLowerCase()) ? 'MEASURED' : 'COUNTED')
+            : parseImportedSaleMode(modoRaw);
         const pasoRaw = cell(raw, mapping.pasoCantidad);
-        const defaultStep = modoVenta === 'MEASURED' ? 0.001 : 1;
+        const defaultStep = modoVenta === 'LEGACY' ? 0.0001 : modoVenta === 'MEASURED' ? 0.001 : 1;
         const pasoCantidad = text(pasoRaw) === '' ? defaultStep : parseQuantityNi(pasoRaw);
         const familiaRaw = cell(raw, mapping.familiaProducto);
         const familiaProducto = text(familiaRaw) === '' ? 'GENERAL' : parseImportedProductFamily(familiaRaw);
@@ -349,7 +384,8 @@ export function parseProductRows(
         const ivaExento = text(ivaExentoRaw) === '' ? false : parseBooleanNi(ivaExentoRaw);
 
         if (!sku) errors.push('Sin código (SKU)');
-        if (sku.length > 50) errors.push('Código muy largo (máx. 50)');
+        if (typeof cell(raw, mapping.sku) === 'number' && !sku) errors.push('Código numérico sin precisión: formateá la columna como texto y verificá el código original');
+        if (sku.length > 100) errors.push('Código muy largo (máx. 100)');
         if (!nombre) errors.push('Sin nombre');
         if (nombre.length > 200) errors.push('Nombre muy largo (máx. 200)');
         if (precio === null) errors.push(`Precio ilegible: "${text(precioRaw)}"`);
@@ -388,21 +424,23 @@ export function parseProductRows(
         }
 
         if (modoVenta && pasoCantidad !== null) {
+            const effectiveMode = modoVenta === 'LEGACY' ? 'MEASURED' : modoVenta;
             try {
                 // Valida el propio paso (COUNTED exige entero) y cada cantidad
                 // física importada como múltiplo exacto de ese paso.
-                validateQuantity(pasoCantidad, { saleMode: modoVenta, quantityStep: pasoCantidad });
+                validateQuantity(transportValues.pasoCantidad ?? pasoCantidad, { saleMode: effectiveMode, quantityStep: transportValues.pasoCantidad ?? pasoCantidad });
                 for (const [label, value] of [['Existencia', stock], ['Mínimo', minStock]] as const) {
+                    if (!providedFields.includes(label === 'Existencia' ? 'stock' : 'minStock')) continue;
                     if (value === null || value === 0) continue;
                     try {
-                        validateQuantity(value, { saleMode: modoVenta, quantityStep: pasoCantidad });
+                        validateQuantity(transportValues[label === 'Existencia' ? 'stock' : 'minStock'] ?? value, { saleMode: effectiveMode, quantityStep: pasoCantidad });
                     } catch (error) {
                         errors.push(`${label}: ${error instanceof Error ? error.message : 'cantidad inválida'}`);
                     }
                 }
                 if (tamanoEmpaque !== null) {
                     try {
-                        validateQuantity(tamanoEmpaque, { saleMode: modoVenta, quantityStep: pasoCantidad });
+                        validateQuantity(transportValues.tamanoEmpaque ?? tamanoEmpaque, { saleMode: effectiveMode, quantityStep: pasoCantidad });
                     } catch (error) {
                         errors.push(`Tamaño de empaque: ${error instanceof Error ? error.message : 'cantidad inválida'}`);
                     }
@@ -426,7 +464,7 @@ export function parseProductRows(
         return {
             excelRow,
             data: {
-                sku, nombre, categoria,
+                sku, nombre, categoria, marca,
                 precio: precio ?? 0,
                 costo: costo ?? 0,
                 stock: stock ?? 0,
@@ -443,16 +481,36 @@ export function parseProductRows(
             },
             valid: errors.length === 0,
             errors,
+            providedFields,
+            transportValues,
+            source: { ...raw },
         };
     });
 
     return { rows, resolution };
 }
 
-/** Azúcar: leer encabezados de la primera fila cruda de sheet_to_json. */
+/** Incluye columnas aunque alguna de sus primeras celdas esté vacía. */
 export function parseWorkbookRows(jsonData: Record<string, unknown>[]): ParseResult {
-    const headers = jsonData.length > 0 ? Object.keys(jsonData[0]) : [];
+    const headers = [...new Set(jsonData.flatMap(row => Object.keys(row)))].filter(key => key !== '__rowNum__');
     return parseProductRows(jsonData, resolveColumns(headers));
+}
+
+/** Actualiza sólo lo que el archivo expresa. Existencias requieren alta explícita. */
+export function buildImportedProductPayload(row: ParsedRow, options: { includeInitialStock?: boolean } = {}) {
+    const names: Record<CanonicalField, string> = {
+        sku: 'sku', nombre: 'name', precio: 'price', costo: 'cost', stock: 'stock', minStock: 'minStock',
+        marca: 'brand', categoria: 'category', unidad: 'unit', descripcion: 'description', modoVenta: 'saleMode',
+        pasoCantidad: 'quantityStep', familiaProducto: 'productFamily', unidadEmpaque: 'packUnit',
+        tamanoEmpaque: 'packSize', precioEmpaque: 'packPrice', requiereLote: 'requiresBatchTracking', ivaExento: 'ivaExento',
+    };
+    const payload: Record<string, unknown> = { sku: row.data.sku, name: row.data.nombre, price: row.transportValues.precio ?? String(row.data.precio), excelRow: row.excelRow };
+    for (const field of row.providedFields) {
+        if (field === 'stock' && !options.includeInitialStock) continue;
+        if ((field === 'modoVenta' || field === 'pasoCantidad') && row.data.modoVenta === 'LEGACY') continue;
+        payload[names[field]] = row.transportValues[field] ?? row.data[field];
+    }
+    return payload;
 }
 
 // ── Troceado (auditoría E4: el tope de 500 se descubría al final) ────────────
@@ -464,8 +522,9 @@ export interface ChunkedImportResult {
     updated: number;
     /** Mensajes de error del servidor, acumulados de todos los lotes. */
     serverErrors: string[];
-    /** Lotes que fallaron completos (red/500): filas para reintentar. */
+    /** Lotes sin respuesta confirmada: verificar antes de decidir un reintento. */
     failedChunks: number;
+    uncertainRows: { excelRow: number | null; sku: string; reason: string }[];
 }
 
 /**
@@ -479,7 +538,7 @@ export async function importInChunks<T>(
     onProgress?: (done: number, total: number) => void,
     chunkSize = IMPORT_CHUNK_SIZE,
 ): Promise<ChunkedImportResult> {
-    const result: ChunkedImportResult = { created: 0, updated: 0, serverErrors: [], failedChunks: 0 };
+    const result: ChunkedImportResult = { created: 0, updated: 0, serverErrors: [], failedChunks: 0, uncertainRows: [] };
     for (let i = 0; i < items.length; i += chunkSize) {
         const chunk = items.slice(i, i + chunkSize);
         try {
@@ -489,7 +548,11 @@ export async function importInChunks<T>(
             if (Array.isArray(r.errors)) result.serverErrors.push(...r.errors);
         } catch (e: any) {
             result.failedChunks++;
-            result.serverErrors.push(`Lote de ${chunk.length} productos no se pudo enviar: ${e?.message || 'error de red'}`);
+            result.serverErrors.push(`Lote de ${chunk.length} productos sin confirmación: ${e?.message || 'error de red'}`);
+            for (const item of chunk) {
+                const row = item as { excelRow?: number; sku?: string; data?: { sku?: string } };
+                result.uncertainRows.push({ excelRow: row.excelRow ?? null, sku: row.sku ?? row.data?.sku ?? '—', reason: e?.message || 'Sin respuesta del servidor' });
+            }
         }
         onProgress?.(Math.min(i + chunkSize, items.length), items.length);
     }

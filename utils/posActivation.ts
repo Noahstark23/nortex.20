@@ -1,6 +1,7 @@
 import Decimal from 'decimal.js';
 import { resolveLegacySaleMode } from './legacySaleMode';
 import { validateNonNegativeQuantity } from './quantity';
+import { resolveProductQuantityRules } from './productQuantityRules';
 
 export interface QuickProductDraft {
     name: string;
@@ -16,16 +17,9 @@ export interface PosQuantityProduct {
     unit?: string | null;
 }
 
-/**
- * Compatibilidad del catálogo legacy:
- * antes de `saleMode`, el alta común del POS/inventario sembraba productos por
- * pieza con `unit = "unidad"` y sin reglas físicas. Si el POS los interpreta
- * como medidos, el `+` vuelve a sumar 0.0001 y bloquea la venta.
- */
-
 /** Mantiene fracciones legacy medidas, pero un producto contado usa enteros. */
 export function effectivePosSaleMode(product: PosQuantityProduct): 'COUNTED' | 'MEASURED' {
-    return resolveLegacySaleMode(product);
+    return resolveProductQuantityRules(product).saleMode;
 }
 
 export function effectivePosQuantityStep(product: PosQuantityProduct): number {

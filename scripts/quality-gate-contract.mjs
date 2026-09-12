@@ -10,6 +10,13 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/productRefresh.integration.test.ts',
   'tests/fiscalFlow.integration.test.ts',
   'tests/inventoryAdjust.integration.test.ts',
+  'tests/bodegaAdjustment.integration.test.ts',
+  'tests/bodegaReorder.integration.test.ts',
+  'tests/productImport.integration.test.ts',
+  'tests/productDeletion.integration.test.ts',
+  'tests/warehouseTopology.integration.test.ts',
+  'tests/bodegaStockCountHistory.integration.test.ts',
+  'tests/bodegaPurchaseCashAuthority.integration.test.ts',
   'tests/batchWarehouseManualMovements.test.ts',
   'tests/purchaseFlow.integration.test.ts',
   'tests/purchaseRegistration.integration.test.ts',
@@ -36,6 +43,8 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/procurementPhaseTwoB.integration.test.ts',
   'tests/returnIdempotency.integration.test.ts',
   'tests/stockCountWarehouse.integration.test.ts',
+  'tests/productWarehouseSnapshot.integration.test.ts',
+  'tests/productBrandCamera.integration.test.ts',
   'tests/delivery.mysql.integration.test.ts',
 ];
 
