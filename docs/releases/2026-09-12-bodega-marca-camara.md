@@ -1,6 +1,6 @@
 # Candidato de bodega, marca y cámara — 2026-09-12
 
-Estado: preparado para revisión; no desplegado. Base remota: `8b41ef1fb37dbe86405bae696ed2228ba2ee4dca`.
+Estado: PR #215 en draft, CI pendiente; no desplegado. Base remota: `8b41ef1fb37dbe86405bae696ed2228ba2ee4dca`.
 
 Integra los tres cambios locales de bodega, experiencia de recepción y marca/lector sobre main vigente. Conserva disponibilidad farmacéutica, refresco por IDs, imágenes, tratamiento de IVA y precio de venta de compras. El checkout original y las demos locales permanecen intactos.
 
@@ -11,7 +11,7 @@ Integra los tres cambios locales de bodega, experiencia de recepción y marca/le
 - MySQL 8 descartable: 46 suites, 414 casos aprobados, cero omisiones. Evidencia en `docs/evidence/bodega-release-20260912/integration-summary.json`.
 - Diseño: 113 archivos, sin incumplimientos.
 - Build de producción y prerender: aprobados; 71 rutas y sitemap de 72 URLs.
-- Mutación global: en ejecución al registrar este expediente; no acreditada. Umbral global conservado, con los dos helpers nuevos dentro del alcance.
+- Mutación dirigida: 365/365 detectados, 100%, sin sobrevivientes ni casos sin cobertura, sobre seis módulos/rangos afectados. Reproducible con `mise exec -- npx stryker run stryker.bodega.config.mjs`. La corrida global se interrumpió al detectar un rango desplazado por tres líneas en schemas; no se acredita. Se corrigió el rango completo de canonicalizeCloseShiftPayload a 871–883 y se conservó el umbral global de 100, con los dos helpers nuevos dentro de su alcance.
 - Servidor: 14.131 → 13.190 líneas; POS: 5.924 → 5.895. Presupuestos reducidos, sin excepciones adicionales.
 
 Las capturas de las entregas anteriores acreditan sus candidatos locales, no este candidato combinado ni producción. La cámara física, permisos de Android/iOS y lectura óptica requieren prueba en dispositivo real.

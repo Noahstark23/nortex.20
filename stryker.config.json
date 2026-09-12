@@ -95,7 +95,7 @@
     "backend/services/stockService.ts:58-71",
     "backend/services/journalPosting.ts:212-355",
     "backend/services/legacyShiftCloseService.ts:96-106",
-    "backend/validation/schemas.ts:868-880",
+    "backend/validation/schemas.ts:871-883",
     "backend/validation/saleCorrectionSchemas.ts:21-35",
     "utils/posProductMapper.ts",
     "backend/services/accounting.ts:152-159",
