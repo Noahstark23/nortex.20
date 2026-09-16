@@ -317,13 +317,26 @@ export function resolveUiMode(tenantType: string, stored: string | null): UiMode
 }
 
 /**
- * Modo simple del POS. La investigación de Square, Shopify, Lightspeed,
- * Loyverse, Alegra y Tiendanube converge en la misma capa inicial:
- * producto → carrito → cobro. Ferretería y farmacia no necesitan aprender una
- * pantalla más compleja para hacer esa tarea; las herramientas avanzadas siguen
- * disponibles al elegir explícitamente el modo completo.
+ * Modo simple del POS — DESACOPLADO del menú a propósito. Son dos políticas
+ * distintas y tienen que seguir siéndolo:
+ *
+ *   menú simple  = menos etiquetas de jerga ERP en la barra lateral.
+ *   POS simple   = se esconden DESCUENTO (global y por línea), tiquetera,
+ *                  parqueo, devoluciones e importación.
+ *
+ * Lo primero es un alivio para cualquier giro. Lo segundo, en un mostrador que
+ * no sea de pulpería, es una mutilación: una ferretería negocia el precio de
+ * frente al cliente. Por eso el default simple del POS es SOLO pulpería, aunque
+ * el menú de esos giros sí arranque simple (resolveUiMode). La elección
+ * explícita del usuario (mismo UI_MODE_KEY) manda en los dos sentidos.
+ *
+ * NO cambiar esto a `!== 'LENDER'` para "unificarlo" con resolveUiMode. Ya pasó
+ * —944cc94, 2026-08-22— y dejó sin descuento en el POS a toda ferretería,
+ * farmacia y distribuidora con clientes reales, hasta que el negocio lo reportó
+ * el 2026-09-16. Conducta fijada en tests/posDescuentoModoSimple.test.tsx;
+ * episodio en docs/releases/2026-09-16-descuento-pos-modo-simple.md.
  */
 export function resolvePosSimple(tenantType: string, stored: string | null): boolean {
     if (stored === 'simple' || stored === 'full') return stored === 'simple';
-    return tenantType !== 'LENDER';
+    return tenantType === 'PULPERIA';
 }

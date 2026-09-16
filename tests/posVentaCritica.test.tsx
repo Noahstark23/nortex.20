@@ -127,8 +127,13 @@ beforeEach(() => {
     posteos = [];
     pausarRespuestaVenta = false;
     resolverRespuestaVenta = null;
-    localStorage.setItem('nortex_tenant_data', JSON.stringify({ id: 't1', businessName: 'Pulpería QA' }));
-    localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', name: 'Cajera', role: 'CASHIER' }));
+    // El giro va EXPLÍCITO. Esta caracterización describe el POS en modo simple
+    // y el modo simple depende del giro (resolvePosSimple): sin `type`, el
+    // fixture se apoyaba en que el POS arrancaba simple para todos —que era
+    // justo el bug del descuento (ver tests/posDescuentoModoSimple.test.tsx)—.
+    // La pulpería es la que este fixture dice ser desde su primer día.
+    localStorage.setItem('nortex_tenant_data', JSON.stringify({ id: 't1', businessName: 'Pulpería QA', type: 'PULPERIA' }));
+    localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', name: 'Cajera', role: 'CASHIER', tenant: { id: 't1', type: 'PULPERIA' } }));
     localStorage.setItem('token', 'tok-qa');
     doblarFetch();
 });

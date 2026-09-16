@@ -358,12 +358,18 @@ describe('NortexGPT dentro del negocio', () => {
         });
         const user = userEvent.setup();
         render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><POS /><NortexAssistantLauncher /></VentaEnCursoProvider></MemoryRouter>);
-        await user.type(await screen.findByPlaceholderText('Escaneá o buscá un producto'), 'TOR-1{Enter}');
+        // Buscador y botón de cobro cambian de rótulo entre POS simple y
+        // completo, y este caso trata del bloqueo de atajos de NortexGPT, no
+        // del modo. Se aceptan los dos rótulos —conservando el monto, que sí
+        // importa— igual que en tests/posVentaCritica.test.tsx. Antes esto
+        // dependía de que TODA ferretería arrancara en POS simple, que era el
+        // bug del descuento (tests/posDescuentoModoSimple.test.tsx).
+        await user.type(await screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i), 'TOR-1{Enter}');
         const quantity = screen.getByRole('textbox', { name: 'Cantidad de Tornillo QA en unidad' }); expect(quantity).toHaveValue('1');
         await open(); const close = screen.getByRole('button', { name: 'Cerrar NortexGPT' }); await waitFor(() => expect(close).toHaveFocus());
         await user.keyboard('{F9}{F4}TOR-1'); expect(quantity).toHaveValue('1'); expect(screen.queryByRole('textbox', { name: /Efectivo recibido en córdobas/ })).not.toBeInTheDocument();
         await user.click(close); await waitFor(() => expect(screen.queryByRole('dialog', { name: 'NortexGPT' })).not.toBeInTheDocument());
-        screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/ }).focus(); await user.keyboard('TOR-1{Enter}');
+        screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo|EFECTIVO.*C\$ 25\.00/ }).focus(); await user.keyboard('TOR-1{Enter}');
         await waitFor(() => expect(quantity).toHaveValue('2')); expect(fetcher.mock.calls.some(([url]) => url === '/api/sales')).toBe(false);
     });
     it('una falla transitoria de acceso oculta datos y conserva la corrección hasta reconectar', async () => {
