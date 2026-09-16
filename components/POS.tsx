@@ -8,7 +8,7 @@ import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
-import { useUiMode } from '../hooks/useUiMode';
+import { usePosSimpleMode } from '../hooks/useUiMode';
 import { ToastViewport, useToast } from './ui/Toast';
 import { evaluarCarrito, textoAviso, textoResumen, AvisoStock } from '../utils/stockAlert';
 import { buscarProductos, resolverEnterBusqueda } from '../utils/posSearch';
@@ -526,8 +526,8 @@ const POS: React.FC = () => {
     // carrito vacío. En un mostrador, 200 ms bastan para que esto ocurra.
     const parkingLockRef = useRef(false);
 
-    const [uiMode] = useUiMode();
-    const simpleMode = uiMode === 'simple';
+    // NO es el modo del menú: el POS tiene política propia (resolvePosSimple).
+    const simpleMode = usePosSimpleMode();
     const guidedSimpleMode = simpleMode;
     const [operatorRole] = useState<string>(() => currentOperatorRole());
     const canApproveScaleLabelTotal = canApproveExceptionalScaleLabel(operatorRole);
@@ -4806,7 +4806,7 @@ const POS: React.FC = () => {
                     <div className="px-4 pt-3">
                         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-3 py-2 flex items-center gap-2">
                             <div className="w-7 h-7 bg-emerald-200 rounded-full flex items-center justify-center text-emerald-400 font-bold text-xs">
-                                {currentShift.employee.firstName[0]}{currentShift.employee.lastName[0]}
+                                {currentShift.employee.firstName?.[0]}{currentShift.employee.lastName?.[0]}
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-bold text-emerald-300 truncate">{currentShift.employee.firstName} {currentShift.employee.lastName}</p>
