@@ -321,14 +321,21 @@ export function resolveUiMode(tenantType: string, stored: string | null): UiMode
  * distintas y tienen que seguir siéndolo:
  *
  *   menú simple  = menos etiquetas de jerga ERP en la barra lateral.
- *   POS simple   = se esconden DESCUENTO (global y por línea), tiquetera,
- *                  parqueo, devoluciones e importación.
+ *   POS simple   = se esconden DESCUENTO (global y por línea), escáner,
+ *                  tiquetera, "Nuevo" producto completo e importación Excel,
+ *                  más saldo de caja, pulso del día y atajos de teclado.
+ *                  (Verificado en el código al 2026-09-16. Aparcar y
+ *                  devoluciones NO se esconden: siguen en los dos modos. Una
+ *                  descripción vieja de esta lista decía lo contrario; si vas a
+ *                  citarla, contala contra el código antes.)
  *
- * Lo primero es un alivio para cualquier giro. Lo segundo, en un mostrador que
- * no sea de pulpería, es una mutilación: una ferretería negocia el precio de
- * frente al cliente. Por eso el default simple del POS es SOLO pulpería, aunque
- * el menú de esos giros sí arranque simple (resolveUiMode). La elección
- * explícita del usuario (mismo UI_MODE_KEY) manda en los dos sentidos.
+ * Esconder configuración de una sola vez —tiquetera, escáner, importación— es
+ * un alivio para cualquier giro. El DESCUENTO no es eso: es la operación más
+ * común del mostrador después de cobrar, y una ferretería negocia precio de
+ * frente al cliente. Meterlo en la misma bolsa fue un error de categoría.
+ * Por eso el default simple del POS es SOLO pulpería, aunque el menú de esos
+ * giros sí arranque simple (resolveUiMode). La elección explícita del usuario
+ * (mismo UI_MODE_KEY) manda en los dos sentidos.
  *
  * NO cambiar esto a `!== 'LENDER'` para "unificarlo" con resolveUiMode. Ya pasó
  * —944cc94, 2026-08-22— y dejó sin descuento en el POS a toda ferretería,

@@ -168,11 +168,21 @@ es la regresión que habría causado el `firstName[0]` sin blindar.
   código (desde `944cc94`); cuándo llegó a cada tenant depende de las promociones, y
   eso se establece con `docs/releases/` y el historial de despliegues, no con este
   documento.
-- **No se auditó qué más se perdió.** El modo simple también esconde tiquetera,
-  parqueo, devoluciones e importación. Este arreglo se las devuelve a esos giros junto
-  con el descuento, pero **no se revisó uno por uno** que cada uno funcione bien ahí.
-  Queda pendiente y se declara: no es lo mismo que un control vuelva a estar visible a
-  que esté verificado.
+- **No se auditó qué más se devuelve.** Además del descuento, el modo simple esconde
+  **escáner, tiquetera, "Nuevo" producto completo e importación Excel**, más saldo de
+  caja, pulso del día y atajos de teclado. Este arreglo se los devuelve a esos giros
+  junto con el descuento, y **no se revisó uno por uno** que cada uno funcione bien
+  ahí. Que un control vuelva a estar visible no es lo mismo que verificado.
+
+  > **Corrección (2026-09-16).** Una versión anterior de este expediente y del
+  > docstring de `resolvePosSimple` decían que el modo simple esconde además
+  > *parqueo* y *devoluciones*. **No es cierto en el código actual**: "Aparcar venta"
+  > (F4), "Ventas aparcadas" y "Correcciones y aprobaciones" están en los dos modos.
+  > Esa lista venía del mensaje de R2.6 (2026-08-11), era correcta entonces, y se
+  > arrastró sin contrastarla contra el código. El alcance real de lo que vuelve es
+  > más chico de lo que se declaró primero. Verificado enumerando los usos de
+  > `guidedSimpleMode` en `components/POS.tsx`, `components/pos/PosCatalogPane.tsx` y
+  > `components/pos/POSCatalogAdminTools.tsx`.
 - **La pulpería sigue sin descuento por defecto.** Es la conducta original de R2.6 y se
   conserva a propósito, con prueba que la fija. Si el negocio decide que la pulpería
   también lo necesita —que es discutible, porque ahí se regatea— debe ser un cambio
