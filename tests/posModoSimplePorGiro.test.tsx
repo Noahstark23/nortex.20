@@ -8,24 +8,30 @@ import React from 'react';
 import POS from '../components/POS';
 
 /**
- * REGRESIÓN REPORTADA POR EL NEGOCIO (2026-09-16): "el descuento del POS
- * desapareció". No se había borrado: quedó detrás de `guidedSimpleMode`, y el
- * POS empezó a arrancar en modo simple para TODO giro menos LENDER.
+ * EN QUÉ MODO DE POS CAE CADA GIRO.
  *
  * La política del POS y la del menú son deliberadamente distintas. R2.6
- * (12d91eb) las separó y dejó escrito el porqué: el modo simple del POS esconde
- * descuento, tiquetera, parqueo, devoluciones e importación, y ocultarle eso al
- * mostrador de una ferretería es una regresión real. Que el MENÚ de esa
- * ferretería arranque simple está bien; su POS, no.
+ * (12d91eb) las separó: que el MENÚ de una ferretería arranque simple está
+ * bien; su POS, no, porque el modo simple esconde herramientas de mostrador.
+ * Esa separación se perdió en dos pasos —`944cc94` invirtió el cuerpo de
+ * `resolvePosSimple` y borró el comentario que la explicaba; `5c5d307` dejó de
+ * llamarla y volvió a leer el modo del menú— y el negocio lo reportó el
+ * 2026-09-16 como "el descuento del POS desapareció".
  *
- * Esa separación se perdió en dos pasos: `944cc94` invirtió el cuerpo de
- * `resolvePosSimple` (`=== 'PULPERIA'` → `!== 'LENDER'`) y borró el comentario
- * que la explicaba; `5c5d307` dejó de llamarla y volvió a leer el modo del menú.
+ * ESTE ARCHIVO YA NO USA EL DESCUENTO COMO SONDA. Antes lo hacía, porque el
+ * descuento dependía del modo. Desde la decisión de producto del 2026-09-16 es
+ * visible SIEMPRE, en los dos modos (ver posDescuentoSiempreVisible.test.tsx):
+ * ya no distingue un modo del otro, y seguir usándolo sería medir con una regla
+ * que dejó de marcar.
  *
- * Estas pruebas fijan la CONDUCTA que se perdió, no la fórmula: montan el POS
- * de verdad y miran si el cajero puede aplicar un descuento. Una prueba sobre
- * `resolvePosSimple` en aislamiento habría seguido en verde durante todo el
- * período roto, porque el POS ni la llamaba.
+ * La sonda ahora es el rótulo del buscador, que sí cambia con el modo:
+ *   simple   → "Escaneá o buscá un producto"
+ *   completo → "Buscar o escanear"
+ *
+ * Lo que se protege es lo mismo y sigue importando: que nadie vuelva a unificar
+ * `resolvePosSimple` con `resolveUiMode`. Se fija montando el POS, no la
+ * fórmula: una prueba sobre la función en aislamiento habría seguido en verde
+ * durante todo el período roto, porque el POS ni la llamaba.
  */
 
 const PRODUCTO = {
@@ -121,7 +127,13 @@ const esperarPOSListo = async () => {
     ).toBeInTheDocument());
 };
 
-const descuentoGlobal = () => screen.queryByLabelText('Descuento global en porcentaje');
+/**
+ * La sonda del modo. El rótulo del buscador es lo más estable que distingue los
+ * dos modos: existe siempre, no depende del carrito ni del turno, y no hay que
+ * abrir ningún menú para verlo.
+ */
+const modoDelPOS = (): 'simple' | 'completo' =>
+    screen.queryByPlaceholderText('Escaneá o buscá un producto') ? 'simple' : 'completo';
 
 beforeEach(() => {
     respuestas = respuestasBase();
@@ -135,60 +147,59 @@ afterEach(() => {
     vi.unstubAllGlobals();
 });
 
-describe('POS · el descuento y el giro del negocio', () => {
-    it('una ferretería sin modo elegido conserva el Descuento Global', async () => {
-        // EL BUG EXACTO DEL REPORTE: nadie tocó el toggle y el descuento se fue.
+describe('POS · en qué modo cae cada giro', () => {
+    it('una ferretería sin modo elegido arranca en POS completo', async () => {
+        // EL BUG EXACTO DEL REPORTE: nadie tocó el toggle y el POS se simplificó.
         prepararTenant('FERRETERIA');
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).toBeInTheDocument();
+        expect(modoDelPOS()).toBe('completo');
     });
 
-    it('una farmacia sin modo elegido conserva el Descuento Global', async () => {
+    it('una farmacia sin modo elegido arranca en POS completo', async () => {
         prepararTenant('FARMACIA');
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).toBeInTheDocument();
+        expect(modoDelPOS()).toBe('completo');
     });
 
-    it('una distribuidora sin modo elegido conserva el Descuento Global', async () => {
+    it('una distribuidora sin modo elegido arranca en POS completo', async () => {
         prepararTenant('DISTRIBUIDORA');
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).toBeInTheDocument();
+        expect(modoDelPOS()).toBe('completo');
     });
 
-    it('la elección explícita del usuario manda: "simple" esconde el descuento en ferretería', async () => {
-        // El arreglo NO puede ser "mostrar siempre": quien pidió modo simple
+    it('la elección explícita del usuario manda: "simple" simplifica la ferretería', async () => {
+        // El arreglo NO puede ser "todos en completo": quien pidió modo simple
         // sigue teniendo modo simple. Lo guardado gana, en los dos sentidos.
         prepararTenant('FERRETERIA', 'simple');
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).not.toBeInTheDocument();
+        expect(modoDelPOS()).toBe('simple');
     });
 
-    it('la elección explícita del usuario manda: "full" devuelve el descuento en pulpería', async () => {
+    it('la elección explícita del usuario manda: "full" saca del simple a la pulpería', async () => {
         prepararTenant('PULPERIA', 'full');
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).toBeInTheDocument();
+        expect(modoDelPOS()).toBe('completo');
     });
 
     it('la pulpería sin modo elegido sigue arrancando simple (conducta original de R2.6)', async () => {
-        // Se fija para que el arreglo del descuento no se lleve por delante el
-        // default que la pulpería tiene desde siempre. Si mañana se decide que
-        // la pulpería también necesita descuento, que sea una decisión con su
-        // propio cambio y no un efecto colateral de este.
+        // El modo simple sigue existiendo y sigue siendo el default de la
+        // pulpería: lo que cambió el 2026-09-16 es QUÉ esconde (ya no el
+        // descuento), no a quién le toca.
         prepararTenant('PULPERIA');
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).not.toBeInTheDocument();
+        expect(modoDelPOS()).toBe('simple');
     });
 
     it('el prestamista nunca entra en modo simple del POS', async () => {
@@ -196,6 +207,6 @@ describe('POS · el descuento y el giro del negocio', () => {
         montarPOS();
         await esperarPOSListo();
 
-        expect(descuentoGlobal()).toBeInTheDocument();
+        expect(modoDelPOS()).toBe('completo');
     });
 });
