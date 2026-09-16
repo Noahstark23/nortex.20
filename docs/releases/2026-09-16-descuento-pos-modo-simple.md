@@ -105,6 +105,7 @@ dos sentidos, pulpería por defecto, prestamista) pasan antes y después.
 |---|---|
 | Suite completa | 6.278 pasan · 11 fallan |
 | ¿Esos 11 son míos? | **No.** Mismo conjunto exacto en `main` (`98e54af`), comparado por nombre de caso |
+| Candidato integrado con el PR #216 | 6.285 pasan · mismos 11 · **cero regresiones cruzadas** |
 | `tsc --noEmit` | Limpio salvo el bloqueo conocido de `xlsx`; ninguno en archivos tocados |
 | Presupuestos POS y backend | Verdes — el del POS **no se subió** (ver abajo) |
 | `check:design` | Íntegro, 113 archivos |
@@ -133,11 +134,36 @@ Tres tests dependían de que el POS arrancara simple para todos:
   **conservando el monto**, que es lo que el caso verifica. Su tema es el bloqueo de
   atajos de NortexGPT, no el modo del POS.
 
-## Límites declarados
+## Verificación visual en navegador (2026-09-16)
 
-- **No se verificó en un navegador real.** jsdom no calcula layout. La confirmación de
-  que el cajero ve el descuento en una ferretería es mirarlo; corresponde la revisión
-  visual de `docs/runbooks/frontend-preprod-audit.md`.
+Se ejecutó en **Chromium real** con Playwright, no jsdom: la app servida por Vite, el
+POS montado con `localStorage` de un tenant por giro y `/api/*` stubeado (no hay
+MySQL en el entorno; Docker no está disponible). El modo del POS no depende de la
+red, sale de `localStorage` + `utils/navigation`, así que el stub no interviene en lo
+que se está midiendo.
+
+**Descuento global** — visible de verdad, con caja pintada de 53×25px:
+
+| Caso | Esperado | Presente | Visible |
+|---|---|---|---|
+| Ferretería sin modo elegido | visible | sí | **sí** |
+| Farmacia sin modo elegido | visible | sí | **sí** |
+| Distribuidora sin modo elegido | visible | sí | **sí** |
+| Pulpería sin modo elegido | oculto | no | no |
+| Ferretería que eligió "simple" | oculto | no | no |
+| Pulpería que eligió "completo" | visible | sí | **sí** |
+
+**Descuento por línea** — no alcanza con que el control aparezca; se comprobó que
+*aplica*. Con un producto de C$ 25.00 en el carrito de una ferretería: el botón
+"Aplicar descuento" está visible, al cargar 10% se pinta la insignia `−10%` con
+"rebaja C$ 2.50", y el total baja a **C$ 22.50**, con base imponible C$ 19.57 + IVA
+C$ 2.93 que cuadran contra ese total y contra el botón de cobro. En pulpería el
+control sigue oculto, como corresponde.
+
+También se verificó que el POS **monta sin pantalla en blanco** en modo completo, que
+es la regresión que habría causado el `firstName[0]` sin blindar.
+
+## Límites declarados
 - **La ventana real en producción no está acreditada.** Se conoce la ventana en el
   código (desde `944cc94`); cuándo llegó a cada tenant depende de las promociones, y
   eso se establece con `docs/releases/` y el historial de despliegues, no con este
