@@ -144,7 +144,7 @@ describe('CajaNicaCatalog en interacción real', () => {
         expect(onBlocked).toHaveBeenCalledWith(expect.objectContaining({ id: '2' }));
     });
 
-    it('prioriza las primeras fotos y muestra fallback si una URL se rompe', () => {
+    it('prioriza las primeras fotos y conserva el producto legible si una foto se rompe', () => {
         render(
             <CajaNicaCatalog
                 products={[
@@ -167,14 +167,16 @@ describe('CajaNicaCatalog en interacción real', () => {
             />,
         );
 
-        const image = screen.getByAltText('Arroz integral');
+        const card = screen.getByRole('button', { name: /Agregar Arroz integral/ });
+        const image = card.querySelector('img')!;
+        expect(image).toBeTruthy();
         expect(image.getAttribute('loading')).toBe('eager');
         expect(image.getAttribute('fetchpriority')).toBe('high');
         expect(image.getAttribute('srcset')).toContain('w_160');
 
         fireEvent.error(image);
-        expect(screen.getByRole('img', {
-            name: 'Sin foto disponible para Arroz integral',
-        })).toBeTruthy();
+        expect(card.querySelector('img')).toBeNull();
+        expect(screen.getByText('Arroz integral')).toBeTruthy();
+        expect(card.getAttribute('aria-label')).toContain('C$ 85.00');
     });
 });

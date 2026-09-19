@@ -4,12 +4,13 @@ import { describe, expect, it } from 'vitest';
 
 const source = (file: string) => readFileSync(resolve(process.cwd(), file), 'utf8');
 const purchases = source('components/Purchases.tsx');
+const receiving = source('components/inventory/ReceivingWorkspace.tsx');
 const reports = source('components/Reports.tsx');
 const audit = source('components/AuditDashboard.tsx');
 
 describe('contrato UI de documentos fiscales protegidos', () => {
     it('nunca navega directamente a endpoints Bearer con anchors', () => {
-        for (const component of [purchases, reports, audit]) {
+        for (const component of [purchases, receiving, reports, audit]) {
             expect(component).not.toMatch(/href=\{`\/api\/fiscal\//);
             expect(component).not.toMatch(/href=["']\/api\/fiscal\//);
             expect(component).not.toMatch(/\balert\s*\(/);

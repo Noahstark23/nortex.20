@@ -12,6 +12,7 @@ import {
     cancelPedidoInTransaction,
     completePedidoDeliveryInTransaction,
     lockPedidoForFulfillment,
+    PEDIDO_PREPARATION_SOURCE_STATES,
     PedidoFulfillmentError,
     reservePedidoInTransaction,
 } from '../services/pedidoFulfillmentService.js';
@@ -26,7 +27,54 @@ import {
     toPublicPedidoTrackingDto,
 } from '../services/pedidoTrackingService.js';
 
-const router = express.Router();
+const DEFAULT_PEDIDO_LIST_LIMIT = 100;
+const MAX_PEDIDO_LIST_LIMIT = 200;
+const PEDIDO_DISPATCH_SOURCE_STATES = ['preparando', 'en_tienda', 'en_ruta', 'en_punto'] as const;
+const PEDIDO_PRODUCT_OPERATIONAL_SELECT = {
+    name: true,
+    sku: true,
+    imageUrl: true,
+} as const;
+const PEDIDO_MOTORIZADO_OPERATIONAL_SELECT = {
+    id: true,
+    nombre: true,
+    telefono: true,
+    tipoFlota: true,
+    activo: true,
+} as const;
+
+export const PedidoListQuerySchema = z.object({
+    page: z.coerce.number().int().min(1).optional().default(1),
+    limit: z.coerce.number().int().min(1).max(MAX_PEDIDO_LIST_LIMIT).optional().default(DEFAULT_PEDIDO_LIST_LIMIT),
+});
+
+export const PedidoMotorizadoAssignmentSchema = z.object({
+    motorizadoId: z.string().trim().min(1).nullable().optional(),
+});
+
+const isLimitedPedidoDetailRole = (role?: string): boolean => (
+    role === 'CASHIER' || role === 'VIEWER'
+);
+
+const assertPedidoCanDispatch = (pedido: { estado: string; motorizadoId: string | null }) => {
+    if (!pedido.motorizadoId) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_INVALID_TRANSITION',
+            409,
+            'Asigná un motorizado antes de despachar el pedido.',
+        );
+    }
+    if (!PEDIDO_DISPATCH_SOURCE_STATES.includes(pedido.estado as typeof PEDIDO_DISPATCH_SOURCE_STATES[number])) {
+        throw new PedidoFulfillmentError(
+            'PEDIDO_INVALID_TRANSITION',
+            409,
+            'El pedido solo puede pasar a en camino desde preparando o una etapa de ruta activa.',
+        );
+    }
+};
+
+export const buildPedidosRouter = () => {
+    const router = express.Router();
 
 /**
  * ==========================================
@@ -183,44 +231,67 @@ router.post('/', createPedidoLimiter, async (req: any, res: any) => {
 });
 
 // GET /api/v1/pedidos -> (Privado) Listar pedidos del Dashboard
-router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    try {
-        const pedidos = await prisma.pedido.findMany({
-            where: { tenantId: authReq.tenantId },
-            include: {
-                motorizado: true,
-                items: {
-                    include: {
-                        producto: {
-                            select: { name: true, sku: true, imageUrl: true }
+    router.get('/', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const parsedQuery = PedidoListQuerySchema.safeParse(req.query);
+        if (!parsedQuery.success) {
+            return res.status(400).json({ error: 'Parámetros de listado inválidos.' });
+        }
+
+        try {
+            const { page, limit } = parsedQuery.data;
+            const skip = (page - 1) * limit;
+            const pedidos = await prisma.pedido.findMany({
+                where: { tenantId: authReq.tenantId },
+                include: {
+                    motorizado: { select: PEDIDO_MOTORIZADO_OPERATIONAL_SELECT },
+                    items: {
+                        include: {
+                            producto: {
+                                select: PEDIDO_PRODUCT_OPERATIONAL_SELECT,
+                            }
                         }
                     }
-                }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+                },
+                orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+                skip,
+                take: limit + 1,
+            });
 
-        res.json({ pedidos });
-    } catch (error) {
-        console.error('Get Pedidos Error:', error);
-        res.status(500).json({ error: 'Error al listar los pedidos.' });
-    }
-});
+            const hasMore = pedidos.length > limit;
+            const pageItems = hasMore ? pedidos.slice(0, limit) : pedidos;
+
+            res.json({
+                pedidos: pageItems,
+                pageInfo: {
+                    page,
+                    limit,
+                    hasMore,
+                    nextPage: hasMore ? page + 1 : null,
+                },
+            });
+        } catch (error) {
+            console.error('Get Pedidos Error:', error);
+            res.status(500).json({ error: 'Error al listar los pedidos.' });
+        }
+    });
 
 // GET /api/v1/pedidos/:id -> (Privado) Detalle de pedido
-router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
+    router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     const { id } = req.params;
 
     try {
+        const includeProduct = isLimitedPedidoDetailRole(authReq.role)
+            ? { select: PEDIDO_PRODUCT_OPERATIONAL_SELECT }
+            : true;
         const pedido = await prisma.pedido.findFirst({
             where: { id, tenantId: authReq.tenantId },
             include: {
-                motorizado: true,
+                motorizado: { select: PEDIDO_MOTORIZADO_OPERATIONAL_SELECT },
                 items: {
                     include: {
-                        producto: true
+                        producto: includeProduct
                     }
                 },
                 eventos: {
@@ -236,10 +307,10 @@ router.get('/:id', authenticate, checkRole(PEDIDO_READ_ROLES), async (req: any, 
         console.error('Get Pedido Detail Error:', error);
         res.status(500).json({ error: 'Error al obtener el pedido.' });
     }
-});
+    });
 
 // GET /api/v1/pedidos/:id/tracking -> tracking mediante capacidad firmada
-router.get('/:id/tracking', async (req: any, res: any) => {
+    router.get('/:id/tracking', async (req: any, res: any) => {
     const { id } = req.params;
     const token = req.get('x-pedido-tracking-token');
     res.set('Cache-Control', 'private, no-store, max-age=0');
@@ -262,183 +333,242 @@ router.get('/:id/tracking', async (req: any, res: any) => {
         // revelamos si el UUID existe ni registramos la capacidad secreta.
         res.status(404).json({ error: 'Enlace de seguimiento inválido o vencido.' });
     }
-});
+    });
 
 // PATCH /api/v1/pedidos/:id/estado -> (Privado) Cambiar estado
-router.patch('/:id/estado', authenticate, checkRole(PEDIDO_WRITE_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { estado, nota, lat, lng } = req.body;
+    router.patch('/:id/estado', authenticate, checkRole(PEDIDO_WRITE_ROLES), async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const { id } = req.params;
+        const { estado, nota, lat, lng } = req.body;
 
-    const estadosValidos = ['pendiente', 'asignado', 'preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto', 'entregado', 'cancelado'];
+        const estadosValidos = ['pendiente', 'asignado', 'preparando', 'en_tienda', 'en_ruta', 'en_camino', 'en_punto', 'entregado', 'cancelado'];
 
-    if (!estadosValidos.includes(estado)) {
-        return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` });
-    }
-
-    try {
-        const numericLat = lat === undefined || lat === null ? null : Number(lat);
-        const numericLng = lng === undefined || lng === null ? null : Number(lng);
-        if ((numericLat !== null && !Number.isFinite(numericLat)) || (numericLng !== null && !Number.isFinite(numericLng))) {
-            return res.status(400).json({ error: 'Coordenadas inválidas.' });
+        if (!estadosValidos.includes(estado)) {
+            return res.status(400).json({ error: `Estado inválido. Opciones: ${estadosValidos.join(', ')}` });
         }
 
-        if (estado === 'entregado') {
-            const result = await prisma.$transaction((tx) => completePedidoDeliveryInTransaction(tx, {
-                pedidoId: id,
-                tenantId: authReq.tenantId,
-                actorUserId: authReq.userId,
-                source: 'DELIVERY_DASHBOARD',
-                nota: typeof nota === 'string' ? nota : null,
-                lat: numericLat,
-                lng: numericLng,
-            }));
-            return res.json({ message: 'Estado actualizado a entregado', pedido: result.pedido });
-        }
-
-        if (estado === 'preparando') {
-            const updated = await prisma.$transaction((tx) => reservePedidoInTransaction(tx, {
-                pedidoId: id,
-                tenantId: authReq.tenantId!,
-                userId: authReq.userId!,
-                nota: typeof nota === 'string' ? nota : null,
-                lat: numericLat,
-                lng: numericLng,
-            }));
-            return res.json({ message: 'Estado actualizado a preparando', pedido: updated });
-        }
-
-        if (estado === 'cancelado') {
-            const result = await prisma.$transaction((tx) => cancelPedidoInTransaction(tx, {
-                pedidoId: id,
-                tenantId: authReq.tenantId!,
-                userId: authReq.userId!,
-                nota: typeof nota === 'string' ? nota : null,
-                lat: numericLat,
-                lng: numericLng,
-            }));
-            return res.json({
-                message: 'Estado actualizado a cancelado',
-                pedido: result.pedido,
-                idempotentReplay: result.idempotentReplay,
-                releasedQuantity: result.releasedQuantity,
-            });
-        }
-
-        const updated = await prisma.$transaction(async (tx) => {
-            await lockPedidoForFulfillment(tx, {
-                pedidoId: id,
-                tenantId: authReq.tenantId!,
-            });
-            const pedido = await tx.pedido.findFirst({
-                where: { id, tenantId: authReq.tenantId },
-                select: { id: true, estado: true, facturaId: true },
-            });
-            if (!pedido) {
-                throw new PedidoFulfillmentError('PEDIDO_NOT_FOUND', 404, 'Pedido no encontrado.');
+        try {
+            const numericLat = lat === undefined || lat === null ? null : Number(lat);
+            const numericLng = lng === undefined || lng === null ? null : Number(lng);
+            if ((numericLat !== null && !Number.isFinite(numericLat)) || (numericLng !== null && !Number.isFinite(numericLng))) {
+                return res.status(400).json({ error: 'Coordenadas inválidas.' });
             }
-            if (pedido.facturaId || pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
-                throw new PedidoFulfillmentError(
-                    'PEDIDO_ALREADY_PROCESSED',
-                    409,
-                    'Un pedido entregado, facturado o cancelado no se puede reabrir.',
-                );
-            }
-            const changed = await tx.pedido.updateMany({
-                where: {
-                    id,
-                    tenantId: authReq.tenantId,
-                    facturaId: null,
-                    estado: { notIn: ['entregado', 'cancelado'] },
-                },
-                data: { estado },
-            });
-            if (changed.count !== 1) {
-                throw new PedidoFulfillmentError(
-                    'PEDIDO_ALREADY_PROCESSED',
-                    409,
-                    'El pedido fue procesado por otra operación.',
-                );
-            }
-            await tx.trackingEvento.create({
-                data: {
+
+            if (estado === 'entregado') {
+                const result = await prisma.$transaction((tx) => completePedidoDeliveryInTransaction(tx, {
                     pedidoId: id,
-                    estado,
+                    tenantId: authReq.tenantId,
+                    actorUserId: authReq.userId,
+                    source: 'DELIVERY_DASHBOARD',
                     nota: typeof nota === 'string' ? nota : null,
                     lat: numericLat,
                     lng: numericLng,
-                },
+                }));
+                return res.json({ message: 'Estado actualizado a entregado', pedido: result.pedido });
+            }
+
+            if (estado === 'preparando') {
+                const updated = await prisma.$transaction((tx) => reservePedidoInTransaction(tx, {
+                    pedidoId: id,
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    nota: typeof nota === 'string' ? nota : null,
+                    lat: numericLat,
+                    lng: numericLng,
+                }));
+                return res.json({ message: 'Estado actualizado a preparando', pedido: updated });
+            }
+
+            if (estado === 'cancelado') {
+                const result = await prisma.$transaction((tx) => cancelPedidoInTransaction(tx, {
+                    pedidoId: id,
+                    tenantId: authReq.tenantId!,
+                    userId: authReq.userId!,
+                    nota: typeof nota === 'string' ? nota : null,
+                    lat: numericLat,
+                    lng: numericLng,
+                }));
+                return res.json({
+                    message: 'Estado actualizado a cancelado',
+                    pedido: result.pedido,
+                    idempotentReplay: result.idempotentReplay,
+                    releasedQuantity: result.releasedQuantity,
+                });
+            }
+
+            const updated = await prisma.$transaction(async (tx) => {
+                await lockPedidoForFulfillment(tx, {
+                    pedidoId: id,
+                    tenantId: authReq.tenantId!,
+                });
+                const pedido = await tx.pedido.findFirst({
+                    where: { id, tenantId: authReq.tenantId },
+                    select: { id: true, estado: true, facturaId: true, motorizadoId: true },
+                });
+                if (!pedido) {
+                    throw new PedidoFulfillmentError('PEDIDO_NOT_FOUND', 404, 'Pedido no encontrado.');
+                }
+                if (pedido.facturaId || pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
+                    throw new PedidoFulfillmentError(
+                        'PEDIDO_ALREADY_PROCESSED',
+                        409,
+                        'Un pedido entregado, facturado o cancelado no se puede reabrir.',
+                    );
+                }
+                if (estado === 'preparando' && !PEDIDO_PREPARATION_SOURCE_STATES.includes(pedido.estado as typeof PEDIDO_PREPARATION_SOURCE_STATES[number])) {
+                    throw new PedidoFulfillmentError(
+                        'PEDIDO_INVALID_TRANSITION',
+                        409,
+                        'El pedido solo puede pasar a preparando desde pendiente, asignado o en tienda.',
+                    );
+                }
+                if (estado === 'en_camino') {
+                    assertPedidoCanDispatch(pedido);
+                }
+                const changed = await tx.pedido.updateMany({
+                    where: {
+                        id,
+                        tenantId: authReq.tenantId,
+                        facturaId: null,
+                        estado: { notIn: ['entregado', 'cancelado'] },
+                    },
+                    data: { estado },
+                });
+                if (changed.count !== 1) {
+                    throw new PedidoFulfillmentError(
+                        'PEDIDO_ALREADY_PROCESSED',
+                        409,
+                        'El pedido fue procesado por otra operación.',
+                    );
+                }
+                await tx.trackingEvento.create({
+                    data: {
+                        pedidoId: id,
+                        estado,
+                        nota: typeof nota === 'string' ? nota : null,
+                        lat: numericLat,
+                        lng: numericLng,
+                    },
+                });
+                return tx.pedido.findFirstOrThrow({
+                    where: { id, tenantId: authReq.tenantId },
+                });
             });
-            return tx.pedido.findFirstOrThrow({
-                where: { id, tenantId: authReq.tenantId },
-            });
-        });
-        return res.json({ message: `Estado actualizado a ${estado}`, pedido: updated });
-    } catch (error) {
+            return res.json({ message: `Estado actualizado a ${estado}`, pedido: updated });
+        } catch (error) {
         // Stock insuficiente / producto inexistente: la transacción abortó por el
         // decremento atómico. Devolvemos un estado claro en vez de un 500 genérico.
-        if (error instanceof StockError) {
-            const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 422;
-            return res.status(status).json({ error: error.message });
+            if (error instanceof StockError) {
+                const status = error.code === 'PRODUCT_NOT_FOUND' ? 404 : 422;
+                return res.status(status).json({ error: error.message });
+            }
+            if (error instanceof PedidoFulfillmentError) {
+                return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+            }
+            console.error('Patch Estado Error:', error);
+            res.status(500).json({ error: 'Error al actualizar el estado.' });
         }
-        if (error instanceof PedidoFulfillmentError) {
-            return res.status(error.httpStatus).json({ error: error.message, code: error.code });
-        }
-        console.error('Patch Estado Error:', error);
-        res.status(500).json({ error: 'Error al actualizar el estado.' });
-    }
-});
+    });
 
 // PATCH /api/v1/pedidos/:id/motorizado -> (Privado) Asignar motorizado
-router.patch('/:id/motorizado', authenticate, checkRole(PEDIDO_WRITE_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { motorizadoId } = req.body;
-
-    try {
-        const pedido = await prisma.pedido.findFirst({
-            where: { id, tenantId: authReq.tenantId }
-        });
-
-        if (!pedido) return res.status(404).json({ error: 'Pedido no encontrado.' });
-
-        if (motorizadoId) {
-            // Verificar que el motorizado es del tenant o es un freelancer global
-            // activo CON KYC aprobado (Red NORTEX: nadie reparte sin revisión).
-            const mot = await prisma.motorizado.findFirst({
-                where: {
-                    id: motorizadoId,
-                    activo: true,
-                    OR: [
-                        { tenantId: authReq.tenantId },
-                        { tipoFlota: 'NORTEX', kycStatus: 'APROBADO' }
-                    ]
-                }
-            });
-            if (!mot) return res.status(400).json({ error: 'Motorizado inválido, inactivo o no autorizado.' });
+    router.patch('/:id/motorizado', authenticate, checkRole(PEDIDO_WRITE_ROLES), async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const { id } = req.params;
+        const parsedBody = PedidoMotorizadoAssignmentSchema.safeParse(req.body);
+        if (!parsedBody.success) {
+            return res.status(400).json({ error: 'Motorizado inválido.' });
         }
+        const motorizadoId = parsedBody.data.motorizadoId ?? null;
 
-        const updated = await prisma.pedido.update({
-            where: { id },
-            data: { motorizadoId }
-        });
-
-        // Registrar evento de asignación si es nuevo motorizado
-        if (motorizadoId && pedido.motorizadoId !== motorizadoId) {
-            await prisma.trackingEvento.create({
-                data: {
+        try {
+            const updated = await prisma.$transaction(async (tx) => {
+                await lockPedidoForFulfillment(tx, {
                     pedidoId: id,
-                    estado: pedido.estado,
-                    nota: `Motorizado asignado.`
+                    tenantId: authReq.tenantId!,
+                });
+
+                const pedido = await tx.pedido.findFirst({
+                    where: { id, tenantId: authReq.tenantId },
+                    select: { id: true, estado: true, facturaId: true, motorizadoId: true },
+                });
+
+                if (!pedido) {
+                    throw new PedidoFulfillmentError('PEDIDO_NOT_FOUND', 404, 'Pedido no encontrado.');
                 }
+                if (pedido.facturaId || pedido.estado === 'entregado' || pedido.estado === 'cancelado') {
+                    throw new PedidoFulfillmentError(
+                        'PEDIDO_ALREADY_PROCESSED',
+                        409,
+                        'No podés reasignar un pedido entregado, facturado o cancelado.',
+                    );
+                }
+
+                if (motorizadoId) {
+                    const mot = await tx.motorizado.findFirst({
+                        where: {
+                            id: motorizadoId,
+                            activo: true,
+                            OR: [
+                                { tenantId: authReq.tenantId },
+                                { tipoFlota: 'NORTEX', kycStatus: 'APROBADO' }
+                            ]
+                        }
+                    });
+                    if (!mot) {
+                        throw new PedidoFulfillmentError(
+                            'PEDIDO_INVALID_TRANSITION',
+                            400,
+                            'Motorizado inválido, inactivo o no autorizado.',
+                        );
+                    }
+                }
+
+                const changed = await tx.pedido.updateMany({
+                    where: {
+                        id,
+                        tenantId: authReq.tenantId,
+                        facturaId: null,
+                        estado: { notIn: ['entregado', 'cancelado'] },
+                    },
+                    data: { motorizadoId },
+                });
+                if (changed.count !== 1) {
+                    throw new PedidoFulfillmentError(
+                        'PEDIDO_ALREADY_PROCESSED',
+                        409,
+                        'El pedido fue procesado por otra operación.',
+                    );
+                }
+
+                if (motorizadoId && pedido.motorizadoId !== motorizadoId) {
+                    await tx.trackingEvento.create({
+                        data: {
+                            pedidoId: id,
+                            estado: pedido.estado,
+                            nota: 'Motorizado asignado.',
+                        }
+                    });
+                }
+
+                return tx.pedido.findFirstOrThrow({
+                    where: { id, tenantId: authReq.tenantId },
+                    include: {
+                        motorizado: { select: PEDIDO_MOTORIZADO_OPERATIONAL_SELECT },
+                    },
+                });
             });
+
+            res.json({ message: 'Motorizado asignado correctamente.', pedido: updated });
+        } catch (error) {
+            if (error instanceof PedidoFulfillmentError) {
+                return res.status(error.httpStatus).json({ error: error.message, code: error.code });
+            }
+            console.error('Patch Motorizado Error:', error);
+            res.status(500).json({ error: 'Error al asignar motorizado.' });
         }
+    });
 
-        res.json({ message: 'Motorizado asignado correctamente.', pedido: updated });
-    } catch (error) {
-        console.error('Patch Motorizado Error:', error);
-        res.status(500).json({ error: 'Error al asignar motorizado.' });
-    }
-});
+    return router;
+};
 
-export default router;
+export default buildPedidosRouter();

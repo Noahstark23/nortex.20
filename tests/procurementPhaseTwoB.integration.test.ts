@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
+import { approveQaCorrection, inviteQaMember } from './helpers/saleCorrectionQa';
 
 /**
  * QA HTTP real de procurement Fase 2B (lote + bodega).
@@ -28,6 +29,7 @@ let productAId = '';
 let productBId = '';
 let batchAId = '';
 let batchBId = '';
+let correctionApprover: { email: string; password: string };
 
 async function api<T = any>(
   path: string,
@@ -198,6 +200,7 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     }, '');
     expectStatus(accepted, 200);
     viewerToken = accepted.body.token;
+    correctionApprover = await inviteQaMember(post, 'MANAGER');
   }, 180_000);
 
   afterAll(async () => {
@@ -724,12 +727,30 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     });
     expectStatus(adjustment, 409);
     expect(adjustment.body.code).toBe('BATCH_SELECTION_REQUIRED');
+    expect(adjustment.body.clientEventId).toMatch(/^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i);
+    expect(adjustment.body).toMatchObject({ outcome: 'REJECTED', rejection: {
+      id: expect.any(String), tenantId: tenantAId, userId: tenantAUserId,
+      clientEventId: adjustment.body.clientEventId, productId: productAId, warehouseId: defaultWarehouseAId,
+      quantity: '-1.0000', type: 'ADJUST_LOSS', reason: 'Ajuste agregado que debe bloquearse',
+    } });
     expect(await inventorySnapshot({ tenantId: tenantAId, productId: productAId, batchId: batchAId }))
       .toEqual(beforeAdjust);
     expect(await prisma.kardexMovement.count({ where: { tenantId: tenantAId } }))
       .toBe(countsBeforeAdjust.kardex);
     expect(await prisma.auditLog.count({ where: { tenantId: tenantAId } }))
-      .toBe(countsBeforeAdjust.audits);
+      .toBe(countsBeforeAdjust.audits + 2);
+    // El rechazo tiene evidencia durable propia; no produjo un movimiento.
+    const rejectionAudit = await prisma.auditLog.findFirstOrThrow({
+      where: { id: adjustment.body.rejection.id, tenantId: tenantAId, userId: tenantAUserId, action: 'INVENTORY_ADJUSTMENT_REJECTED' },
+    });
+    const rejectionDetails = JSON.parse(rejectionAudit.details!);
+    expect(rejectionDetails).toMatchObject({ version: 1, outcome: 'REJECTED', httpStatus: 409,
+      code: 'BATCH_SELECTION_REQUIRED', rejection: adjustment.body.rejection });
+    const rejectionClaim = await prisma.auditLog.findFirstOrThrow({
+      where: { id: rejectionDetails.commandId, tenantId: tenantAId, userId: tenantAUserId, action: 'INVENTORY_ADJUSTMENT_COMMAND' },
+    });
+    expect(JSON.parse(rejectionClaim.details!)).toMatchObject({ version: 1, commandType: 'INVENTORY_ADJUSTMENT',
+      resultId: rejectionAudit.id, payloadHash: rejectionDetails.payloadHash });
     expect(await prisma.journalEntry.count({ where: { tenantId: tenantAId } }))
       .toBe(countsBeforeAdjust.journals);
 
@@ -981,9 +1002,11 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
       warehouseId: defaultWarehouseAId,
     });
 
-    const voided = await post(`/api/sales/${sale.body.id}/cancel`, {
-      motivo: 'Anulacion QA con evidencia exacta de lote y bodega',
+    const motivo = 'Anulacion QA con evidencia exacta de lote y bodega';
+    const correctionRequestId = await approveQaCorrection(post, correctionApprover, {
+      saleId: sale.body.id, kind: 'VOID', reason: motivo,
     });
+    const voided = await post(`/api/sales/${sale.body.id}/cancel`, { correctionRequestId, motivo });
     expectStatus(voided, 200);
     expect(voided.body).toMatchObject({
       success: true,
@@ -1043,11 +1066,17 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     expect(fixed(allocation.quantity)).toBe('1.0000');
 
     const clientEventId = crypto.randomUUID();
+    const reason = 'Producto regresado con evidencia exacta';
+    const correctionRequestId = await approveQaCorrection(post, correctionApprover, {
+      saleId: sale.body.id, kind: 'RETURN', reason, resolution: 'REFUND', refundMethod: 'CARD',
+      lines: [{ saleItemId: saleItem.id, quantity: '1.0000', disposition: 'RESTOCK' }],
+    });
     const payload = {
+      correctionRequestId,
       clientEventId,
       saleId: sale.body.id,
       items: [{ saleItemId: saleItem.id, quantity: '1.0000' }],
-      reason: 'Producto regresado con evidencia exacta',
+      reason,
       refundMethod: 'CARD',
     };
     const foreign = await post('/api/returns', payload, tenantBToken);
@@ -1147,6 +1176,11 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
     });
 
     const legacyEventId = crypto.randomUUID();
+    const legacyReason = 'Venta historica sin bodega exacta';
+    const legacyCorrectionId = await approveQaCorrection(post, correctionApprover, {
+      saleId: legacySale.body.id, kind: 'RETURN', reason: legacyReason, resolution: 'REFUND', refundMethod: 'CARD',
+      lines: [{ saleItemId: legacySaleItem.id, quantity: '1.0000', disposition: 'RESTOCK' }],
+    });
     const legacyBefore = {
       inventory: await inventorySnapshot({ tenantId: tenantAId, productId: productAId, batchId: batchAId }),
       returns: await prisma.productReturn.count({ where: { tenantId: tenantAId } }),
@@ -1156,10 +1190,11 @@ qaDescribe('QA integracion: procurement Fase 2B lote + bodega', () => {
       audits: await prisma.auditLog.count({ where: { tenantId: tenantAId } }),
     };
     const legacyReturn = await post('/api/returns', {
+      correctionRequestId: legacyCorrectionId,
       clientEventId: legacyEventId,
       saleId: legacySale.body.id,
       items: [{ saleItemId: legacySaleItem.id, quantity: '1.0000' }],
-      reason: 'Venta historica sin bodega exacta',
+      reason: legacyReason,
       refundMethod: 'CARD',
     });
     expectStatus(legacyReturn, 409);

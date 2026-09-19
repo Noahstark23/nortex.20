@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Loader2, RefreshCw, Copy, Minus } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { FileText, Plus, ShoppingCart, Calendar, User, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Loader2, RefreshCw, Copy, Minus } from 'lucide-react';
 import { Product, CartItem, Quotation, PublicOrder } from '../types';
 import { useNavigate } from 'react-router-dom';
 import { formatMoney } from '../utils/money';
@@ -21,6 +21,9 @@ import {
     resolverIdentidadPersistencia,
     serializarTraspasoCarrito,
 } from '../utils/cartPersistence';
+
+import { QuotationCatalog } from './quotations/QuotationCatalog';
+import './quotations/quotationWorkspace.css';
 
 type FiscalQuotation = Quotation & {
     fiscalRegimeAtQuote?: FiscalRegime;
@@ -87,6 +90,12 @@ const QuotationManager: React.FC = () => {
     ));
     const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS'>('NEW');
 
+    const [productsLoading, setProductsLoading] = useState(true);
+    const [productsError, setProductsError] = useState(false);
+    const [saving, setSaving] = useState(false);
+    const savingRef = useRef(false);
+    const [saveError, setSaveError] = useState('');
+    const [savedMessage, setSavedMessage] = useState('');
     const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
     const [fiscalSettings, setFiscalSettings] = useState<FiscalSettingsSnapshot>(fiscalSettingsFromTenantCache);
@@ -96,6 +105,8 @@ const QuotationManager: React.FC = () => {
     }, []);
 
     const fetchProducts = async () => {
+        setProductsLoading(true);
+        setProductsError(false);
         try {
             const token = localStorage.getItem('nortex_token');
             const res = await fetch('/api/products', {
@@ -104,10 +115,10 @@ const QuotationManager: React.FC = () => {
             if (res.ok) {
                 const data = await res.json();
                 setProducts(data);
-            }
+            } else { setProductsError(true); }
         } catch (error) {
-            console.error('Error fetching products:', error);
-        }
+            setProductsError(true);
+        } finally { setProductsLoading(false); }
     };
 
     const fetchFiscalSettings = async () => {
@@ -127,7 +138,6 @@ const QuotationManager: React.FC = () => {
             // Sin red se conserva el régimen/version del tenant cacheado.
         }
     };
-    const [searchTerm, setSearchTerm] = useState('');
     const [customerName, setCustomerName] = useState('');
     const [customerRuc, setCustomerRuc] = useState('');
     const [quantityErrors, setQuantityErrors] = useState<Record<string, string>>({});
@@ -262,7 +272,10 @@ const QuotationManager: React.FC = () => {
         });
     };
 
-    const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
+    const removeFromCart = (id: string) => {
+        setCart(prev => prev.filter(item => item.id !== id));
+        setQuantityErrors(prev => { const next = { ...prev }; delete next[id]; return next; });
+    };
 
     const setItemQuantity = (id: string, raw: string) => {
         const product = cart.find((item) => item.id === id);
@@ -331,10 +344,14 @@ const QuotationManager: React.FC = () => {
     const isFixedQuota = quoteFiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
 
     const handleSaveQuotation = async () => {
+        if (savingRef.current) return;
+        setSaveError('');
         if (cart.length === 0) return alert("Agrega productos primero.");
-        if (!customerName) return alert("Ingresa el nombre del cliente.");
+        if (!customerName.trim()) { setSaveError('Escribí el nombre del cliente para guardar.'); document.getElementById('quotation-customer')?.focus(); return; }
         if (Object.keys(quantityErrors).length > 0) return alert('Corregí las cantidades marcadas antes de guardar.');
 
+        savingRef.current = true;
+        setSaving(true);
         try {
             const token = localStorage.getItem('nortex_token');
             const res = await fetch('/api/quotations', {
@@ -371,17 +388,18 @@ const QuotationManager: React.FC = () => {
 
                 // Reset
                 setCart([]);
+                setQuantityErrors({});
                 setCustomerName('');
                 setCustomerRuc('');
                 setActiveTab('HISTORY');
-                alert(`Cotización ${savedQuote.id} generada exitosamente.`);
+                setSavedMessage(`Proforma para ${savedQuote.customerName} guardada.`);
             } else {
-                alert('Error al guardar cotización');
+                setSaveError('No se pudo guardar. Tu proforma sigue aquí; revisá la conexión y reintentá.');
             }
         } catch (error) {
             console.error('Error saving quotation:', error);
-            alert('Error de conexión al guardar cotización');
-        }
+            setSaveError('No recibimos confirmación. Conservamos tu proforma; revisá el historial antes de reintentar.');
+        } finally { savingRef.current = false; setSaving(false); }
     };
 
     const convertToSale = (quote: FiscalQuotation) => {
@@ -452,40 +470,37 @@ const QuotationManager: React.FC = () => {
         }
     };
 
-    const filteredProducts = products.filter(p =>
-        p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.sku.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
     const pendingWebOrders = webOrders.filter(o => o.status === 'PENDING');
 
     return (
-        <div className="flex h-full bg-white/[0.04] overflow-hidden">
+        <div className="nx-quote-workspace">
             {/* Left Panel: Navigation & Products/List */}
-            <div className="flex-1 flex flex-col border-r border-white/[0.06] bg-surface-900 text-slate-100">
-                <div className="p-6 border-b border-white/[0.06] text-slate-100">
+            <div className="nx-quote-main">
+                <div className="nx-quote-header">
                     <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
                         <FileText className="text-nortex-500" /> Proformas
                     </h1>
-                    <div className="flex gap-2 mt-6">
+                    <p className="nx-quote-subtitle">Armá el presupuesto como una venta. Sin mover caja ni inventario.</p>
+                    {savedMessage && <p role="status" className="nx-quote-success">{savedMessage}</p>}
+                    <div className="nx-quote-navigation">
                         <button
-                            onClick={() => setActiveTab('NEW')}
+                            aria-pressed={activeTab === 'NEW'} onClick={() => { setActiveTab('NEW'); setSavedMessage(''); }}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'NEW' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
-                            + NUEVA
+                            Nueva proforma
                         </button>
                         <button
-                            onClick={() => setActiveTab('HISTORY')}
+                            aria-pressed={activeTab === 'HISTORY'} onClick={() => { setActiveTab('HISTORY'); fetchQuotations(); }}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'HISTORY' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
-                            HISTORIAL
+                            Guardadas
                         </button>
                         <button
-                            onClick={() => { setActiveTab('WEB_ORDERS'); fetchWebOrders(); }}
+                            aria-pressed={activeTab === 'WEB_ORDERS'} onClick={() => { setActiveTab('WEB_ORDERS'); fetchWebOrders(); }}
                             className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all relative ${activeTab === 'WEB_ORDERS' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             <Globe size={14} className="inline mr-1" />
-                            PEDIDOS WEB
+                            Pedidos web
                             {pendingWebOrders.length > 0 && (
                                 <span className="absolute -top-2 -right-1 bg-red-500 text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center">
                                     {pendingWebOrders.length}
@@ -496,43 +511,9 @@ const QuotationManager: React.FC = () => {
                 </div>
 
                 {activeTab === 'NEW' ? (
-                    <div className="flex-1 flex flex-col overflow-hidden">
-                        <div className="p-4 border-b border-white/[0.04] text-slate-100">
-                            <div className="relative">
-                                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                <input
-                                    type="text"
-                                    placeholder="Buscar productos para cotizar..."
-                                    className="w-full pl-10 pr-4 py-2 bg-surface-800/40 border border-white/[0.06] rounded-lg focus:outline-none focus:border-nortex-500"
-                                    value={searchTerm}
-                                    onChange={e => setSearchTerm(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                        <div className="flex-1 overflow-y-auto p-4 grid grid-cols-2 gap-3 content-start custom-scrollbar">
-                            {filteredProducts.map(product => (
-                                <button
-                                    key={product.id}
-                                    onClick={() => addToCart(product)}
-                                    className="p-3 text-left border border-white/[0.06] rounded-lg hover:border-nortex-500 hover:bg-surface-800/40 transition-all group text-slate-100"
-                                >
-                                    <div className="flex justify-between items-start">
-                                        <span className="text-xs font-mono text-slate-400">{product.sku}</span>
-                                        <div className="opacity-0 group-hover:opacity-100 text-nortex-600 bg-nortex-100 p-1 rounded-full"><Plus size={14} /></div>
-                                    </div>
-                                    <div className="font-medium text-slate-100 text-sm line-clamp-1 mt-1">{product.name}</div>
-                                        <div className="font-bold text-white mt-1">{formatMoney(product.price)}</div>
-                                        <div className="mt-1 text-[11px] text-slate-500">
-                                            {effectiveSaleMode(product) === 'COUNTED'
-                                                ? `Contado · paso ${formatQuantityValue(effectiveQuantityStep(product))}`
-                                                : `Medido · ${product.unit || 'unidad'} · paso ${formatQuantityValue(effectiveQuantityStep(product))}`}
-                                        </div>
-                                    </button>
-                                ))}
-                            </div>
-                    </div>
+                    <QuotationCatalog products={products} cart={cart} loading={productsLoading} error={productsError} onRetry={fetchProducts} onAdd={product => { if (!savingRef.current) addToCart(product); }} />
                 ) : activeTab === 'HISTORY' ? (
-                    <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
+                    <div className="nx-quote-history flex-1 overflow-y-auto p-4 custom-scrollbar">
                         {history.length === 0 && <div className="text-center text-slate-400 mt-10">No hay cotizaciones guardadas.</div>}
                         {history.map(quote => (
                             <div key={quote.id} className="p-4 mb-3 border border-white/[0.06] rounded-xl hover:shadow-md transition-shadow bg-surface-800/40 text-slate-100">
@@ -544,7 +525,7 @@ const QuotationManager: React.FC = () => {
                                     <span className={`text-xs px-2 py-1 rounded font-bold ${quote.status === 'CONVERTED' ? 'bg-green-500/15 text-green-400' :
                                         quote.status === 'EXPIRED' ? 'bg-red-500/15 text-red-400' : 'bg-blue-500/15 text-blue-400'
                                         }`}>
-                                        {quote.status}
+                                        {quote.status === 'SENT' ? 'Vigente' : quote.status === 'CONVERTED' ? 'Enviada a caja' : 'Vencida'}
                                     </span>
                                 </div>
                                 <div className="flex justify-between items-end">
@@ -553,7 +534,7 @@ const QuotationManager: React.FC = () => {
                                         <div className="flex items-center gap-1 text-red-400"><Clock size={12} /> Vence: {new Date(quote.expiresAt).toLocaleDateString()}</div>
                                     </div>
                                     <div className="text-right">
-                                        <div className="font-bold text-lg">${quote.total.toFixed(2)}</div>
+                                        <div className="font-bold text-lg">{formatMoney(quote.total)}</div>
                                         {quote.status === 'SENT' && (
                                             <button
                                                 onClick={() => convertToSale(quote)}
@@ -747,39 +728,13 @@ const QuotationManager: React.FC = () => {
 
             {/* Right Panel: Active Quotation Details */}
             {activeTab === 'NEW' && (
-                <div className="w-96 bg-surface-800/40 flex flex-col border-l border-white/[0.06] text-slate-100">
-                    <div className="p-6 border-b border-white/[0.06] bg-surface-900 text-slate-100">
-                        <h2 className="font-bold text-slate-100 mb-4 flex items-center gap-2">Detalle de Cotización</h2>
-                        <div className="space-y-3">
-                            <div>
-                                <label className="block text-xs font-mono text-slate-500 mb-1">CLIENTE / EMPRESA</label>
-                                <div className="relative">
-                                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
-                                    <input
-                                        className="bg-transparent w-full pl-9 pr-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
-                                        placeholder="Nombre del Cliente"
-                                        value={customerName}
-                                        onChange={e => setCustomerName(e.target.value)}
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <label className="block text-xs font-mono text-slate-500 mb-1">RUC / NIT (Opcional)</label>
-                                <input
-                                    className="bg-transparent w-full px-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
-                                    placeholder="00000000000"
-                                    value={customerRuc}
-                                    onChange={e => setCustomerRuc(e.target.value)}
-                                />
-                            </div>
-                        </div>
-                    </div>
-
+                <div className="nx-quote-ticket" aria-label="Resumen de proforma">
+                    <div className="nx-quote-ticket-heading"><h2>Tu proforma</h2><p>{cart.length ? `${cart.length} ${cart.length === 1 ? 'producto' : 'productos'} · Revisá las cantidades` : "Elegí los productos para empezar"}</p></div>
                     <div className="flex-1 overflow-y-auto p-4 space-y-2 custom-scrollbar">
                         {cart.length === 0 ? (
                             <div className="h-full flex flex-col items-center justify-center text-slate-400 opacity-60">
                                 <ShoppingCart size={32} />
-                                <p className="text-sm mt-2 text-center">Agrega items para cotizar</p>
+                                <p className="text-sm mt-2 text-center">Los productos que elijás aparecerán aquí.</p>
                             </div>
                         ) : (
                             cart.map(item => (
@@ -794,26 +749,26 @@ const QuotationManager: React.FC = () => {
                                                 {formatMoney(item.price)} / {item.unit || 'unidad'}
                                             </div>
                                         </div>
-                                        <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={14} /></button>
+                                        <button disabled={saving} aria-label={`Quitar ${item.name}`} onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={14} /></button>
                                     </div>
                                     <div className="mt-3 flex items-center justify-between gap-3">
                                         <div className="flex items-center gap-1 bg-surface-800/60 rounded-lg border border-white/[0.06] p-1">
                                             <button
-                                                onClick={() => bumpItemQuantity(item.id, -1)}
+                                                disabled={saving} onClick={() => bumpItemQuantity(item.id, -1)}
                                                 className="w-9 h-9 flex items-center justify-center rounded text-slate-300 hover:bg-white/[0.06]"
                                                 aria-label={`Restar ${formatQuantityValue(effectiveQuantityStep(item))} ${item.unit || 'unidad'} de ${item.name}`}
                                             >
                                                 <Minus size={15} />
                                             </button>
                                             <input
-                                                value={formatQuantityValue(item.quantity)}
+                                                disabled={saving} value={formatQuantityValue(item.quantity)}
                                                 onChange={(event) => setItemQuantity(item.id, event.target.value)}
                                                 inputMode="decimal"
                                                 className="w-20 bg-transparent text-center font-mono text-sm outline-none"
                                                 aria-label={`Cantidad de ${item.name}`}
                                             />
                                             <button
-                                                onClick={() => bumpItemQuantity(item.id, 1)}
+                                                disabled={saving} onClick={() => bumpItemQuantity(item.id, 1)}
                                                 className="w-9 h-9 flex items-center justify-center rounded text-slate-300 hover:bg-white/[0.06]"
                                                 aria-label={`Agregar ${formatQuantityValue(effectiveQuantityStep(item))} ${item.unit || 'unidad'} a ${item.name}`}
                                             >
@@ -830,7 +785,34 @@ const QuotationManager: React.FC = () => {
                         )}
                     </div>
 
-                    <div className="p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
+                    <div className="nx-quote-customer">
+                        <h3 className="font-bold text-slate-100 mb-4">¿Para quién es?</h3>
+                        <div className="space-y-3">
+                            <div>
+                                <label htmlFor="quotation-customer" className="block text-xs font-mono text-slate-500 mb-1">Cliente o empresa</label>
+                                <div className="relative">
+                                    <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
+                                    <input id="quotation-customer" disabled={saving}
+                                        className="bg-transparent w-full pl-9 pr-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
+                                        placeholder="Nombre del Cliente"
+                                        value={customerName}
+                                        onChange={e => setCustomerName(e.target.value)}
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <label htmlFor="quotation-ruc" className="block text-xs font-mono text-slate-500 mb-1">RUC / NIT (Opcional)</label>
+                                <input id="quotation-ruc" disabled={saving}
+                                    className="bg-transparent w-full px-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
+                                    placeholder="00000000000"
+                                    value={customerRuc}
+                                    onChange={e => setCustomerRuc(e.target.value)}
+                                />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="nx-quote-footer p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
                         <div className="space-y-2 text-sm mb-4">
                             {!isFixedQuota && (
                                 <>
@@ -841,20 +823,13 @@ const QuotationManager: React.FC = () => {
                             <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04]"><span>Total</span><span className="font-mono tabular-nums">{formatMoney(grandTotal.toNumber())}</span></div>
                         </div>
 
-                        <div className="grid grid-cols-2 gap-3">
-                            <button className="py-3 border border-white/10 rounded-lg font-bold text-slate-300 hover:bg-surface-800/40 flex items-center justify-center gap-2 text-slate-100">
-                                <Printer size={18} /> IMPRIMIR
-                            </button>
-                            <button
-                                onClick={handleSaveQuotation}
-                                className="py-3 bg-nortex-900 text-white rounded-lg font-bold hover:bg-nortex-800 flex items-center justify-center gap-2"
-                            >
-                                <CheckCircle size={18} /> GUARDAR
-                            </button>
-                        </div>
-                        <p className="text-xs text-center text-slate-400 mt-3">
-                            Válido por 15 días. Se generará un enlace público.
-                        </p>
+                        {saveError && <p role="alert" className="nx-quote-error">{saveError}</p>}
+                        <button onClick={handleSaveQuotation} disabled={saving || !cart.length || Object.keys(quantityErrors).length > 0}
+                            className="nx-quote-save">
+                            {saving ? <Loader2 className="animate-spin" size={18}/> : <CheckCircle size={18}/>}
+                            {saving ? 'Guardando…' : 'Guardar proforma'}
+                        </button>
+                        <p className="text-xs text-center text-slate-400 mt-3">Válida por 15 días. No reserva existencias.</p>
                     </div>
                 </div>
             )}

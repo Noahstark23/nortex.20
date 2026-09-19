@@ -120,7 +120,7 @@ export type NavSection = (typeof NAV_SECTIONS)[number];
  * Rutas SATÉLITE: pantallas que no tienen ítem propio en el menú pero pertenecen
  * a uno que sí lo tiene.
  *
- * El problema que resuelven: al entrar a Bodegas o a Series, ningún ítem del
+ * El problema que resuelven: al entrar a Series, ningún ítem del
  * sidebar quedaba marcado y todas las secciones aparecían plegadas —el usuario
  * no sabía dónde estaba ni cómo volver, y no había breadcrumb ni botón atrás—.
  * Se llegaba a un callejón sin salida desde el propio menú.
@@ -130,7 +130,6 @@ export type NavSection = (typeof NAV_SECTIONS)[number];
  * testear sin montar React.
  */
 export const RUTAS_SATELITE: Readonly<Record<string, string>> = {
-    '/app/warehouses': '/app/inventory',
     '/app/serials': '/app/inventory',
 };
 
@@ -148,7 +147,7 @@ export function esRutaDe(navPath: string, ruta: string): boolean {
 export function navPathForRoute(ruta: string, role = ''): string {
     // Para BODEGUERO, Inventario es una subvista operativa de su destino
     // principal "Bodegas y existencias". El resto de roles conserva la
-    // atribución histórica inversa (Bodegas como satélite de Mis Productos).
+    // destino propio de cada entrada; Series continúa bajo Mis Productos.
     if (role === 'BODEGUERO') {
         if (esRutaDe('/app/inventory', ruta) && !esRutaDe('/app/inventory-count', ruta)) {
             return '/app/warehouses';
@@ -165,6 +164,7 @@ const RETAIL_CATALOG: CatalogEntry[] = [
     { path: '/app/inicio', label: 'Mi Negocio', shortLabel: 'Inicio', group: 'Inicio', iconKey: 'home', roles: GATE_MANAGER },
     // ── VENDER ──
     { path: '/app/pos', label: 'Vender', shortLabel: 'Vender', group: 'VENDER', iconKey: 'shoppingCart' },
+    { path: '/app/sales', label: 'Ventas y Devoluciones', shortLabel: 'Ventas', group: 'VENDER', iconKey: 'fileText' },
     { path: '/app/cash-registers', label: 'Caja y Arqueos', shortLabel: 'Caja', group: 'VENDER', iconKey: 'monitor', roles: GATE_MANAGER },
     { path: '/app/quotations', label: 'Proformas', shortLabel: 'Proformas', group: 'VENDER', iconKey: 'fileText' },
     { path: '/app/delivery', label: 'Entregas', shortLabel: 'Entregas', group: 'VENDER', iconKey: 'truck' },
@@ -205,14 +205,14 @@ const RETAIL_CATALOG: CatalogEntry[] = [
 // "Mi Negocio" (/app/inicio) va primero para roles administradores; para roles
 // sin acceso (p. ej. CASHIER) simplemente se filtra por el gating del catálogo.
 const SIMPLE_SETS: Record<string, string[]> = {
-    PULPERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/scales', '/app/dashboard'],
-    FERRETERIA: ['/app/inicio', '/app/pos', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/quotations', '/app/purchases', '/app/dashboard'],
-    FARMACIA: ['/app/inicio', '/app/pos', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/clients', '/app/dashboard'],
-    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/quotations', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/clients', '/app/delivery', '/app/dashboard'],
+    PULPERIA: ['/app/inicio', '/app/pos', '/app/sales', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/scales', '/app/dashboard'],
+    FERRETERIA: ['/app/inicio', '/app/pos', '/app/sales', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/quotations', '/app/purchases', '/app/dashboard'],
+    FARMACIA: ['/app/inicio', '/app/pos', '/app/sales', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/clients', '/app/dashboard'],
+    DISTRIBUIDORA: ['/app/inicio', '/app/pos', '/app/sales', '/app/quotations', '/app/inventory', '/app/warehouses', '/app/purchases', '/app/receivables', '/app/clients', '/app/delivery', '/app/dashboard'],
 };
 
 /** Set simple por defecto para giros sin set propio (RETAIL, BOUTIQUE, MISCELANEA…). */
-const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/scales', '/app/purchases', '/app/dashboard'];
+const SIMPLE_DEFAULT: string[] = ['/app/inicio', '/app/pos', '/app/sales', '/app/receivables', '/app/clients', '/app/inventory', '/app/warehouses', '/app/scales', '/app/purchases', '/app/dashboard'];
 
 // ── API ──────────────────────────────────────────────────────────────────────
 

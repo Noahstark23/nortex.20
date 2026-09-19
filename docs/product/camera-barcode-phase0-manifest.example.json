@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "phase0-v1",
+  "normalizationVersion": "barcode-input-v1",
+  "studyId": "nortex-camera-template",
+  "studyStatus": "TEMPLATE",
+  "createdDate": "2026-08-30",
+  "dataClassification": "REPO_SAFE_SYNTHETIC",
+  "privacy": {
+    "realPayloadsInRepo": false,
+    "rawFramesPersisted": false,
+    "customerDataAllowed": false,
+    "fingerprintAlgorithm": "HMAC-SHA-256"
+  },
+  "samples": [
+    {
+      "sampleId": "synthetic-ean13-valid",
+      "provenance": "SYNTHETIC",
+      "repoSafe": true,
+      "symbology": "EAN_13",
+      "semanticClass": "FIXED_PRODUCT",
+      "expectedOutcome": "DECODE",
+      "expectedValue": "7501234567893",
+      "checksumExpectation": "VALID",
+      "printSource": "LASER",
+      "substrate": "MATTE_PAPER",
+      "conditionTags": ["PRISTINE"],
+      "barcodeWidthMm": 37.29,
+      "barcodeHeightMm": 25.93,
+      "quietZoneClass": "COMPLIANT",
+      "contrastClass": "HIGH",
+      "artifactRef": null
+    },
+    {
+      "sampleId": "synthetic-scale-ean13-valid",
+      "provenance": "SYNTHETIC",
+      "repoSafe": true,
+      "symbology": "SCALE_EAN_13",
+      "semanticClass": "SCALE_WEIGHT",
+      "expectedOutcome": "DECODE",
+      "expectedValue": "2000123012506",
+      "checksumExpectation": "VALID",
+      "printSource": "THERMAL",
+      "substrate": "MATTE_PAPER",
+      "conditionTags": ["PRISTINE"],
+      "barcodeWidthMm": 37.29,
+      "barcodeHeightMm": 25.93,
+      "quietZoneClass": "COMPLIANT",
+      "contrastClass": "HIGH",
+      "artifactRef": null
+    },
+    {
+      "sampleId": "synthetic-ean13-invalid-checksum",
+      "provenance": "SYNTHETIC",
+      "repoSafe": true,
+      "symbology": "EAN_13",
+      "semanticClass": "NEGATIVE",
+      "expectedOutcome": "REJECT_INVALID",
+      "expectedValue": "7501234567894",
+      "checksumExpectation": "INVALID",
+      "printSource": "LASER",
+      "substrate": "MATTE_PAPER",
+      "conditionTags": ["PRISTINE"],
+      "barcodeWidthMm": 37.29,
+      "barcodeHeightMm": 25.93,
+      "quietZoneClass": "COMPLIANT",
+      "contrastClass": "HIGH",
+      "artifactRef": null
+    }
+  ],
+  "environments": [
+    {
+      "environmentId": "android-low-pwa-zxing-template",
+      "deviceTier": "ANDROID_LOW",
+      "manufacturer": "record-at-run",
+      "modelAlias": "record-at-run",
+      "osName": "Android",
+      "osVersion": "record-at-run",
+      "surface": "INSTALLED_PWA",
+      "browserName": "Chrome",
+      "browserVersion": "record-at-run",
+      "engine": "Blink",
+      "decoderName": "ZXING_BROWSER",
+      "decoderVersion": "record-at-run",
+      "prototypeBuildId": "not-built",
+      "cameraFacing": "ENVIRONMENT",
+      "actualResolution": null,
+      "torchAvailable": false,
+      "secureContext": true,
+      "reportedFormats": ["ean_13", "ean_8", "upc_a", "upc_e", "code_128"]
+    }
+  ],
+  "scenarios": [
+    {
+      "scenarioId": "cold-normal-handheld",
+      "startState": "COLD",
+      "permissionState": "PROMPT",
+      "networkMode": "ONLINE",
+      "distanceCm": 20,
+      "angleDeg": 0,
+      "orientationDeg": 0,
+      "lightingBand": "NORMAL_INDOOR",
+      "motion": "HANDHELD",
+      "torch": "OFF",
+      "timeoutMs": 5000
+    }
+  ],
+  "runs": []
+}

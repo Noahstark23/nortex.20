@@ -1,0 +1,29 @@
+{
+  "max_function_length": 80,
+  "max_complexity": 15,
+  "max_nesting_depth": 5,
+  "max_file_size_lines": 800,
+  "min_duplicate_lines": 6,
+  "ignore_patterns": [
+    ".git",
+    ".codex",
+    ".opencode",
+    ".claude",
+    ".stryker-tmp",
+    "artifacts",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "package-lock.json",
+    "*.png",
+    "*.jpg",
+    "*.jpeg",
+    "*.webp",
+    "*.map",
+    "*.min.js",
+    "*.md",
+    "*.json",
+    "*.sql"
+  ]
+}

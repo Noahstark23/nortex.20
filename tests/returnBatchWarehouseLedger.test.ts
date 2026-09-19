@@ -275,10 +275,10 @@ describe('integración transaccional lote+bodega de devoluciones y anulaciones',
         expect(stock).toBeGreaterThan(create);
         expect(returnRoute.slice(allocationRead, plan)).toContain('tenantId: authReq.tenantId!');
         expect(returnRoute.slice(allocationRead, plan)).toContain('saleItem: { saleId, sale: { tenantId: authReq.tenantId! } }');
-        expect(returnRoute.slice(plan, create)).toContain(
+        expect(returnRoute.slice(allocationRead, plan)).toContain(
             'productsById.get(item.productId)?.requiresBatchTracking === true',
         );
-        expect(returnRoute.slice(mode, plan)).toContain("batchWarehouseLedgerMode !== 'OFF'");
+        expect(returnRoute.slice(allocationRead, plan)).toContain('const requiresBatchTracking =');
         expect(returnRoute.slice(plan, create)).toContain('ledgerMode: batchWarehouseLedgerMode');
     });
 

@@ -31,12 +31,10 @@ const writeoffRoute = between(
     server,
     "app.post('/api/inventory/batches/:batchId/writeoff'",
     "app.get('/api/inventory/expiring-soon'",
-);
-const adjustRoute = between(
-    server,
-    "app.post('/api/inventory/adjust'",
-    "app.get('/api/inventory/batches/:productId'",
-);
+) + readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffService.ts'), 'utf8');
+const writeoffAuthority = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffPreparation.ts'), 'utf8');
+const writeoffValue = readFileSync(resolve(process.cwd(), 'backend/services/batchWriteoffValue.ts'), 'utf8');
+const adjustRoute = readFileSync(resolve(process.cwd(), 'backend/services/inventoryAdjustmentService.ts'), 'utf8');
 const updateProductRoute = between(
     server,
     "app.put('/api/products/:id'",
@@ -55,7 +53,7 @@ const kardexRecordRoute = between(
 const seedCatalogRoute = between(
     server,
     "app.post('/api/onboarding/seed-catalog'",
-    "app.get('/api/onboarding'",
+    "app.use('/api/onboarding'",
 );
 const createProductRoute = between(
     server,
@@ -66,7 +64,7 @@ const bulkProductRoute = between(
     server,
     "app.post('/api/products/bulk'",
     "app.put('/api/products/:id'",
-);
+) + readFileSync(resolve(process.cwd(), 'backend/services/productImportService.ts'), 'utf8');
 
 const eventId = '123e4567-e89b-42d3-a456-426614174000';
 
@@ -220,14 +218,16 @@ describe('integridad transaccional de alta y merma manual', () => {
         expect(createBatchRoute).toContain('resultAuditId');
         expect(createBatchRoute).toContain('movementId');
         expect(createBatchRoute).not.toMatch(/findMany[\s\S]*MANUAL_BATCH_COMMAND/u);
-        expect(writeoffRoute).toContain('loadManualBatchReplay({');
-        expect(writeoffRoute).toContain('isUniqueConstraintFailure(error)');
+        expect(writeoffRoute).toContain('loadBatchWriteoffReplay(');
+        expect(writeoffRoute).toContain("error.code === 'P2002'");
     });
 
     it('merma exige ubicación/cantidad, descuenta local y agregado sin poner el lote en cero', () => {
         expect(writeoffRoute).toContain('validate(WriteoffBatchSchema)');
         expect(writeoffRoute.match(/resolveBatchWarehouseLedgerMode\(/gu)).toHaveLength(1);
-        expect(writeoffRoute).toContain("status: 'ACTIVE'");
+        expect(writeoffRoute).toContain('await assertBatchWriteoffPrincipal(principal, tx, true)');
+        expect(writeoffAuthority).toContain("actor.status !== 'ACTIVE'");
+        expect(writeoffAuthority).toContain('actor.role !== principal.role');
         expect(writeoffRoute).toContain("movementType: 'WRITEOFF'");
         expect(writeoffRoute).toContain('warehouseId: operationWarehouse.id');
         expect(writeoffRoute).toContain('enforceSufficient: true');
@@ -239,7 +239,9 @@ describe('integridad transaccional de alta y merma manual', () => {
     });
 
     it('valúa la merma con Decimal 2dp y mantiene asiento/auditoría en la misma tx', () => {
-        expect(writeoffRoute).toContain('.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)');
+        expect(writeoffRoute).toContain('calculateBatchWriteoffValue(writeoffQuantity,');
+        expect(writeoffAuthority).toContain('calculateBatchWriteoffValue(quantity, cost)');
+        expect(writeoffValue).toContain('.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)');
         expect(writeoffRoute).toContain('const journalValue = lossValue.toNumber()');
         expect(writeoffRoute).toContain("{ accountCode: '5.1.2', debit: journalValue, credit: 0 }");
         expect(writeoffRoute).toContain("{ accountCode: '1.1.4', debit: 0, credit: journalValue }");
@@ -250,12 +252,15 @@ describe('integridad transaccional de alta y merma manual', () => {
 
 describe('guard de mutaciones agregadas batch-tracked', () => {
     it('protege ajuste, edición de stock y kardex antes de applyStockDelta', () => {
-        for (const route of [adjustRoute, updateProductRoute, kardexRecordRoute]) {
+        for (const route of [updateProductRoute, kardexRecordRoute]) {
             expect(route).toContain('assertAggregateBatchMutationAllowed({');
             expect(route.indexOf('assertAggregateBatchMutationAllowed({'))
                 .toBeLessThan(route.indexOf('applyStockDelta(tx'));
         }
-        expect(adjustRoute).toContain('requiresBatchTracking');
+        expect(server).toContain("app.use('/api/inventory/adjust', inventoryAdjustmentsRouter)");
+        expect(adjustRoute).toContain("if (Boolean(product.requiresBatchTracking)) throw new InventoryAdjustmentError('BATCH_SELECTION_REQUIRED'");
+        expect(adjustRoute.indexOf("if (Boolean(product.requiresBatchTracking))"))
+            .toBeLessThan(adjustRoute.indexOf('await applyStockDelta(tx'));
         expect(updateProductRoute).toContain('lockedRequiresBatchTracking || nextRequiresBatchTracking');
         expect(kardexRecordRoute).toContain('requiresBatchTracking: product.requiresBatchTracking');
     });
@@ -266,9 +271,9 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
         expect(updateProductRoute).toContain('where: { tenantId: authReq.tenantId!, productId: id }');
         expect(updateProductRoute.indexOf('assertBatchTrackingTransitionAllowed({'))
             .toBeLessThan(updateProductRoute.indexOf('const result = await tx.product.update'));
-        expect(bulkProductRoute).toContain('SELECT stock, requiresBatchTracking FROM');
-        expect(bulkProductRoute).toContain('lockedRequiresBatchTracking !== nextRequiresBatchTracking');
-        expect(bulkProductRoute).toContain('where: { tenantId: authReq.tenantId!, productId: existing.id }');
+        expect(bulkProductRoute).toContain('SELECT id FROM \\`Product\\` WHERE tenantId = ${tenantId} AND sku = ${sku} FOR UPDATE');
+        expect(bulkProductRoute).toContain('existing.requiresBatchTracking !== data.requiresBatchTracking');
+        expect(bulkProductRoute).toContain('where: {tenantId, productId: existing.id}');
         expect(bulkProductRoute.indexOf('assertBatchTrackingTransitionAllowed({'))
             .toBeLessThan(bulkProductRoute.indexOf('await tx.product.update({'));
     });
@@ -279,17 +284,14 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
             'SELECT stock, requiresBatchTracking FROM',
             'const result = await tx.product.update',
         );
-        const bulkLockedDecision = between(
-            bulkProductRoute,
-            'SELECT stock, requiresBatchTracking FROM',
-            'await tx.product.update({',
-        );
-
-        for (const decision of [putLockedDecision, bulkLockedDecision]) {
-            expect(decision).toContain('lockedRequiresBatchTracking');
-            expect(decision).not.toContain('currentRequiresBatchTracking: existing.requiresBatchTracking');
-            expect(decision).not.toContain('requiresBatchTracking: Boolean(existing.requiresBatchTracking');
-        }
+        expect(putLockedDecision).toContain('lockedRequiresBatchTracking');
+        expect(putLockedDecision).not.toContain('currentRequiresBatchTracking: existing.requiresBatchTracking');
+        expect(putLockedDecision).not.toContain('requiresBatchTracking: Boolean(existing.requiresBatchTracking');
+        const lock = bulkProductRoute.indexOf('AND sku = ${sku} FOR UPDATE');
+        const authoritativeRead = bulkProductRoute.indexOf('tx.product.findFirstOrThrow({where: {id: locked[0].id, tenantId}})');
+        expect(lock).toBeGreaterThan(-1);
+        expect(authoritativeRead).toBeGreaterThan(lock);
+        expect(bulkProductRoute.indexOf('currentRequiresBatchTracking: existing.requiresBatchTracking')).toBeGreaterThan(authoritativeRead);
     });
 
     it('stock-count preflightea todas las líneas antes de aplicar una sola', () => {
@@ -311,9 +313,8 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
         expect(createProductRoute).toContain('const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)');
         expect(createProductRoute.indexOf('assertAggregateBatchMutationAllowed({'))
             .toBeLessThan(createProductRoute.indexOf('applyStockDelta(tx'));
-        expect(bulkProductRoute).toContain('const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)');
-        expect(bulkProductRoute).toContain('lockedRequiresBatchTracking || nextRequiresBatchTracking');
-        expect(bulkProductRoute).toContain('requiresBatchTracking: nextRequiresBatchTracking');
+        expect(bulkProductRoute).toContain('const mode = await resolveBatchWarehouseLedgerMode(tx, tenantId)');
+        expect(bulkProductRoute).toContain('assertAggregateBatchMutationAllowed({mode, requiresBatchTracking: data.requiresBatchTracking, delta: targetStock})');
         expect(bulkProductRoute).toContain('requiresBatchTracking: Boolean(normalized.requiresBatchTracking)');
     });
 });
@@ -321,8 +322,8 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
 // Verifica la clase por separado para que los callers puedan mapear siempre 409.
 expect(new ManualBatchMovementError('BATCH_SELECTION_REQUIRED', 409, 'x').httpStatus).toBe(409);
 
-// Ronda HTTP opcional contra una instancia MySQL descartable. La suite normal
-// la omite; CI/release puede activarla con NORTEX_QA_BASE_URL.
+// Ronda HTTP contra MySQL descartable. La suite normal la omite; la compuerta
+// test:integration:required exige estos dos casos con NORTEX_QA_BASE_URL.
 const QA_BASE_URL = process.env.NORTEX_QA_BASE_URL?.replace(/\/$/u, '');
 const qaDescribe = QA_BASE_URL ? describe.sequential : describe.skip;
 

@@ -1,6 +1,11 @@
 # Plan de desarrollo — Nortex App Móvil (Play Store + App Store)
 
-> Estado: **plan aprobable** · Rama `claude/plan-app-movil`
+> **ARCHIVADO (2026-08-30):** todo el contenido que sigue es una fotografía
+> histórica y no debe usarse como inventario técnico ni roadmap vigente. Contiene
+> premisas que ya no coinciden con el repositorio. `BUILD_ANDROID.md` describe el
+> shell actual; `PLAN_CAMARA_CODIGOS_BODEGA.md` gobierna cámara y códigos.
+
+> Estado histórico: **archivado; no ejecutable como plan vigente**
 > Insumos: recon técnico de la PWA actual (`vite.config.ts`, `lib/db.ts`, manifest,
 > service worker) + requisitos vigentes de Google Play y App Store.
 > Objetivo: publicar Nortex como app instalable en Play Store (Android) y App Store
@@ -8,7 +13,7 @@
 
 ---
 
-## 1. El problema
+## 1. Problema observado en el snapshot histórico
 
 Nortex ya es una PWA instalable, pero:
 - Los usuarios reales (ferreteros, pulperas, farmacéuticos) **buscan "apps" en la Play
@@ -17,7 +22,7 @@ Nortex ya es una PWA instalable, pero:
   nativas** que hoy no tenemos: escáner de código de barras con la cámara, impresión
   térmica por Bluetooth, notificaciones push de pedidos nuevos.
 
-## 2. Decisión técnica: **Capacitor** (no TWA)
+## 2. Decisión evaluada en el snapshot — no vigente
 
 | | TWA (Trusted Web Activity) | **Capacitor (elegido)** |
 |---|---|---|
@@ -43,9 +48,9 @@ app: se empaqueta la que ya existe.
   pero **requiere red** (pierde el offline del POS) y **Apple suele rechazar** un wrapper
   que es "solo un sitio web" (guideline 4.2). ❌ no recomendado para un POS.
 
-→ **Modo A**: bundle local para offline real + OTA para iterar rápido.
+→ En este snapshot se recomendó el **Modo A**; no describe el shell vigente.
 
-## 3. Qué existe hoy (del recon) y qué falta
+## 3. Estado observado en el snapshot histórico
 
 **Listo (reusable):**
 - PWA con `vite-plugin-pwa` (`registerType: autoUpdate`), manifest (`name`, `theme_color
@@ -65,7 +70,7 @@ app: se empaqueta la que ya existe.
 - El SW/PWA dentro del WebView de Capacitor no se comporta 100% igual que en Chrome →
   validar que el offline funciona en el WebView real (QA en dispositivo, no solo build).
 
-## 4. Roadmap por fases (cada fase = su PR)
+## 4. Roadmap histórico — no ejecutar desde este archivo
 
 ### Fase 1 — Shell Android en Play Store (testing interno)
 - Instalar Capacitor (`@capacitor/core`, `/cli`, `/android`), `npx cap init`.
@@ -113,7 +118,7 @@ app: se empaqueta la que ya existe.
 | Assets de marca | — | Logo en alta, screenshots por tamaño, gráfico destacado, textos de ficha. |
 | Cuenta Google/Apple del negocio | — | Definir con qué correo/organización se publican (no una cuenta personal descartable). |
 
-## 6. Decisiones abiertas (para arrancar Fase 1)
+## 6. Decisiones que estaban abiertas en el snapshot
 
 1. **¿Ambas tiendas o Android primero?** Recomiendo **Android primero** (Fases 1–2) y iOS
    después (Fase 3), porque Android es más barato/rápido y no necesita Mac. Capacitor deja

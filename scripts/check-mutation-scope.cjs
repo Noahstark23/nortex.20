@@ -78,8 +78,8 @@ const PISO_MUTANTES = {
     // recorte nunca es silencioso y una búsqueda ambigua jamás adivina producto.
     'utils/posSearch.ts': 62,
     // Alta rápida, compatibilidad de cantidades y clasificación de errores del
-    // POS: 221/221. Protege precio/costo/stock, pasos y reintentos idempotentes.
-    'utils/posActivation.ts': 221,
+    // POS: 192/192 tras extraer modo/paso a productQuantityRules (38/38).
+    'utils/posActivation.ts': 192,
     // Efectivo recibido, faltante, vuelto y denominaciones NIO: 99/99.
     'utils/posCash.ts': 99,
     // Foto de recibido/vuelto para ticket inmediato: 23/23.
@@ -91,13 +91,17 @@ const PISO_MUTANTES = {
     // la construcción exportada de MAX_QUANTITY al importar el módulo, antes
     // de que coverageAnalysis=perTest pueda activar un mutante estático.
     'utils/quantity.ts': 257,
-    // Transferencias de bodega reutilizan modo/paso autoritativos: 18/18.
-    'utils/stockTransferQuantity.ts': 18,
+    // Transferencias: 1/1; se borraron 17 mutantes al extraer reglas compartidas.
+    'utils/stockTransferQuantity.ts': 1,
     // Parser declarativo completo de etiquetas: 370 mutantes, 100.00% (incluye
     // un timeout por hit-limit que Stryker cuenta como detectado).
     'utils/scaleLabels.ts': 370,
-    // Conversión autoritativa BASE/PACK y costo unitario: 117/117.
-    'utils/purchasePackaging.ts': 117,
+    // BASE/PACK y costo: 99/99; se extrajo la inferencia duplicada de modo/paso.
+    'utils/purchasePackaging.ts': 99,
+    // Reglas de modo/paso extraídas de POS, traslado y compra: 38/38; total conjunto 330/330.
+    'utils/productQuantityRules.ts': 38,
+    // Captura decimal local completa: 27/27; formatos ambiguos bloquean envío.
+    'utils/bodegaReceivingInput.ts': 27,
     // Serialización pura de filas para el XLSX de reportes medidos: 3/3.
     'utils/measuredReportExport.ts': 3,
     // Agrupación exacta de cantidades vendidas: 67/67.
@@ -195,11 +199,35 @@ const PISO_MUTANTES = {
     // anticipado.
     'backend/services/stripe.ts': 13,
     'backend/services/stockService.ts': 5,
+    // PR-01 protege toda la canalización pura de posting: normalización
+    // estricta string/Decimal, límites 18,4, balance, orden total y huella.
+    // Corrida dirigida: 175/175, sin NoCoverage, ignores ni sobrevivientes.
+    'backend/services/journalPosting.ts': 175,
+    // Identidad legacy tenant+turno y hash de intención: 9/9.
+    'backend/services/shiftCloseService.ts': 9,
+    // JSON canónico de cierre (NIO 2dp, USD 4dp, notas normalizadas): 8/8.
+    'backend/validation/schemas.ts': 8,
     // Asientos puros de venta, abonos, compra+PPV y devolución: 177/177, más
     // 7/7 del orden canónico de locks contables. La factura ligada a OC deja
     // Inventario al costo recibido y separa variación favorable/desfavorable
     // en 5.1.3, incluidos bordes CUOTA_FIJA.
-    'backend/services/accounting.ts': 184,
+    // 2026-09-04: rangos realineados y clasificación de cobros; medidos 189/189.
+    'backend/services/accounting.ts': 189,
+    'backend/lib/paymentAccounts.ts': 11,
+    // NortexGPT: costo estricto de entrada/salida y rechazo de consumo inválido.
+    'backend/services/assistant/budget.ts': 15,
+    // Concordancia exacta entre subtotal/IVA/total impreso y cálculo de Compras.
+    'backend/services/assistant/proposalValidation.ts': 14,
+    // Hash canónico: escalares, orden de líneas, claves, fechas y Decimal.
+    // El filtro redundante undefined se eliminó antes de fijar este piso;
+    // JSON.stringify ya omite esas propiedades. Corrida dirigida: 26/26.
+    'backend/services/purchaseRegistrationAuthority.ts': 26,
+    // Valor de merma Decimal: corrida dirigida 13/13, sin exclusiones.
+    'backend/services/batchWriteoffValue.ts': 13,
+    // Medidos en el candidato operativo: cálculo promocional y edición decimal.
+    'backend/services/promotions/pricing.ts': 1,
+    'backend/services/promotions/totals.ts': 5,
+    'backend/services/productBulkEditPrice.ts': 5,
 };
 
 if (!fs.existsSync(REPORT)) {

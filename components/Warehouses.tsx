@@ -1,9 +1,11 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react';
 import { Warehouse as WarehouseIcon, Plus, ArrowRightLeft, Star, RefreshCw, X, Search, ChevronLeft, ChevronRight, Loader2, AlertTriangle } from 'lucide-react';
 import { ToastViewport, useToast } from './ui/Toast';
-import { InventoryTabs } from './ui/InventoryTabs';
+import { useLocation } from 'react-router-dom';
+import { WarehouseWorkspaceHeader, WarehouseWorkspaceManagement, readStockWorkspaceContext, stockWorkspaceHref } from './inventory/WarehouseWorkspaceHeader';
 import { validateStockTransferQuantity } from '../utils/stockTransferQuantity';
 import { currentSessionRole, roleCapabilitiesFor } from '../utils/roleCapabilities';
+import { resolveProductQuantityRules } from '../utils/productQuantityRules';
 
 /** Multi-bodega: lista, stock por bodega y transferencias (Fase 3). */
 interface Warehouse {
@@ -16,6 +18,7 @@ interface MiembroEquipo { id: string; name: string; status: string; }
 interface StockItem {
     productId: string;
     name: string;
+    brand?: string | null;
     sku: string;
     unit: string;
     stock: number;
@@ -41,6 +44,14 @@ type StockLoadState = {
     items: StockItem[];
     error: string;
 };
+interface TransferHistoryRow {
+    id: string;
+    createdAt: string;
+    fromWarehouse?: { name: string };
+    toWarehouse?: { name: string };
+    items: Array<{ name?: string; productName?: string; quantity: string | number }>;
+    batchTransferStatus?: string;
+}
 
 const authHeaders = (): Record<string, string> => ({
     'Content-Type': 'application/json',
@@ -84,7 +95,15 @@ const parseCantidadTransferencia = (
 };
 
 const Warehouses: React.FC = () => {
-    const { isBodeguero, canManageWarehouseTopology, canTransferStock } = roleCapabilitiesFor(currentSessionRole());
+    const { isBodeguero, canManageWarehouseTopology, canTransferStock, canAdjustStock } = roleCapabilitiesFor(currentSessionRole());
+    const location = useLocation();
+    const context = useMemo(() => readStockWorkspaceContext(location.search), [location.search]);
+    const openedTransferLinks = useRef(new Set<string>());
+    const latestWarehouseContext = useRef(context.warehouseId);
+    latestWarehouseContext.current = context.warehouseId;
+    const appliedWarehouseContext = useRef<string | null>(null);
+    const [showManagement, setShowManagement] = useState(false);
+    const [contextProductId, setContextProductId] = useState(context.productId);
     const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
     const [selected, setSelected] = useState<Warehouse | null>(null);
     const [warehousesLoading, setWarehousesLoading] = useState(true);
@@ -102,6 +121,10 @@ const Warehouses: React.FC = () => {
     const [transfer, setTransfer] = useState<TransferDraft | null>(null);
     const [transferError, setTransferError] = useState('');
     const [transferring, setTransferring] = useState(false);
+    const [showHistory, setShowHistory] = useState(false);
+    const [transferHistory, setTransferHistory] = useState<TransferHistoryRow[]>([]);
+    const [historyLoading, setHistoryLoading] = useState(false);
+    const [historyError, setHistoryError] = useState('');
     const transferringRef = useRef(false);
     const transferDialogRef = useRef<HTMLDivElement | null>(null);
     const transferQuantityRef = useRef<HTMLInputElement | null>(null);
@@ -128,24 +151,26 @@ const Warehouses: React.FC = () => {
     // P0-1 — El panel renderizaba TODAS las existencias de la bodega (1.003 filas
     // en un tenant real) dentro de un contenedor sin scroll: el 98% del inventario
     // quedaba fuera de alcance, sin barra, sin paginar y sin forma de buscar.
-    const [busqueda, setBusqueda] = useState('');
+    const [busqueda, setBusqueda] = useState(context.productId ? '' : context.search);
     // Equipo para asignar la carga (GET /api/team es OWNER/ADMIN: ante 403 la
     // lista queda vacía y el select se oculta — nunca un select vacío mudo).
+    useEffect(() => { setContextProductId(context.productId); setBusqueda(context.productId ? '' : context.search); }, [context.productId, context.search]);
     const [equipo, setEquipo] = useState<MiembroEquipo[]>([]);
     const [orden, setOrden] = useState<'nombre' | 'stock'>('nombre');
     const [pagina, setPagina] = useState(1);
 
     const filtrados = useMemo(() => {
         const q = sinTildes(busqueda.trim());
+        const contextualStock = contextProductId ? stock.filter(it => it.productId === contextProductId) : stock;
         const base = q
-            ? stock.filter(it => sinTildes(it.name).includes(q) || sinTildes(it.sku ?? '').includes(q))
-            : stock;
+            ? contextualStock.filter(it => sinTildes(it.name).includes(q) || sinTildes(it.brand ?? '').includes(q) || sinTildes(it.sku ?? '').includes(q))
+            : contextualStock;
         // Copia antes de ordenar: sort muta, y `stock` es el estado.
         return [...base].sort((a, b) =>
             orden === 'stock'
                 ? b.stock - a.stock
                 : a.name.localeCompare(b.name, 'es'));
-    }, [stock, busqueda, orden]);
+    }, [stock, busqueda, orden, contextProductId]);
 
     const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
     const visibles = filtrados.slice((pagina - 1) * POR_PAGINA, pagina * POR_PAGINA);
@@ -161,19 +186,25 @@ const Warehouses: React.FC = () => {
             const d = await res.json().catch(() => ({}));
             if (!res.ok) throw new Error(d.error || 'No se pudieron cargar las bodegas.');
 
+            if (latestWarehouseContext.current !== context.warehouseId) return;
             const items: Warehouse[] = Array.isArray(d.data) ? d.data : [];
+            const contextChanged = appliedWarehouseContext.current !== context.warehouseId;
+            appliedWarehouseContext.current = context.warehouseId;
             setWarehouses(items);
             setSelected(current => {
                 if (items.length === 0) return null;
-                const refreshedSelection = current && items.find(w => w.id === current.id);
-                return refreshedSelection ?? items.find(w => w.isDefault) ?? items[0];
+                const refreshedSelection = !contextChanged && current && items.find(w => w.id === current.id);
+                if (refreshedSelection) return refreshedSelection;
+                if (context.warehouseId) return items.find(w => w.id === context.warehouseId && w.isActive) ?? null;
+                return items.find(w => w.isDefault && w.isActive) ?? items.find(w => w.isActive) ?? null;
             });
         } catch (error) {
+            if (latestWarehouseContext.current !== context.warehouseId) return;
             setWarehousesError(error instanceof Error ? error.message : 'No se pudieron cargar las bodegas.');
         } finally {
-            setWarehousesLoading(false);
+            if (latestWarehouseContext.current === context.warehouseId) setWarehousesLoading(false);
         }
-    }, []);
+    }, [context.warehouseId]);
 
     const loadStock = useCallback(async (wh: Warehouse) => {
         stockAbortController.current?.abort();
@@ -278,6 +309,17 @@ const Warehouses: React.FC = () => {
         }
     };
 
+    const loadHistory = async () => {
+        setShowHistory(true); setHistoryLoading(true); setHistoryError('');
+        try {
+            const res = await fetch('/api/stock-transfers', { headers: authHeaders() });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(data.error || 'No se pudo cargar el historial.');
+            setTransferHistory(Array.isArray(data.data) ? data.data : []);
+        } catch (error) { setHistoryError(error instanceof Error ? error.message : 'No se pudo cargar el historial.'); }
+        finally { setHistoryLoading(false); }
+    };
+
     const doTransfer = async () => {
         if (!transfer || !selected) return;
         if (!canTransferStock) {
@@ -337,6 +379,7 @@ const Warehouses: React.FC = () => {
                 message: `${qtyDisplay} ${transfer.unit} de ${transfer.productName}.`,
             });
             await loadStock(selected);
+            if (showHistory) await loadHistory();
         } catch (error) {
             setTransferError(error instanceof Error ? error.message : 'Revisá tu conexión e intentá de nuevo.');
         } finally {
@@ -399,7 +442,7 @@ const Warehouses: React.FC = () => {
         };
     }, [Boolean(transfer), closeTransfer]);
 
-    const openTransfer = (item: StockItem, trigger: HTMLButtonElement) => {
+    const openTransfer = useCallback((item: StockItem, trigger: HTMLButtonElement | null) => {
         if (!canTransferStock || !selected || topologyLocked) return;
         const destination = warehouses.find(w => w.id !== selected.id && w.isActive);
         if (!destination) {
@@ -416,38 +459,45 @@ const Warehouses: React.FC = () => {
             unit: item.unit,
             available: item.stock,
             qty: '',
-            saleMode: item.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED',
-            quantityStep: item.quantityStep?.toString()
-                || (item.saleMode === 'COUNTED' ? '1' : '0.0001'),
+            ...resolveProductQuantityRules(item),
         });
-    };
+    }, [canTransferStock, selected, topologyLocked, warehouses, showToast]);
+
+    useEffect(() => {
+        if (new URLSearchParams(location.search).get('transfer') !== '1'
+            || !context.warehouseId || !context.productId || !canTransferStock || topologyLocked
+            || !selected?.isActive || selected.id !== context.warehouseId
+            || !stockBelongsToSelection || stockLoad.status !== 'success' || transfer) return;
+        const key = `${location.key}:${context.warehouseId}:${context.productId}`;
+        if (openedTransferLinks.current.has(key)) return;
+        const item = stock.find(product => product.productId === context.productId);
+        if (!item || !(item.stock > 0)) return;
+        // Abrir una intención no registra el traslado. Su UUID y cantidad siguen
+        // perteneciendo al formulario y solo el botón de confirmar envía el POST.
+        openedTransferLinks.current.add(key);
+        openTransfer(item, null);
+    }, [location.key, location.search, context.warehouseId, context.productId, canTransferStock,
+        topologyLocked, selected, stockBelongsToSelection, stockLoad.status, stock, transfer, openTransfer]);
 
     return (
         // `h-full overflow-y-auto` es el contenedor de scroll que esta vista NO tenía:
         // el <main> del layout es `overflow-hidden` a propósito y cada pantalla trae
         // el suyo (Mis Productos, Compras y Series ya lo hacen). Sin él, el contenido
         // se recortaba en la altura del viewport y no había forma de bajar.
-        <div className="h-full overflow-y-auto p-6 max-w-6xl mx-auto text-slate-100">
+        <div className="stock-workspace nx-workspace">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
-            <InventoryTabs className="mb-4" />
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-                <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2"><WarehouseIcon className="text-brand" /> Bodegas y existencias</h1>
-                    {isBodeguero && <p className="mt-1 text-sm text-slate-400">Consultá el stock y mové mercadería entre bodegas.</p>}
-                </div>
-                <button
-                    type="button"
-                    onClick={() => selected && loadStock(selected)}
-                    disabled={!selected || loading || topologyLocked}
-                    aria-label={selected ? `Actualizar existencias de ${selected.name}` : 'Actualizar existencias'}
-                    title={topologyLocked ? 'Primero verificá la lista de bodegas' : 'Actualizar existencias'}
-                    className="min-h-tap min-w-tap inline-flex items-center justify-center rounded-control text-slate-300 hover:bg-white/[0.06] hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} aria-hidden="true" />
-                </button>
-            </div>
-
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+            <WarehouseWorkspaceHeader onCameraCode={code => { if (loading || stockError) throw new Error('Primero reintentá cargar las existencias de esta bodega.'); const found = stock.find(item => item.sku.toUpperCase() === code.toUpperCase()); if (!found) throw new Error('El código no figura en esta bodega. Buscalo en Productos para ver su ubicación.'); setContextProductId(found.productId); setBusqueda(''); }} warehouses={warehouses} selectedId={selected?.id || ''} locked={topologyLocked || Boolean(transfer)}
+                search={busqueda || (contextProductId ? stock.find(item => item.productId === contextProductId)?.name || '' : '')}
+                onSearch={value => { setContextProductId(''); setBusqueda(value); }}
+                onSelect={id => { const next = warehouses.find(item => item.id === id); if (next) setSelected(next); }}
+                returnHref={stockWorkspaceHref('/app/inventory', { search: context.search, productId: context.productId })}
+                countHref={canAdjustStock && selected?.isActive && !topologyLocked ? stockWorkspaceHref('/app/inventory-count', { warehouseId: selected.id, productId: contextProductId, search: context.search }) : undefined}
+                onManage={canManageWarehouseTopology ? () => setShowManagement(true) : undefined} />
+            {context.warehouseId && !warehousesLoading && !warehousesError && !warehouses.some(item => item.id === context.warehouseId && item.isActive) && !selected && <p role="alert" className="stock-workspace-notice">La bodega del enlace no está disponible. Elegí una ubicación para continuar.</p>}
+            {contextProductId && stockBelongsToSelection && stockLoad.status === 'success' && !stock.some(item => item.productId === contextProductId) && <p role="status" className="stock-workspace-notice">El producto del enlace no aparece en esta bodega. <button className="underline nx-fluid-press" onClick={() => { setContextProductId(''); setBusqueda(''); }}>Ver todas las existencias</button></p>}
+            {warehousesError && <p role="alert" className="stock-workspace-notice">{warehousesError} <button className="underline nx-fluid-press" onClick={() => void load()}>Reintentar bodegas</button></p>}
+            {warehousesLoading && <p role="status" className="stock-workspace-notice">Verificando bodegas…</p>}
+            <WarehouseWorkspaceManagement open={showManagement && canManageWarehouseTopology} busy={creating || warehousesLoading} onClose={() => { if (!creating && !warehousesLoading) setShowManagement(false); }}>
                 {/* Lista + crear */}
                 <div className="space-y-2" aria-busy={warehousesLoading}>
                     {warehousesLoading && warehouses.length === 0 && (
@@ -543,7 +593,7 @@ const Warehouses: React.FC = () => {
                                 aria-label="Crear bodega"
                                 aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
                                 title="Crear bodega"
-                                className="min-h-tap min-w-tap inline-flex items-center justify-center bg-brand text-white rounded-control disabled:opacity-40 disabled:cursor-not-allowed"
+                                className="min-h-tap min-w-tap inline-flex items-center justify-center bg-brand text-brand-on rounded-control disabled:opacity-40 disabled:cursor-not-allowed"
                             >
                                 {creating
                                     ? <Loader2 size={16} className="animate-spin" aria-hidden="true" />
@@ -553,8 +603,10 @@ const Warehouses: React.FC = () => {
                     )}
                 </div>
 
+            </WarehouseWorkspaceManagement>
+
                 {/* Stock de la bodega seleccionada */}
-                <div className="lg:col-span-3 bg-surface-900 border border-white/[0.06] rounded-xl overflow-hidden">
+                <div className="stock-workspace-list">
                     <div className="px-4 py-3 border-b border-white/[0.04] space-y-3">
                         <div className="flex flex-wrap items-center justify-between gap-2">
                             <span ref={stockHeadingRef} tabIndex={-1} className="font-bold text-sm outline-none" aria-live="polite">
@@ -571,41 +623,10 @@ const Warehouses: React.FC = () => {
                             )}
                         </div>
 
-                        {stockBelongsToSelection && stockLoad.status === 'success' && stock.length > 0 && (
-                            <div className="flex flex-wrap items-center gap-2">
-                                <div className="relative flex-1 min-w-[12rem]">
-                                    <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 pointer-events-none" aria-hidden="true" />
-                                    <label htmlFor="buscar-existencias" className="sr-only">Buscar existencias por nombre o SKU</label>
-                                    <input
-                                        id="buscar-existencias"
-                                        value={busqueda}
-                                        onChange={e => setBusqueda(e.target.value)}
-                                        placeholder="Buscar por nombre o SKU…"
-                                        className="w-full h-touch pl-9 pr-9 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 placeholder:text-slate-500 focus:outline-none focus:border-brand"
-                                    />
-                                    {busqueda && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setBusqueda('')}
-                                            aria-label="Limpiar búsqueda"
-                                            className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-slate-500 hover:text-slate-200 rounded-control"
-                                        >
-                                            <X size={14} aria-hidden="true" />
-                                        </button>
-                                    )}
-                                </div>
-                                <label htmlFor="orden-existencias" className="text-xs text-slate-400">Ordenar</label>
-                                <select
-                                    id="orden-existencias"
-                                    value={orden}
-                                    onChange={e => setOrden(e.target.value as 'nombre' | 'stock')}
-                                    className="h-touch px-3 bg-slate-800 border border-slate-700 rounded-control text-sm text-slate-100 focus:outline-none focus:border-brand"
-                                >
-                                    <option value="nombre">Nombre (A-Z)</option>
-                                    <option value="stock">Stock (mayor primero)</option>
-                                </select>
-                            </div>
-                        )}
+                        <div className="flex items-center justify-between gap-3">
+                            <label className="text-xs text-slate-400">Ordenar <select aria-label="Ordenar existencias" value={orden} onChange={event => setOrden(event.target.value as 'nombre' | 'stock')} className="ml-2 rounded-control border px-3 py-2 bg-surface-900 nx-form-field"><option value="nombre">Nombre</option><option value="stock">Mayor existencia</option></select></label>
+                            <button type="button" onClick={() => selected && loadStock(selected)} disabled={!selected || loading || topologyLocked} aria-label={selected ? `Actualizar existencias de ${selected.name}` : 'Actualizar existencias'} className="stock-workspace-quiet nx-fluid-press"><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Actualizar</button>
+                        </div>
                     </div>
                     {/* En móvil cada existencia es una tarjeta: nombre, SKU, stock y
                         acción permanecen visibles sin depender de scroll horizontal. */}
@@ -628,12 +649,7 @@ const Warehouses: React.FC = () => {
                                         <li key={it.productId} className="p-4">
                                             <div className="min-w-0">
                                                 <p className="break-words text-sm font-semibold text-slate-100">
-                                                    {it.name}
-                                                    {it.implicit && (
-                                                        <span className="ml-2 text-[9px] font-normal text-slate-400" title="Stock legado aún no movido en esta bodega">
-                                                            IMPLÍCITO
-                                                        </span>
-                                                    )}
+                                                    {it.name}{it.brand && <span className="block text-xs font-medium text-slate-400">{it.brand}</span>}
                                                 </p>
                                             </div>
 
@@ -662,7 +678,7 @@ const Warehouses: React.FC = () => {
                                                 className="mt-4 min-h-tap w-full inline-flex items-center justify-center gap-2 rounded-control border border-brand/30 bg-brand/10 px-4 text-sm font-semibold text-brand transition-colors hover:bg-brand/15 focus:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:cursor-not-allowed disabled:border-white/[0.06] disabled:bg-white/[0.02] disabled:text-slate-500"
                                             >
                                                 <ArrowRightLeft size={16} aria-hidden="true" />
-                                                Transferir
+                                                Trasladar
                                             </button>
                                         </li>
                                     );
@@ -706,7 +722,7 @@ const Warehouses: React.FC = () => {
                                 {/* Solo la página actual: antes se montaban las 1.003 filas de una. */}
                                 {visibles.map(it => (
                                     <tr key={it.productId}>
-                                        <td className="p-3">{it.name}{it.implicit && <span className="ml-2 text-[9px] text-slate-400" title="Stock legado aún no movido en esta bodega">IMPLÍCITO</span>}</td>
+                                        <td className="p-3">{it.name}{it.brand && <span className="block text-xs text-slate-400">{it.brand}</span>}</td>
                                         <td className="p-3 text-slate-500 font-mono text-xs">{it.sku}</td>
                                         <td className="p-3 text-right font-mono font-bold">{it.stock} {it.unit}</td>
                                         <td className="p-3 text-right">
@@ -717,10 +733,11 @@ const Warehouses: React.FC = () => {
                                                     disabled={topologyLocked}
                                                     aria-label={`Transferir ${it.name} a otra bodega`}
                                                     aria-describedby={warehousesError ? 'warehouse-topology-error' : undefined}
-                                                    className="min-h-tap min-w-tap inline-flex items-center justify-center text-brand hover:bg-brand/10 rounded-control disabled:cursor-not-allowed disabled:opacity-40"
+                                                    className="min-h-tap inline-flex items-center justify-center gap-2 whitespace-nowrap px-3 text-sm font-semibold text-brand hover:bg-brand/10 rounded-control disabled:cursor-not-allowed disabled:opacity-40"
                                                     title={topologyLocked ? 'Primero verificá la lista de bodegas' : `Transferir ${it.name}`}
                                                 >
                                                     <ArrowRightLeft size={14} aria-hidden="true" />
+                                                    <span>Trasladar</span>
                                                 </button>
                                             )}
                                         </td>
@@ -786,7 +803,24 @@ const Warehouses: React.FC = () => {
                         </div>
                     )}
                 </div>
-            </div>
+
+            <section className="mt-6 rounded-xl border border-white/10 p-4" aria-label="Historial de traslados">
+                <div className="flex items-center justify-between gap-3">
+                    <h2 className="font-semibold">Traslados registrados</h2>
+                    <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} className="text-sm font-semibold text-brand underline disabled:opacity-50">{showHistory ? 'Actualizar historial' : 'Ver historial de traslados'}</button>
+                </div>
+                {showHistory && <p className="mt-2 text-xs text-slate-400">Últimos 100 traslados. Cada registro confirma el movimiento inmediato entre las dos bodegas.</p>}
+                {historyLoading && <p role="status" className="mt-3 text-sm text-slate-400">Cargando traslados…</p>}
+                {historyError && <p role="alert" className="mt-3 text-sm text-red-300">{historyError}</p>}
+                {showHistory && !historyLoading && !historyError && (transferHistory.length === 0 ? <p className="mt-3 text-sm text-slate-400">Todavía no hay traslados registrados.</p> : <ul className="mt-3 divide-y divide-white/10">
+                    {transferHistory.map(row => <li key={row.id} className="py-3 text-sm">
+                        <p className="font-semibold">{row.fromWarehouse?.name || 'Bodega origen'} → {row.toWarehouse?.name || 'Bodega destino'}</p>
+                        <p className="mt-1 text-xs text-slate-400">{new Date(row.createdAt).toLocaleString('es-NI')} · Comprobante {row.id}</p>
+                        <p className="mt-1 text-slate-200">{(Array.isArray(row.items) ? row.items : []).map(line => `${line.quantity} × ${line.name || line.productName || 'Producto'}`).join(' · ')}</p>
+                        {row.batchTransferStatus === 'SHADOW_GAP' && <p className="mt-1 text-xs text-amber-300">El desglose de lotes requiere conciliación.</p>}
+                    </li>)}
+                </ul>)}
+            </section>
 
             {/* Modal de transferencia */}
             {transfer && selected && (
@@ -886,7 +920,7 @@ const Warehouses: React.FC = () => {
                             type="button"
                             onClick={doTransfer}
                             disabled={transferring || topologyLocked || !transfer.toId || validTransferQuantity === null}
-                            className="w-full min-h-tap inline-flex items-center justify-center gap-2 bg-brand text-white rounded-control font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                            className="w-full min-h-tap inline-flex items-center justify-center gap-2 bg-brand text-brand-on rounded-control font-bold text-sm disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                             {transferring && <Loader2 size={16} className="animate-spin" aria-hidden="true" />}
                             {transferring ? 'Transfiriendo…' : 'Transferir'}

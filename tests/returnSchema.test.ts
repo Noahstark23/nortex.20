@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { CreateReturnSchema } from '../backend/validation/schemas';
 
 const payloadWithQuantity = (quantity: string | number) => ({
+    correctionRequestId: 'correction-001',
     clientEventId: '018f47cb-52d6-7f6a-8b41-25db4b0ae1a9',
     saleId: 'sale-001',
     items: [{ saleItemId: 'sale-item-001', quantity }],
@@ -22,6 +23,7 @@ describe('CreateReturnSchema — identidad de línea y cantidades decimales', ()
 
     it('acepta productId legacy para que el servicio decida si es inequívoco', () => {
         const result = CreateReturnSchema.safeParse({
+            correctionRequestId: 'correction-legacy',
             clientEventId: '018f47cb-52d6-7f6a-8b41-25db4b0ae1aa',
             saleId: 'sale-legacy',
             items: [{ productId: 'product-meat', quantity: 0.5 }],
@@ -38,6 +40,7 @@ describe('CreateReturnSchema — identidad de línea y cantidades decimales', ()
 
     it('requiere saleItemId o productId en cada entrada', () => {
         const result = CreateReturnSchema.safeParse({
+            correctionRequestId: 'correction-invalid',
             clientEventId: '018f47cb-52d6-7f6a-8b41-25db4b0ae1ab',
             saleId: 'sale-001',
             items: [{ quantity: '0.50' }],

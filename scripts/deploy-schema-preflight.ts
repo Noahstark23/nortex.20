@@ -29,6 +29,10 @@ export const SUPPLIER_CREDIT_NOTE_EVENT_UNIQUE_INDEX = 'SupplierCreditNote_tenan
 export const SUPPLIER_CREDIT_NOTE_LINE_RETURN_ITEM_UNIQUE_INDEX = 'SupplierCreditNoteLine_supplierReturnItemId_key';
 export const SUPPLIER_CREDIT_NOTE_LINE_DOCUMENT_ITEM_UNIQUE_INDEX = 'SupplierCreditNoteLine_creditNoteId_supplierReturnItemId_key';
 export const SUPPLIER_CREDIT_APPLICATION_PURCHASE_UNIQUE_INDEX = 'SupplierCreditApplication_creditNoteId_purchaseId_key';
+export const SHIFT_CLOSE_EVENT_UNIQUE_INDEX = 'Shift_tenantId_closeEventId_key';
+export const JOURNAL_ENTRY_POSTING_KEY_UNIQUE_INDEX = 'JournalEntry_tenantId_postingKey_key';
+export const JOURNAL_ENTRY_REVERSAL_UNIQUE_INDEX = 'JournalEntry_reversalOfId_key';
+export const JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY = 'JournalEntry_reversalOfId_fkey';
 
 // Identificadores internos y constantes: nunca contienen entrada del usuario.
 const WAREHOUSE_TABLE_SQL = Prisma.raw('`Warehouse`');
@@ -103,6 +107,22 @@ export interface WarehouseSellerIndexRow {
     expression: string | null;
 }
 
+export interface AccountingDecimalColumnRow {
+    tableName: string;
+    columnName: string;
+    dataType: string;
+    columnType: string;
+    isNullable: string;
+    numericPrecision: number | bigint | null;
+    numericScale: number | bigint | null;
+    columnDefault: string | null;
+    extra: string;
+    generationExpression: string;
+}
+
+export type AccountingDecimalColumnState = 'missing' | 'legacy' | 'target' | 'invalid';
+export type AccountingDecimalConvergenceDecision = 'alter' | 'noop' | 'reject';
+
 export type StockCountColumnRow = WarehouseSellerColumnRow;
 export type StockCountIndexRow = WarehouseSellerIndexRow;
 export type ProductReturnColumnRow = WarehouseSellerColumnRow;
@@ -120,6 +140,9 @@ export type ProcurementPhaseTwoBForeignKeyRow = StockCountForeignKeyRow;
 export type ProcurementPhaseTwoCColumnRow = ProcurementPhaseTwoBColumnRow;
 export type ProcurementPhaseTwoCIndexRow = ProcurementPhaseTwoBIndexRow;
 export type ProcurementPhaseTwoCForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
+export type CashCloseJournalColumnRow = ProcurementPhaseTwoBColumnRow;
+export type CashCloseJournalIndexRow = ProcurementPhaseTwoBIndexRow;
+export type CashCloseJournalForeignKeyRow = ProcurementPhaseTwoBForeignKeyRow;
 
 export interface ProcurementPhaseTwoBColumnContract {
     columnName: string;
@@ -210,6 +233,86 @@ export type SchemaObjectState = 'missing' | 'valid' | 'invalid';
 function normalizedSchemaDefault(value: string | null): string | null {
     if (value === null) return null;
     return value.toLowerCase().replace(/^'(.*)'$/, '$1');
+}
+
+function isZeroDecimalDefault(value: string | null): boolean {
+    if (value === null) return false;
+    return /^[-+]?0+(?:\.0+)?$/.test(value.trim().replace(/^'(.*)'$/, '$1'));
+}
+
+/**
+ * Un DECIMAL solo se amplía sin redondear ni perder rango cuando el destino
+ * conserva (o aumenta) por separado sus dígitos enteros y fraccionarios.
+ */
+export function isSafeDecimalWidening(
+    source: { precision: number; scale: number },
+    target: { precision: number; scale: number },
+): boolean {
+    if (!Number.isInteger(source.precision)
+        || !Number.isInteger(source.scale)
+        || !Number.isInteger(target.precision)
+        || !Number.isInteger(target.scale)
+        || source.precision <= 0
+        || target.precision <= 0
+        || source.scale < 0
+        || target.scale < 0
+        || source.scale > source.precision
+        || target.scale > target.precision) {
+        return false;
+    }
+
+    return source.scale <= target.scale
+        && source.precision - source.scale <= target.precision - target.scale;
+}
+
+/**
+ * Solo acepta el contrato histórico DECIMAL(14,2) o el final DECIMAL(18,4).
+ * Cualquier nullabilidad, default, atributo unsigned/generado o metadata
+ * discordante se considera drift y se rechaza antes de ejecutar DDL.
+ */
+export function inspectAccountingDecimalColumn(
+    rows: AccountingDecimalColumnRow[],
+): AccountingDecimalColumnState {
+    if (rows.length === 0) return 'missing';
+    if (rows.length !== 1) return 'invalid';
+
+    const [column] = rows;
+    const precision = Number(column.numericPrecision);
+    const scale = Number(column.numericScale);
+    const normalizedColumnType = column.columnType.toLowerCase().replace(/\s+/g, '');
+    const identityIsValid = (column.tableName === 'Account' && column.columnName === 'balance')
+        || (column.tableName === 'JournalLine'
+            && (column.columnName === 'debit' || column.columnName === 'credit'));
+    const commonContractIsValid = identityIsValid
+        && column.dataType.toLowerCase() === 'decimal'
+        && column.isNullable.toUpperCase() === 'NO'
+        && isZeroDecimalDefault(column.columnDefault)
+        && column.extra === ''
+        && column.generationExpression === '';
+
+    if (!commonContractIsValid) return 'invalid';
+    if (precision === 14 && scale === 2 && normalizedColumnType === 'decimal(14,2)') {
+        return 'legacy';
+    }
+    if (precision === 18 && scale === 4 && normalizedColumnType === 'decimal(18,4)') {
+        return 'target';
+    }
+    return 'invalid';
+}
+
+export function decideAccountingDecimalConvergence(
+    rows: AccountingDecimalColumnRow[],
+): AccountingDecimalConvergenceDecision {
+    const state = inspectAccountingDecimalColumn(rows);
+    if (state === 'target') return 'noop';
+    if (state === 'legacy'
+        && isSafeDecimalWidening(
+            { precision: 14, scale: 2 },
+            { precision: 18, scale: 4 },
+        )) {
+        return 'alter';
+    }
+    return 'reject';
 }
 
 export function inspectProcurementPhaseTwoBColumn(
@@ -499,6 +602,32 @@ export function inspectProcurementPhaseTwoBForeignKey(
         && row.updateRule.toUpperCase() === 'CASCADE'
         ? 'valid'
         : 'invalid';
+}
+
+export function inspectCashCloseJournalColumn(
+    rows: CashCloseJournalColumnRow[],
+    expected: ProcurementPhaseTwoBColumnContract,
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBColumn(rows, expected);
+}
+
+export function inspectCashCloseJournalIndex(
+    rows: CashCloseJournalIndexRow[],
+    expectedName: string,
+    expectedColumns: string[],
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBIndex(rows, expectedName, expectedColumns, true);
+}
+
+export function inspectCashCloseJournalForeignKey(
+    rows: CashCloseJournalForeignKeyRow[],
+): SchemaObjectState {
+    return inspectProcurementPhaseTwoBForeignKey(rows, {
+        constraintName: JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY,
+        columnName: 'reversalOfId',
+        referencedTableName: 'JournalEntry',
+        deleteRule: 'RESTRICT',
+    });
 }
 
 export function inspectProcurementPhaseTwoCColumn(
@@ -3667,6 +3796,765 @@ export async function applyProcurementPhaseTwoCSchemaPreflight(
     logger.info('Preflight DDL 2C verificado: devoluciones y créditos listos sin DML ni activaciones.');
 }
 
+type CashCloseJournalTableName = 'Shift' | 'JournalEntry';
+
+interface CashCloseJournalColumnDefinition {
+    tableName: CashCloseJournalTableName;
+    contract: ProcurementPhaseTwoBColumnContract;
+    ddl: Prisma.Sql;
+}
+
+interface CashCloseJournalUniqueDefinition {
+    tableName: CashCloseJournalTableName;
+    name: string;
+    columns: string[];
+    duplicateQuery: Prisma.Sql;
+    ddl: Prisma.Sql;
+}
+
+const CASH_CLOSE_JOURNAL_BASELINE_COLUMNS: Array<{
+    tableName: CashCloseJournalTableName;
+    contract: ProcurementPhaseTwoBColumnContract;
+}> = [
+    {
+        tableName: 'Shift',
+        contract: {
+            columnName: 'tenantId',
+            columnType: 'varchar(191)',
+            nullable: false,
+            defaultValue: null,
+        },
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'id',
+            columnType: 'varchar(191)',
+            nullable: false,
+            defaultValue: null,
+        },
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'tenantId',
+            columnType: 'varchar(191)',
+            nullable: false,
+            defaultValue: null,
+        },
+    },
+];
+
+const CASH_CLOSE_JOURNAL_COLUMNS: CashCloseJournalColumnDefinition[] = [
+    {
+        tableName: 'Shift',
+        contract: {
+            columnName: 'closeEventId',
+            columnType: 'varchar(128)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Shift\`
+            ADD COLUMN \`closeEventId\` VARCHAR(128) NULL
+        `,
+    },
+    {
+        tableName: 'Shift',
+        contract: {
+            columnName: 'closePayloadHash',
+            columnType: 'varchar(64)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`Shift\`
+            ADD COLUMN \`closePayloadHash\` VARCHAR(64) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'economicDate',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`economicDate\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'postedAt',
+            columnType: 'datetime(3)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`postedAt\` DATETIME(3) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'entryKind',
+            columnType: 'varchar(32)',
+            nullable: false,
+            defaultValue: 'ORIGINAL',
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`entryKind\` VARCHAR(32) NOT NULL DEFAULT 'ORIGINAL'
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'postingKey',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`postingKey\` VARCHAR(191) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'payloadHash',
+            columnType: 'varchar(64)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`payloadHash\` VARCHAR(64) NULL
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        contract: {
+            columnName: 'reversalOfId',
+            columnType: 'varchar(191)',
+            nullable: true,
+            defaultValue: null,
+        },
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalEntry\`
+            ADD COLUMN \`reversalOfId\` VARCHAR(191) NULL
+        `,
+    },
+];
+
+const CASH_CLOSE_JOURNAL_UNIQUES: CashCloseJournalUniqueDefinition[] = [
+    {
+        tableName: 'Shift',
+        name: SHIFT_CLOSE_EVENT_UNIQUE_INDEX,
+        columns: ['tenantId', 'closeEventId'],
+        duplicateQuery: Prisma.sql`
+            SELECT tenantId AS keyPartOne, closeEventId AS keyPartTwo, COUNT(*) AS duplicateCount
+            FROM \`Shift\`
+            WHERE closeEventId IS NOT NULL
+            GROUP BY tenantId, closeEventId
+            HAVING COUNT(*) > 1
+            LIMIT 10
+        `,
+        ddl: Prisma.sql`
+            CREATE UNIQUE INDEX \`Shift_tenantId_closeEventId_key\`
+            ON \`Shift\`(\`tenantId\`, \`closeEventId\`)
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        name: JOURNAL_ENTRY_POSTING_KEY_UNIQUE_INDEX,
+        columns: ['tenantId', 'postingKey'],
+        duplicateQuery: Prisma.sql`
+            SELECT tenantId AS keyPartOne, postingKey AS keyPartTwo, COUNT(*) AS duplicateCount
+            FROM \`JournalEntry\`
+            WHERE postingKey IS NOT NULL
+            GROUP BY tenantId, postingKey
+            HAVING COUNT(*) > 1
+            LIMIT 10
+        `,
+        ddl: Prisma.sql`
+            CREATE UNIQUE INDEX \`JournalEntry_tenantId_postingKey_key\`
+            ON \`JournalEntry\`(\`tenantId\`, \`postingKey\`)
+        `,
+    },
+    {
+        tableName: 'JournalEntry',
+        name: JOURNAL_ENTRY_REVERSAL_UNIQUE_INDEX,
+        columns: ['reversalOfId'],
+        duplicateQuery: Prisma.sql`
+            SELECT reversalOfId AS keyPartOne, NULL AS keyPartTwo, COUNT(*) AS duplicateCount
+            FROM \`JournalEntry\`
+            WHERE reversalOfId IS NOT NULL
+            GROUP BY reversalOfId
+            HAVING COUNT(*) > 1
+            LIMIT 10
+        `,
+        ddl: Prisma.sql`
+            CREATE UNIQUE INDEX \`JournalEntry_reversalOfId_key\`
+            ON \`JournalEntry\`(\`reversalOfId\`)
+        `,
+    },
+];
+
+async function readCashCloseJournalTables(
+    db: DeploySchemaClient,
+): Promise<Set<CashCloseJournalTableName>> {
+    const rows = await db.query<Array<{ tableName: CashCloseJournalTableName }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('Shift', 'JournalEntry')
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function readCashCloseJournalColumns(
+    db: DeploySchemaClient,
+    tableName: CashCloseJournalTableName,
+): Promise<CashCloseJournalColumnRow[]> {
+    return db.query<CashCloseJournalColumnRow[]>(Prisma.sql`
+        SELECT
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            CHARACTER_MAXIMUM_LENGTH AS characterMaximumLength,
+            CHARACTER_SET_NAME AS characterSetName,
+            COLLATION_NAME AS collationName,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${tableName}
+        ORDER BY ORDINAL_POSITION
+    `);
+}
+
+async function readCashCloseJournalIndexes(
+    db: DeploySchemaClient,
+    tableName: CashCloseJournalTableName,
+): Promise<CashCloseJournalIndexRow[]> {
+    return db.query<CashCloseJournalIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${tableName}
+        ORDER BY INDEX_NAME, SEQ_IN_INDEX
+    `);
+}
+
+async function readJournalEntryForeignKeys(
+    db: DeploySchemaClient,
+): Promise<CashCloseJournalForeignKeyRow[]> {
+    return db.query<CashCloseJournalForeignKeyRow[]>(Prisma.sql`
+        SELECT
+            rc.CONSTRAINT_NAME AS constraintName,
+            kcu.COLUMN_NAME AS columnName,
+            kcu.REFERENCED_TABLE_NAME AS referencedTableName,
+            kcu.REFERENCED_COLUMN_NAME AS referencedColumnName,
+            kcu.ORDINAL_POSITION AS ordinalPosition,
+            rc.DELETE_RULE AS deleteRule,
+            rc.UPDATE_RULE AS updateRule
+        FROM information_schema.REFERENTIAL_CONSTRAINTS rc
+        INNER JOIN information_schema.KEY_COLUMN_USAGE kcu
+          ON kcu.CONSTRAINT_SCHEMA = rc.CONSTRAINT_SCHEMA
+         AND kcu.TABLE_NAME = rc.TABLE_NAME
+         AND kcu.CONSTRAINT_NAME = rc.CONSTRAINT_NAME
+        WHERE rc.CONSTRAINT_SCHEMA = DATABASE()
+          AND rc.TABLE_NAME = 'JournalEntry'
+        ORDER BY rc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION
+    `);
+}
+
+async function assertCashCloseJournalUniqueIsSafe(
+    db: DeploySchemaClient,
+    definition: CashCloseJournalUniqueDefinition,
+): Promise<void> {
+    const duplicates = await db.query<Array<{
+        keyPartOne: string;
+        keyPartTwo: string | null;
+        duplicateCount: number | bigint;
+    }>>(definition.duplicateQuery);
+    if (duplicates.length === 0) return;
+
+    const detail = duplicates
+        .map(row => [row.keyPartOne, row.keyPartTwo]
+            .filter((value): value is string => value !== null)
+            .join('/') + ` (${String(row.duplicateCount)})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `${definition.name} no puede crearse porque hay claves non-null duplicadas: ${detail}`,
+    );
+}
+
+async function assertJournalEntryReversalsAreSafe(db: DeploySchemaClient): Promise<void> {
+    const invalid = await db.query<Array<{
+        reversalId: string;
+        reversalTenantId: string;
+        reversalOfId: string;
+        originalTenantId: string | null;
+        reason: 'MISSING_ORIGINAL' | 'CROSS_TENANT';
+    }>>(Prisma.sql`
+        SELECT
+            reversal.id AS reversalId,
+            reversal.tenantId AS reversalTenantId,
+            reversal.reversalOfId,
+            original.tenantId AS originalTenantId,
+            CASE
+                WHEN original.id IS NULL THEN 'MISSING_ORIGINAL'
+                ELSE 'CROSS_TENANT'
+            END AS reason
+        FROM \`JournalEntry\` reversal
+        LEFT JOIN \`JournalEntry\` original ON original.id = reversal.reversalOfId
+        WHERE reversal.reversalOfId IS NOT NULL
+          AND (original.id IS NULL OR original.tenantId <> reversal.tenantId)
+        LIMIT 10
+    `);
+    if (invalid.length === 0) return;
+
+    const detail = invalid
+        .map(row => `${row.reversalId}->${row.reversalOfId} (${row.reason})`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `JournalEntry.reversalOfId contiene referencias inexistentes o cross-tenant: ${detail}`,
+    );
+}
+
+function assertJournalEntryReversalEncoding(columns: CashCloseJournalColumnRow[]): void {
+    const id = columns.filter(column => column.columnName === 'id');
+    const reversal = columns.filter(column => column.columnName === 'reversalOfId');
+    if (id.length !== 1 || reversal.length !== 1) {
+        throw new UnsafeSchemaStateError(
+            'No se pudo comparar el encoding de JournalEntry.id y reversalOfId.',
+        );
+    }
+    if (id[0].characterSetName === null
+        || id[0].collationName === null
+        || reversal[0].characterSetName !== id[0].characterSetName
+        || reversal[0].collationName !== id[0].collationName) {
+        throw new UnsafeSchemaStateError(
+            'JournalEntry.reversalOfId debe usar el mismo charset y collation que JournalEntry.id.',
+        );
+    }
+}
+
+async function ensureCashCloseJournalColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: CashCloseJournalColumnDefinition,
+): Promise<void> {
+    const read = async () => inspectCashCloseJournalColumn(
+        await readCashCloseJournalColumns(db, definition.tableName),
+        definition.contract,
+    );
+    const initial = await read();
+    const label = `${definition.tableName}.${definition.contract.columnName}`;
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${label} existe con definición incompatible.`);
+    }
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: columna ${label}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${label} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${label}.`);
+    }
+}
+
+async function ensureCashCloseJournalUnique(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: CashCloseJournalUniqueDefinition,
+): Promise<void> {
+    const read = async () => {
+        const indexes = await readCashCloseJournalIndexes(db, definition.tableName);
+        return inspectCashCloseJournalIndex(
+            indexes.filter(index => index.indexName === definition.name),
+            definition.name,
+            definition.columns,
+        );
+    };
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(`${definition.name} existe con definición incompatible.`);
+    }
+    await assertCashCloseJournalUniqueIsSafe(db, definition);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: índice único ${definition.name}.`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${definition.name} fue creado concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${definition.name}.`,
+        );
+    }
+    await assertCashCloseJournalUniqueIsSafe(db, definition);
+}
+
+async function ensureJournalEntryReversalForeignKey(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+): Promise<void> {
+    const read = async () => inspectCashCloseJournalForeignKey(
+        await readJournalEntryForeignKeys(db),
+    );
+    const initial = await read();
+    if (initial === 'invalid') {
+        throw new UnsafeSchemaStateError(
+            `${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY} existe con definición incompatible.`,
+        );
+    }
+    await assertJournalEntryReversalsAreSafe(db);
+    if (initial === 'missing') {
+        logger.info(`Aplicando DDL seguro: FK ${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY}.`);
+        try {
+            await db.execute(Prisma.sql`
+                ALTER TABLE \`JournalEntry\`
+                ADD CONSTRAINT \`JournalEntry_reversalOfId_fkey\`
+                FOREIGN KEY (\`reversalOfId\`) REFERENCES \`JournalEntry\`(\`id\`)
+                ON DELETE RESTRICT ON UPDATE CASCADE
+            `);
+        } catch (error) {
+            if (await read() !== 'valid') throw error;
+            logger.warn(`${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY} fue creada concurrentemente; definición exacta verificada.`);
+        }
+    }
+    if (await read() !== 'valid') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final de ${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY}.`,
+        );
+    }
+    await assertJournalEntryReversalsAreSafe(db);
+}
+
+/**
+ * Converge los campos y restricciones expand-only de cierre/asientos antes de
+ * db push. Tolera cualquier estado parcial compatible y falla cerrado ante
+ * drift, duplicados, referencias huérfanas o reversos entre tenants.
+ */
+export async function applyCashCloseJournalSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    const tables = await readCashCloseJournalTables(db);
+    if (tables.size === 0) {
+        logger.info('Preflight cierre/asientos: tablas ausentes; db push creará el contrato completo.');
+        return;
+    }
+
+    for (const baseline of CASH_CLOSE_JOURNAL_BASELINE_COLUMNS) {
+        if (!tables.has(baseline.tableName)) continue;
+        const state = inspectCashCloseJournalColumn(
+            await readCashCloseJournalColumns(db, baseline.tableName),
+            baseline.contract,
+        );
+        if (state !== 'valid') {
+            throw new UnsafeSchemaStateError(
+                `${baseline.tableName}.${baseline.contract.columnName} base falta o es incompatible.`,
+            );
+        }
+    }
+
+    // Prevalidar todo lo que ya existe antes del primer ALTER.
+    for (const definition of CASH_CLOSE_JOURNAL_COLUMNS) {
+        if (!tables.has(definition.tableName)) continue;
+        const state = inspectCashCloseJournalColumn(
+            await readCashCloseJournalColumns(db, definition.tableName),
+            definition.contract,
+        );
+        if (state === 'invalid') {
+            throw new UnsafeSchemaStateError(
+                `${definition.tableName}.${definition.contract.columnName} existe con definición incompatible.`,
+            );
+        }
+    }
+    for (const definition of CASH_CLOSE_JOURNAL_UNIQUES) {
+        if (!tables.has(definition.tableName)) continue;
+        const indexes = await readCashCloseJournalIndexes(db, definition.tableName);
+        const state = inspectCashCloseJournalIndex(
+            indexes.filter(index => index.indexName === definition.name),
+            definition.name,
+            definition.columns,
+        );
+        if (state === 'invalid') {
+            throw new UnsafeSchemaStateError(`${definition.name} existe con definición incompatible.`);
+        }
+        const relevantColumn = CASH_CLOSE_JOURNAL_COLUMNS.find(candidate => (
+            candidate.tableName === definition.tableName
+            && definition.columns.includes(candidate.contract.columnName)
+        ));
+        if (relevantColumn
+            && inspectCashCloseJournalColumn(
+                await readCashCloseJournalColumns(db, definition.tableName),
+                relevantColumn.contract,
+            ) === 'valid') {
+            await assertCashCloseJournalUniqueIsSafe(db, definition);
+        }
+    }
+    if (tables.has('JournalEntry')) {
+        const foreignKeyState = inspectCashCloseJournalForeignKey(
+            await readJournalEntryForeignKeys(db),
+        );
+        if (foreignKeyState === 'invalid') {
+            throw new UnsafeSchemaStateError(
+                `${JOURNAL_ENTRY_REVERSAL_FOREIGN_KEY} existe con definición incompatible.`,
+            );
+        }
+        const reversalDefinition = CASH_CLOSE_JOURNAL_COLUMNS.find(definition => (
+            definition.tableName === 'JournalEntry'
+            && definition.contract.columnName === 'reversalOfId'
+        ));
+        const journalColumns = await readCashCloseJournalColumns(db, 'JournalEntry');
+        if (reversalDefinition
+            && inspectCashCloseJournalColumn(
+                journalColumns,
+                reversalDefinition.contract,
+            ) === 'valid') {
+            assertJournalEntryReversalEncoding(journalColumns);
+            await assertJournalEntryReversalsAreSafe(db);
+        }
+    }
+
+    for (const definition of CASH_CLOSE_JOURNAL_COLUMNS) {
+        if (tables.has(definition.tableName)) {
+            await ensureCashCloseJournalColumn(db, logger, definition);
+        }
+    }
+
+    if (tables.has('JournalEntry')) {
+        assertJournalEntryReversalEncoding(
+            await readCashCloseJournalColumns(db, 'JournalEntry'),
+        );
+    }
+    for (const definition of CASH_CLOSE_JOURNAL_UNIQUES) {
+        if (tables.has(definition.tableName)) {
+            await ensureCashCloseJournalUnique(db, logger, definition);
+        }
+    }
+    if (tables.has('JournalEntry')) {
+        await ensureJournalEntryReversalForeignKey(db, logger);
+    }
+
+    logger.info('Preflight cierre/asientos verificado: idempotencia, reversos y fechas listos.');
+}
+
+type AccountingDecimalTableName = 'Account' | 'JournalLine';
+type AccountingDecimalColumnName = 'balance' | 'debit' | 'credit';
+
+interface AccountingDecimalDefinition {
+    tableName: AccountingDecimalTableName;
+    columnName: AccountingDecimalColumnName;
+    ddl: Prisma.Sql;
+    unsafeValuesQuery: Prisma.Sql;
+}
+
+const ACCOUNTING_DECIMAL_DEFINITIONS: AccountingDecimalDefinition[] = [
+    {
+        tableName: 'Account',
+        columnName: 'balance',
+        ddl: Prisma.sql`
+            ALTER TABLE \`Account\`
+            MODIFY COLUMN \`balance\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+        unsafeValuesQuery: Prisma.sql`
+            SELECT id AS recordId, CAST(balance AS CHAR) AS unsafeValue
+            FROM \`Account\`
+            WHERE balance < CAST('-99999999999999.9999' AS DECIMAL(18, 4))
+               OR balance > CAST('99999999999999.9999' AS DECIMAL(18, 4))
+            LIMIT 10
+        `,
+    },
+    {
+        tableName: 'JournalLine',
+        columnName: 'debit',
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalLine\`
+            MODIFY COLUMN \`debit\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+        unsafeValuesQuery: Prisma.sql`
+            SELECT id AS recordId, CAST(debit AS CHAR) AS unsafeValue
+            FROM \`JournalLine\`
+            WHERE debit < CAST('-99999999999999.9999' AS DECIMAL(18, 4))
+               OR debit > CAST('99999999999999.9999' AS DECIMAL(18, 4))
+            LIMIT 10
+        `,
+    },
+    {
+        tableName: 'JournalLine',
+        columnName: 'credit',
+        ddl: Prisma.sql`
+            ALTER TABLE \`JournalLine\`
+            MODIFY COLUMN \`credit\` DECIMAL(18, 4) NOT NULL DEFAULT 0
+        `,
+        unsafeValuesQuery: Prisma.sql`
+            SELECT id AS recordId, CAST(credit AS CHAR) AS unsafeValue
+            FROM \`JournalLine\`
+            WHERE credit < CAST('-99999999999999.9999' AS DECIMAL(18, 4))
+               OR credit > CAST('99999999999999.9999' AS DECIMAL(18, 4))
+            LIMIT 10
+        `,
+    },
+];
+
+async function readAccountingDecimalTables(
+    db: DeploySchemaClient,
+): Promise<Set<AccountingDecimalTableName>> {
+    const rows = await db.query<Array<{ tableName: AccountingDecimalTableName }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME IN ('Account', 'JournalLine')
+    `);
+    return new Set(rows.map(row => row.tableName));
+}
+
+async function readAccountingDecimalColumn(
+    db: DeploySchemaClient,
+    definition: Pick<AccountingDecimalDefinition, 'tableName' | 'columnName'>,
+): Promise<AccountingDecimalColumnRow[]> {
+    return db.query<AccountingDecimalColumnRow[]>(Prisma.sql`
+        SELECT
+            TABLE_NAME AS tableName,
+            COLUMN_NAME AS columnName,
+            DATA_TYPE AS dataType,
+            COLUMN_TYPE AS columnType,
+            IS_NULLABLE AS isNullable,
+            NUMERIC_PRECISION AS numericPrecision,
+            NUMERIC_SCALE AS numericScale,
+            COLUMN_DEFAULT AS columnDefault,
+            EXTRA AS extra,
+            GENERATION_EXPRESSION AS generationExpression
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = ${definition.tableName}
+          AND COLUMN_NAME = ${definition.columnName}
+    `);
+}
+
+async function assertAccountingDecimalValuesFitTarget(
+    db: DeploySchemaClient,
+    definition: AccountingDecimalDefinition,
+): Promise<void> {
+    const unsafeValues = await db.query<Array<{ recordId: string; unsafeValue: string }>>(
+        definition.unsafeValuesQuery,
+    );
+    if (unsafeValues.length === 0) return;
+
+    const detail = unsafeValues
+        .map(row => `${row.recordId}=${row.unsafeValue}`)
+        .join(', ');
+    throw new UnsafeSchemaStateError(
+        `${definition.tableName}.${definition.columnName} contiene valores fuera del rango DECIMAL(18,4): ${detail}`,
+    );
+}
+
+async function ensureAccountingDecimalColumn(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger,
+    definition: AccountingDecimalDefinition,
+): Promise<void> {
+    const read = async () => readAccountingDecimalColumn(db, definition);
+    const initialRows = await read();
+    const decision = decideAccountingDecimalConvergence(initialRows);
+    const label = `${definition.tableName}.${definition.columnName}`;
+
+    if (decision === 'reject') {
+        const state = inspectAccountingDecimalColumn(initialRows);
+        throw new UnsafeSchemaStateError(
+            `${label} tiene contrato ${state}; solo se acepta DECIMAL(14,2) legacy o DECIMAL(18,4) final, NOT NULL DEFAULT 0.`,
+        );
+    }
+
+    if (decision === 'alter') {
+        logger.info(`Aplicando widening seguro: ${label} DECIMAL(14,2) -> DECIMAL(18,4).`);
+        try {
+            await db.execute(definition.ddl);
+        } catch (error) {
+            if (inspectAccountingDecimalColumn(await read()) !== 'target') throw error;
+            logger.warn(`${label} fue ampliada concurrentemente; definición final exacta verificada.`);
+        }
+    }
+
+    if (inspectAccountingDecimalColumn(await read()) !== 'target') {
+        throw new UnsafeSchemaStateError(
+            `No se pudo verificar la definición final DECIMAL(18,4) de ${label}.`,
+        );
+    }
+}
+
+/**
+ * Preflight del núcleo contable: valida contrato y rango antes de ampliar.
+ * DECIMAL(14,2) -> DECIMAL(18,4) conserva 12 -> 14 dígitos enteros y 2 -> 4
+ * decimales, por lo que no redondea ni reduce el dominio representable.
+ */
+export async function applyAccountingDecimalSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    const tables = await readAccountingDecimalTables(db);
+    if (tables.size === 0) {
+        logger.info('Preflight contable: Account y JournalLine aún no existen; db push creará DECIMAL(18,4).');
+        return;
+    }
+
+    // Primero validar todas las definiciones y todos los valores. Así no se
+    // deja una ampliación parcial por drift o datos incompatibles conocidos.
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        const rows = await readAccountingDecimalColumn(db, definition);
+        if (decideAccountingDecimalConvergence(rows) === 'reject') {
+            const label = `${definition.tableName}.${definition.columnName}`;
+            throw new UnsafeSchemaStateError(
+                `${label} no coincide con DECIMAL(14,2) legacy ni DECIMAL(18,4) final.`,
+            );
+        }
+    }
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        await assertAccountingDecimalValuesFitTarget(db, definition);
+    }
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        await ensureAccountingDecimalColumn(db, logger, definition);
+    }
+    for (const definition of ACCOUNTING_DECIMAL_DEFINITIONS) {
+        if (!tables.has(definition.tableName)) continue;
+        await assertAccountingDecimalValuesFitTarget(db, definition);
+    }
+
+    logger.info('Preflight contable verificado: saldos, débitos y créditos usan DECIMAL(18,4) sin pérdida.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -3692,6 +4580,11 @@ export async function applyDeploySchemaPreflight(
                 'Hay tablas de negocio sin Warehouse; el schema parcial requiere intervención manual.',
             );
         }
+        // Shift/JournalEntry/Account/JournalLine pueden existir en snapshots
+        // legacy anteriores a Warehouse. Sus cambios con unique/ALTER deben
+        // converger igualmente antes del db push sin aceptar data loss.
+        await applyCashCloseJournalSchemaPreflight(db, logger);
+        await applyAccountingDecimalSchemaPreflight(db, logger);
         logger.info('Preflight DDL: Warehouse aún no existe; db push creará el schema completo.');
         return;
     }
@@ -3709,4 +4602,6 @@ export async function applyDeploySchemaPreflight(
     await applyPurchaseMatchResolutionSchemaPreflight(db, logger);
     await applyProcurementPhaseTwoBSchemaPreflight(db, logger);
     await applyProcurementPhaseTwoCSchemaPreflight(db, logger);
+    await applyCashCloseJournalSchemaPreflight(db, logger);
+    await applyAccountingDecimalSchemaPreflight(db, logger);
 }

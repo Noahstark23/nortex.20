@@ -183,12 +183,12 @@ const SEGMENT_OPTIONS: Array<{ id: string; label: string }> = [
 ];
 
 const segmentTone: Record<CustomerHubSegment, string> = {
-    active: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
-    blocked: 'bg-red-500/10 text-red-300 border-red-500/20',
-    inactive: 'bg-slate-500/10 text-slate-300 border-slate-500/20',
-    overlimit: 'bg-amber-500/10 text-amber-300 border-amber-500/20',
-    wholesale: 'bg-emerald-500/10 text-emerald-300 border-emerald-500/20',
-    withDebt: 'bg-orange-500/10 text-orange-300 border-orange-500/20',
+    active: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    blocked: 'bg-red-50 text-red-700 border-red-200',
+    inactive: 'bg-slate-100 text-slate-600 border-slate-200',
+    overlimit: 'bg-amber-50 text-amber-700 border-amber-200',
+    wholesale: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    withDebt: 'bg-amber-50 text-amber-700 border-amber-200',
 };
 
 const segmentLabel: Record<CustomerHubSegment, string> = {
@@ -946,15 +946,15 @@ const Clients: React.FC = () => {
     );
 
     return (
-        <div className="h-full overflow-hidden bg-surface-950">
+        <div className="nx-light-context nx-workspace h-full overflow-hidden bg-slate-50 text-slate-950">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
-            <div className="grid h-full grid-cols-1 xl:grid-cols-[310px_minmax(0,1fr)]">
-                <aside className={`${mobileDetailOpen ? 'hidden xl:flex' : 'flex'} h-full flex-col border-r border-white/[0.06] bg-surface-900/95`}>
-                    <div className="border-b border-white/[0.06] p-4">
+            <div className="grid h-full grid-cols-1 xl:grid-cols-[340px_minmax(0,1fr)]">
+                <aside className={`${mobileDetailOpen ? 'hidden xl:flex' : 'flex'} nx-list-surface h-full flex-col rounded-none border-y-0 border-l-0 bg-white`} aria-label="Cartera de clientes">
+                    <div className="border-b border-slate-200 p-4 sm:p-5">
                         <div className="flex items-start justify-between gap-3">
                             <div>
-                                <h1 className="flex items-center gap-2 text-2xl font-black text-slate-100">
-                                    <Users className="text-nortex-500" /> Clientes
+                                <h1 className="nx-module-header flex items-center gap-2 text-2xl font-bold text-slate-950">
+                                    <Users className="text-brand" aria-hidden="true" /> Clientes
                                 </h1>
                                 <p className="mt-1 text-xs text-slate-500">Cartera, riesgo y seguimiento.</p>
                             </div>
@@ -962,17 +962,17 @@ const Clients: React.FC = () => {
                                 <button
                                     type="button"
                                     onClick={openCreateModal}
-                                    className="inline-flex items-center gap-2 rounded-xl bg-nortex-900 px-4 py-2 text-sm font-bold text-white hover:bg-nortex-800"
+                                    className="nx-fluid-press inline-flex h-touch shrink-0 items-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                                 >
-                                    <Plus size={16} /> Nuevo
+                                    <Plus size={16} aria-hidden="true" /> Nuevo
                                 </button>
                             )}
                         </div>
 
-                        <div className="mt-4 rounded-control border border-white/[0.06] bg-white/[0.025] px-3 py-2.5 text-xs">
+                        <div className="nx-canvas-card mt-4 px-3 py-3 text-xs">
                             <div className="flex items-center justify-between gap-3">
-                                <span className="font-bold text-slate-300">{summary.total} clientes</span>
-                                <span className="font-black text-amber-300">{fmtMoney(summary.debt)}</span>
+                                <span className="font-semibold text-slate-700">{summary.total} clientes</span>
+                                <span className="nx-num font-bold text-amber-700">{fmtMoney(summary.debt)}</span>
                             </div>
                             <div className="mt-1 flex items-center justify-between gap-3 text-slate-500">
                                 <span>{summary.overdue} facturas vencidas</span>
@@ -981,13 +981,13 @@ const Clients: React.FC = () => {
                         </div>
 
                         <div className="relative mt-4">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
+                            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} aria-hidden="true" />
                             <input
                                 aria-label="Buscar clientes"
                                 value={searchTerm}
                                 onChange={(e) => setSearchTerm(e.target.value)}
                                 placeholder="Buscar por nombre, documento, teléfono o email"
-                                className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.03] py-3 pl-10 pr-4 text-sm text-slate-100 outline-none focus:border-nortex-500"
+                                className="h-touch w-full rounded-control border border-slate-300 bg-white py-0 pl-10 pr-4 text-sm text-slate-900 shadow-sm outline-none placeholder:text-slate-400 focus:border-brand focus:ring-2 focus:ring-brand-ring"
                             />
                         </div>
 
@@ -998,10 +998,10 @@ const Clients: React.FC = () => {
                                     key={option.id}
                                     onClick={() => setSegment(option.id)}
                                     aria-pressed={segment === option.id}
-                                    className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+                                    className={`nx-fluid-press min-h-tap shrink-0 rounded-full border px-3 text-xs font-semibold transition-colors ${
                                         segment === option.id
-                                            ? 'border-nortex-500 bg-nortex-500/15 text-nortex-300'
-                                            : 'border-white/[0.06] bg-white/[0.03] text-slate-400 hover:text-slate-200'
+                                            ? 'border-brand bg-brand-soft text-emerald-800'
+                                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-100 hover:text-slate-900'
                                     }`}
                                 >
                                     {option.label}
@@ -1011,12 +1011,12 @@ const Clients: React.FC = () => {
 
                         {puedeAsignar && (
                             <div className="mt-4">
-                                <label htmlFor="customer-seller-filter" className="mb-1 block text-[11px] font-mono uppercase text-slate-500">Vendedor</label>
+                                <label htmlFor="customer-seller-filter" className="mb-1 block text-[11px] font-semibold uppercase tracking-wide text-slate-500">Vendedor</label>
                                 <select
                                     id="customer-seller-filter"
                                     value={sellerFilter}
                                     onChange={(e) => setSellerFilter(e.target.value)}
-                                    className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.03] px-3 py-3 text-sm text-slate-100 outline-none focus:border-nortex-500"
+                                    className="h-touch w-full rounded-control border border-slate-300 bg-white px-3 text-sm text-slate-900 shadow-sm outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                 >
                                     <option value="">Todos</option>
                                     <option value="none">Sin asignar</option>
@@ -1030,12 +1030,12 @@ const Clients: React.FC = () => {
                         )}
 
                         {loadError && (
-                            <div className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
-                                <div className="font-bold">No pudimos cargar la cartera.</div>
-                                <div className="mt-1 text-red-100/80">{loadError}</div>
+                            <div className="mt-4 rounded-control border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
+                                <div className="font-semibold">No pudimos cargar la cartera.</div>
+                                <div className="mt-1 text-red-700">{loadError}</div>
                                 <button
                                     onClick={() => fetchCustomers(selectedCustomerId)}
-                                    className="mt-3 rounded-xl border border-red-400/30 px-3 py-2 text-xs font-bold text-red-100 hover:bg-red-500/10"
+                                    className="nx-fluid-press mt-3 min-h-tap rounded-control border border-red-300 bg-white px-3 text-xs font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
                                 >
                                     Reintentar
                                 </button>
@@ -1043,17 +1043,17 @@ const Clients: React.FC = () => {
                         )}
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+                    <div className="min-h-0 flex-1 overflow-y-auto bg-slate-50/70 p-2.5">
                         {loading ? (
                             <div className="space-y-2">
                                 {Array.from({ length: 6 }).map((_, index) => (
-                                    <div key={index} className="h-32 animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.03]" />
+                                    <div key={index} className="h-32 animate-pulse rounded-card border border-slate-200 bg-white" />
                                 ))}
                             </div>
                         ) : customers.length === 0 ? (
-                            <div className="rounded-3xl border border-dashed border-white/[0.08] bg-white/[0.02] p-6 text-center">
-                                <Users className="mx-auto text-slate-500" size={28} />
-                                <h3 className="mt-3 text-lg font-bold text-slate-200">No hay clientes en este filtro</h3>
+                            <div className="nx-canvas-card border-dashed p-6 text-center">
+                                <Users className="mx-auto text-slate-400" size={28} aria-hidden="true" />
+                                <h3 className="mt-3 text-lg font-semibold text-slate-900">No hay clientes en este filtro</h3>
                                 <p className="mt-1 text-sm text-slate-500">Probá otro segmento o crea un cliente nuevo para empezar a poblar la cartera.</p>
                             </div>
                         ) : (
@@ -1068,16 +1068,17 @@ const Clients: React.FC = () => {
                                                 setSelectedCustomerId(customer.id);
                                                 setMobileDetailOpen(true);
                                             }}
-                                            className={`w-full rounded-control border p-3 text-left transition-all ${
+                                            aria-pressed={selected}
+                                            className={`nx-fluid-press w-full min-h-[132px] rounded-control border p-3 text-left transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
                                                 selected
-                                                    ? 'border-emerald-500/70 bg-emerald-500/[0.08] shadow-[0_0_0_1px_rgba(16,185,129,0.10)]'
-                                                    : 'border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.05]'
+                                                    ? 'border-brand bg-brand-soft shadow-[0_0_0_1px_var(--nx-brand-ring)]'
+                                                    : 'border-slate-200 bg-white shadow-sm hover:border-slate-300 hover:bg-slate-50'
                                             }`}
                                         >
                                             <div className="flex items-start justify-between gap-3">
                                                 <div>
-                                                    <div className="text-sm font-black text-slate-100">{customer.name}</div>
-                                                    <div className="mt-1 text-xs text-slate-400">
+                                                    <div className="text-sm font-bold text-slate-950">{customer.name}</div>
+                                                    <div className="mt-1 text-xs text-slate-500">
                                                         {customer.phone || customer.taxId || 'Sin contacto'}
                                                     </div>
                                                 </div>
@@ -1088,21 +1089,21 @@ const Clients: React.FC = () => {
 
                                             <div className="mt-3 flex items-end justify-between gap-3 text-xs">
                                                 <div className="text-slate-500">{customer.seller?.name || 'Sin vendedor'}</div>
-                                                <div className={`font-black ${customer.currentDebt > 0 ? 'text-red-300' : 'text-slate-400'}`}>
+                                                <div className={`nx-num font-bold ${customer.currentDebt > 0 ? 'text-red-700' : 'text-slate-500'}`}>
                                                     {fmtMoney(customer.currentDebt)}
                                                 </div>
                                             </div>
 
-                                            <div className="mt-3 h-2 rounded-full bg-white/[0.06]">
+                                            <div className="mt-3 h-2 rounded-full bg-slate-200">
                                                 <div
-                                                    className={`h-2 rounded-full ${usage > 90 ? 'bg-red-400' : usage > 60 ? 'bg-amber-400' : 'bg-emerald-400'}`}
+                                                    className={`h-2 rounded-full ${usage > 90 ? 'bg-red-500' : usage > 60 ? 'bg-amber-500' : 'bg-brand'}`}
                                                     style={{ width: `${usage}%` }}
                                                 />
                                             </div>
 
                                             <div className="mt-2 flex items-center justify-between gap-3 text-[11px] text-slate-500">
                                                 <div>{customer.stats.openInvoices} abiertas · {customer.stats.overdueInvoices} vencidas</div>
-                                                <ChevronRight size={14} aria-hidden="true" />
+                                                <ChevronRight size={16} aria-hidden="true" />
                                             </div>
                                         </button>
                                     );
@@ -1112,31 +1113,31 @@ const Clients: React.FC = () => {
                     </div>
                 </aside>
 
-                <main className={`${mobileDetailOpen ? 'block' : 'hidden xl:block'} h-full overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.07),_transparent_32%),linear-gradient(180deg,_rgba(6,17,27,0.9),_rgba(6,17,27,1))] p-4 sm:p-5`}>
+                <main className={`${mobileDetailOpen ? 'block' : 'hidden xl:block'} nx-workspace h-full overflow-y-auto bg-slate-50 p-4 sm:p-6`}>
                     <button
                         type="button"
                         onClick={() => setMobileDetailOpen(false)}
-                        className="mb-4 inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm font-bold text-slate-200 xl:hidden"
+                        className="nx-fluid-press mb-4 inline-flex h-touch items-center gap-2 rounded-control border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring xl:hidden"
                     >
                         <ArrowLeft size={16} /> Volver a clientes
                     </button>
                     {!selectedCustomerId ? (
                         <div className="flex h-full items-center justify-center">
-                            <div className="max-w-md rounded-3xl border border-dashed border-white/[0.08] bg-white/[0.02] p-8 text-center">
-                                <Sparkles className="mx-auto text-nortex-400" size={30} />
-                                <h2 className="mt-4 text-2xl font-black text-slate-100">Elegí un cliente</h2>
-                                <p className="mt-2 text-sm text-slate-400">Acá vas a ver el perfil operativo, la deuda viva, las últimas ventas y la actividad reciente.</p>
+                            <div className="nx-canvas-card max-w-md border-dashed p-8 text-center">
+                                <Sparkles className="mx-auto text-brand" size={30} aria-hidden="true" />
+                                <h2 className="nx-module-header mt-4 text-2xl font-bold text-slate-950">Elegí un cliente</h2>
+                                <p className="mt-2 text-sm text-slate-500">Acá vas a ver el perfil operativo, la deuda viva, las últimas ventas y la actividad reciente.</p>
                             </div>
                         </div>
                     ) : detailError ? (
                         <div className="flex h-full items-center justify-center">
-                            <div className="max-w-lg rounded-3xl border border-red-500/20 bg-red-500/10 p-8 text-center">
-                                <AlertCircle className="mx-auto text-red-300" size={30} />
-                                <h2 className="mt-4 text-2xl font-black text-slate-100">No pudimos abrir la ficha</h2>
-                                <p className="mt-2 text-sm text-red-100/80">{detailError}</p>
+                            <div className="max-w-lg rounded-card border border-red-200 bg-red-50 p-8 text-center shadow-sm" role="alert">
+                                <AlertCircle className="mx-auto text-red-600" size={30} aria-hidden="true" />
+                                <h2 className="nx-module-header mt-4 text-2xl font-bold text-slate-950">No pudimos abrir la ficha</h2>
+                                <p className="mt-2 text-sm text-red-700">{detailError}</p>
                                 <button
                                     onClick={() => void fetchDetail(selectedCustomerId)}
-                                    className="mt-4 rounded-2xl bg-red-500/15 px-4 py-3 text-sm font-bold text-red-100 hover:bg-red-500/20"
+                                    className="nx-fluid-press mt-4 h-touch rounded-control border border-red-300 bg-white px-4 text-sm font-semibold text-red-700 hover:bg-red-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-600"
                                 >
                                     Reintentar detalle
                                 </button>
@@ -1144,11 +1145,11 @@ const Clients: React.FC = () => {
                         </div>
                     ) : loadingDetail || !detail ? (
                         <div className="space-y-4">
-                            <div className="h-48 animate-pulse rounded-3xl border border-white/[0.06] bg-white/[0.03]" />
+                            <div className="h-48 animate-pulse rounded-card border border-slate-200 bg-white" />
                             <div className="grid gap-4 lg:grid-cols-3">
-                                <div className="h-56 animate-pulse rounded-3xl border border-white/[0.06] bg-white/[0.03]" />
-                                <div className="h-56 animate-pulse rounded-3xl border border-white/[0.06] bg-white/[0.03]" />
-                                <div className="h-56 animate-pulse rounded-3xl border border-white/[0.06] bg-white/[0.03]" />
+                                <div className="h-56 animate-pulse rounded-card border border-slate-200 bg-white" />
+                                <div className="h-56 animate-pulse rounded-card border border-slate-200 bg-white" />
+                                <div className="h-56 animate-pulse rounded-card border border-slate-200 bg-white" />
                             </div>
                         </div>
                     ) : (
@@ -1174,7 +1175,7 @@ const Clients: React.FC = () => {
 
             {showModal && (canCreateCustomer || canEditProfile) && (
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4 backdrop-blur-sm"
+                    className="modal-backdrop"
                     onMouseDown={(event) => {
                         if (event.target === event.currentTarget) closeModal();
                     }}
@@ -1186,11 +1187,11 @@ const Clients: React.FC = () => {
                         aria-labelledby="customer-form-title"
                         aria-describedby="customer-form-description"
                         tabIndex={-1}
-                        className="max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
+                        className="nx-dark-context nx-dark-chrome max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-card border border-white/[0.08] shadow-2xl"
                     >
                         <div className="flex items-center justify-between border-b border-white/[0.06] p-6">
                             <div>
-                                <h3 id="customer-form-title" className="text-xl font-black text-slate-100">{editingCustomerId ? 'Editar cliente' : 'Nuevo cliente'}</h3>
+                                <h3 id="customer-form-title" className="nx-module-header text-xl font-bold text-slate-100">{editingCustomerId ? 'Editar cliente' : 'Nuevo cliente'}</h3>
                                 <p id="customer-form-description" className="text-sm text-slate-400">
                                     {editingCustomerId
                                         ? canEditLegalIdentity
@@ -1199,14 +1200,14 @@ const Clients: React.FC = () => {
                                         : 'Alta rápida para que la venta y la cartera queden vinculadas desde el inicio.'}
                                 </p>
                             </div>
-                            <button type="button" onClick={closeModal} aria-label="Cerrar ficha de cliente" className="rounded-full p-2 text-slate-400 hover:bg-white/[0.04] hover:text-slate-200">
+                            <button type="button" onClick={closeModal} aria-label="Cerrar ficha de cliente" className="nx-fluid-press flex h-touch w-touch shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-white/[0.06] hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring">
                                 <X size={18} />
                             </button>
                         </div>
 
                         <form onSubmit={handleSubmit} className="space-y-4 p-6">
                             {editingCustomerId && !canEditLegalIdentity && (
-                                <div id="customer-identity-readonly-note" role="note" className="rounded-2xl border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                                <div id="customer-identity-readonly-note" role="note" className="rounded-control border border-amber-500/20 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
                                     El nombre o razón social y el DNI/RUC son datos legales. Solo administración puede cambiarlos.
                                 </div>
                             )}
@@ -1227,7 +1228,7 @@ const Clients: React.FC = () => {
                                     aria-readonly={!canEditIdentityFields}
                                     aria-describedby={!canEditIdentityFields ? 'customer-identity-readonly-note' : undefined}
                                     aria-invalid={canEditIdentityFields && Boolean(formErrors.name)}
-                                    className={`mt-1 w-full rounded-2xl border p-3 outline-none ${canEditIdentityFields ? 'bg-white/[0.03] text-slate-100 focus:border-nortex-500' : 'cursor-not-allowed bg-slate-800/60 text-slate-400'} ${formErrors.name ? 'border-red-500/70' : 'border-white/[0.08]'}`}
+                                    className={`mt-1 min-h-tap w-full rounded-control border px-3 outline-none ${canEditIdentityFields ? 'bg-white/[0.04] text-slate-100 focus:border-brand focus:ring-2 focus:ring-brand-ring' : 'cursor-not-allowed bg-slate-800/60 text-slate-400'} ${formErrors.name ? 'border-red-500/70' : 'border-white/[0.10]'}`}
                                 />
                                 {formErrors.name && <p className="mt-1 text-xs text-red-300">{formErrors.name}</p>}
                             </div>
@@ -1247,7 +1248,7 @@ const Clients: React.FC = () => {
                                         aria-readonly={!canEditIdentityFields}
                                         aria-describedby={!canEditIdentityFields ? 'customer-identity-readonly-note' : undefined}
                                         aria-invalid={canEditIdentityFields && Boolean(formErrors.taxId)}
-                                        className={`mt-1 w-full rounded-2xl border p-3 outline-none ${canEditIdentityFields ? 'bg-white/[0.03] text-slate-100 focus:border-nortex-500' : 'cursor-not-allowed bg-slate-800/60 text-slate-400'} ${formErrors.taxId ? 'border-red-500/70' : 'border-white/[0.08]'}`}
+                                        className={`mt-1 min-h-tap w-full rounded-control border px-3 outline-none ${canEditIdentityFields ? 'bg-white/[0.04] text-slate-100 focus:border-brand focus:ring-2 focus:ring-brand-ring' : 'cursor-not-allowed bg-slate-800/60 text-slate-400'} ${formErrors.taxId ? 'border-red-500/70' : 'border-white/[0.10]'}`}
                                     />
                                     {formErrors.taxId && <p className="mt-1 text-xs text-red-300">{formErrors.taxId}</p>}
                                 </div>
@@ -1262,7 +1263,7 @@ const Clients: React.FC = () => {
                                             setFormErrors((previous) => ({ ...previous, phone: undefined, general: undefined }));
                                         }}
                                         aria-invalid={Boolean(formErrors.phone)}
-                                        className={`mt-1 w-full rounded-2xl border bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500 ${formErrors.phone ? 'border-red-500/70' : 'border-white/[0.08]'}`}
+                                        className={`mt-1 min-h-tap w-full rounded-control border bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring ${formErrors.phone ? 'border-red-500/70' : 'border-white/[0.10]'}`}
                                     />
                                     {formErrors.phone && <p className="mt-1 text-xs text-red-300">{formErrors.phone}</p>}
                                 </div>
@@ -1280,7 +1281,7 @@ const Clients: React.FC = () => {
                                             setFormErrors((previous) => ({ ...previous, email: undefined, general: undefined }));
                                         }}
                                         aria-invalid={Boolean(formErrors.email)}
-                                        className={`mt-1 w-full rounded-2xl border bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500 ${formErrors.email ? 'border-red-500/70' : 'border-white/[0.08]'}`}
+                                        className={`mt-1 min-h-tap w-full rounded-control border bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring ${formErrors.email ? 'border-red-500/70' : 'border-white/[0.10]'}`}
                                     />
                                     {formErrors.email && <p className="mt-1 text-xs text-red-300">{formErrors.email}</p>}
                                 </div>
@@ -1296,7 +1297,7 @@ const Clients: React.FC = () => {
                                                 setFormErrors((previous) => ({ ...previous, creditLimit: undefined, general: undefined }));
                                             }}
                                             aria-invalid={Boolean(formErrors.creditLimit)}
-                                            className={`mt-1 w-full rounded-2xl border bg-emerald-500/[0.05] p-3 text-lg font-black text-slate-100 outline-none focus:border-emerald-500 ${formErrors.creditLimit ? 'border-red-500/70' : 'border-emerald-500/20'}`}
+                                            className={`nx-num mt-1 min-h-tap w-full rounded-control border bg-emerald-500/[0.06] px-3 text-lg font-bold text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring ${formErrors.creditLimit ? 'border-red-500/70' : 'border-emerald-500/25'}`}
                                             placeholder="0.00"
                                         />
                                         {formErrors.creditLimit && <p className="mt-1 text-xs text-red-300">{formErrors.creditLimit}</p>}
@@ -1314,7 +1315,7 @@ const Clients: React.FC = () => {
                                         setFormErrors((previous) => ({ ...previous, address: undefined, general: undefined }));
                                     }}
                                     aria-invalid={Boolean(formErrors.address)}
-                                    className={`mt-1 w-full rounded-2xl border bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500 ${formErrors.address ? 'border-red-500/70' : 'border-white/[0.08]'}`}
+                                    className={`mt-1 min-h-tap w-full rounded-control border bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring ${formErrors.address ? 'border-red-500/70' : 'border-white/[0.10]'}`}
                                 />
                                 {formErrors.address && <p className="mt-1 text-xs text-red-300">{formErrors.address}</p>}
                             </div>
@@ -1329,7 +1330,7 @@ const Clients: React.FC = () => {
                                             setFormData({ ...formData, sellerId: e.target.value });
                                             setFormErrors((previous) => ({ ...previous, sellerId: undefined, general: undefined }));
                                         }}
-                                        className="mt-1 w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500"
+                                        className="mt-1 min-h-tap w-full rounded-control border border-white/[0.10] bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                     >
                                         <option value="">Sin asignar</option>
                                         {vendedores.map((vendedor) => (
@@ -1341,13 +1342,13 @@ const Clients: React.FC = () => {
                                 </div>
                             )}
 
-                            <div className="rounded-2xl border border-emerald-500/15 bg-emerald-500/[0.06] p-4 text-xs text-emerald-200">
+                            <div className="rounded-control border border-emerald-500/15 bg-emerald-500/[0.06] p-4 text-xs text-emerald-200">
                                 <div className="flex items-center gap-2 font-bold"><Shield size={14} /> Este cliente queda listo para POS, fiado y cobranza.</div>
                                 <p className="mt-1 text-emerald-100/80">Después podés registrar llamadas, visitas, notas y promesas desde su ficha.</p>
                             </div>
 
                             {formErrors.general && (
-                                <div role="alert" className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                                <div role="alert" className="rounded-control border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                                     {formErrors.general}
                                 </div>
                             )}
@@ -1355,7 +1356,7 @@ const Clients: React.FC = () => {
                             <button
                                 type="submit"
                                 disabled={savingForm}
-                                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-nortex-900 px-4 py-3 text-sm font-bold text-white hover:bg-nortex-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="nx-fluid-press inline-flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                             >
                                 <Save size={16} /> {savingForm ? 'Guardando...' : 'Guardar ficha'}
                             </button>
@@ -1366,7 +1367,7 @@ const Clients: React.FC = () => {
 
             {showInteractionModal && detail && canWriteInteraction && (
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
+                    className="modal-backdrop"
                     onMouseDown={(event) => {
                         if (event.target === event.currentTarget) closeInteractionModal();
                     }}
@@ -1378,18 +1379,18 @@ const Clients: React.FC = () => {
                         aria-labelledby="customer-interaction-title"
                         aria-describedby="customer-interaction-description"
                         tabIndex={-1}
-                        className="max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
+                        className="nx-dark-context nx-dark-chrome max-h-[calc(100dvh-2rem)] w-full max-w-xl overflow-y-auto rounded-card border border-white/[0.08] shadow-2xl"
                     >
                         <div className="flex items-start justify-between gap-4 border-b border-white/[0.06] p-6">
                             <div>
-                                <h3 id="customer-interaction-title" className="text-xl font-black text-slate-100">Registrar gestión</h3>
+                                <h3 id="customer-interaction-title" className="nx-module-header text-xl font-bold text-slate-100">Registrar gestión</h3>
                                 <p id="customer-interaction-description" className="mt-1 text-sm text-slate-400">{detail.profile.name} · dejá contexto y una próxima acción concreta.</p>
                             </div>
                             <button
                                 type="button"
                                 onClick={closeInteractionModal}
                                 aria-label="Cerrar registro de gestión"
-                                className="rounded-full p-2 text-slate-400 hover:bg-white/[0.04] hover:text-slate-200"
+                                className="nx-fluid-press flex h-touch w-touch shrink-0 items-center justify-center rounded-full text-slate-400 hover:bg-white/[0.06] hover:text-slate-200 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                             >
                                 <X size={18} />
                             </button>
@@ -1412,7 +1413,7 @@ const Clients: React.FC = () => {
                                         }));
                                         setInteractionError('');
                                     }}
-                                    className="mt-1 w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500"
+                                    className="mt-1 min-h-tap w-full rounded-control border border-white/[0.10] bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                 >
                                     <option value="NOTE">Nota interna</option>
                                     <option value="CALL">Llamada</option>
@@ -1435,7 +1436,7 @@ const Clients: React.FC = () => {
                                         setInteractionError('');
                                     }}
                                     placeholder="Ej.: confirmó que pagará el viernes; prefiere contacto por WhatsApp."
-                                    className="mt-1 w-full resize-y rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500"
+                                    className="mt-1 min-h-[7rem] w-full resize-y rounded-control border border-white/[0.10] bg-white/[0.04] p-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                 />
                                 <div className="mt-1 text-right text-[11px] text-slate-500">{interactionForm.note.length}/2000</div>
                             </div>
@@ -1453,7 +1454,7 @@ const Clients: React.FC = () => {
                                                 setInteractionError('');
                                             }}
                                             placeholder="Opcional"
-                                            className="mt-1 w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500"
+                                            className="nx-num mt-1 min-h-tap w-full rounded-control border border-white/[0.10] bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                         />
                                     </div>
                                     <div>
@@ -1467,7 +1468,7 @@ const Clients: React.FC = () => {
                                                 setInteractionForm((previous) => ({ ...previous, promisedAt: event.target.value }));
                                                 setInteractionError('');
                                             }}
-                                            className="mt-1 w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500"
+                                            className="mt-1 min-h-tap w-full rounded-control border border-white/[0.10] bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                         />
                                     </div>
                                 </div>
@@ -1483,13 +1484,13 @@ const Clients: React.FC = () => {
                                         setInteractionForm((previous) => ({ ...previous, followUpAt: event.target.value }));
                                         setInteractionError('');
                                     }}
-                                    className="mt-1 w-full rounded-2xl border border-white/[0.08] bg-white/[0.03] p-3 text-slate-100 outline-none focus:border-nortex-500"
+                                    className="mt-1 min-h-tap w-full rounded-control border border-white/[0.10] bg-white/[0.04] px-3 text-slate-100 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                                 />
                                 <p className="mt-1 text-xs text-slate-500">Si lo dejás vacío, una nota o contacto queda cerrado; una promesa permanece pendiente.</p>
                             </div>
 
                             {interactionError && (
-                                <div role="alert" className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                                <div role="alert" className="rounded-control border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">
                                     {interactionError}
                                 </div>
                             )}
@@ -1497,7 +1498,7 @@ const Clients: React.FC = () => {
                             <button
                                 type="submit"
                                 disabled={savingInteraction}
-                                className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-nortex-900 px-4 py-3 text-sm font-bold text-white hover:bg-nortex-800 disabled:cursor-not-allowed disabled:opacity-60"
+                                className="nx-fluid-press inline-flex h-pay w-full items-center justify-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                             >
                                 <MessageSquare size={16} /> {savingInteraction ? 'Guardando gestión…' : 'Guardar gestión'}
                             </button>
@@ -1508,7 +1509,7 @@ const Clients: React.FC = () => {
 
             {blockConfirm && (
                 <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm"
+                    className="modal-backdrop"
                     onMouseDown={(event) => {
                         if (event.target === event.currentTarget) setBlockConfirm(null);
                     }}
@@ -1520,10 +1521,10 @@ const Clients: React.FC = () => {
                         aria-labelledby="customer-block-title"
                         aria-describedby="customer-block-description"
                         tabIndex={-1}
-                        className="w-full max-w-md rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl"
+                        className="nx-dark-context nx-dark-chrome w-full max-w-md rounded-card border border-white/[0.08] shadow-2xl"
                     >
                         <div className="border-b border-white/[0.06] p-6">
-                            <h3 id="customer-block-title" className="text-xl font-black text-slate-100">
+                            <h3 id="customer-block-title" className="nx-module-header text-xl font-bold text-slate-100">
                                 {blockConfirm.nextBlockedState ? 'Bloquear crédito' : 'Desbloquear crédito'}
                             </h3>
                             <p id="customer-block-description" className="mt-2 text-sm text-slate-400">
@@ -1537,14 +1538,14 @@ const Clients: React.FC = () => {
                                 type="button"
                                 onClick={() => setBlockConfirm(null)}
                                 data-dialog-initial-focus="customer-block"
-                                className="flex-1 rounded-2xl border border-white/[0.08] px-4 py-3 text-sm font-bold text-slate-200 hover:bg-white/[0.04]"
+                                className="nx-fluid-press h-touch flex-1 rounded-control border border-white/[0.10] px-4 text-sm font-semibold text-slate-200 hover:bg-white/[0.06] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                             >
                                 Cancelar
                             </button>
                             <button
                                 type="button"
                                 onClick={() => void confirmToggleBlock()}
-                                className={`flex-1 rounded-2xl px-4 py-3 text-sm font-bold ${
+                                className={`nx-fluid-press min-h-tap flex-1 rounded-control px-4 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
                                     blockConfirm.nextBlockedState
                                         ? 'bg-red-500/15 text-red-200 hover:bg-red-500/20'
                                         : 'bg-emerald-500/15 text-emerald-200 hover:bg-emerald-500/20'

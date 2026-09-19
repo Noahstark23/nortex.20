@@ -143,8 +143,8 @@ const RegistroRepartidor: React.FC = () => {
                             <Lock size={13} className="text-brand-300" /> Creá tu PIN de acceso (4-6 dígitos) — con él entrás a tu app de entregas.
                         </p>
                         <div className="grid grid-cols-2 gap-3">
-                            <input required type="password" inputMode="numeric" placeholder="PIN *" value={form.pin} onChange={setPinSan('pin')} className="w-full bg-white/[0.03] border border-white/[0.08] text-white text-center text-xl font-mono tracking-[0.4em] py-3 rounded-xl focus:outline-none focus:border-brand placeholder:tracking-normal placeholder:text-sm placeholder:text-slate-600" />
-                            <input required type="password" inputMode="numeric" placeholder="Repetir PIN *" value={form.pinConfirm} onChange={setPinSan('pinConfirm')} className="w-full bg-white/[0.03] border border-white/[0.08] text-white text-center text-xl font-mono tracking-[0.4em] py-3 rounded-xl focus:outline-none focus:border-brand placeholder:tracking-normal placeholder:text-sm placeholder:text-slate-600" />
+                            <input required type="password" inputMode="numeric" placeholder="PIN *" value={form.pin} onChange={setPinSan('pin')} className="w-full border text-center text-xl font-mono tracking-[0.4em] py-3 rounded-xl focus:outline-none focus:border-brand placeholder:tracking-normal placeholder:text-sm bg-surface-900 nx-form-field" />
+                            <input required type="password" inputMode="numeric" placeholder="Repetir PIN *" value={form.pinConfirm} onChange={setPinSan('pinConfirm')} className="w-full border text-center text-xl font-mono tracking-[0.4em] py-3 rounded-xl focus:outline-none focus:border-brand placeholder:tracking-normal placeholder:text-sm bg-surface-900 nx-form-field" />
                         </div>
                     </div>
 

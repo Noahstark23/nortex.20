@@ -543,7 +543,7 @@ const LenderDashboard: React.FC = () => {
                                                                 <select
                                                                     value={loan.assignedToId || ''}
                                                                     onChange={(e) => handleAssignCollector(loan.id, e.target.value)}
-                                                                    className="bg-slate-800 border border-slate-700 text-xs text-slate-300 rounded px-2 py-1 outline-none focus:border-nortex-accent w-full max-w-[120px]"
+                                                                    className="border text-xs text-slate-300 rounded px-2 py-1 outline-none w-full max-w-[120px] bg-surface-900 rounded-control nx-form-field"
                                                                 >
                                                                     <option value="">Sin Asignar</option>
                                                                     {collectors.map(c => (
@@ -694,7 +694,7 @@ const LenderDashboard: React.FC = () => {
                             placeholder="Buscar cliente..."
                             value={clientSearch}
                             onChange={(e) => setClientSearch(e.target.value)}
-                            className="bg-slate-900 border border-slate-700 rounded-lg px-4 py-2 text-sm text-white focus:border-blue-500 outline-none"
+                            className="border rounded-control px-4 py-2 text-sm focus:border-blue-500 outline-none bg-surface-900 nx-form-field"
                         />
                     </div>
 
@@ -958,7 +958,7 @@ const LenderDashboard: React.FC = () => {
                                     required
                                     value={formData.clientName}
                                     onChange={(e) => setFormData({ ...formData, clientName: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-nortex-accent outline-none transition-colors"
+                                    className="w-full border rounded-control p-3 outline-none transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                 />
 
                                 <div className="grid grid-cols-2 gap-4">
@@ -968,7 +968,7 @@ const LenderDashboard: React.FC = () => {
                                         required
                                         value={formData.principalAmount}
                                         onChange={(e) => setFormData({ ...formData, principalAmount: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-nortex-accent transition-colors"
+                                        className="w-full border rounded-control p-3 outline-none transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                     <input
                                         type="number"
@@ -976,7 +976,7 @@ const LenderDashboard: React.FC = () => {
                                         required
                                         value={formData.interestRate}
                                         onChange={(e) => setFormData({ ...formData, interestRate: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-nortex-accent transition-colors"
+                                        className="w-full border rounded-control p-3 outline-none transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
 
@@ -987,12 +987,12 @@ const LenderDashboard: React.FC = () => {
                                         required
                                         value={formData.installments}
                                         onChange={(e) => setFormData({ ...formData, installments: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-nortex-accent transition-colors"
+                                        className="w-full border rounded-control p-3 outline-none transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                     <select
                                         onChange={(e) => setFormData({ ...formData, frequency: e.target.value })}
                                         value={formData.frequency}
-                                        className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-nortex-accent transition-colors"
+                                        className="w-full border rounded-control p-3 outline-none transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     >
                                         <option value="DAILY">Diario</option>
                                         <option value="WEEKLY">Semanal</option>
@@ -1039,7 +1039,7 @@ const LenderDashboard: React.FC = () => {
                                 required
                                 value={refiData.newPrincipal}
                                 onChange={(e) => setRefiData({ ...refiData, newPrincipal: e.target.value })}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-purple-400 outline-none"
+                                className="w-full border rounded-control p-3 outline-none bg-surface-900 text-slate-100 nx-form-field"
                             />
 
                             <div className="grid grid-cols-2 gap-4">
@@ -1049,7 +1049,7 @@ const LenderDashboard: React.FC = () => {
                                     required
                                     value={refiData.interestRate}
                                     onChange={(e) => setRefiData({ ...refiData, interestRate: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-400"
+                                    className="w-full border rounded-control p-3 outline-none bg-surface-900 text-slate-100 nx-form-field"
                                 />
                                 <input
                                     type="number"
@@ -1057,14 +1057,14 @@ const LenderDashboard: React.FC = () => {
                                     required
                                     value={refiData.installments}
                                     onChange={(e) => setRefiData({ ...refiData, installments: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-400"
+                                    className="w-full border rounded-control p-3 outline-none bg-surface-900 text-slate-100 nx-form-field"
                                 />
                             </div>
 
                             <select
                                 value={refiData.frequency}
                                 onChange={(e) => setRefiData({ ...refiData, frequency: e.target.value })}
-                                className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white outline-none focus:border-purple-400"
+                                className="w-full border rounded-control p-3 outline-none bg-surface-900 text-slate-100 nx-form-field"
                             >
                                 <option value="DAILY">Diario</option>
                                 <option value="WEEKLY">Semanal</option>
@@ -1098,19 +1098,19 @@ const LenderDashboard: React.FC = () => {
                                 <label className="text-xs text-slate-400 mb-1 block">Nombre del Cobrador (Alias/Moto)</label>
                                 <input type="text" required placeholder="Ej: MOTO-01 o Carlos"
                                     value={motoData.name} onChange={(e) => setMotoData({ ...motoData, name: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none" />
+                                    className="w-full border rounded-control p-3 focus:border-orange-400 outline-none bg-surface-900 text-slate-100 nx-form-field" />
                             </div>
                             <div>
                                 <label className="text-xs text-slate-400 mb-1 block">Correo de Acceso (Usuario)</label>
                                 <input type="email" required placeholder="moto1@financiera.com"
                                     value={motoData.email} onChange={(e) => setMotoData({ ...motoData, email: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none" />
+                                    className="w-full border rounded-control p-3 focus:border-orange-400 outline-none bg-surface-900 text-slate-100 nx-form-field" />
                             </div>
                             <div>
                                 <label className="text-xs text-slate-400 mb-1 block">Contraseña Temporal</label>
                                 <input type="password" required placeholder="123456"
                                     value={motoData.password} onChange={(e) => setMotoData({ ...motoData, password: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-orange-400 outline-none" />
+                                    className="w-full border rounded-control p-3 focus:border-orange-400 outline-none bg-surface-900 text-slate-100 nx-form-field" />
                             </div>
 
                             <div className="bg-orange-500/10 border border-orange-500/30 p-3 rounded-lg mt-4">
@@ -1149,7 +1149,7 @@ const LenderDashboard: React.FC = () => {
                                     required
                                     value={depositData.amount}
                                     onChange={(e) => setDepositData({ ...depositData, amount: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-4 text-white font-mono text-2xl focus:border-emerald-400 outline-none"
+                                    className="w-full border rounded-control p-4 font-mono text-2xl focus:border-emerald-400 outline-none bg-surface-900 nx-form-field"
                                 />
                             </div>
                             <div>
@@ -1158,7 +1158,7 @@ const LenderDashboard: React.FC = () => {
                                     type="text"
                                     value={depositData.notes}
                                     onChange={(e) => setDepositData({ ...depositData, notes: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-emerald-400 outline-none"
+                                    className="w-full border rounded-control p-3 focus:border-emerald-400 outline-none bg-surface-900 text-slate-100 nx-form-field"
                                     placeholder="Ej. Liquidación ruta martes"
                                 />
                             </div>
@@ -1196,7 +1196,7 @@ const LenderDashboard: React.FC = () => {
                                     required
                                     value={penaltyData.amount}
                                     onChange={(e) => setPenaltyData({ ...penaltyData, amount: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-red-400 outline-none font-mono"
+                                    className="w-full border rounded-control p-3 focus:border-red-400 outline-none font-mono bg-surface-900 text-slate-100 nx-form-field"
                                     placeholder="Ej: 5.00"
                                 />
                             </div>
@@ -1207,7 +1207,7 @@ const LenderDashboard: React.FC = () => {
                                     required
                                     value={penaltyData.reason}
                                     onChange={(e) => setPenaltyData({ ...penaltyData, reason: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-red-400 outline-none text-sm"
+                                    className="w-full border rounded-control p-3 focus:border-red-400 outline-none text-sm bg-surface-900 nx-form-field"
                                 />
                             </div>
                             <div className="bg-red-900/20 border border-red-500/20 p-3 rounded-lg text-xs text-red-200 mt-2">
@@ -1253,7 +1253,7 @@ const LenderDashboard: React.FC = () => {
                                     autoFocus
                                     value={paymentData.amount}
                                     onChange={(e) => setPaymentData({ ...paymentData, amount: e.target.value })}
-                                    className="w-full bg-slate-800 border border-slate-700 rounded-lg p-3 text-white focus:border-emerald-400 outline-none font-mono text-lg"
+                                    className="w-full border rounded-control p-3 focus:border-emerald-400 outline-none font-mono text-lg bg-surface-900 nx-form-field"
                                     placeholder="Ej: 30.00"
                                 />
                                 <p className="text-[11px] text-slate-500 mt-1">No puede exceder el saldo pendiente.</p>

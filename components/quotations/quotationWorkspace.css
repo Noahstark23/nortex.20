@@ -1,0 +1,95 @@
+/* Mismo estante claro y resumen oscuro que el POS. Alcance exclusivo a proformas. */
+.nx-quote-workspace { display:flex; height:100%; min-height:0; overflow:hidden; background:rgb(var(--nx-neutral-100-rgb, 244 245 247)); }
+.nx-quote-main { flex:1; min-width:0; display:flex; flex-direction:column; overflow:hidden; color:rgb(var(--nx-neutral-900-rgb, 20 23 28)); }
+.nx-quote-header { padding:24px 24px 16px; }
+.nx-quote-workspace .nx-quote-header h1 { color:rgb(var(--nx-neutral-900-rgb, 20 23 28)); letter-spacing:-.035em; }
+.nx-quote-subtitle { margin-top:6px; font-size:14px; color:rgb(var(--nx-neutral-600-rgb, 82 87 96)); }
+.nx-quote-navigation { display:flex; gap:8px; margin-top:20px; }
+.nx-quote-workspace .nx-quote-navigation button { min-height:44px; background:white; color:rgb(var(--nx-neutral-600-rgb, 82 87 96)); border:1px solid rgb(var(--nx-neutral-200-rgb, 220 223 228)); }
+.nx-quote-workspace .nx-quote-navigation button[aria-pressed='true'] { background:var(--nx-brand, #10b981); color:var(--nx-on-brand, #fff); border-color:transparent; }
+.nx-quote-catalog { flex:1; min-height:0; overflow:auto; padding:8px 24px 24px; }
+.nx-quote-catalog > label { display:block; font-size:13px; font-weight:600; margin-bottom:8px; }
+.nx-quote-search { display:flex; align-items:center; gap:10px; background:white; border:1px solid rgb(var(--nx-neutral-200-rgb, 220 223 228)); border-radius:var(--nx-r-control,12px); padding:0 14px; margin-bottom:24px; color:rgb(var(--nx-neutral-600-rgb, 82 87 96)); }
+.nx-quote-search input { min-width:0; flex:1; height:54px; background:white; color:rgb(var(--nx-neutral-900-rgb, 20 23 28)); border:0; outline:none; }
+.nx-quote-search:focus-within { outline:2px solid var(--nx-brand,#10b981); outline-offset:2px; }
+.nx-quote-search button { min-height:44px; min-width:44px; display:grid; place-items:center; }
+.nx-quote-catalog .nx-compact-catalog { background:transparent; }
+.nx-quote-empty { padding:40px 12px; text-align:center; color:rgb(var(--nx-neutral-600-rgb, 82 87 96)); }
+.nx-quote-empty h2 { font-size:18px; font-weight:600; margin-bottom:8px; }
+.nx-quote-empty button { margin-top:16px; min-height:44px; padding:8px 16px; border:1px solid currentColor; border-radius:var(--nx-r-control,12px); }
+.nx-quote-hint { font-size:13px; margin-bottom:12px; }
+.nx-quote-ticket { width:380px; flex-shrink:0; margin:24px 24px 24px 0; display:flex; flex-direction:column; min-height:0; background:#18191d; color:#f5f5f7; border:1px solid #33353b; border-radius:var(--nx-r-card,16px); overflow:auto; }
+.nx-quote-ticket-heading { padding:20px; border-bottom:1px solid #33353b; }
+.nx-quote-ticket-heading h2 { font-size:20px; font-weight:700; letter-spacing:-.025em; }
+.nx-quote-ticket-heading p { margin-top:4px; font-size:13px; color:#b4b7c0; }
+.nx-quote-ticket > .flex-1 { flex:1 0 auto; min-height:120px; }
+.nx-quote-ticket .text-slate-500, .nx-quote-ticket .text-slate-400 { color:#b4b7c0; }
+.nx-quote-ticket .line-clamp-1 { display:block; overflow:visible; white-space:normal; }
+.nx-quote-ticket button { min-height:44px; min-width:44px; }
+.nx-quote-ticket input { min-height:44px; }
+.nx-quote-ticket input:focus-visible { outline:2px solid var(--nx-brand,#10b981); outline-offset:2px; }
+.nx-quote-customer { padding:16px 20px; border-top:1px solid #33353b; }
+.nx-quote-customer input { background:#22242a; border-color:#494c54; }
+.nx-quote-footer { padding:16px 20px 20px; }
+.nx-quote-save { width:100%; display:flex; gap:8px; justify-content:center; align-items:center; background:var(--nx-brand,#10b981); color:var(--nx-on-brand,#fff); padding:14px; font-weight:700; border-radius:var(--nx-r-control,12px); }
+.nx-quote-save:disabled { opacity:.45; cursor:not-allowed; }
+.nx-quote-error { color:#fda4af; font-size:13px; margin-bottom:12px; }
+.nx-quote-success { color:#166534; padding:12px; background:#dcfce7; margin-top:12px; border-radius:var(--nx-r-control,12px); }
+.nx-quote-workspace button:focus-visible { outline:2px solid var(--nx-brand,#10b981); outline-offset:3px; }
+@media(max-width:900px) {
+  .nx-quote-workspace { display:block; overflow:auto; }
+  .nx-quote-main { overflow:visible; }
+  .nx-quote-header { padding:20px 16px 12px; }
+  .nx-quote-subtitle { max-width:38ch; }
+  .nx-quote-catalog { flex:none; max-height:52dvh; min-height:240px; padding:8px 16px 20px; }
+  .nx-quote-ticket { width:auto; margin:0 16px 24px; overflow:visible; }
+  .nx-quote-ticket > .flex-1 { max-height:none; }
+  .nx-quote-navigation { gap:6px; }
+  .nx-quote-workspace .nx-quote-navigation button { font-size:12px; padding:8px; }
+}
+.nx-quote-workspace .nx-quote-history > div { background:white; border-color:rgb(var(--nx-neutral-200-rgb, 220 223 228)); color:rgb(var(--nx-neutral-900-rgb, 20 23 28)); }
+.nx-quote-workspace .nx-quote-history :is(h3,.text-slate-100) { color:rgb(var(--nx-neutral-900-rgb, 20 23 28)); }
+.nx-quote-workspace .nx-quote-history :is(.text-slate-400,.text-slate-500) { color:rgb(var(--nx-neutral-600-rgb, 82 87 96)); }
+.nx-quote-workspace .nx-quote-history .text-red-400 { color:rgb(var(--nx-neutral-600-rgb, 82 87 96)); }
+.nx-quote-workspace .nx-quote-history .text-blue-400 { color:#1d4ed8; }
+.nx-quote-workspace .nx-quote-history .text-green-400 { color:#166534; }
+.nx-quote-history button { min-height:44px; }
+/* El ticket conserva su contraste bajo los dos ancestros de Layout. */
+.nx-quote-workspace .nx-quote-ticket { color-scheme:dark; background:var(--nx-ticket,#18191d); color:var(--nx-ticket-text,#f5f5f7); }
+.nx-quote-workspace .nx-quote-ticket :is(.bg-surface-900,.bg-surface-800\/60) { background:var(--nx-ticket,#18191d); }
+.nx-quote-workspace .nx-quote-ticket :is(.text-slate-100,.text-slate-300) { color:var(--nx-ticket-text,#f5f5f7); }
+.nx-quote-workspace .nx-quote-ticket :is(.text-slate-400,.text-slate-500) { color:var(--nx-ticket-muted,#b4b7c0); }
+.nx-quote-workspace .nx-quote-ticket input { background:var(--nx-ticket,#22242a); color:var(--nx-ticket-text,#f5f5f7); border-color:var(--nx-ticket-border,#494c54); }
+.nx-quote-workspace .nx-quote-ticket [class*='border-white'] { border-color:var(--nx-ticket-border,#33353b); }
+
+/* Los campos definen tinta, cursor y ayuda juntos: el tema del Layout no
+   debe pintar un cursor oscuro ni un placeholder tenue dentro del ticket. */
+.nx-quote-workspace .nx-quote-search input {
+  background:white;
+  color:rgb(var(--nx-neutral-900-rgb, 20 23 28));
+  font-size:16px;
+  caret-color:rgb(var(--nx-neutral-900-rgb, 20 23 28));
+  color-scheme:light;
+}
+.nx-quote-workspace .nx-quote-search input::placeholder {
+  color:rgb(var(--nx-neutral-600-rgb, 74 82 94));
+  opacity:1;
+}
+.nx-quote-workspace .nx-quote-ticket input {
+  font-size:16px;
+  caret-color:var(--nx-ticket-text, #f5f5f7);
+}
+.nx-quote-workspace .nx-quote-ticket input::placeholder {
+  color:var(--nx-ticket-muted, #b4b7c0);
+  opacity:1;
+}
+.nx-quote-workspace .nx-quote-ticket input:-webkit-autofill {
+  -webkit-text-fill-color:var(--nx-ticket-text, #f5f5f7);
+  caret-color:var(--nx-ticket-text, #f5f5f7);
+  box-shadow:0 0 0 1000px var(--nx-ticket, #18191d) inset;
+}
+.nx-quote-workspace .nx-quote-search input:-webkit-autofill {
+  -webkit-text-fill-color:rgb(var(--nx-neutral-900-rgb, 20 23 28));
+  caret-color:rgb(var(--nx-neutral-900-rgb, 20 23 28));
+  box-shadow:0 0 0 1000px white inset;
+}

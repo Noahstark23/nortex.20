@@ -18,7 +18,7 @@ import { join } from 'node:path';
  *
  * Este test lee el CÓDIGO FUENTE porque el orden de bloqueo no se puede
  * observar desde afuera sin dos conexiones MySQL reales peleando: es una
- * propiedad estructural del handler, y lo que hay que impedir es que alguien la
+ * propiedad estructural del servicio, y lo que hay que impedir es que alguien la
  * cambie de un lado sin mirar el otro.
  */
 
@@ -61,12 +61,21 @@ describe('orden de bloqueo Product → Shift', () => {
     });
 
     it('la compra de contado NO adelanta el lock del turno antes del stock', () => {
-        const cuerpo = cuerpoDelHandler("app.post('/api/purchases'");
+        const handler = cuerpoDelHandler("app.post('/api/purchases'");
+        expect(handler).toContain('createPurchaseHandler');
+        const ruta = readFileSync(join(__dirname, '..', 'backend', 'routes', 'purchases.ts'), 'utf-8');
+        expect(ruta).toContain('await registerPurchase({');
+        const fuente = readFileSync(join(__dirname, '..', 'backend', 'services', 'purchaseRegistrationService.ts'), 'utf-8');
+        const desde = fuente.indexOf('export async function registerPurchase(');
+        expect(desde, 'el servicio debe conservar el punto de registro público').toBeGreaterThan(-1);
+        const cuerpo = fuente.slice(desde);
 
         const producto = posicionLockDeProducto(cuerpo);
         const turno = posicionLockDeTurno(cuerpo);
 
         expect(producto, 'la compra debe seguir moviendo stock').toBeGreaterThan(-1);
+        const debito = cuerpo.indexOf('await registrarSalidaDeCajaPorCompra(');
+        expect(debito, 'la compra de contado debe conservar el débito de caja').toBeGreaterThan(producto);
         // El turno lo toma `registrarSalidaDeCajaPorCompra` (fuera de este
         // handler). Si alguien vuelve a poner un FOR UPDATE de Shift acá, tiene
         // que quedar DESPUÉS del stock o el orden se invierte contra /api/returns.

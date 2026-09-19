@@ -1,0 +1,83 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { PrismaClient } from '@prisma/client';
+import { assertAssistantAccess, getAssistantCapabilities } from '../backend/services/assistant/access';
+
+const principal = { tenantId: 'tenant-a', userId: 'user-a', role: 'OWNER' };
+function database(role = 'OWNER', enabled = true) {
+    const mocks = {
+        user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-a', role, status: 'ACTIVE' }) },
+        assistantTenantConfig: { findUnique: vi.fn().mockResolvedValue({ enabled, extractionEnabled: true, executionEnabled: true }) },
+    };
+    return { mocks, db: mocks as unknown as PrismaClient };
+}
+
+beforeEach(() => {
+    vi.stubEnv('NORTEX_ASSISTANT_ENABLED', 'true');
+    vi.stubEnv('NORTEX_ASSISTANT_EXTRACTION_ENABLED', 'true');
+    vi.stubEnv('NORTEX_ASSISTANT_EXECUTION_ENABLED', 'true');
+});
+afterEach(() => vi.unstubAllEnvs());
+
+describe('NortexGPT: acceso vigente y mínimo privilegio', () => {
+    it.each(['false', '', undefined])('apagado global %s no consulta tablas nuevas', async flag => {
+        vi.stubEnv('NORTEX_ASSISTANT_ENABLED', flag);
+        const { db, mocks } = database();
+        expect(await getAssistantCapabilities(principal, db)).toMatchObject({ enabled: false, help: false, invoiceConfirm: false });
+        expect(mocks.assistantTenantConfig.findUnique).not.toHaveBeenCalled();
+    });
+    it('tenant sin activación permanece bloqueado', async () => {
+        const { db, mocks } = database();
+        mocks.assistantTenantConfig.findUnique.mockResolvedValue(null);
+        await expect(assertAssistantAccess(principal, 'help', db)).rejects.toMatchObject({ statusCode: 403, code: 'ASSISTANT_DISABLED' });
+    });
+    it.each(['DISABLED', 'INVITED'])('usuario %s no conserva acceso', async status => {
+        const { db, mocks } = database();
+        mocks.user.findFirst.mockResolvedValue({ id: 'user-a', role: 'OWNER', status });
+        await expect(getAssistantCapabilities(principal, db)).rejects.toMatchObject({ code: 'SESSION_REVOKED' });
+        expect(mocks.assistantTenantConfig.findUnique).not.toHaveBeenCalled();
+    });
+    it('rol cambiado o tenant ajeno revoca el principal antes de consultar configuración', async () => {
+        const { db, mocks } = database('CASHIER');
+        await expect(getAssistantCapabilities(principal, db)).rejects.toMatchObject({ code: 'SESSION_REVOKED' });
+        expect(mocks.user.findFirst.mock.calls[0][0].where).toEqual({ id: 'user-a', tenantId: 'tenant-a' });
+        mocks.user.findFirst.mockResolvedValue(null);
+        await expect(getAssistantCapabilities(principal, db)).rejects.toMatchObject({ code: 'SESSION_REVOKED' });
+    });
+    it.each(['OWNER', 'ADMIN', 'SUPER_ADMIN', 'MANAGER'])('%s puede preparar/confirmar con ambos interruptores', async role => {
+        expect(await getAssistantCapabilities({ ...principal, role }, database(role).db)).toMatchObject({ help: true, overview: true, invoiceRead: true, purchasePrepare: true, invoicePrepare: true, invoiceConfirm: true });
+    });
+    it.each(['ACCOUNTANT', 'VIEWER', 'BODEGUERO', 'CASHIER', 'VENDEDOR', 'EMPLOYEE', 'LENDER', 'DRIVER'])('%s nunca hereda escritura de compras', async role => {
+        const { db } = database(role);
+        expect(await getAssistantCapabilities({ ...principal, role }, db)).toMatchObject({ help: true, invoiceRead: false, purchasePrepare: false, invoicePrepare: false, invoiceConfirm: false });
+        await expect(assertAssistantAccess({ ...principal, role }, 'purchasePrepare', db)).rejects.toMatchObject({ code: 'ASSISTANT_FORBIDDEN' });
+        await expect(assertAssistantAccess({ ...principal, role }, 'invoiceConfirm', db)).rejects.toMatchObject({ code: 'ASSISTANT_FORBIDDEN' });
+    });
+    it('rol desconocido falla cerrado', async () => {
+        expect(await getAssistantCapabilities({ ...principal, role: 'ROOT' }, database('ROOT').db)).toMatchObject({ enabled: false, help: false });
+    });
+    it('un cambio de rol invalida datos locales aunque conserve capacidades de compras', async () => {
+        const owner = await getAssistantCapabilities(principal, database().db);
+        const manager = await getAssistantCapabilities({ ...principal, role: 'MANAGER' }, database('MANAGER').db);
+        expect(owner.purchasePrepare).toBe(manager.purchasePrepare);
+        expect(owner.accessScope).toBe('OWNER');
+        expect(manager.accessScope).toBe('MANAGER');
+    });
+    it('pausar extracción conserva evidencia y deja ejecución bajo su propio interruptor', async () => {
+        vi.stubEnv('NORTEX_ASSISTANT_EXTRACTION_ENABLED', 'false');
+        expect(await getAssistantCapabilities(principal, database().db)).toMatchObject({ invoiceRead: true, purchasePrepare: true, invoicePrepare: false, invoiceConfirm: true });
+        vi.stubEnv('NORTEX_ASSISTANT_EXECUTION_ENABLED', 'false');
+        expect(await getAssistantCapabilities(principal, database().db)).toMatchObject({ invoiceRead: true, purchasePrepare: true, invoicePrepare: false, invoiceConfirm: false });
+    });
+    it('captura manual no depende del permiso de lectura automática de documentos del negocio', async () => {
+        const { db, mocks } = database();
+        mocks.assistantTenantConfig.findUnique.mockResolvedValue({ enabled: true, extractionEnabled: false, executionEnabled: false });
+        await expect(assertAssistantAccess(principal, 'purchasePrepare', db)).resolves.toBeUndefined();
+        expect(await getAssistantCapabilities(principal, db)).toMatchObject({ purchasePrepare: true, invoicePrepare: false, invoiceConfirm: false });
+    });
+    it('fallo de revalidación nunca concede capacidades', async () => {
+        const { db, mocks } = database();
+        mocks.user.findFirst.mockRejectedValue(new Error('DB unavailable'));
+        await expect(getAssistantCapabilities(principal, db)).rejects.toThrow('DB unavailable');
+        expect(mocks.assistantTenantConfig.findUnique).not.toHaveBeenCalled();
+    });
+});

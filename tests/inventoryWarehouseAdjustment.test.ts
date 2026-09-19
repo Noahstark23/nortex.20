@@ -46,10 +46,10 @@ describe('ajuste de inventario por bodega', () => {
         expect(source).not.toContain('alert(`Ajuste registrado:');
     });
 
-    it('no ofrece compras ni devoluciones dentro del ajuste BODEGUERO', () => {
+    it('no ofrece compras ni devoluciones dentro del ajuste de ningún rol', () => {
         expect(adjustmentTypesForRole(true)).toEqual(['ADJUST_LOSS', 'ADJUST_GAIN']);
         expect(adjustmentTypesForRole(false)).toEqual([
-            'ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN',
+            'ADJUST_LOSS', 'ADJUST_GAIN',
         ]);
         expect(source).toContain('.filter(opt => adjustmentTypesForRole(isBodeguero).includes(opt.value))');
     });

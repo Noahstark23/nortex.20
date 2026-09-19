@@ -12,6 +12,7 @@ const purchasesSource = readFileSync(
     resolve(process.cwd(), 'components/Purchases.tsx'),
     'utf8',
 );
+const receivingSource = readFileSync(resolve(process.cwd(), 'components/inventory/ReceivingWorkspace.tsx'), 'utf8');
 
 describe('fecha civil de la factura en Nueva Compra', () => {
     it('calcula el valor inicial desde el calendario local, incluso cerca de medianoche', () => {
@@ -32,12 +33,15 @@ describe('fecha civil de la factura en Nueva Compra', () => {
     });
 
     it('presenta un campo requerido y accesible con error inline', () => {
-        expect(purchasesSource).toContain('Fecha de la factura *');
-        expect(purchasesSource).toContain('id="purchase-invoice-date"');
-        expect(purchasesSource).toContain('htmlFor="purchase-invoice-date"');
-        expect(purchasesSource).toMatch(/id="purchase-invoice-date"[\s\S]*?type="date"[\s\S]*?required/);
-        expect(purchasesSource).toContain("aria-describedby={formErrors.date ? 'purchase-invoice-date-error' : undefined}");
-        expect(purchasesSource).toContain('id="purchase-invoice-date-error"');
+        expect(purchasesSource).toContain('<ReceivingWorkspace');
+        expect(purchasesSource).toContain('errors={formErrors}');
+        expect(purchasesSource).toContain('date: purchaseDate');
+        expect(receivingSource).toContain('Fecha de la factura *');
+        expect(receivingSource).toContain('id="purchase-invoice-date"');
+        expect(receivingSource).toContain('htmlFor="purchase-invoice-date"');
+        expect(receivingSource).toMatch(/id="purchase-invoice-date"[\s\S]*?type="date"[\s\S]*?required/);
+        expect(receivingSource).toContain("aria-describedby={p.errors.date ? 'purchase-invoice-date-error' : undefined}");
+        expect(receivingSource).toContain('id="purchase-invoice-date-error"');
         expect(purchasesSource).toContain("errors.date = 'Ingresá la fecha de la factura.'");
         expect(purchasesSource).toContain("errors.date = 'Ingresá una fecha de factura válida.'");
     });

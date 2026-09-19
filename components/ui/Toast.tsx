@@ -106,7 +106,7 @@ export function ToastViewport({
                 key={toast.id}
                 role={isError ? 'alert' : 'status'}
                 aria-live={isError ? 'assertive' : 'polite'}
-                className={`pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3.5 shadow-2xl backdrop-blur animate-in fade-in slide-in-from-top-2 duration-200 ${panel}`}
+                className={`pointer-events-auto flex items-start gap-3 rounded-xl border px-4 py-3.5 shadow-2xl backdrop-blur duration-200 ${panel}`}
             >
                 <Icon className={`mt-0.5 shrink-0 ${icon}`} size={20} aria-hidden="true" />
                 <div className="min-w-0 flex-1">

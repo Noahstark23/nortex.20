@@ -140,9 +140,9 @@ const STATUS_LABELS: Record<SupplierStatus, string> = {
 };
 
 const STATUS_TONES: Record<SupplierStatus, string> = {
-    ACTIVE: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300',
-    SUSPENDED: 'border-amber-500/30 bg-amber-500/10 text-amber-300',
-    BLOCKED: 'border-red-500/30 bg-red-500/10 text-red-300',
+    ACTIVE: 'border-green-500/30 bg-green-500/10 text-green-800',
+    SUSPENDED: 'border-amber-500/30 bg-amber-500/10 text-amber-800',
+    BLOCKED: 'border-red-500/30 bg-red-500/10 text-red-700',
 };
 
 const EMPTY_AGGREGATES: SupplierAggregates = {
@@ -541,36 +541,38 @@ const Suppliers: React.FC = () => {
     const selectedCurrency = detail?.supplier.currency || 'NIO';
 
     return (
-        <div className="h-full overflow-hidden bg-surface-950">
+        <div className="nx-light-context nx-workspace h-full overflow-hidden bg-slate-50 text-slate-950">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
-            <div className="grid h-full grid-cols-1 xl:grid-cols-[330px_minmax(0,1fr)]">
-                <aside className={`${mobileDetailOpen ? 'hidden xl:flex' : 'flex'} h-full flex-col border-r border-white/[0.06] bg-surface-900/95`}>
-                    <div className="border-b border-white/[0.06] p-4">
+            <div className="grid h-full grid-cols-1 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <aside className={`${mobileDetailOpen ? 'hidden xl:flex' : 'flex'} h-full flex-col border-r border-slate-200 bg-white`}>
+                    <div className="border-b border-slate-200 p-4 sm:p-5">
                         <div className="flex items-start justify-between gap-3">
                             <div>
-                                <h1 className="flex items-center gap-2 text-2xl font-black text-slate-100"><Truck className="text-nortex-500" /> Proveedores</h1>
-                                <p className="mt-1 text-xs text-slate-500">Expediente, compras y cuentas por pagar.</p>
+                                <p className="nx-label mb-1 text-slate-500">Compras</p>
+                                <h1 className="nx-module-header flex items-center gap-2 text-title font-bold text-slate-950"><Truck className="text-slate-500" size={21} aria-hidden="true" /> Proveedores</h1>
+                                <p className="mt-1 text-xs text-slate-500">Expedientes y cuentas por pagar.</p>
                             </div>
                             {canMutate && (
-                                <button type="button" onClick={openCreateSupplier} className="inline-flex items-center gap-2 rounded-xl bg-nortex-900 px-4 py-2 text-sm font-bold text-white hover:bg-nortex-800">
-                                    <Plus size={16} /> Nuevo
+                                <button type="button" onClick={openCreateSupplier} className="nx-fluid-press inline-flex h-touch items-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring">
+                                    <Plus size={16} aria-hidden="true" /> Nuevo
                                 </button>
                             )}
                         </div>
-                        <div className="mt-4 rounded-xl border border-white/[0.06] bg-white/[0.025] px-3 py-2.5 text-xs text-slate-400">
-                            <span className="font-bold text-slate-200">{loading ? 'Actualizando directorio…' : supplierCountLabel}</span>
+                        <div className="mt-4 flex items-center justify-between border-y border-slate-100 py-2 text-xs text-slate-500">
+                            <span className="font-semibold text-slate-700">{loading ? 'Actualizando directorio…' : supplierCountLabel}</span>
+                            <span>Directorio</span>
                         </div>
                         <div className="relative mt-4">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" size={18} />
-                            <input aria-label="Buscar proveedores" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre, RUC, contacto o correo" className="w-full rounded-2xl border border-white/[0.06] bg-white/[0.03] py-3 pl-10 pr-4 text-sm text-slate-100 outline-none focus:border-nortex-500" />
+                            <Search className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={17} aria-hidden="true" />
+                            <input aria-label="Buscar proveedores" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Nombre, RUC, contacto o correo" className="min-h-tap w-full rounded-control border border-slate-300 bg-white py-2.5 pl-10 pr-3 text-sm text-slate-900 outline-none placeholder:text-slate-400 focus:border-brand focus:ring-2 focus:ring-brand-ring" />
                         </div>
-                        <label className="mt-3 block text-xs text-slate-500">
+                        <label className="mt-3 block text-xs font-medium text-slate-600">
                             Estado
                             <select
                                 aria-label="Filtrar proveedores por estado"
                                 value={statusFilter}
                                 onChange={(event) => setStatusFilter(event.target.value as 'ALL' | SupplierStatus)}
-                                className="mt-1.5 w-full rounded-xl border border-white/[0.06] bg-surface-950 px-3 py-2.5 text-sm text-slate-200 outline-none focus:border-nortex-500"
+                                className="mt-1.5 min-h-tap w-full rounded-control border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-900 outline-none focus:border-brand focus:ring-2 focus:ring-brand-ring"
                             >
                                 <option value="ALL">Todos</option>
                                 <option value="ACTIVE">Activos</option>
@@ -579,57 +581,57 @@ const Suppliers: React.FC = () => {
                             </select>
                         </label>
                         {loadError && (
-                            <div role="alert" className="mt-4 rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-100">
-                                <p className="font-bold">No pudimos cargar el directorio.</p>
-                                <p className="mt-1 text-red-100/80">{loadError}</p>
-                                <button type="button" onClick={() => void fetchSuppliers(selectedSupplierId)} className="mt-3 inline-flex items-center gap-2 rounded-xl border border-red-400/30 px-3 py-2 text-xs font-bold hover:bg-red-500/10"><RefreshCw size={14} /> Reintentar</button>
+                            <div role="alert" className="mt-4 rounded-card border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-700">
+                                <p className="font-semibold">No pudimos cargar el directorio.</p>
+                                <p className="mt-1">{loadError}</p>
+                                <button type="button" onClick={() => void fetchSuppliers(selectedSupplierId)} className="nx-fluid-press mt-3 inline-flex h-touch items-center gap-2 rounded-control border border-red-500/30 px-3 text-xs font-semibold hover:bg-red-500/10"><RefreshCw size={14} aria-hidden="true" /> Reintentar</button>
                             </div>
                         )}
                     </div>
 
-                    <div className="min-h-0 flex-1 overflow-y-auto p-2.5">
+                    <div className="min-h-0 flex-1 overflow-y-auto p-2">
                         {loading ? (
                             <div aria-label="Cargando proveedores" className="space-y-2">
-                                {Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-28 animate-pulse rounded-2xl border border-white/[0.06] bg-white/[0.03]" />)}
+                                {Array.from({ length: 5 }).map((_, index) => <div key={index} className="h-24 animate-pulse rounded-card bg-slate-100" />)}
                             </div>
                         ) : suppliers.length === 0 ? (
-                            <div className="rounded-3xl border border-dashed border-white/[0.08] bg-white/[0.02] p-6 text-center">
-                                <Truck className="mx-auto text-slate-500" size={30} />
-                                <h2 className="mt-3 text-lg font-bold text-slate-200">No hay proveedores en esta búsqueda</h2>
+                            <div className="rounded-card border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+                                <Truck className="mx-auto text-slate-400" size={30} aria-hidden="true" />
+                                <h2 className="mt-3 text-base font-semibold text-slate-800">No hay proveedores en esta búsqueda</h2>
                                 <p className="mt-1 text-sm text-slate-500">Probá otro término o creá el primer expediente.</p>
                             </div>
                         ) : (
-                            <div className="space-y-3">
+                            <nav aria-label="Directorio de proveedores" className="divide-y divide-slate-100">
                                 {suppliers.map((supplier) => (
-                                    <button type="button" key={supplier.id} onClick={() => { setSelectedSupplierId(supplier.id); setMobileDetailOpen(true); }} className={`w-full rounded-xl border p-3 text-left transition-all ${supplier.id === selectedSupplierId ? 'border-nortex-500/70 bg-nortex-500/[0.08]' : 'border-white/[0.06] bg-white/[0.03] hover:bg-white/[0.05]'}`}>
+                                    <button type="button" key={supplier.id} aria-current={supplier.id === selectedSupplierId ? 'true' : undefined} onClick={() => { setSelectedSupplierId(supplier.id); setMobileDetailOpen(true); }} className={`nx-fluid-press min-h-[88px] w-full rounded-control border px-3 py-3 text-left ${supplier.id === selectedSupplierId ? 'border-brand bg-brand-soft' : 'border-transparent bg-white hover:bg-slate-50'}`}>
                                         <div className="flex items-start justify-between gap-3">
-                                            <div className="min-w-0"><p className="truncate text-sm font-black text-slate-100">{supplier.name}</p><p className="mt-1 truncate text-xs text-slate-500">{supplier.category || 'Categoría general'}</p></div>
-                                            <span className={`shrink-0 rounded-full border px-2 py-1 text-[10px] font-bold ${STATUS_TONES[supplier.status] ?? STATUS_TONES.ACTIVE}`}>{STATUS_LABELS[supplier.status] ?? supplier.status}</span>
+                                            <div className="min-w-0"><p className="truncate text-sm font-semibold text-slate-950">{supplier.name}</p><p className="mt-1 truncate text-xs text-slate-500">{supplier.category || 'Categoría general'}</p></div>
+                                            <span className={`shrink-0 rounded-pill border px-2 py-1 text-[10px] font-semibold ${STATUS_TONES[supplier.status] ?? STATUS_TONES.ACTIVE}`}>{STATUS_LABELS[supplier.status] ?? supplier.status}</span>
                                         </div>
-                                        <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-400"><span className="truncate">{supplier.contactName || supplier.phone || supplier.email || 'Sin contacto principal'}</span><ChevronRight size={14} className="shrink-0" /></div>
+                                        <div className="mt-3 flex items-center justify-between gap-2 text-xs text-slate-500"><span className="truncate">{supplier.contactName || supplier.phone || supplier.email || 'Sin contacto principal'}</span><ChevronRight size={14} className="shrink-0" aria-hidden="true" /></div>
                                     </button>
                                 ))}
-                            </div>
+                            </nav>
                         )}
                     </div>
                 </aside>
 
-                <main className={`${mobileDetailOpen ? 'block' : 'hidden xl:block'} h-full overflow-y-auto bg-[radial-gradient(circle_at_top,_rgba(16,185,129,0.07),_transparent_32%),linear-gradient(180deg,_rgba(6,17,27,0.9),_rgba(6,17,27,1))] p-4 sm:p-6`}>
-                    <button type="button" onClick={() => setMobileDetailOpen(false)} className="mb-4 inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-3 py-2 text-sm font-bold text-slate-200 xl:hidden"><ArrowLeft size={16} /> Volver a proveedores</button>
+                <main className={`${mobileDetailOpen ? 'block' : 'hidden xl:block'} nx-workspace h-full overflow-y-auto bg-slate-50 p-4 sm:p-6 lg:p-8`}>
+                    <button type="button" onClick={() => setMobileDetailOpen(false)} className="nx-fluid-press mb-4 inline-flex h-touch items-center gap-2 rounded-control border border-slate-300 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-100 xl:hidden"><ArrowLeft size={16} aria-hidden="true" /> Volver a proveedores</button>
                     {!selectedSupplierId ? (
-                        <div className="flex h-full items-center justify-center"><div className="max-w-md rounded-3xl border border-dashed border-white/[0.08] bg-white/[0.02] p-8 text-center"><Building2 className="mx-auto text-nortex-400" size={34} /><h2 className="mt-4 text-2xl font-black text-slate-100">Elegí un proveedor</h2><p className="mt-2 text-sm text-slate-400">Acá vas a ver su identidad fiscal, contactos, compras, pagos y documentos registrados.</p></div></div>
+                        <div className="flex h-full items-center justify-center"><div className="nx-canvas-card max-w-md p-8 text-center"><Building2 className="mx-auto text-slate-400" size={34} aria-hidden="true" /><h2 className="nx-module-header mt-4 text-title font-bold text-slate-950">Elegí un proveedor</h2><p className="mt-2 text-sm text-slate-600">Acá vas a ver su identidad fiscal, contactos, compras, pagos y documentos registrados.</p></div></div>
                     ) : detailError ? (
-                        <div className="flex h-full items-center justify-center"><div role="alert" className="max-w-lg rounded-3xl border border-red-500/20 bg-red-500/10 p-8 text-center"><AlertCircle className="mx-auto text-red-300" size={32} /><h2 className="mt-4 text-2xl font-black text-slate-100">No pudimos abrir el expediente</h2><p className="mt-2 text-sm text-red-100/80">{detailError}</p><button type="button" onClick={() => void fetchSupplierDetail(selectedSupplierId)} className="mt-4 rounded-xl border border-red-400/30 px-4 py-2.5 text-sm font-bold text-red-100 hover:bg-red-500/10">Reintentar detalle</button></div></div>
+                        <div className="flex h-full items-center justify-center"><div role="alert" className="nx-canvas-card max-w-lg border-red-500/20 bg-red-500/10 p-8 text-center"><AlertCircle className="mx-auto text-red-600" size={32} aria-hidden="true" /><h2 className="nx-module-header mt-4 text-title font-bold text-slate-950">No pudimos abrir el expediente</h2><p className="mt-2 text-sm text-red-700">{detailError}</p><button type="button" onClick={() => void fetchSupplierDetail(selectedSupplierId)} className="nx-fluid-press mt-4 h-touch rounded-control border border-red-500/30 px-4 text-sm font-semibold text-red-700 hover:bg-red-500/10">Reintentar detalle</button></div></div>
                     ) : loadingDetail || !detail ? (
-                        <div aria-label="Cargando expediente del proveedor" className="space-y-4"><div className="h-48 animate-pulse rounded-3xl border border-white/[0.06] bg-white/[0.03]" /><div className="grid gap-4 lg:grid-cols-3">{Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-64 animate-pulse rounded-3xl border border-white/[0.06] bg-white/[0.03]" />)}</div></div>
+                        <div aria-label="Cargando expediente del proveedor" className="mx-auto max-w-[1480px] space-y-4"><div className="h-48 animate-pulse rounded-card bg-white" /><div className="grid gap-4 lg:grid-cols-3">{Array.from({ length: 3 }).map((_, index) => <div key={index} className="h-64 animate-pulse rounded-card bg-white" />)}</div></div>
                     ) : (
-                        <div className="space-y-5">
-                            <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5 shadow-card sm:p-6">
+                        <div className="mx-auto max-w-[1480px] space-y-5">
+                            <section className="nx-canvas-card p-5 sm:p-6">
                                 <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-start">
-                                    <div><div className="flex flex-wrap items-center gap-2"><h2 className="text-3xl font-black text-slate-100">{detail.supplier.name}</h2><span className={`rounded-full border px-3 py-1 text-xs font-bold ${STATUS_TONES[detail.supplier.status] ?? STATUS_TONES.ACTIVE}`}>{STATUS_LABELS[detail.supplier.status] ?? detail.supplier.status}</span></div><p className="mt-2 text-sm text-slate-400">{detail.supplier.category || 'Sin categoría'} · {detail.supplier.currency || 'NIO'} · {detail.supplier.paymentTermsDays ?? 0} días de crédito</p></div>
-                                    {canMutate && <div className="flex flex-wrap gap-2"><button type="button" onClick={openEditSupplier} className="inline-flex items-center gap-2 rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2.5 text-sm font-bold text-slate-200 hover:bg-white/[0.07]"><Pencil size={16} /> Editar expediente</button><button type="button" onClick={() => void archiveSupplier()} className="inline-flex items-center gap-2 rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-2.5 text-sm font-bold text-red-200 hover:bg-red-500/15"><Trash2 size={16} /> Archivar</button></div>}
+                                    <div><p className="nx-label mb-1 text-slate-500">Expediente del proveedor</p><div className="flex flex-wrap items-center gap-2"><h2 className="nx-module-header text-3xl font-bold text-slate-950">{detail.supplier.name}</h2><span className={`rounded-pill border px-3 py-1 text-xs font-semibold ${STATUS_TONES[detail.supplier.status] ?? STATUS_TONES.ACTIVE}`}>{STATUS_LABELS[detail.supplier.status] ?? detail.supplier.status}</span></div><p className="mt-2 text-sm text-slate-600">{detail.supplier.category || 'Sin categoría'} · {detail.supplier.currency || 'NIO'} · {detail.supplier.paymentTermsDays ?? 0} días de crédito</p></div>
+                                    {canMutate && <div className="flex flex-wrap gap-2"><button type="button" onClick={openEditSupplier} className="nx-fluid-press inline-flex h-touch items-center gap-2 rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-100"><Pencil size={16} aria-hidden="true" /> Editar expediente</button><button type="button" onClick={() => void archiveSupplier()} className="nx-fluid-press inline-flex h-touch items-center gap-2 rounded-control border border-red-500/20 bg-red-500/10 px-4 text-sm font-semibold text-red-700 hover:bg-red-500/15"><Trash2 size={16} aria-hidden="true" /> Archivar</button></div>}
                                 </div>
-                                <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                                <div className="nx-list-surface mt-6 grid gap-px overflow-hidden bg-slate-200 sm:grid-cols-2 xl:grid-cols-4">
                                     <Metric label="Comprado acumulado" value={formatSupplierMoney(detail.aggregates.totalPurchased, selectedCurrency)} note={`${detail.aggregates.purchaseCount} facturas`} />
                                     <Metric label="Saldo pendiente" value={formatSupplierMoney(detail.aggregates.outstandingBalance, selectedCurrency)} note="CxP viva" tone="amber" />
                                     <Metric label="Pagado registrado" value={formatSupplierMoney(detail.aggregates.totalPaid, selectedCurrency)} note={`${detail.aggregates.paymentCount} pagos`} tone="emerald" />
@@ -638,8 +640,8 @@ const Suppliers: React.FC = () => {
                             </section>
 
                             <div className="grid gap-5 xl:grid-cols-3">
-                                <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5">
-                                    <h3 className="flex items-center gap-2 text-lg font-black text-slate-100"><Hash size={18} className="text-amber-400" /> Identidad y operación</h3>
+                                <section className="nx-canvas-card p-5">
+                                    <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-950"><Hash size={18} className="text-slate-500" aria-hidden="true" /> Identidad y operación</h3>
                                     <dl className="mt-4 space-y-3 text-sm">
                                         <Info label="RUC / documento" value={detail.supplier.ruc || 'No registrado'} mono />
                                         <Info label="Tipo legal" value={detail.supplier.legalType === 'JURIDICAL' ? 'Persona jurídica' : detail.supplier.legalType === 'NATURAL' ? 'Persona natural' : 'No definido'} />
@@ -649,35 +651,35 @@ const Suppliers: React.FC = () => {
                                     </dl>
                                 </section>
 
-                                <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5">
-                                    <div className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-lg font-black text-slate-100"><Users size={18} className="text-nortex-400" /> Contactos</h3>{canMutate && <button type="button" onClick={openCreateContact} className="inline-flex items-center gap-1.5 rounded-xl border border-nortex-500/30 bg-nortex-500/10 px-3 py-2 text-xs font-bold text-nortex-200 hover:bg-nortex-500/15"><Plus size={14} /> Agregar</button>}</div>
+                                <section className="nx-canvas-card p-5">
+                                    <div className="flex items-center justify-between gap-3"><h3 className="flex items-center gap-2 text-lg font-semibold text-slate-950"><Users size={18} className="text-brand" aria-hidden="true" /> Contactos</h3>{canMutate && <button type="button" onClick={openCreateContact} className="nx-fluid-press inline-flex h-touch items-center gap-1.5 rounded-control border border-brand/30 bg-brand-soft px-3 text-xs font-semibold text-brand-800 hover:bg-brand/15"><Plus size={14} aria-hidden="true" /> Agregar</button>}</div>
                                     <div className="mt-4 space-y-3">
                                         {detail.contacts.length === 0 ? <EmptyText> Todavía no hay contactos adicionales. </EmptyText> : detail.contacts.map((contact) => (
-                                            <div key={contact.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3">
-                                                <div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><p className="font-bold text-slate-100">{contact.name}</p>{contact.isPrimary && <span className="rounded-full border border-nortex-500/30 bg-nortex-500/10 px-2 py-0.5 text-[10px] font-bold text-nortex-300">Principal</span>}</div><p className="mt-0.5 text-xs text-slate-500">{contact.title || 'Sin cargo'}</p></div>{canMutate && <div className="flex gap-1"><button type="button" onClick={() => openEditContact(contact)} aria-label={`Editar contacto ${contact.name}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-white/[0.06] hover:text-slate-200"><Pencil size={14} /></button><button type="button" onClick={() => void deleteContact(contact)} aria-label={`Eliminar contacto ${contact.name}`} className="rounded-lg p-1.5 text-slate-400 hover:bg-red-500/10 hover:text-red-300"><Trash2 size={14} /></button></div>}</div>
-                                                <div className="mt-3 space-y-1 text-xs text-slate-400">{contact.phone && <p className="flex items-center gap-2"><Phone size={13} /> {contact.phone}</p>}{contact.email && <p className="flex items-center gap-2"><Mail size={13} /> {contact.email}</p>}</div>
+                                            <div key={contact.id} className="rounded-card border border-slate-200 bg-slate-50 p-3">
+                                                <div className="flex items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><p className="font-semibold text-slate-900">{contact.name}</p>{contact.isPrimary && <span className="rounded-pill border border-brand/30 bg-brand-soft px-2 py-0.5 text-[10px] font-semibold text-brand-800">Principal</span>}</div><p className="mt-0.5 text-xs text-slate-500">{contact.title || 'Sin cargo'}</p></div>{canMutate && <div className="flex gap-1"><button type="button" onClick={() => openEditContact(contact)} aria-label={`Editar contacto ${contact.name}`} className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control text-slate-500 hover:bg-slate-200 hover:text-slate-800"><Pencil size={15} aria-hidden="true" /></button><button type="button" onClick={() => void deleteContact(contact)} aria-label={`Eliminar contacto ${contact.name}`} className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control text-slate-500 hover:bg-red-500/10 hover:text-red-700"><Trash2 size={15} aria-hidden="true" /></button></div>}</div>
+                                                <div className="mt-3 space-y-1 text-xs text-slate-600">{contact.phone && <p className="flex items-center gap-2"><Phone size={13} aria-hidden="true" /> {contact.phone}</p>}{contact.email && <p className="flex items-center gap-2"><Mail size={13} aria-hidden="true" /> {contact.email}</p>}</div>
                                             </div>
                                         ))}
                                     </div>
                                 </section>
 
-                                <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5">
-                                    <h3 className="flex items-center gap-2 text-lg font-black text-slate-100"><FileText size={18} className="text-sky-400" /> Documentos</h3>
+                                <section className="nx-canvas-card p-5">
+                                    <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-950"><FileText size={18} className="text-slate-500" aria-hidden="true" /> Documentos</h3>
                                     <p className="mt-1 text-xs text-slate-500">Metadatos privados. La carga y descarga de archivos todavía no está habilitada.</p>
                                     <div className="mt-4 space-y-3">
                                         {detail.documents.length === 0 ? <EmptyText>No hay documentos registrados.</EmptyText> : detail.documents.map((document) => (
-                                            <div key={document.id} className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3"><p className="break-words font-bold text-slate-100">{document.fileName}</p><p className="mt-1 text-xs font-mono text-sky-300">{document.kind}</p><p className="mt-2 text-xs text-slate-500">{formatFileSize(document.sizeBytes)} · registrado {formatDate(document.createdAt)}</p>{document.expiresAt && <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-300"><Calendar size={13} /> Vence {formatDate(document.expiresAt)}</p>}</div>
+                                            <div key={document.id} className="rounded-card border border-slate-200 bg-slate-50 p-3"><p className="break-words font-semibold text-slate-900">{document.fileName}</p><p className="nx-sku mt-1 text-xs text-slate-600">{document.kind}</p><p className="mt-2 text-xs text-slate-500">{formatFileSize(document.sizeBytes)} · registrado {formatDate(document.createdAt)}</p>{document.expiresAt && <p className="mt-1 flex items-center gap-1.5 text-xs text-amber-800"><Calendar size={13} aria-hidden="true" /> Vence {formatDate(document.expiresAt)}</p>}</div>
                                         ))}
                                     </div>
                                 </section>
                             </div>
 
                             <div className="grid gap-5 xl:grid-cols-2">
-                                <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5"><h3 className="text-lg font-black text-slate-100">Compras recientes</h3><div className="mt-4 space-y-2">{detail.recentPurchases.length === 0 ? <EmptyText>Sin facturas registradas.</EmptyText> : detail.recentPurchases.map((purchase) => <div key={purchase.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3"><div><p className="font-mono text-sm font-bold text-slate-100">#{purchase.invoiceNumber}</p><p className="mt-1 text-xs text-slate-500">{formatDate(purchase.date)} · {purchase.status === 'PARTIALLY_PAID' ? 'Abono parcial' : purchase.status === 'COMPLETED' ? 'Pagada' : 'Pendiente'}</p></div><div className="text-right"><p className="font-black text-slate-100">{formatSupplierMoney(purchase.total, selectedCurrency)}</p>{purchase.balanceDue !== null && <p className="mt-1 text-xs text-amber-300">Saldo {formatSupplierMoney(purchase.balanceDue, selectedCurrency)}</p>}</div></div>)}</div></section>
-                                <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5"><h3 className="text-lg font-black text-slate-100">Pagos recientes</h3><div className="mt-4 space-y-2">{detail.recentPayments.length === 0 ? <EmptyText>Sin pagos registrados.</EmptyText> : detail.recentPayments.map((payment) => <div key={payment.id} className="flex items-center justify-between gap-4 rounded-2xl border border-white/[0.06] bg-white/[0.025] p-3"><div><p className="font-bold text-slate-100">{payment.method}</p><p className="mt-1 text-xs text-slate-500">{formatDate(payment.paidAt ?? payment.createdAt)}{payment.purchase?.invoiceNumber ? ` · #${payment.purchase.invoiceNumber}` : ''}</p></div><p className="font-black text-emerald-300">{formatSupplierMoney(payment.amount, selectedCurrency)}</p></div>)}</div></section>
+                                <section className="nx-canvas-card overflow-hidden p-5"><h3 className="text-lg font-semibold text-slate-950">Compras recientes</h3><div className="nx-list-surface mt-4 divide-y divide-slate-200 overflow-hidden">{detail.recentPurchases.length === 0 ? <EmptyText>Sin facturas registradas.</EmptyText> : detail.recentPurchases.map((purchase) => <div key={purchase.id} className="flex min-h-[72px] items-center justify-between gap-4 bg-white p-3"><div><p className="nx-sku text-sm font-semibold text-slate-900">#{purchase.invoiceNumber}</p><p className="mt-1 text-xs text-slate-500">{formatDate(purchase.date)} · {purchase.status === 'PARTIALLY_PAID' ? 'Abono parcial' : purchase.status === 'COMPLETED' ? 'Pagada' : 'Pendiente'}</p></div><div className="text-right"><p className="nx-num font-semibold text-slate-950">{formatSupplierMoney(purchase.total, selectedCurrency)}</p>{purchase.balanceDue !== null && <p className="mt-1 text-xs text-amber-800">Saldo {formatSupplierMoney(purchase.balanceDue, selectedCurrency)}</p>}</div></div>)}</div></section>
+                                <section className="nx-canvas-card overflow-hidden p-5"><h3 className="text-lg font-semibold text-slate-950">Pagos recientes</h3><div className="nx-list-surface mt-4 divide-y divide-slate-200 overflow-hidden">{detail.recentPayments.length === 0 ? <EmptyText>Sin pagos registrados.</EmptyText> : detail.recentPayments.map((payment) => <div key={payment.id} className="flex min-h-[72px] items-center justify-between gap-4 bg-white p-3"><div><p className="font-semibold text-slate-900">{payment.method}</p><p className="mt-1 text-xs text-slate-500">{formatDate(payment.paidAt ?? payment.createdAt)}{payment.purchase?.invoiceNumber ? ` · #${payment.purchase.invoiceNumber}` : ''}</p></div><p className="nx-num font-semibold text-slate-950">{formatSupplierMoney(payment.amount, selectedCurrency)}</p></div>)}</div></section>
                             </div>
 
-                            <section className="rounded-3xl border border-white/[0.08] bg-surface-900/90 p-5"><h3 className="text-lg font-black text-slate-100">Contacto principal y notas</h3><div className="mt-4 grid gap-4 md:grid-cols-2"><div className="space-y-3 text-sm text-slate-300"><p className="flex items-center gap-2"><User size={16} className="text-slate-500" /> {detail.supplier.contactName || 'Sin contacto principal'}</p><p className="flex items-center gap-2"><Phone size={16} className="text-slate-500" /> {detail.supplier.phone || 'Sin teléfono'}</p><p className="flex items-center gap-2"><Mail size={16} className="text-slate-500" /> {detail.supplier.email || 'Sin correo'}</p><p className="flex items-center gap-2"><MapPin size={16} className="text-slate-500" /> {detail.supplier.address || 'Sin dirección'}</p></div><div className="rounded-2xl border border-white/[0.06] bg-white/[0.025] p-4 text-sm leading-6 text-slate-400">{detail.supplier.notes || 'No hay notas operativas para este proveedor.'}</div></div></section>
+                            <section className="nx-canvas-card p-5"><h3 className="text-lg font-semibold text-slate-950">Contacto principal y notas</h3><div className="mt-4 grid gap-4 md:grid-cols-2"><div className="space-y-3 text-sm text-slate-700"><p className="flex items-center gap-2"><User size={16} className="text-slate-400" aria-hidden="true" /> {detail.supplier.contactName || 'Sin contacto principal'}</p><p className="flex items-center gap-2"><Phone size={16} className="text-slate-400" aria-hidden="true" /> {detail.supplier.phone || 'Sin teléfono'}</p><p className="flex items-center gap-2"><Mail size={16} className="text-slate-400" aria-hidden="true" /> {detail.supplier.email || 'Sin correo'}</p><p className="flex items-center gap-2"><MapPin size={16} className="text-slate-400" aria-hidden="true" /> {detail.supplier.address || 'Sin dirección'}</p></div><div className="rounded-card border border-slate-200 bg-slate-50 p-4 text-sm leading-6 text-slate-600">{detail.supplier.notes || 'No hay notas operativas para este proveedor.'}</div></div></section>
                         </div>
                     )}
                 </main>
@@ -691,20 +693,20 @@ const Suppliers: React.FC = () => {
 
 function Metric({ label, value, note, tone = 'slate' }: { label: string; value: string; note: string; tone?: 'slate' | 'amber' | 'emerald' | 'sky' }) {
     const tones = {
-        slate: 'border-white/[0.06] bg-white/[0.025] text-slate-100',
-        amber: 'border-amber-500/20 bg-amber-500/[0.06] text-amber-300',
-        emerald: 'border-emerald-500/20 bg-emerald-500/[0.06] text-emerald-300',
-        sky: 'border-sky-500/20 bg-sky-500/[0.06] text-sky-300',
+        slate: 'text-slate-950',
+        amber: 'text-amber-800',
+        emerald: 'text-green-800',
+        sky: 'text-slate-950',
     };
-    return <div className={`rounded-2xl border p-4 ${tones[tone]}`}><p className="text-xs opacity-70">{label}</p><p className="mt-1 text-xl font-black">{value}</p><p className="mt-1 text-xs opacity-60">{note}</p></div>;
+    return <div className="bg-white p-4"><p className="nx-label text-slate-500">{label}</p><p className={`nx-num mt-1 text-xl font-semibold ${tones[tone]}`}>{value}</p><p className="mt-1 text-xs text-slate-500">{note}</p></div>;
 }
 
 function Info({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
-    return <div><dt className="text-xs text-slate-500">{label}</dt><dd className={`mt-1 text-slate-200 ${mono ? 'font-mono font-bold' : ''}`}>{value}</dd></div>;
+    return <div><dt className="text-xs text-slate-500">{label}</dt><dd className={`mt-1 text-slate-800 ${mono ? 'nx-sku font-semibold text-slate-800' : ''}`}>{value}</dd></div>;
 }
 
 function EmptyText({ children }: { children: React.ReactNode }) {
-    return <p className="rounded-2xl border border-dashed border-white/[0.08] p-4 text-sm text-slate-500">{children}</p>;
+    return <p className="rounded-card border border-dashed border-slate-300 bg-slate-50 p-4 text-sm text-slate-500">{children}</p>;
 }
 
 interface SupplierDialogProps {
@@ -718,11 +720,11 @@ interface SupplierDialogProps {
 }
 
 function SupplierDialog({ form, setForm, editing, error, saving, onClose, onSubmit }: SupplierDialogProps) {
-    const fieldClass = 'w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-slate-100 outline-none focus:border-nortex-500';
+    const fieldClass = 'min-h-tap w-full rounded-control border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-brand focus:ring-2 focus:ring-brand-ring';
     return (
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-            <div role="dialog" aria-modal="true" aria-labelledby="supplier-form-title" className="max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-3xl border border-white/[0.08] bg-surface-900 shadow-2xl">
-                <div className="sticky top-0 z-sticky flex items-center justify-between border-b border-white/[0.06] bg-surface-900 p-5"><div><h2 id="supplier-form-title" className="text-xl font-black text-slate-100">{editing ? 'Editar proveedor' : 'Nuevo proveedor'}</h2><p className="mt-1 text-sm text-slate-400">Identidad fiscal, condiciones comerciales y operación.</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Cerrar formulario de proveedor" className="rounded-full p-2 text-slate-400 hover:bg-white/[0.05] hover:text-white disabled:opacity-50"><X size={19} /></button></div>
+            <div role="dialog" aria-modal="true" aria-labelledby="supplier-form-title" className="nx-dark-context nx-ticket-surface max-h-[calc(100dvh-2rem)] w-full max-w-3xl overflow-y-auto rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl">
+                <div className="nx-dark-chrome sticky top-0 z-sticky flex items-center justify-between border-b border-white/[0.06] p-5"><div><p className="nx-label mb-1 text-slate-500">Expediente</p><h2 id="supplier-form-title" className="nx-module-header text-xl font-semibold text-slate-100">{editing ? 'Editar proveedor' : 'Nuevo proveedor'}</h2><p className="mt-1 text-sm text-slate-400">Identidad fiscal, condiciones comerciales y operación.</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Cerrar formulario de proveedor" className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control text-slate-400 hover:bg-white/[0.06] hover:text-white disabled:opacity-50"><X size={19} aria-hidden="true" /></button></div>
                 <form onSubmit={onSubmit} className="space-y-5 p-5">
                     <div className="grid gap-4 md:grid-cols-2">
                         <label className="space-y-1.5 text-sm text-slate-300 md:col-span-2">Nombre / razón social *<input autoFocus required aria-label="Nombre / razón social" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className={fieldClass} /></label>
@@ -742,8 +744,8 @@ function SupplierDialog({ form, setForm, editing, error, saving, onClose, onSubm
                         <label className="space-y-1.5 text-sm text-slate-300">Dirección<input aria-label="Dirección" value={form.address} onChange={(event) => setForm((current) => ({ ...current, address: event.target.value }))} className={fieldClass} /></label>
                     </div>
                     <label className="block space-y-1.5 text-sm text-slate-300">Notas operativas<textarea aria-label="Notas operativas" rows={3} value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} className={fieldClass} /></label>
-                    {error && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-                    <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border border-white/[0.08] px-4 py-2.5 text-sm font-bold text-slate-300 hover:bg-white/[0.04] disabled:opacity-50">Cancelar</button><button type="submit" disabled={saving} className="rounded-xl bg-nortex-900 px-5 py-2.5 text-sm font-bold text-white hover:bg-nortex-800 disabled:opacity-60">{saving ? 'Guardando…' : 'Guardar proveedor'}</button></div>
+                    {error && <p role="alert" className="rounded-card border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>}
+                    <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4"><button type="button" onClick={onClose} disabled={saving} className="nx-fluid-press h-touch rounded-control border border-white/10 px-4 text-sm font-semibold text-slate-300 hover:bg-white/[0.05] disabled:opacity-50">Cancelar</button><button type="submit" disabled={saving} className="nx-fluid-press nx-ticket-primary h-touch rounded-control bg-brand px-5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:opacity-60">{saving ? 'Guardando…' : 'Guardar proveedor'}</button></div>
                 </form>
             </div>
         </div>
@@ -762,19 +764,19 @@ interface ContactDialogProps {
 }
 
 function ContactDialog({ supplierName, form, setForm, editing, error, saving, onClose, onSubmit }: ContactDialogProps) {
-    const fieldClass = 'w-full rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-2.5 text-slate-100 outline-none focus:border-nortex-500';
+    const fieldClass = 'min-h-tap w-full rounded-control border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 outline-none placeholder:text-slate-500 focus:border-brand focus:ring-2 focus:ring-brand-ring';
     return (
         <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/75 p-4 backdrop-blur-sm" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
-            <div role="dialog" aria-modal="true" aria-labelledby="supplier-contact-title" className="w-full max-w-lg rounded-3xl border border-white/[0.08] bg-surface-900 shadow-2xl">
-                <div className="flex items-center justify-between border-b border-white/[0.06] p-5"><div><h2 id="supplier-contact-title" className="text-xl font-black text-slate-100">{editing ? 'Editar contacto' : 'Nuevo contacto'}</h2><p className="mt-1 text-sm text-slate-400">{supplierName}</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Cerrar formulario de contacto" className="rounded-full p-2 text-slate-400 hover:bg-white/[0.05] hover:text-white disabled:opacity-50"><X size={19} /></button></div>
+            <div role="dialog" aria-modal="true" aria-labelledby="supplier-contact-title" className="nx-dark-context nx-ticket-surface w-full max-w-lg rounded-card border border-white/[0.08] bg-surface-900 shadow-2xl">
+                <div className="nx-dark-chrome flex items-center justify-between border-b border-white/[0.06] p-5"><div><p className="nx-label mb-1 text-slate-500">Contacto</p><h2 id="supplier-contact-title" className="nx-module-header text-xl font-semibold text-slate-100">{editing ? 'Editar contacto' : 'Nuevo contacto'}</h2><p className="mt-1 text-sm text-slate-400">{supplierName}</p></div><button type="button" onClick={onClose} disabled={saving} aria-label="Cerrar formulario de contacto" className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control text-slate-400 hover:bg-white/[0.06] hover:text-white disabled:opacity-50"><X size={19} aria-hidden="true" /></button></div>
                 <form onSubmit={onSubmit} className="space-y-4 p-5">
                     <label className="block space-y-1.5 text-sm text-slate-300">Nombre *<input autoFocus required aria-label="Nombre del contacto" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} className={fieldClass} /></label>
                     <div className="grid gap-4 sm:grid-cols-2"><label className="space-y-1.5 text-sm text-slate-300">Cargo<input aria-label="Cargo" value={form.title} onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))} className={fieldClass} /></label><label className="space-y-1.5 text-sm text-slate-300">Teléfono<input aria-label="Teléfono del contacto" value={form.phone} onChange={(event) => setForm((current) => ({ ...current, phone: event.target.value }))} className={fieldClass} /></label></div>
                     <label className="block space-y-1.5 text-sm text-slate-300">Correo<input aria-label="Correo del contacto" type="email" value={form.email} onChange={(event) => setForm((current) => ({ ...current, email: event.target.value }))} className={fieldClass} /></label>
                     <label className="block space-y-1.5 text-sm text-slate-300">Notas<textarea aria-label="Notas del contacto" rows={3} value={form.notes} onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))} className={fieldClass} /></label>
-                    <label className="flex items-center gap-3 rounded-xl border border-white/[0.06] bg-white/[0.025] p-3 text-sm text-slate-300"><input type="checkbox" checked={form.isPrimary} onChange={(event) => setForm((current) => ({ ...current, isPrimary: event.target.checked }))} className="h-4 w-4 accent-emerald-500" /> Contacto principal del proveedor</label>
-                    {error && <p role="alert" className="rounded-xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>}
-                    <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4"><button type="button" onClick={onClose} disabled={saving} className="rounded-xl border border-white/[0.08] px-4 py-2.5 text-sm font-bold text-slate-300 hover:bg-white/[0.04] disabled:opacity-50">Cancelar</button><button type="submit" disabled={saving} className="rounded-xl bg-nortex-900 px-5 py-2.5 text-sm font-bold text-white hover:bg-nortex-800 disabled:opacity-60">{saving ? 'Guardando…' : 'Guardar contacto'}</button></div>
+                    <label className="flex min-h-tap items-center gap-3 rounded-control border border-white/[0.08] bg-white/[0.04] p-3 text-sm text-slate-300"><input type="checkbox" checked={form.isPrimary} onChange={(event) => setForm((current) => ({ ...current, isPrimary: event.target.checked }))} className="h-4 w-4 accent-brand" /> Contacto principal del proveedor</label>
+                    {error && <p role="alert" className="rounded-card border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-200">{error}</p>}
+                    <div className="flex justify-end gap-3 border-t border-white/[0.06] pt-4"><button type="button" onClick={onClose} disabled={saving} className="nx-fluid-press h-touch rounded-control border border-white/10 px-4 text-sm font-semibold text-slate-300 hover:bg-white/[0.05] disabled:opacity-50">Cancelar</button><button type="submit" disabled={saving} className="nx-fluid-press nx-ticket-primary h-touch rounded-control bg-brand px-5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:opacity-60">{saving ? 'Guardando…' : 'Guardar contacto'}</button></div>
                 </form>
             </div>
         </div>

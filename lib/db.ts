@@ -278,11 +278,19 @@ export async function getPendingSales(scope?: OfflineSaleScope): Promise<Offline
     return scope ? pending.filter((sale) => offlineSaleBelongsToScope(sale, scope)) : pending;
 }
 
-export async function markSalesSynced(offlineIds: string[]): Promise<void> {
+/** Leer una referencia nunca concede acceso por conocer su ID. */
+export async function getPendingSale(offlineId: string, scope: Required<OfflineSaleScope>): Promise<OfflineSale | null> {
+    if (!scope.tenantId || !scope.userId || !offlineId) return null;
+    const sale = await db.offline_sales.get(offlineId);
+    return sale?.synced === 0 && offlineSaleBelongsToScope(sale, scope) ? sale : null;
+}
+
+export async function markSalesSynced(offlineIds: string[], scope?: OfflineSaleScope): Promise<void> {
     if (offlineIds.length === 0) return;
     // Borrar es deliberado: una venta confirmada ya vive en el servidor. Dejar
     // la fila `synced=1` retendría para siempre el código crudo de la etiqueta.
-    await db.offline_sales.where('offlineId').anyOf(offlineIds).delete();
+    await db.offline_sales.where('offlineId').anyOf(offlineIds)
+        .filter(sale => !scope || offlineSaleBelongsToScope(sale, scope)).delete();
 }
 
 export interface OfflineSyncResult {
@@ -293,7 +301,7 @@ export interface OfflineSyncResult {
 }
 
 /** Conserva fallos/conciliaciones en la fila pendiente sin almacenar payloads nuevos. */
-export async function recordOfflineSyncResults(results: readonly OfflineSyncResult[]): Promise<void> {
+export async function recordOfflineSyncResults(results: readonly OfflineSyncResult[], scope?: OfflineSaleScope): Promise<void> {
     const pendingResults = results.filter((result) => (
         result.status === 'failed' || result.status === 'reconciliation_required'
     ));
@@ -301,6 +309,10 @@ export async function recordOfflineSyncResults(results: readonly OfflineSyncResu
     const lastSyncAt = new Date().toISOString();
     await db.transaction('rw', db.offline_sales, async () => {
         for (const result of pendingResults) {
+            if (scope) {
+                const sale = await db.offline_sales.get(result.offlineId);
+                if (!sale || !offlineSaleBelongsToScope(sale, scope)) continue;
+            }
             await db.offline_sales.update(result.offlineId, {
                 syncState: result.status === 'reconciliation_required'
                     ? 'RECONCILIATION_REQUIRED'

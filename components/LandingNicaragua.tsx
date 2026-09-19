@@ -42,7 +42,7 @@ const LandingNicaragua: React.FC = () => {
             value={email}
             onChange={e => setEmail(e.target.value)}
             placeholder="tu@correo.com"
-            className="flex-1 px-4 py-3 border-2 border-slate-200 rounded-xl text-base focus:border-emerald-500 focus:outline-none"
+            className="flex-1 px-4 py-3 rounded-xl text-base focus:border-emerald-500 focus:outline-none bg-surface-900 nx-form-field"
           />
           <button
             onClick={handleCTA}

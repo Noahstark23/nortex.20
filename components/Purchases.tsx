@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { calculatePurchaseMoney } from '../backend/lib/purchaseMoney';
+import { bodegaReceivingAttempt, bodegaReceivingDraftKey, readBodegaReceivingDraft, writeBodegaReceivingDraft, type BodegaReceivingAttempt } from '../utils/bodegaReceivingDraft';
 import { maybeAutostartTour } from '../utils/tours';
 import {
     Truck, Plus, Search, FileText, CreditCard, DollarSign, Package,
@@ -6,7 +8,8 @@ import {
     ShoppingCart, Wallet, Printer, Eye, Stamp, Loader2, GitCompareArrows,
     LockKeyhole, RotateCcw, SlidersHorizontal
 } from 'lucide-react';
-import { formatMoney, sanitizeDecimalInput } from '../utils/money';
+import { formatMoney } from '../utils/money';
+import { BODEGA_DECIMAL_HINT, normalizeBodegaDecimalInput, parseBodegaDecimalInput } from '../utils/bodegaReceivingInput';
 import Decimal from 'decimal.js';
 import { formatQuantityValue } from '../utils/quantity';
 import {
@@ -14,27 +17,29 @@ import {
     resolvePurchaseLine,
     type PurchaseUnit,
 } from '../utils/purchasePackaging';
+import { purchaseOrderRulesForReceipt } from '../utils/purchaseOrderQuantities';
 import { currentSessionRole } from '../utils/roleCapabilities';
 import { ToastViewport, useToast } from './ui/Toast';
 import { authenticatedRequestErrorMessage, openAuthenticatedPreview } from '../utils/authenticatedDownload';
+import ReceivingWorkspace, { type ReceivingDocument } from './inventory/ReceivingWorkspace';
 
 // ==========================================
 // TYPES
 // ==========================================
 
-interface Supplier {
+export interface Supplier {
     id: string;
     name: string;
     contactName?: string;
     phone?: string;
 }
 
-interface Product {
+export interface PurchaseEntryProduct {
     id: string;
     name: string;
     sku: string;
     price: number;
-    cost: number;
+    cost?: number;
     stock: number;
     unit: string;
     saleMode?: 'COUNTED' | 'MEASURED' | null;
@@ -46,7 +51,9 @@ interface Product {
     requiresBatchTracking?: boolean;
 }
 
-interface CartItem {
+type Product = PurchaseEntryProduct;
+
+export interface CartItem {
     cartKey: string;
     productId: string;
     purchaseOrderItemId?: string;
@@ -82,9 +89,12 @@ interface PurchaseOrderItemLite {
     quantityReceivedExact?: number | string | null;
     unitCost: number | string;
     unitAtOrder?: string | null;
+    unitCostExact?: number | string | null;
+    saleModeAtOrder?: string | null;
+    quantityStepAtOrder?: number | string | null;
 }
 
-interface PurchaseOrderLite {
+export interface PurchaseOrderLite {
     id: string;
     supplierId: string;
     orderNumber: string;
@@ -136,7 +146,7 @@ interface Purchase {
     createdAt: string;
 }
 
-interface PurchaseFormErrors {
+export interface PurchaseFormErrors {
     supplierId?: string;
     warehouseId?: string;
     invoiceNumber?: string;
@@ -146,7 +156,7 @@ interface PurchaseFormErrors {
     items?: string;
 }
 
-interface WarehouseOption {
+export interface WarehouseOption {
     id: string;
     name: string;
     isDefault: boolean;
@@ -270,8 +280,8 @@ const hasPackConfiguration = (
     && Number(product.packSize) > 0,
 );
 const resolveCartLine = (item: CartItem) => resolvePurchaseLine({
-    quantity: item.quantity,
-    unitCost: item.unitCost,
+    quantity: parseBodegaDecimalInput(item.quantity).toString(),
+    unitCost: parseBodegaDecimalInput(item.unitCost).toString(),
     purchaseUnit: item.purchaseUnit,
 }, item);
 const exactPurchaseQuantity = (item: Pick<Purchase['items'][number], 'quantity' | 'quantityExact'>) =>
@@ -443,11 +453,11 @@ const matchStatusLabel = (status: string): string => ({
 }[status] ?? status);
 
 const matchStatusClass = (status: string): string => ({
-    NOT_REQUIRED: 'border-slate-600 bg-slate-700/50 text-slate-300',
-    MATCHED: 'border-emerald-700 bg-emerald-950/40 text-emerald-300',
-    EXCEPTION: 'border-amber-700 bg-amber-950/40 text-amber-300',
-    RESOLVED: 'border-sky-700 bg-sky-950/40 text-sky-300',
-}[status] ?? 'border-slate-600 bg-slate-700/50 text-slate-300');
+    NOT_REQUIRED: 'border-slate-200 bg-slate-100 text-slate-600',
+    MATCHED: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    EXCEPTION: 'border-amber-200 bg-amber-50 text-amber-700',
+    RESOLVED: 'border-sky-200 bg-sky-50 text-sky-700',
+}[status] ?? 'border-slate-200 bg-slate-100 text-slate-600');
 
 const exceptionTypeLabel = (type: string): string => ({
     QUANTITY: 'Cantidad',
@@ -461,7 +471,44 @@ const exceptionTypeLabel = (type: string): string => ({
 // MAIN COMPONENT
 // ==========================================
 
-export default function Purchases() {
+interface PurchaseFormDraft {
+    selectedSupplier: string; selectedWarehouseId: string; selectedPO: string;
+    invoiceNumber: string; purchaseDate: string; paymentMethod: 'CASH' | 'CREDIT';
+    dueDate: string; notes: string; cart: CartItem[]; attempt: BodegaReceivingAttempt | null;
+}
+
+interface PurchasesProps {
+    embedded?: boolean;
+    entryContext?: { product: PurchaseEntryProduct; warehouseId?: string };
+    onClose?: () => void;
+    onCompleted?: () => void;
+    onBusyChange?: (busy: boolean) => void;
+}
+
+const hasPurchaseDraft = (draft: PurchaseFormDraft | null) => Boolean(draft && (
+    draft.cart?.length || draft.invoiceNumber || draft.selectedSupplier || draft.selectedPO || draft.notes
+));
+
+export default function Purchases({ embedded = false, entryContext, onClose, onCompleted, onBusyChange }: PurchasesProps = {}) {
+    const [sessionScope] = useState(() => bodegaReceivingDraftKey('purchase'));
+    const sessionIsCurrent = () => bodegaReceivingDraftKey('purchase') === sessionScope;
+    const requestedOrderId = useRef(embedded || typeof window === 'undefined' ? '' : new URLSearchParams(window.location.search).get('purchaseOrderId') || '').current;
+    const contextKind = entryContext ? `purchase:entry:${entryContext.product.id}:${entryContext.warehouseId || 'any'}` : 'purchase';
+    const [draftOrigin] = useState(() => {
+        const kind = embedded ? contextKind : requestedOrderId ? `purchase:${requestedOrderId}` : 'purchase';
+        const contextual = readBodegaReceivingDraft<PurchaseFormDraft>(kind);
+        if (hasPurchaseDraft(contextual)) return { kind, draft: contextual, contextual: embedded };
+        const general = embedded ? readBodegaReceivingDraft<PurchaseFormDraft>('purchase') : null;
+        return hasPurchaseDraft(general) ? { kind: 'purchase', draft: general, contextual: false } : { kind, draft: contextual, contextual: embedded };
+    });
+    const initialDraft = draftOrigin.draft;
+    const [draftKind, setDraftKind] = useState(draftOrigin.kind);
+    const [draftChoice, setDraftChoice] = useState(embedded && hasPurchaseDraft(initialDraft));
+    const contextApplied = useRef(false);
+    const callbacks = useRef({ onClose, onCompleted, onBusyChange });
+    callbacks.current = { onClose, onCompleted, onBusyChange };
+    const requestedOrderLoaded = useRef(!requestedOrderId || initialDraft?.selectedPO === requestedOrderId);
+    const [requestedOrderError, setRequestedOrderError] = useState('');
     const currentRole = currentSessionRole();
     const canCreatePurchase = PURCHASE_CREATE_ROLES.has(currentRole);
     const canPaySuppliers = SUPPLIER_PAYMENT_ROLES.has(currentRole);
@@ -474,22 +521,32 @@ export default function Purchases() {
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [products, setProducts] = useState<Product[]>([]);
     const [purchases, setPurchases] = useState<Purchase[]>([]);
+    const [purchaseHistoryError, setPurchaseHistoryError] = useState(false);
     const [loading, setLoading] = useState(true);
 
     // New Purchase form
-    const [selectedSupplier, setSelectedSupplier] = useState('');
+    const [selectedSupplier, setSelectedSupplier] = useState(typeof initialDraft?.selectedSupplier === 'string' ? initialDraft.selectedSupplier : '');
     const [warehouses, setWarehouses] = useState<WarehouseOption[]>([]);
-    const [selectedWarehouseId, setSelectedWarehouseId] = useState('');
+    const [selectedWarehouseId, setSelectedWarehouseId] = useState(typeof initialDraft?.selectedWarehouseId === 'string' && initialDraft.selectedWarehouseId ? initialDraft.selectedWarehouseId : entryContext?.warehouseId || '');
     const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrderLite[]>([]);
-    const [selectedPO, setSelectedPO] = useState('');
-    const [invoiceNumber, setInvoiceNumber] = useState('');
-    const [purchaseDate, setPurchaseDate] = useState(() => localCalendarDateInputValue());
-    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CASH');
-    const [dueDate, setDueDate] = useState('');
-    const [notes, setNotes] = useState('');
-    const [cart, setCart] = useState<CartItem[]>([]);
+    const [selectedPO, setSelectedPO] = useState(typeof initialDraft?.selectedPO === 'string' ? initialDraft.selectedPO : '');
+    const [invoiceNumber, setInvoiceNumber] = useState(typeof initialDraft?.invoiceNumber === 'string' ? initialDraft.invoiceNumber : '');
+    const [purchaseDate, setPurchaseDate] = useState(() => initialDraft?.purchaseDate || localCalendarDateInputValue());
+    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>(initialDraft?.paymentMethod === 'CREDIT' ? 'CREDIT' : 'CASH');
+    const [dueDate, setDueDate] = useState(typeof initialDraft?.dueDate === 'string' ? initialDraft.dueDate : '');
+    const [notes, setNotes] = useState(typeof initialDraft?.notes === 'string' ? initialDraft.notes : '');
+    const [cart, setCart] = useState<CartItem[]>(Array.isArray(initialDraft?.cart) ? initialDraft.cart : []);
     const [productSearch, setProductSearch] = useState('');
     const [submitting, setSubmitting] = useState(false);
+    const registrationInFlight = useRef(false);
+    // Un reintento del mismo formulario conserva la identidad tras perder la respuesta.
+    const registrationAttempt = useRef<BodegaReceivingAttempt | null>(initialDraft?.attempt ?? null);
+    const [draftSaved, setDraftSaved] = useState(false);
+    const persistDraft = () => sessionIsCurrent() && !draftChoice && writeBodegaReceivingDraft(draftKind, {
+        selectedSupplier, selectedWarehouseId, selectedPO, invoiceNumber, purchaseDate,
+        paymentMethod, dueDate, notes, cart, attempt: registrationAttempt.current,
+    } satisfies PurchaseFormDraft);
+    useEffect(() => { setDraftSaved(persistDraft()); }, [draftChoice, draftKind, selectedSupplier, selectedWarehouseId, selectedPO, invoiceNumber, purchaseDate, paymentMethod, dueDate, notes, cart]);
     const [formErrors, setFormErrors] = useState<PurchaseFormErrors>({});
     const [paymentToConfirm, setPaymentToConfirm] = useState<PaymentDialogState | null>(null);
     const [supplierPaymentForm, setSupplierPaymentForm] = useState<SupplierPaymentForm>(EMPTY_SUPPLIER_PAYMENT_FORM);
@@ -555,7 +612,7 @@ export default function Purchases() {
             const [suppRes, prodRes, purchRes, poRes, warehouseRes] = await Promise.all([
                 fetch('/api/suppliers', { headers, signal: controller.signal }),
                 fetch('/api/products', { headers, signal: controller.signal }),
-                fetch('/api/purchases', { headers, signal: controller.signal }),
+                embedded ? Promise.resolve({ ok: true, json: async () => [] } as Response) : fetch('/api/purchases', { headers, signal: controller.signal }),
                 fetch('/api/purchase-orders', { headers, signal: controller.signal }),
                 fetch('/api/warehouses', { headers, signal: controller.signal }),
             ]);
@@ -573,6 +630,7 @@ export default function Purchases() {
                         : Number(product.packSize),
                 })) : []);
             }
+            setPurchaseHistoryError(!purchRes.ok);
             if (purchRes.ok) setPurchases(await purchRes.json());
             if (poRes.ok) {
                 const poData = await poRes.json();
@@ -605,6 +663,7 @@ export default function Purchases() {
                 });
             }
         } catch (e: any) {
+            setPurchaseHistoryError(true);
             console.error('Error fetching data:', e);
             showToast({
                 tone: 'error',
@@ -615,7 +674,7 @@ export default function Purchases() {
             window.clearTimeout(timeoutId);
             setLoading(false);
         }
-    }, [headers, showToast]);
+    }, [headers, showToast, embedded]);
 
     useEffect(() => { void fetchAll(); }, [fetchAll]);
 
@@ -815,8 +874,10 @@ export default function Purchases() {
 
     const addToCart = (product: Product) => {
         setCart(currentCart => {
-            const existing = currentCart.find(c => c.productId === product.id);
+            const existing = !product.requiresBatchTracking && currentCart.find(c => c.productId === product.id);
             if (existing) {
+                try { parseBodegaDecimalInput(existing.quantity); parseBodegaDecimalInput(existing.unitCost); }
+                catch { return currentCart; }
                 return currentCart.map(c =>
                     c.productId === product.id
                         ? (() => {
@@ -835,14 +896,16 @@ export default function Purchases() {
             }
 
             const initialQuantity = new Decimal(product.quantityStep || 1).toString();
+            const initialCost = typeof product.cost === 'number' && Number.isFinite(product.cost)
+                ? new Decimal(product.cost).toDecimalPlaces(6).toString() : '';
             return [...currentCart, {
-                cartKey: product.id,
+                cartKey: product.requiresBatchTracking ? crypto.randomUUID() : product.id,
                 productId: product.id,
                 productName: product.name,
                 sku: product.sku,
                 quantity: initialQuantity,
-                unitCost: new Decimal(product.cost).toDecimalPlaces(2).toString(),
-                totalCost: new Decimal(initialQuantity).mul(product.cost).toDecimalPlaces(2).toString(),
+                unitCost: initialCost,
+                totalCost: initialCost ? new Decimal(initialQuantity).mul(initialCost).toDecimalPlaces(2).toString() : '0',
                 currentStock: product.stock,
                 unit: product.unit || 'unidad',
                 saleMode: product.saleMode,
@@ -864,10 +927,10 @@ export default function Purchases() {
         setCart(currentCart => currentCart.map(c => {
             if (c.cartKey !== cartKey) return c;
             const updated = { ...c, [field]: value };
-            updated.totalCost = new Decimal(updated.quantity || 0)
-                .mul(updated.unitCost || 0)
-                .toDecimalPlaces(2)
-                .toString();
+            try {
+                updated.totalCost = parseBodegaDecimalInput(updated.quantity)
+                    .mul(parseBodegaDecimalInput(updated.unitCost)).toDecimalPlaces(2).toString();
+            } catch { updated.totalCost = '0'; }
             return updated;
         }));
         setFormErrors(current => ({ ...current, items: undefined }));
@@ -877,6 +940,8 @@ export default function Purchases() {
         setCart(currentCart => currentCart.map(item => {
             if (item.cartKey !== cartKey || item.purchaseUnit === purchaseUnit) return item;
             if (!hasPackConfiguration(item)) return item;
+            try { parseBodegaDecimalInput(item.quantity); parseBodegaDecimalInput(item.unitCost); }
+            catch { return item; }
 
             const factor = new Decimal(item.packSize!);
             // El costo visible cambia de "por unidad base" a "por empaque" (o
@@ -903,12 +968,41 @@ export default function Purchases() {
         setCart(currentCart => currentCart.filter(c => c.cartKey !== cartKey));
     };
 
+    useEffect(() => {
+        if (!entryContext || loading || draftChoice || contextApplied.current || !sessionIsCurrent()) return;
+        contextApplied.current = true;
+        if (!hasPurchaseDraft(initialDraft)) {
+            const loaded = products.find(product => product.id === entryContext.product.id);
+            addToCart({ ...entryContext.product, cost: Number.isFinite(loaded?.cost) ? loaded!.cost : entryContext.product.cost });
+        }
+    }, [entryContext, draftChoice, loading, products]);
+
+    const continueSavedDraft = () => {
+        contextApplied.current = true;
+        setDraftChoice(false);
+    };
+
+    const preserveAndReceiveContext = () => {
+        if (!entryContext || registrationInFlight.current) return;
+        contextApplied.current = true;
+        setDraftKind(contextKind);
+        setSelectedSupplier(''); setSelectedPO(''); setInvoiceNumber('');
+        setPurchaseDate(localCalendarDateInputValue()); setPaymentMethod('CASH'); setDueDate(''); setNotes('');
+        setSelectedWarehouseId(entryContext.warehouseId || (warehouses.length === 1 ? warehouses[0].id : ''));
+        setCart([]); setFormErrors({}); registrationAttempt.current = null;
+        const loaded = products.find(product => product.id === entryContext.product.id);
+        addToCart({ ...entryContext.product, cost: Number.isFinite(loaded?.cost) ? loaded!.cost : entryContext.product.cost });
+        setDraftChoice(false);
+    };
+
+    const closeReceiving = () => { if (!registrationInFlight.current) callbacks.current.onClose?.(); };
+
     // Una factura vinculada a una OC registra el dinero, no vuelve a ingresar
     // mercadería: el stock y los lotes pertenecen al acto de recepción.
     const purchaseOrdersForSupplier = useMemo(() =>
         purchaseOrders.filter(po =>
             po.supplierId === selectedSupplier &&
-            ['PARTIALLY_RECEIVED', 'RECEIVED'].includes(po.status) &&
+            ['PARTIALLY_RECEIVED', 'RECEIVED', 'CLOSED_SHORT'].includes(po.status) &&
             availablePurchaseOrderItems(po).length > 0
         ), [purchaseOrders, selectedSupplier]);
 
@@ -937,7 +1031,11 @@ export default function Purchases() {
         setCart(receivedItems.map(item => {
             const product = products.find(candidate => candidate.id === item.productId);
             const quantity = new Decimal(item.availableQuantity).toString();
-            const unitCost = new Decimal(item.unitCost).toString();
+            const unitCost = new Decimal(item.unitCostExact ?? item.unitCost).toString();
+            const rules = purchaseOrderRulesForReceipt(item, {
+                id: item.productId, name: item.productName, unit: product?.unit || item.unitAtOrder || 'unidad',
+                saleMode: product?.saleMode ?? null, quantityStep: product?.quantityStep ?? null,
+            });
             return {
                 cartKey: item.id,
                 productId: item.productId,
@@ -948,9 +1046,9 @@ export default function Purchases() {
                 unitCost,
                 totalCost: new Decimal(quantity).mul(unitCost).toDecimalPlaces(2).toString(),
                 currentStock: product?.stock ?? 0,
-                unit: product?.unit || 'unidad',
-                saleMode: product?.saleMode,
-                quantityStep: product?.quantityStep,
+                unit: item.unitAtOrder || product?.unit || 'unidad',
+                saleMode: rules.saleMode,
+                quantityStep: rules.quantityStep,
                 purchaseUnit: 'BASE',
                 packUnit: product?.packUnit,
                 packSize: product?.packSize,
@@ -969,6 +1067,23 @@ export default function Purchases() {
         setFormErrors(current => ({ ...current, items: undefined }));
     };
 
+    useEffect(() => {
+        if (loading || requestedOrderLoaded.current || !requestedOrderId || !canCreatePurchase) return;
+        requestedOrderLoaded.current = true;
+        const order = purchaseOrders.find(candidate => candidate.id === requestedOrderId);
+        if (!order) {
+            setRequestedOrderError('No pudimos cargar la orden solicitada. Revisá Órdenes de compra antes de registrar esta factura.');
+            return;
+        }
+        setSelectedSupplier(order.supplierId);
+        setSelectedPO(order.id);
+        if (availablePurchaseOrderItems(order).length === 0) {
+            setRequestedOrderError('Esta orden no tiene cantidades recibidas pendientes de facturar. Revisá sus facturas en el historial.');
+            return;
+        }
+        linkPurchaseOrder(order.id);
+    }, [loading, purchaseOrders, products, requestedOrderId, canCreatePurchase]);
+
     const changeSupplier = (supplierId: string) => {
         setSelectedSupplier(supplierId);
         setFormErrors(current => ({ ...current, supplierId: undefined }));
@@ -984,7 +1099,7 @@ export default function Purchases() {
             (sum, item) => item.ivaExento ? sum : sum.plus(item.totalCost),
             new Decimal(0),
         );
-        const tax = taxableSubtotal.mul('0.15').toDecimalPlaces(2);
+        const tax = cart.length ? calculatePurchaseMoney(cart.map(item => ({ lineNet: item.totalCost, taxable: !item.ivaExento })), true).tax : new Decimal(0);
         return {
             subtotal: subtotal.toNumber(),
             taxableSubtotal: taxableSubtotal.toNumber(),
@@ -998,7 +1113,7 @@ export default function Purchases() {
     // ==========================================
 
     const handleSubmit = async () => {
-        if (submitting) return;
+        if (!sessionIsCurrent() || !canCreatePurchase || loading || draftChoice || submitting || registrationInFlight.current || requestedOrderError) return;
 
         const errors: PurchaseFormErrors = {};
         if (!selectedSupplier) errors.supplierId = 'Seleccioná un proveedor.';
@@ -1019,7 +1134,7 @@ export default function Purchases() {
             }
         });
         if (invalidItem) {
-            errors.items = `Revisá cantidad y costo de ${invalidItem.productName}.`;
+            errors.items = `Revisá cantidad y costo de ${invalidItem.productName}. ${BODEGA_DECIMAL_HINT}`;
         }
 
         const invalidPrecision = cart.find(item => {
@@ -1059,22 +1174,17 @@ export default function Purchases() {
                 title: 'Revisá los datos de la compra',
                 message: Object.values(errors)[0],
             });
-            window.setTimeout(() => {
-                document.querySelector<HTMLElement>('[aria-invalid="true"]')?.focus();
-            }, 0);
             return;
         }
 
         setFormErrors({});
+        registrationInFlight.current = true;
+        callbacks.current.onBusyChange?.(true);
         setSubmitting(true);
         const controller = new AbortController();
         const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
-            const res = await fetch('/api/purchases', {
-                method: 'POST',
-                headers,
-                signal: controller.signal,
-                body: JSON.stringify({
+            const payload = JSON.stringify({
                     supplierId: selectedSupplier,
                     warehouseId: selectedPO ? undefined : selectedWarehouseId || undefined,
                     invoiceNumber: invoiceNumber.trim(),
@@ -1096,29 +1206,48 @@ export default function Purchases() {
                             expiryDate: c.expiryDate || undefined
                         };
                     })
-                })
+                });
+            registrationAttempt.current = bodegaReceivingAttempt(payload, registrationAttempt.current);
+            persistDraft();
+            const res = await fetch('/api/purchases', {
+                method: 'POST',
+                headers: { ...headers, 'Idempotency-Key': registrationAttempt.current.key },
+                signal: controller.signal,
+                body: payload,
             });
 
             const data = await res.json().catch(() => ({}));
 
+            if (!sessionIsCurrent()) return;
+
             if (res.ok) {
+                registrationAttempt.current = null;
+                const clearedDraft: PurchaseFormDraft = {
+                    selectedSupplier: '', selectedWarehouseId: warehouses.length === 1 ? warehouses[0].id : '',
+                    selectedPO: '', invoiceNumber: '', purchaseDate: localCalendarDateInputValue(),
+                    paymentMethod: 'CASH', dueDate: '', notes: '', cart: [], attempt: null,
+                };
+                // El panel puede desmontarse en onCompleted, antes del próximo efecto.
+                // Solo se retira el borrador que acaba de confirmar esta sesión.
+                writeBodegaReceivingDraft(draftKind, clearedDraft);
                 showToast({
                     tone: 'success',
                     title: 'Compra registrada',
                     message: data.message || 'El inventario y los saldos quedaron actualizados.',
                 });
                 // Reset form
-                setSelectedSupplier('');
-                setSelectedWarehouseId(warehouses.length === 1 ? warehouses[0].id : '');
-                setSelectedPO('');
-                setInvoiceNumber('');
-                setPurchaseDate(localCalendarDateInputValue());
-                setPaymentMethod('CASH');
-                setDueDate('');
-                setNotes('');
-                setCart([]);
+                setSelectedSupplier(clearedDraft.selectedSupplier);
+                setSelectedWarehouseId(clearedDraft.selectedWarehouseId);
+                setSelectedPO(clearedDraft.selectedPO);
+                setInvoiceNumber(clearedDraft.invoiceNumber);
+                setPurchaseDate(clearedDraft.purchaseDate);
+                setPaymentMethod(clearedDraft.paymentMethod);
+                setDueDate(clearedDraft.dueDate);
+                setNotes(clearedDraft.notes);
+                setCart(clearedDraft.cart);
                 setFormErrors({});
                 void fetchAll();
+                callbacks.current.onCompleted?.();
             } else {
                 const details = data?.details && typeof data.details === 'object' ? data.details : {};
                 setFormErrors({
@@ -1132,7 +1261,7 @@ export default function Purchases() {
                 });
                 showToast({
                     tone: 'error',
-                    title: res.status === 409 ? 'Esta factura ya fue registrada' : 'No se pudo registrar la compra',
+                    title: data.code === 'FACTURA_DUPLICADA' || (typeof data.error === 'string' && data.error.startsWith('Ya existe la factura #')) ? 'Esta factura ya fue registrada' : 'No se pudo registrar la compra',
                     message: firstValidationMessage(data) || data.error || `El servidor respondió ${res.status}.`,
                 });
             }
@@ -1147,6 +1276,8 @@ export default function Purchases() {
             });
         } finally {
             window.clearTimeout(timeoutId);
+            registrationInFlight.current = false;
+            if (sessionIsCurrent()) callbacks.current.onBusyChange?.(false);
             setSubmitting(false);
         }
     };
@@ -1202,7 +1333,7 @@ export default function Purchases() {
         let normalizedAmount: string | undefined;
         if (!settleAll) {
             try {
-                const amount = new Decimal(supplierPaymentForm.amount.trim());
+                const amount = parseBodegaDecimalInput(supplierPaymentForm.amount);
                 const balance = effectivePurchaseBalance(purchase);
                 if (!amount.isFinite() || amount.lessThanOrEqualTo(0)) {
                     setSupplierPaymentError('Ingresá un monto mayor que cero.');
@@ -1411,7 +1542,7 @@ export default function Purchases() {
         (sum, purchase) => sum.plus(effectivePurchaseBalance(purchase)),
         new Decimal(0),
     );
-    const totalPurchasesMonth = purchases.reduce(
+    const totalLoadedPurchases = purchases.reduce(
         (sum, purchase) => sum.plus(purchase.total),
         new Decimal(0),
     );
@@ -1423,64 +1554,111 @@ export default function Purchases() {
     // RENDER
     // ==========================================
 
+    const updateReceivingDocument = (patch: Partial<ReceivingDocument>) => {
+        if (registrationInFlight.current) return;
+        if (patch.supplierId !== undefined) changeSupplier(patch.supplierId);
+        if (patch.purchaseOrderId !== undefined) linkPurchaseOrder(patch.purchaseOrderId);
+        if (patch.warehouseId !== undefined) setSelectedWarehouseId(patch.warehouseId);
+        if (patch.invoiceNumber !== undefined) setInvoiceNumber(patch.invoiceNumber);
+        if (patch.date !== undefined) setPurchaseDate(patch.date);
+        if (patch.paymentMethod !== undefined) setPaymentMethod(patch.paymentMethod);
+        if (patch.dueDate !== undefined) setDueDate(patch.dueDate);
+        if (patch.notes !== undefined) setNotes(patch.notes);
+        setFormErrors({});
+    };
+
+    const receivingView = <ReceivingWorkspace
+        embedded={embedded} loading={loading} submitting={submitting}
+        canSubmit={sessionIsCurrent() && canCreatePurchase && !loading && !requestedOrderError}
+        cart={cart} document={{ supplierId: selectedSupplier, warehouseId: selectedWarehouseId, purchaseOrderId: selectedPO, invoiceNumber, date: purchaseDate, paymentMethod, dueDate, notes }}
+        suppliers={suppliers} warehouses={warehouses} orders={purchaseOrdersForSupplier}
+        errors={formErrors} contextError={requestedOrderError} draftSaved={draftSaved}
+        search={productSearch} products={filteredProducts} totals={cartTotals}
+        resolveLine={resolveCartLine} hasPack={hasPackConfiguration}
+        onDocumentChange={updateReceivingDocument} onSearch={setProductSearch} onAdd={addToCart}
+        onUpdate={updateCartItem} onPurchaseUnit={updatePurchaseUnit} onRemove={removeFromCart}
+        onSubmit={() => void handleSubmit()} onClose={embedded ? closeReceiving : undefined}
+    />;
+
+    if (embedded) return <div className="nx-light-context receiving-embedded-host">
+        <ToastViewport toast={toast} onDismiss={dismissToast} />
+        {!canCreatePurchase ? <div className="receiving-draft-choice"><h2>No tenés permiso para registrar compras</h2><button type="button" className="nx-fluid-press" onClick={closeReceiving}>Volver al inventario</button></div> : draftChoice ? (
+            <section className="receiving-draft-choice" aria-labelledby="receiving-draft-choice-title">
+                <header><h2 id="receiving-draft-choice-title">Tenés una compra pendiente</h2><button type="button" className="nx-fluid-press receiving-icon-button" aria-label="Cerrar recepción" onClick={closeReceiving}><X size={20} /></button></header>
+                <p>{initialDraft?.invoiceNumber ? `Factura ${initialDraft.invoiceNumber}` : 'Borrador sin número de factura'} · {initialDraft?.cart?.length || 0} producto(s)</p>
+                <p>Podés continuar lo digitado. Tu borrador se conserva hasta que lo registres.</p>
+                <div><button type="button" className="nx-fluid-press receiving-submit" onClick={continueSavedDraft}>Continuar borrador</button>
+                    {entryContext && !draftOrigin.contextual ? <button type="button" className="nx-fluid-press receiving-secondary" onClick={preserveAndReceiveContext}>Conservar y recibir este producto</button>
+                        : <button type="button" className="nx-fluid-press receiving-secondary" onClick={closeReceiving}>Conservar y volver</button>}
+                </div>
+            </section>
+        ) : receivingView}
+    </div>;
+
     return (
-        <div className="h-full overflow-y-auto bg-slate-900">
+        <div className="nx-light-context nx-workspace h-full overflow-y-auto bg-slate-50 text-slate-950">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* HEADER */}
-            <div className="bg-slate-800/80 border-b border-slate-700 px-6 py-4">
+            <div className="border-b border-slate-200 bg-white/90 px-4 py-5 backdrop-blur-xl sm:px-6 lg:px-8">
                 <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div className="flex items-center gap-3">
-                        <div className="w-12 h-12 bg-gradient-to-br from-orange-600 to-red-500 rounded-xl flex items-center justify-center shadow-lg">
-                            <Truck size={24} className="text-white" />
+                        <div className="flex h-11 w-11 items-center justify-center rounded-control border border-emerald-200 bg-emerald-50 shadow-sm">
+                            <Truck size={21} className="text-emerald-600" />
                         </div>
                         <div>
-                            <h1 className="text-2xl font-bold text-white">Compras & Proveedores</h1>
-                            <a href="/app/purchase-orders" className="ml-3 px-3 py-1.5 bg-slate-800 border border-slate-600 text-slate-200 rounded-lg text-xs font-bold hover:border-brand transition-colors">Órdenes de Compra →</a>
-                            <p className="text-sm text-slate-400">Ingreso de mercaderia y cuentas por pagar</p>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <h1 className="nx-module-header text-2xl font-semibold text-slate-950">Compras</h1>
+                                <a href="/app/purchase-orders" className="nx-fluid-press inline-flex min-h-11 items-center rounded-control border border-slate-200 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm hover:border-slate-300 hover:bg-slate-50">Órdenes de compra</a>
+                            </div>
+                            <p className="mt-0.5 text-sm text-slate-500">Ingreso de mercadería, conciliación y cuentas por pagar</p>
                         </div>
                     </div>
 
                     {/* KPI Cards */}
                     <div className="grid w-full grid-cols-2 gap-3 sm:w-auto">
-                        <div className="bg-slate-900/60 border border-slate-700 rounded-lg px-4 py-2 text-center">
-                            <p className="text-xs text-slate-400">Compras del Mes</p>
-                            <p className="text-lg font-bold text-white">{loading ? '…' : formatCurrency(totalPurchasesMonth)}</p>
+                        <div className="nx-list-surface min-w-36 px-4 py-2 text-left">
+                            <p className="text-xs font-medium text-slate-500">Total de compras cargadas</p>
+                            <p className="mt-0.5 text-lg font-semibold tabular-nums text-slate-950">{loading ? '…' : purchaseHistoryError ? 'No disponible' : formatCurrency(totalLoadedPurchases)}</p>
                         </div>
-                        <div className={`border rounded-lg px-4 py-2 text-center ${totalDebt.greaterThan(0) ? 'bg-red-950/40 border-red-800' : 'bg-slate-900/60 border-slate-700'}`}>
-                            <p className="text-xs text-slate-400">Cuentas por Pagar</p>
-                            <p className={`text-lg font-bold ${totalDebt.greaterThan(0) ? 'text-red-400' : 'text-emerald-400'}`}>{loading ? '…' : formatCurrency(totalDebt)}</p>
+                        <div className={`min-w-36 rounded-card border px-4 py-2 text-left shadow-sm ${totalDebt.greaterThan(0) ? 'border-amber-200 bg-amber-50' : 'border-emerald-200 bg-emerald-50'}`}>
+                            <p className="text-xs font-medium text-slate-500">Saldo de compras cargadas</p>
+                            <p className={`mt-0.5 text-lg font-semibold tabular-nums ${totalDebt.greaterThan(0) ? 'text-amber-700' : 'text-emerald-700'}`}>{loading ? '…' : purchaseHistoryError ? 'No disponible' : formatCurrency(totalDebt)}</p>
                         </div>
                     </div>
                 </div>
 
+                <p className="mt-3 text-xs text-slate-500">{purchaseHistoryError ? 'No pudimos actualizar el historial. No se pueden confirmar sus totales.' : 'El historial muestra hasta 100 compras recientes. Los totales corresponden a esas compras; puede haber facturas anteriores pendientes.'}</p>
                 {/* TABS */}
-                <div className="mt-4 flex max-w-full w-fit gap-1 overflow-x-auto rounded-lg bg-slate-900/60 p-1">
+                <div className="mt-5 flex max-w-full w-fit gap-1 overflow-x-auto rounded-control border border-slate-200 bg-slate-100 p-1">
                     {canCreatePurchase && (
                         <button
                             type="button"
+                            disabled={submitting}
                             onClick={() => setActiveTab('new')}
                             aria-pressed={activeTab === 'new'}
-                            className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'new' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                            className={`nx-fluid-press flex min-h-11 items-center gap-2 rounded-control px-4 py-2 text-sm font-medium ${activeTab === 'new' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-900'}`}
                         >
                             <Plus size={16} /> Nueva Compra
                         </button>
                     )}
                     <button
                         type="button"
+                        disabled={submitting}
                         onClick={() => setActiveTab('history')}
                         aria-pressed={activeTab === 'history'}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'history' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        className={`nx-fluid-press flex min-h-11 items-center gap-2 rounded-control px-4 py-2 text-sm font-medium ${activeTab === 'history' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-900'}`}
                     >
                         <FileText size={16} /> Historial
                         {pendingPurchases.length > 0 && (
-                            <span className="bg-red-500 text-white text-xs px-1.5 py-0.5 rounded-full">{pendingPurchases.length}</span>
+                            <span className="rounded-full bg-red-700 px-1.5 py-0.5 text-xs text-white">{pendingPurchases.length}</span>
                         )}
                     </button>
                     <button
                         type="button"
+                        disabled={submitting}
                         onClick={() => setActiveTab('matches')}
                         aria-pressed={activeTab === 'matches'}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'matches' ? 'bg-orange-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}
+                        className={`nx-fluid-press flex min-h-11 items-center gap-2 rounded-control px-4 py-2 text-sm font-medium ${activeTab === 'matches' ? 'bg-white text-slate-950 shadow-sm' : 'text-slate-500 hover:bg-white/60 hover:text-slate-900'}`}
                     >
                         <GitCompareArrows size={16} /> Conciliación
                         {purchases.some(purchase => purchase.paymentHold) && (
@@ -1493,28 +1671,15 @@ export default function Purchases() {
             </div>
 
             {/* CONTENT */}
-            <div className="p-4 sm:p-6">
-                {activeTab === 'new' && Object.values(formErrors).some(Boolean) && (
-                    <div role="alert" className="mb-4 flex items-start gap-3 rounded-xl border border-red-700/70 bg-red-950/40 px-4 py-3 text-red-100">
-                        <AlertTriangle size={19} className="mt-0.5 shrink-0 text-red-300" />
-                        <div>
-                            <p className="font-semibold">Hay datos que necesitan tu atención</p>
-                            <ul className="mt-1 list-disc pl-4 text-sm text-red-200">
-                                {[...new Set(Object.values(formErrors).filter(Boolean))].map(message => (
-                                    <li key={message}>{message}</li>
-                                ))}
-                            </ul>
-                        </div>
-                    </div>
-                )}
+            <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-6 lg:p-8">
                 {activeTab === 'matches' ? (
                     <section className="space-y-5" aria-labelledby="procurement-match-title">
-                        <div className="flex flex-col gap-4 rounded-2xl border border-slate-700 bg-slate-800/70 p-5 lg:flex-row lg:items-end lg:justify-between">
+                        <div className="nx-canvas-card flex flex-col gap-4 p-5 lg:flex-row lg:items-end lg:justify-between">
                             <div>
-                                <h2 id="procurement-match-title" className="flex items-center gap-2 text-lg font-bold text-white">
-                                    <GitCompareArrows className="text-orange-300" size={21} /> Conciliación de compras
+                                <h2 id="procurement-match-title" className="nx-module-header flex items-center gap-2 text-lg font-semibold text-slate-950">
+                                    <GitCompareArrows className="text-emerald-600" size={21} /> Conciliación de compras
                                 </h2>
-                                <p className="mt-1 max-w-2xl text-sm text-slate-400">
+                                <p className="mt-1 max-w-2xl text-sm text-slate-500">
                                     Compará orden, recepción física y factura. Las diferencias abiertas retienen el pago hasta que una persona autorizada documente la decisión.
                                 </p>
                             </div>
@@ -1522,23 +1687,23 @@ export default function Purchases() {
                                 type="button"
                                 onClick={() => void loadMatches()}
                                 disabled={matchesLoading}
-                                className="inline-flex items-center justify-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+                                className="nx-fluid-press inline-flex min-h-11 items-center justify-center gap-2 rounded-control border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
                             >
                                 <RotateCcw size={15} className={matchesLoading ? 'animate-spin' : ''} /> Actualizar
                             </button>
                         </div>
 
-                        <div className="grid gap-3 rounded-xl border border-slate-700 bg-slate-800/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
-                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-300 sm:col-span-2 lg:col-span-1">
+                        <div className="nx-list-surface grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+                            <div className="flex items-center gap-2 text-sm font-semibold text-slate-700 sm:col-span-2 lg:col-span-1">
                                 <SlidersHorizontal size={17} className="text-slate-500" /> Filtros
                             </div>
-                            <label className="space-y-1 text-xs font-semibold text-slate-400">
+                            <label className="space-y-1 text-xs font-semibold text-slate-600">
                                 Estado
                                 <select
                                     aria-label="Filtrar conciliaciones por estado"
                                     value={matchStatusFilter}
                                     onChange={event => setMatchStatusFilter(event.target.value as MatchStatus | 'ALL')}
-                                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white"
+                                    className="min-h-10 w-full rounded-control border px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 bg-surface-900 nx-form-field"
                                 >
                                     <option value="ALL">Todos</option>
                                     <option value="EXCEPTION">Con diferencias</option>
@@ -1547,26 +1712,26 @@ export default function Purchases() {
                                     <option value="NOT_REQUIRED">No requeridas</option>
                                 </select>
                             </label>
-                            <label className="space-y-1 text-xs font-semibold text-slate-400">
+                            <label className="space-y-1 text-xs font-semibold text-slate-600">
                                 Pago
                                 <select
                                     aria-label="Filtrar conciliaciones por retención"
                                     value={matchHoldFilter}
                                     onChange={event => setMatchHoldFilter(event.target.value as 'ALL' | 'true' | 'false')}
-                                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white"
+                                    className="min-h-10 w-full rounded-control border px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 bg-surface-900 nx-form-field"
                                 >
                                     <option value="ALL">Todos</option>
                                     <option value="true">Retenido</option>
                                     <option value="false">Liberado</option>
                                 </select>
                             </label>
-                            <label className="space-y-1 text-xs font-semibold text-slate-400">
+                            <label className="space-y-1 text-xs font-semibold text-slate-600">
                                 Proveedor
                                 <select
                                     aria-label="Filtrar conciliaciones por proveedor"
                                     value={matchSupplierFilter}
                                     onChange={event => setMatchSupplierFilter(event.target.value)}
-                                    className="w-full rounded-lg border border-slate-600 bg-slate-900 px-3 py-2 text-sm text-white"
+                                    className="min-h-10 w-full rounded-control border px-3 py-2 text-sm outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/15 bg-surface-900 nx-form-field"
                                 >
                                     <option value="">Todos</option>
                                     {suppliers.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
@@ -1575,38 +1740,38 @@ export default function Purchases() {
                         </div>
 
                         {matchDetailError && (
-                            <div role="alert" className="flex items-center justify-between gap-3 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200">
+                            <div role="alert" className="flex items-center justify-between gap-3 rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                                 <span>{matchDetailError}</span>
-                                <button type="button" onClick={() => setMatchDetailError('')} className="rounded p-1 hover:bg-red-500/10" aria-label="Cerrar error"><X size={15} /></button>
+                                <button type="button" onClick={() => setMatchDetailError('')} className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control hover:bg-red-100" aria-label="Cerrar error"><X size={15} /></button>
                             </div>
                         )}
 
                         {matchesLoading && matches.length === 0 ? (
                             <div aria-label="Cargando conciliaciones" className="grid gap-3 lg:grid-cols-2">
-                                {[0, 1, 2, 3].map(index => <div key={index} className="h-40 animate-pulse rounded-xl border border-slate-700 bg-slate-800/60" />)}
+                                {[0, 1, 2, 3].map(index => <div key={index} className="nx-list-surface h-40 animate-pulse bg-slate-100" />)}
                             </div>
                         ) : matchesError ? (
-                            <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-7 text-center text-red-100">
-                                <AlertTriangle className="mx-auto text-red-300" size={30} />
+                            <div role="alert" className="rounded-card border border-red-200 bg-red-50 p-7 text-center text-red-800">
+                                <AlertTriangle className="mx-auto text-red-600" size={30} />
                                 <p className="mt-2 font-semibold">No pudimos cargar la conciliación</p>
-                                <p className="mt-1 text-sm text-red-200">{matchesError}</p>
-                                <button type="button" onClick={() => void loadMatches()} className="mt-4 rounded-lg border border-red-400/40 px-4 py-2 text-sm font-semibold hover:bg-red-500/10">Reintentar</button>
+                                <p className="mt-1 text-sm text-red-700">{matchesError}</p>
+                                <button type="button" onClick={() => void loadMatches()} className="nx-fluid-press mt-4 min-h-11 rounded-control border border-red-300 px-4 py-2 text-sm font-semibold hover:bg-red-100">Reintentar</button>
                             </div>
                         ) : matches.length === 0 ? (
-                            <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-12 text-center">
+                            <div className="nx-list-surface p-12 text-center">
                                 <Check className="mx-auto text-emerald-400" size={38} />
-                                <p className="mt-3 font-semibold text-white">No hay compras con estos filtros</p>
-                                <p className="mt-1 text-sm text-slate-400">Probá otro estado o revisá las facturas nuevas más tarde.</p>
+                                <p className="mt-3 font-semibold text-slate-950">No hay compras con estos filtros</p>
+                                <p className="mt-1 text-sm text-slate-500">Probá otro estado o revisá las facturas nuevas más tarde.</p>
                             </div>
                         ) : (
                             <div className="grid gap-4 lg:grid-cols-2">
                                 {matches.map(match => (
-                                    <article key={match.id} className="rounded-xl border border-slate-700 bg-slate-800/65 p-4 shadow-sm">
+                                    <article key={match.id} className="nx-list-surface p-4 transition-shadow hover:shadow-md">
                                         <div className="flex flex-wrap items-start justify-between gap-3">
                                             <div>
-                                                <p className="text-sm font-semibold text-white">{match.supplier.name}</p>
-                                                <p className="mt-0.5 text-xs text-slate-400">
-                                                    Factura <span className="font-mono text-slate-300">#{match.invoiceNumber}</span>
+                                                <p className="text-sm font-semibold text-slate-950">{match.supplier.name}</p>
+                                                <p className="mt-0.5 text-xs text-slate-500">
+                                                    Factura <span className="font-mono text-slate-700">#{match.invoiceNumber}</span>
                                                     {match.purchaseOrder ? ` · ${match.purchaseOrder.orderNumber}` : ' · Compra directa'}
                                                 </p>
                                             </div>
@@ -1614,22 +1779,22 @@ export default function Purchases() {
                                                 {matchStatusLabel(match.matchStatus)}
                                             </span>
                                         </div>
-                                        <div className="mt-4 grid grid-cols-3 gap-3 rounded-lg bg-slate-900/55 p-3 text-sm">
+                                        <div className="mt-4 grid grid-cols-3 gap-3 rounded-control bg-slate-50 p-3 text-sm">
                                             <div>
                                                 <p className="text-[11px] text-slate-500">Factura</p>
-                                                <p className="font-bold text-slate-100">{formatCurrency(match.total)}</p>
+                                                <p className="font-semibold tabular-nums text-slate-900">{formatCurrency(match.total)}</p>
                                             </div>
                                             <div>
                                                 <p className="text-[11px] text-slate-500">Variación</p>
-                                                <p className={`font-bold ${new Decimal(match.varianceAmount || 0).isZero() ? 'text-emerald-300' : 'text-amber-300'}`}>{formatCurrency(match.varianceAmount || 0)}</p>
+                                                <p className={`font-semibold tabular-nums ${new Decimal(match.varianceAmount || 0).isZero() ? 'text-emerald-700' : 'text-amber-700'}`}>{formatCurrency(match.varianceAmount || 0)}</p>
                                             </div>
                                             <div>
                                                 <p className="text-[11px] text-slate-500">Diferencias</p>
-                                                <p className="font-bold text-slate-100">{match.openExceptionCount}</p>
+                                                <p className="font-semibold text-slate-900">{match.openExceptionCount}</p>
                                             </div>
                                         </div>
                                         <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                                            <div className={`flex items-center gap-1.5 text-xs font-semibold ${match.paymentHold ? 'text-amber-300' : 'text-emerald-300'}`}>
+                                            <div className={`flex items-center gap-1.5 text-xs font-semibold ${match.paymentHold ? 'text-amber-700' : 'text-emerald-700'}`}>
                                                 {match.paymentHold ? <LockKeyhole size={14} /> : <Check size={14} />}
                                                 {match.paymentHold ? 'Pago retenido' : 'Pago liberado'}
                                             </div>
@@ -1638,7 +1803,7 @@ export default function Purchases() {
                                                     type="button"
                                                     onClick={() => void openMatchDetail(match.id)}
                                                     disabled={matchDetailLoadingId !== null}
-                                                    className="rounded-lg border border-slate-600 px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-slate-700 disabled:opacity-60"
+                                                    className="nx-fluid-press min-h-11 rounded-control border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
                                                 >
                                                     {matchDetailLoadingId === match.id ? 'Cargando…' : 'Ver diferencias'}
                                                 </button>
@@ -1646,7 +1811,7 @@ export default function Purchases() {
                                                     <button
                                                         type="button"
                                                         onClick={() => openMatchResolution(match)}
-                                                        className="rounded-lg bg-orange-600 px-3 py-2 text-xs font-bold text-white hover:bg-orange-500"
+                                                        className="nx-fluid-press min-h-11 rounded-control bg-brand px-3 py-2 text-xs font-semibold text-brand-on shadow-sm hover:bg-brand-hover"
                                                     >
                                                         Resolver
                                                     </button>
@@ -1660,7 +1825,7 @@ export default function Purchases() {
 
                         {matchesNextCursor && !matchesError && (
                             <div className="text-center">
-                                <button type="button" onClick={() => void loadMatches(matchesNextCursor, true)} disabled={matchesLoading} className="rounded-lg border border-slate-600 px-4 py-2 text-sm font-semibold text-slate-200 hover:bg-slate-800 disabled:opacity-60">
+                                <button type="button" onClick={() => void loadMatches(matchesNextCursor, true)} disabled={matchesLoading} className="nx-fluid-press min-h-11 rounded-control border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60">
                                     {matchesLoading ? 'Cargando…' : 'Cargar más'}
                                 </button>
                             </div>
@@ -1670,473 +1835,11 @@ export default function Purchases() {
                     /* ==========================================
                        TAB: NUEVA COMPRA
                        ========================================== */
-                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                        {/* LEFT: Form + Product Search */}
-                        <div className="lg:col-span-2 space-y-4">
-                            {/* Purchase Info */}
-                            <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-5">
-                                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                                    <FileText size={18} className="text-orange-400" />
-                                    Datos de la Compra
-                                </h3>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                    <div>
-                                        <label htmlFor="purchase-supplier" className="block text-sm text-slate-300 mb-1.5">Proveedor *</label>
-                                        <select
-                                            id="purchase-supplier"
-                                            value={selectedSupplier}
-                                            onChange={(e) => changeSupplier(e.target.value)}
-                                            aria-invalid={Boolean(formErrors.supplierId)}
-                                            className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.supplierId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
-                                        >
-                                            <option value="">{loading ? 'Cargando proveedores…' : suppliers.length === 0 ? 'Todavía no hay proveedores' : 'Seleccionar proveedor…'}</option>
-                                            {suppliers.map(s => (
-                                                <option key={s.id} value={s.id}>{s.name}</option>
-                                            ))}
-                                        </select>
-                                        {formErrors.supplierId && <p className="mt-1 text-xs text-red-300">{formErrors.supplierId}</p>}
-                                        {!loading && suppliers.length === 0 && (
-                                            <div className="mt-2 flex items-center justify-between gap-3 rounded-lg border border-amber-800/60 bg-amber-950/30 px-3 py-2 text-xs text-amber-100">
-                                                <span>Primero agregá a quien te vende.</span>
-                                                <a href="/app/suppliers" className="shrink-0 font-bold text-amber-300 underline decoration-amber-500/60 underline-offset-2 hover:text-amber-200">
-                                                    Crear proveedor
-                                                </a>
-                                            </div>
-                                        )}
-                                    </div>
-                                    {!selectedPO && (
-                                        <div>
-                                            <label htmlFor="purchase-warehouse" className="block text-sm text-slate-300 mb-1.5">Bodega donde entrará la mercadería *</label>
-                                            <select
-                                                id="purchase-warehouse"
-                                                value={selectedWarehouseId}
-                                                onChange={(e) => {
-                                                    setSelectedWarehouseId(e.target.value);
-                                                    setFormErrors(current => ({ ...current, warehouseId: undefined }));
-                                                }}
-                                                aria-invalid={Boolean(formErrors.warehouseId)}
-                                                required
-                                                className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.warehouseId ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
-                                            >
-                                                <option value="">{loading ? 'Cargando bodegas…' : 'Seleccionar bodega destino…'}</option>
-                                                {warehouses.map(warehouse => (
-                                                    <option key={warehouse.id} value={warehouse.id}>
-                                                        {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                            <p className="mt-1 text-xs text-slate-500">El stock se sumará solo en esta ubicación.</p>
-                                            {formErrors.warehouseId && <p className="mt-1 text-xs text-red-300">{formErrors.warehouseId}</p>}
-                                            {!loading && warehouses.length === 0 && (
-                                                <p role="alert" className="mt-1 text-xs text-red-300">No hay una bodega activa disponible. Reintentá la carga antes de procesar el ingreso.</p>
-                                            )}
-                                        </div>
-                                    )}
-                                    {purchaseOrdersForSupplier.length > 0 && (
-                                        <div>
-                                            <label htmlFor="purchase-order-link" className="block text-sm text-slate-300 mb-1.5">Orden de compra (opcional)</label>
-                                            <select
-                                                id="purchase-order-link"
-                                                value={selectedPO}
-                                                onChange={(event) => linkPurchaseOrder(event.target.value)}
-                                                className="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2.5 text-white focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
-                                            >
-                                                <option value="">Compra directa, sin OC</option>
-                                                {purchaseOrdersForSupplier.map(po => (
-                                                    <option key={po.id} value={po.id}>
-                                                        {po.orderNumber} · {po.status === 'RECEIVED' ? 'Recibida' : po.status === 'PARTIALLY_RECEIVED' ? 'Recepción parcial' : 'Aprobada'}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </div>
-                                    )}
-                                    <div>
-                                        <label htmlFor="purchase-invoice-number" className="block text-sm text-slate-300 mb-1.5"># Factura Proveedor *</label>
-                                        <input
-                                            id="purchase-invoice-number"
-                                            value={invoiceNumber}
-                                            onChange={(e) => {
-                                                setInvoiceNumber(e.target.value);
-                                                setFormErrors(current => ({ ...current, invoiceNumber: undefined }));
-                                            }}
-                                            placeholder="FAC-001234"
-                                            aria-invalid={Boolean(formErrors.invoiceNumber)}
-                                            className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white font-mono focus:ring-1 ${formErrors.invoiceNumber ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
-                                        />
-                                        {formErrors.invoiceNumber && <p className="mt-1 text-xs text-red-300">{formErrors.invoiceNumber}</p>}
-                                    </div>
-                                    <div>
-                                        <label htmlFor="purchase-invoice-date" className="block text-sm text-slate-300 mb-1.5">
-                                            Fecha de la factura *
-                                        </label>
-                                        <input
-                                            id="purchase-invoice-date"
-                                            type="date"
-                                            required
-                                            value={purchaseDate}
-                                            onChange={(event) => {
-                                                setPurchaseDate(event.target.value);
-                                                setFormErrors(current => ({ ...current, date: undefined }));
-                                            }}
-                                            aria-invalid={Boolean(formErrors.date)}
-                                            aria-describedby={formErrors.date ? 'purchase-invoice-date-error' : undefined}
-                                            className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.date ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
-                                        />
-                                        {formErrors.date && (
-                                            <p id="purchase-invoice-date-error" className="mt-1 text-xs text-red-300">
-                                                {formErrors.date}
-                                            </p>
-                                        )}
-                                    </div>
-                                    {selectedPO && (
-                                        <div className="col-span-2 flex items-start gap-2 rounded-lg border border-sky-800 bg-sky-950/40 px-3 py-2.5 text-sm text-sky-200">
-                                            <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                                            <span>
-                                                Esta factura queda vinculada a la OC. La recepción maneja el stock y los lotes; aquí solo se registra el dinero y el IVA.
-                                            </span>
-                                        </div>
-                                    )}
-                                    <div>
-                                        <label className="block text-sm text-slate-300 mb-1.5">Método de pago *</label>
-                                        <div className="flex gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => {
-                                                    setPaymentMethod('CASH');
-                                                    setDueDate('');
-                                                    setFormErrors(current => ({ ...current, dueDate: undefined }));
-                                                }}
-                                                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${paymentMethod === 'CASH'
-                                                    ? 'border-emerald-500 bg-emerald-950/40 text-emerald-300'
-                                                    : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600'}`}
-                                            >
-                                                <DollarSign size={16} /> Contado
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setPaymentMethod('CREDIT')}
-                                                className={`flex-1 flex items-center justify-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all ${paymentMethod === 'CREDIT'
-                                                    ? 'border-amber-500 bg-amber-950/40 text-amber-300'
-                                                    : 'border-slate-700 bg-slate-900 text-slate-400 hover:border-slate-600'}`}
-                                            >
-                                                <CreditCard size={16} /> Credito
-                                            </button>
-                                        </div>
-                                    </div>
-                                    {paymentMethod === 'CREDIT' && (
-                                        <div>
-                                            <label className="block text-sm text-slate-300 mb-1.5">Fecha de Vencimiento *</label>
-                                            <input
-                                                type="date"
-                                                value={dueDate}
-                                                onChange={(e) => {
-                                                    setDueDate(e.target.value);
-                                                    setFormErrors(current => ({ ...current, dueDate: undefined }));
-                                                }}
-                                                aria-invalid={Boolean(formErrors.dueDate)}
-                                                className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.dueDate ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
-                                            />
-                                            {formErrors.dueDate && <p className="mt-1 text-xs text-red-300">{formErrors.dueDate}</p>}
-                                        </div>
-                                    )}
-                                </div>
-                                <div className="mt-4">
-                                    <label className="block text-sm text-slate-300 mb-1.5">Notas (opcional)</label>
-                                    <input
-                                        value={notes}
-                                        onChange={(e) => {
-                                            setNotes(e.target.value);
-                                            setFormErrors(current => ({ ...current, notes: undefined }));
-                                        }}
-                                        placeholder="Ej: Pedido semanal, entrega parcial..."
-                                        maxLength={500}
-                                        aria-invalid={Boolean(formErrors.notes)}
-                                        className={`w-full px-3 py-2.5 bg-slate-900 border rounded-lg text-white focus:ring-1 ${formErrors.notes ? 'border-red-500 focus:border-red-400 focus:ring-red-500' : 'border-slate-700 focus:border-orange-500 focus:ring-orange-500'}`}
-                                    />
-                                    {formErrors.notes && <p className="mt-1 text-xs text-red-300">{formErrors.notes}</p>}
-                                </div>
-                            </div>
-
-                            {/* Product Search + Add */}
-                            <div className={`bg-slate-800/80 border rounded-xl p-5 ${formErrors.items ? 'border-red-600/80' : 'border-slate-700'}`}>
-                                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                                    <Package size={18} className="text-blue-400" />
-                                    Agregar Productos
-                                </h3>
-                                <div className="relative">
-                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
-                                    <input
-                                        value={productSearch}
-                                        onChange={(e) => setProductSearch(e.target.value)}
-                                        disabled={Boolean(selectedPO)}
-                                        placeholder={selectedPO ? 'Los productos vienen de la orden de compra vinculada' : 'Buscar producto por nombre o SKU...'}
-                                        className="w-full pl-10 pr-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-orange-500 focus:ring-1 focus:ring-orange-500 disabled:cursor-not-allowed disabled:text-slate-500"
-                                    />
-                                    {!selectedPO && filteredProducts.length > 0 && (
-                                        <div className="absolute top-full left-0 right-0 mt-1 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl z-20 max-h-60 overflow-y-auto">
-                                            {filteredProducts.map(p => (
-                                                <button
-                                                    key={p.id}
-                                                    onClick={() => addToCart(p)}
-                                                    className="w-full flex items-center justify-between px-4 py-3 hover:bg-slate-700/60 text-left transition-colors border-b border-slate-700/50 last:border-0"
-                                                >
-                                                    <div>
-                                                        <span className="text-white font-medium">{p.name}</span>
-                                                        <span className="text-xs text-slate-400 ml-2 font-mono">{p.sku}</span>
-                                                    </div>
-                                                    <div className="text-right">
-                                                        <span className="text-slate-400 text-sm">Costo: {formatCurrency(p.cost)}</span>
-                                                        <span className="text-xs text-slate-500 ml-2">Stock: {formatQuantityValue(p.stock)} {p.unit}</span>
-                                                    </div>
-                                                </button>
-                                            ))}
-                                        </div>
-                                    )}
-                                </div>
-
-                                {/* Cart Items Table */}
-                                {cart.length > 0 && (
-                                    <div className="mt-4 overflow-x-auto">
-                                        <table className="w-full">
-                                            <thead>
-                                                <tr className="text-xs text-slate-400 uppercase border-b border-slate-700">
-                                                    <th className="text-left py-2 px-2">Producto</th>
-                                                    <th className="text-center py-2 px-2 w-36">Cantidad recibida</th>
-                                                    <th className="text-center py-2 px-2 w-40">Costo informado</th>
-                                                    <th className="text-right py-2 px-2 w-28">Total</th>
-                                                    <th className="w-10"></th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {cart.map(item => {
-                                                    let preview: ReturnType<typeof resolvePurchaseLine> | null = null;
-                                                    try {
-                                                        preview = resolveCartLine(item);
-                                                    } catch {
-                                                        // Mientras se edita un input puede estar temporalmente
-                                                        // vacío/inválido; la validación visible lo reporta al enviar.
-                                                    }
-                                                    const inputStep = purchaseQuantityInputStep(item, item.purchaseUnit);
-                                                    return (
-                                                    <React.Fragment key={item.cartKey}>
-                                                        <tr className="border-b border-slate-700/50">
-                                                            <td className="py-3 px-2">
-                                                                <div>
-                                                                    <span className="text-white font-medium text-sm">{item.productName}</span>
-                                                                    <div className="flex flex-wrap items-center gap-2 mt-0.5">
-                                                                        <span className="text-xs text-slate-500 font-mono">{item.sku}</span>
-                                                                        <span className="text-xs text-slate-600">Stock actual: {formatQuantityValue(item.currentStock)} {item.unit}</span>
-                                                                    </div>
-                                                                    {item.purchaseOrderItemId && (
-                                                                        <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px] text-slate-400 sm:grid-cols-4">
-                                                                            <div><dt className="inline">Ordenado </dt><dd className="inline font-mono text-slate-200">{formatQuantityValue(item.orderedQuantity ?? '0')}</dd></div>
-                                                                            <div><dt className="inline">Recibido </dt><dd className="inline font-mono text-slate-200">{formatQuantityValue(item.receivedQuantity ?? '0')}</dd></div>
-                                                                            <div><dt className="inline">Facturado </dt><dd className="inline font-mono text-slate-200">{formatQuantityValue(item.invoicedQuantity ?? '0')}</dd></div>
-                                                                            <div><dt className="inline">Disponible </dt><dd className="inline font-mono font-bold text-emerald-300">{formatQuantityValue(item.availableQuantity ?? '0')}</dd></div>
-                                                                        </dl>
-                                                                    )}
-                                                                    {hasPackConfiguration(item) && (
-                                                                        <select
-                                                                            value={item.purchaseUnit}
-                                                                            onChange={(event) => updatePurchaseUnit(item.cartKey, event.target.value as PurchaseUnit)}
-                                                                            disabled={Boolean(selectedPO)}
-                                                                            aria-label={`Unidad de compra de ${item.productName}`}
-                                                                            className="mt-2 max-w-full rounded border border-slate-600 bg-slate-900 px-2 py-1 text-xs font-semibold text-slate-200 focus:border-orange-500 disabled:cursor-not-allowed disabled:opacity-60"
-                                                                        >
-                                                                            <option value="BASE">Base · {item.unit}</option>
-                                                                            <option value="PACK">Empaque · {item.packUnit} ({formatQuantityValue(item.packSize!)} {item.unit})</option>
-                                                                        </select>
-                                                                    )}
-                                                                </div>
-                                                            </td>
-                                                            <td className="py-3 px-2">
-                                                                <input
-                                                                    type="text"
-                                                                    inputMode="decimal"
-                                                                    value={item.quantity}
-                                                                    onChange={(e) => updateCartItem(item.cartKey, 'quantity', sanitizeDecimalInput(e.target.value))}
-                                                                    aria-label={`Cantidad a facturar de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
-                                                                    aria-invalid={Boolean(formErrors.items)}
-                                                                    className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
-                                                                />
-                                                                <p className="mt-1 text-center text-[11px] text-slate-500">
-                                                                    {item.purchaseUnit === 'PACK'
-                                                                        ? preview
-                                                                            ? `${formatQuantityValue(item.quantity)} ${item.packUnit} = ${formatQuantityValue(preview.baseQuantity)} ${item.unit}`
-                                                                            : `${item.packUnit} de ${formatQuantityValue(item.packSize!)} ${item.unit}`
-                                                                        : `en ${item.unit} · paso ${inputStep}`}
-                                                                </p>
-                                                            </td>
-                                                            <td className="py-3 px-2">
-                                                                <input
-                                                                    type="text"
-                                                                    inputMode="decimal"
-                                                                    value={item.unitCost}
-                                                                    onChange={(e) => updateCartItem(item.cartKey, 'unitCost', sanitizeDecimalInput(e.target.value))}
-                                                                    aria-label={`Costo de ${item.productName}${item.purchaseOrderItemId ? ` · línea ${item.purchaseOrderItemId}` : ''}`}
-                                                                    aria-invalid={Boolean(formErrors.items)}
-                                                                    className="w-full text-center bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-white text-sm focus:border-orange-500"
-                                                                />
-                                                                <p className="mt-1 text-center text-[11px] text-slate-500">
-                                                                    {item.purchaseUnit === 'PACK'
-                                                                        ? preview
-                                                                            ? `por ${item.packUnit} · ${formatCurrency(preview.baseUnitCost.toNumber())}/${item.unit}`
-                                                                            : `costo por ${item.packUnit}`
-                                                                        : `por ${item.unit}`}
-                                                                </p>
-                                                            </td>
-                                                            <td className="py-3 px-2 text-right">
-                                                                <span className="text-emerald-400 font-bold text-sm">{formatCurrency(item.totalCost)}</span>
-                                                            </td>
-                                                            <td className="py-3 px-1">
-                                                                <button
-                                                                    onClick={() => removeFromCart(item.cartKey)}
-                                                                    aria-label={`Quitar ${item.productName}`}
-                                                                    className="p-1.5 hover:bg-red-500/20 rounded text-red-400 transition-colors"
-                                                                >
-                                                                    <Trash2 size={15} />
-                                                                </button>
-                                                            </td>
-                                                        </tr>
-                                                        {item.requiresBatchTracking && (
-                                                            <tr className="bg-slate-900/30">
-                                                                <td colSpan={5} className="px-3 py-2 border-b border-slate-700/50">
-                                                                    <div className="flex gap-4 items-center">
-                                                                        <div className="flex items-center gap-2">
-                                                                            <span className="text-xs text-orange-400 font-semibold bg-orange-500/10 px-2 py-1 rounded">REQUIERE LOTE</span>
-                                                                        </div>
-                                                                        <div className="flex-1 flex gap-3">
-                                                                            <input
-                                                                                type="text"
-                                                                                placeholder="Nº Lote"
-                                                                                value={item.batchNumber || ''}
-                                                                                onChange={(e) => updateCartItem(item.cartKey, 'batchNumber', e.target.value)}
-                                                                                aria-invalid={Boolean(formErrors.items)}
-                                                                                className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
-                                                                            />
-                                                                            <input
-                                                                                type="date"
-                                                                                value={item.expiryDate || ''}
-                                                                                onChange={(e) => updateCartItem(item.cartKey, 'expiryDate', e.target.value)}
-                                                                                aria-invalid={Boolean(formErrors.items)}
-                                                                                className="flex-1 bg-slate-800 border border-slate-600 rounded px-3 py-1.5 text-white text-xs focus:border-orange-500"
-                                                                            />
-                                                                        </div>
-                                                                    </div>
-                                                                </td>
-                                                            </tr>
-                                                        )}
-                                                    </React.Fragment>
-                                                    );
-                                                })}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                )}
-
-                                {cart.length === 0 && (
-                                    <div className="text-center py-8 text-slate-500">
-                                        <ShoppingCart size={32} className="mx-auto mb-2 opacity-30" />
-                                        <p className="text-sm">Busca y agrega productos a la compra</p>
-                                    </div>
-                                )}
-                                {formErrors.items && (
-                                    <p className="mt-3 flex items-center gap-1.5 text-sm text-red-300">
-                                        <AlertTriangle size={15} /> {formErrors.items}
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-
-                        {/* RIGHT: Totals + Submit */}
-                        <div className="space-y-4">
-                            {/* Summary Card */}
-                            <div className="bg-slate-800/80 border border-slate-700 rounded-xl p-5 sticky top-6">
-                                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-                                    <Wallet size={18} className="text-emerald-400" />
-                                    Resumen de Compra
-                                </h3>
-
-                                <div className="space-y-3">
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">Productos</span>
-                                        <span className="text-white font-medium">{cart.length} línea{cart.length === 1 ? '' : 's'}</span>
-                                    </div>
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">Subtotal</span>
-                                        <span className="text-white">{formatCurrency(cartTotals.subtotal)}</span>
-                                    </div>
-                                    {cartTotals.taxableSubtotal !== cartTotals.subtotal && (
-                                        <>
-                                            <div className="flex justify-between text-xs">
-                                                <span className="text-slate-500">Base gravada</span>
-                                                <span className="text-slate-300">{formatCurrency(cartTotals.taxableSubtotal)}</span>
-                                            </div>
-                                            <div className="flex justify-between text-xs">
-                                                <span className="text-slate-500">Productos exentos</span>
-                                                <span className="text-slate-300">{formatCurrency(cartTotals.subtotal - cartTotals.taxableSubtotal)}</span>
-                                            </div>
-                                        </>
-                                    )}
-                                    <div className="flex justify-between text-sm">
-                                        <span className="text-slate-400">IVA (15%)</span>
-                                        <span className="text-white">{formatCurrency(cartTotals.tax)}</span>
-                                    </div>
-                                    <div className="border-t border-slate-700 pt-3 flex justify-between">
-                                        <span className="text-white font-bold text-lg">TOTAL</span>
-                                        <span className="text-emerald-400 font-bold text-xl">{formatCurrency(cartTotals.total)}</span>
-                                    </div>
-                                </div>
-
-                                {paymentMethod === 'CREDIT' && (
-                                    <div className="mt-3 bg-amber-950/40 border border-amber-800/50 rounded-lg p-3">
-                                        <p className="text-xs text-amber-300 flex items-center gap-1.5">
-                                            <Clock size={14} />
-                                            Compra a crédito · No se descuenta de caja
-                                        </p>
-                                    </div>
-                                )}
-
-                                {paymentMethod === 'CASH' && (
-                                    <div className="mt-3 bg-emerald-950/40 border border-emerald-800/50 rounded-lg p-3">
-                                        <p className="text-xs text-emerald-300 flex items-center gap-1.5">
-                                            <DollarSign size={14} />
-                                            Pago de contado · Se descuenta de caja
-                                        </p>
-                                    </div>
-                                )}
-
-                                <button
-                                    onClick={handleSubmit}
-                                    disabled={submitting || cart.length === 0 || !selectedSupplier || !invoiceNumber.trim() || (!selectedPO && !selectedWarehouseId) || (paymentMethod === 'CREDIT' && !dueDate)}
-                                    aria-busy={submitting}
-                                    className="w-full mt-5 bg-orange-600 hover:bg-orange-700 disabled:bg-slate-700 disabled:text-slate-500 py-3.5 rounded-lg text-white font-bold text-lg transition-all flex items-center justify-center gap-2"
-                                >
-                                    {submitting ? (
-                                        <>
-                                            <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                                            Procesando...
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Truck size={20} />
-                                            {selectedPO ? 'Registrar factura' : 'Procesar ingreso'}
-                                        </>
-                                    )}
-                                </button>
-
-                                <p className="text-xs text-slate-500 text-center mt-2">
-                                    {selectedPO
-                                        ? 'El stock se actualiza desde la recepción de la OC'
-                                        : 'El stock se actualiza automáticamente'}
-                                </p>
-                            </div>
-                        </div>
-                    </div>
+                    receivingView
                 ) : loading ? (
                     <div aria-label="Cargando historial de compras" className="space-y-4">
-                        <div className="h-28 animate-pulse rounded-xl border border-slate-700 bg-slate-800/60" />
-                        <div className="h-72 animate-pulse rounded-xl border border-slate-700 bg-slate-800/60" />
+                        <div className="nx-list-surface h-28 animate-pulse bg-slate-100" />
+                        <div className="nx-list-surface h-72 animate-pulse bg-slate-100" />
                     </div>
                 ) : (
                     /* ==========================================
@@ -2146,31 +1849,31 @@ export default function Purchases() {
                         {/* Pending Payments */}
                         {pendingPurchases.length > 0 && (
                             <div>
-                                <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                                    <AlertTriangle size={18} className="text-amber-400" />
+                                <h3 className="mb-3 flex items-center gap-2 font-semibold text-slate-950">
+                                    <AlertTriangle size={18} className="text-amber-600" />
                                     Cuentas por Pagar ({pendingPurchases.length})
-                                    <span className="text-sm text-red-400 font-normal ml-2">
+                                    <span className="ml-2 text-sm font-normal tabular-nums text-amber-700">
                                         Total: {formatCurrency(totalDebt)}
                                     </span>
                                 </h3>
                                 <div className="grid gap-3">
                                     {pendingPurchases.map(p => (
-                                        <div key={p.id} className="flex flex-col gap-4 rounded-xl border border-amber-800/50 bg-amber-950/20 p-4 lg:flex-row lg:items-center lg:justify-between">
+                                        <div key={p.id} className="flex flex-col gap-4 rounded-card border border-amber-200 bg-amber-50/70 p-4 shadow-sm lg:flex-row lg:items-center lg:justify-between">
                                             <div className="flex items-center gap-4">
-                                                <div className="w-10 h-10 bg-amber-900/40 rounded-lg flex items-center justify-center">
-                                                    <Clock size={20} className="text-amber-400" />
+                                                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control border border-amber-200 bg-white">
+                                                    <Clock size={20} className="text-amber-600" />
                                                 </div>
                                                 <div>
-                                                    <p className="text-white font-semibold">{p.supplier.name}</p>
-                                                    <p className="text-xs text-slate-400">
+                                                    <p className="font-semibold text-slate-950">{p.supplier.name}</p>
+                                                    <p className="text-xs text-slate-500">
                                                         Factura #{p.invoiceNumber} | {formatCalendarDate(p.date)}
                                                         {p.dueDate && (
-                                                            <span className="text-amber-400 ml-2">Vence: {formatCalendarDate(p.dueDate)}</span>
+                                                            <span className="ml-2 text-amber-700">Vence: {formatCalendarDate(p.dueDate)}</span>
                                                         )}
                                                     </p>
-                                                    {p.status === 'PARTIALLY_PAID' && <p className="mt-1 text-xs font-bold text-sky-300">Ya tiene abonos registrados</p>}
+                                                    {p.status === 'PARTIALLY_PAID' && <p className="mt-1 text-xs font-semibold text-sky-700">Ya tiene abonos registrados</p>}
                                                     {p.paymentHold && (
-                                                        <p className="mt-1 flex items-center gap-1 text-xs font-bold text-amber-300">
+                                                        <p className="mt-1 flex items-center gap-1 text-xs font-semibold text-amber-700">
                                                             <LockKeyhole size={12} /> Pago retenido hasta resolver la conciliación
                                                         </p>
                                                     )}
@@ -2179,12 +1882,12 @@ export default function Purchases() {
                                             <div className="flex flex-wrap items-center gap-3">
                                                 <div className="mr-1 text-right">
                                                     <p className="text-xs text-slate-500">Saldo pendiente</p>
-                                                    <span className="text-xl font-bold text-amber-400">{formatCurrency(effectivePurchaseBalance(p))}</span>
+                                                    <span className="text-xl font-semibold tabular-nums text-amber-700">{formatCurrency(effectivePurchaseBalance(p))}</span>
                                                     <p className="text-xs text-slate-500">de {formatCurrency(p.total)}</p>
                                                 </div>
                                                 <button
                                                     onClick={() => viewInvoice(p)}
-                                                    className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 px-3 py-2 rounded-lg text-slate-300 text-sm transition-colors"
+                                                    className="nx-fluid-press flex min-h-11 items-center gap-1.5 rounded-control border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
                                                     title="Ver Factura"
                                                 >
                                                     <Eye size={15} /> Factura
@@ -2194,7 +1897,7 @@ export default function Purchases() {
                                                         type="button"
                                                         onClick={() => handleOpenRetention(p.id)}
                                                         disabled={openingRetentionId !== null}
-                                                        className="flex items-center gap-1.5 bg-violet-900/40 hover:bg-violet-800/60 border border-violet-700 px-3 py-2 rounded-lg text-violet-300 text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                                        className="nx-fluid-press flex min-h-11 items-center gap-1.5 rounded-control border border-violet-200 bg-violet-50 px-3 py-2 text-sm font-medium text-violet-700 hover:bg-violet-100 disabled:cursor-not-allowed disabled:opacity-60"
                                                         title="Constancia de Retención"
                                                     >
                                                         {openingRetentionId === p.id
@@ -2206,7 +1909,7 @@ export default function Purchases() {
                                                 {canPaySuppliers && !p.paymentHold && (
                                                     <button
                                                         onClick={() => handlePay(p)}
-                                                        className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-700 px-4 py-2 rounded-lg text-white font-semibold text-sm transition-colors"
+                                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover"
                                                     >
                                                         <DollarSign size={16} /> Abonar
                                                     </button>
@@ -2215,7 +1918,7 @@ export default function Purchases() {
                                                     <button
                                                         type="button"
                                                         onClick={() => setActiveTab('matches')}
-                                                        className="flex items-center gap-2 rounded-lg border border-amber-600/60 bg-amber-500/10 px-4 py-2 text-sm font-semibold text-amber-200 hover:bg-amber-500/15"
+                                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-700 hover:bg-amber-50"
                                                     >
                                                         <GitCompareArrows size={16} /> Revisar diferencia
                                                     </button>
@@ -2229,22 +1932,22 @@ export default function Purchases() {
 
                         {/* Completed Purchases */}
                         <div>
-                            <h3 className="text-white font-semibold mb-3 flex items-center gap-2">
-                                <Check size={18} className="text-emerald-400" />
-                                Historial de Compras ({purchases.length})
+                            <h3 className="mb-3 flex items-center gap-2 font-semibold text-slate-950">
+                                <Check size={18} className="text-emerald-600" />
+                                Historial de compras ({purchases.length})
                             </h3>
 
                             {purchases.length === 0 ? (
-                                <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-12 text-center">
-                                    <Truck size={48} className="mx-auto text-slate-600 mb-3" />
-                                    <p className="text-slate-400">No hay compras registradas</p>
-                                    <p className="text-xs text-slate-600 mt-1">Registra tu primera compra en la pestana "Nueva Compra"</p>
+                                <div className="nx-list-surface p-12 text-center">
+                                    <Truck size={48} className="mx-auto mb-3 text-slate-300" />
+                                    <p className="font-medium text-slate-700">No hay compras registradas</p>
+                                    <p className="mt-1 text-xs text-slate-500">Registrá tu primera compra en “Nueva compra”.</p>
                                 </div>
                             ) : (
-                                <div className="bg-slate-800/60 border border-slate-700 rounded-xl overflow-hidden">
-                                    <table className="w-full">
+                                <div className="nx-list-surface overflow-x-auto">
+                                    <table className="min-w-[960px] w-full">
                                         <thead>
-                                            <tr className="bg-slate-900/80">
+                                            <tr className="border-b border-slate-200 bg-slate-50">
                                                 <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase">Fecha</th>
                                                 <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase">Proveedor</th>
                                                 <th className="text-left px-4 py-3 text-xs text-slate-400 uppercase"># Factura</th>
@@ -2255,45 +1958,46 @@ export default function Purchases() {
                                                 <th className="text-center px-4 py-3 text-xs text-slate-400 uppercase">Acciones</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-slate-700/50">
+                                        <tbody className="divide-y divide-slate-100 bg-white">
                                             {purchases.map(p => (
-                                                <tr key={p.id} className="hover:bg-slate-700/20 transition-colors">
-                                                    <td className="px-4 py-3 text-sm text-slate-300">{formatCalendarDate(p.date)}</td>
-                                                    <td className="px-4 py-3 text-sm text-white font-medium">{p.supplier.name}</td>
-                                                    <td className="px-4 py-3 text-sm text-slate-300 font-mono">{p.invoiceNumber}</td>
-                                                    <td className="px-4 py-3 text-sm text-center text-slate-400">{p.items.length} prod.</td>
+                                                <tr key={p.id} className="hover:bg-slate-50">
+                                                    <td className="px-4 py-3 text-sm text-slate-600">{formatCalendarDate(p.date)}</td>
+                                                    <td className="px-4 py-3 text-sm font-medium text-slate-950">{p.supplier.name}</td>
+                                                    <td className="px-4 py-3 font-mono text-sm text-slate-700">{p.invoiceNumber}</td>
+                                                    <td className="px-4 py-3 text-center text-sm text-slate-500">{p.items.length} prod.</td>
                                                     <td className="px-4 py-3 text-center">
                                                         <span className={`text-xs px-2 py-1 rounded-full ${p.paymentMethod === 'CASH'
-                                                            ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
+                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                                             : p.paymentMethod === 'NORTEX_CAPITAL'
-                                                                ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
-                                                                : 'bg-amber-900/40 text-amber-300 border border-amber-700'}`}>
+                                                                ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                                                : 'bg-amber-50 text-amber-700 border border-amber-200'}`}>
                                                             {p.paymentMethod === 'CASH' ? 'Contado' : p.paymentMethod === 'NORTEX_CAPITAL' ? 'Financiamiento Nortex' : 'Crédito'}
                                                         </span>
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <span className={`text-xs px-2 py-1 rounded-full ${p.status === 'COMPLETED'
-                                                            ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
+                                                            ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                                             : p.status === 'PARTIALLY_PAID'
-                                                                ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
-                                                                : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
+                                                                ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                                                : 'bg-red-50 text-red-700 border border-red-200'}`}>
                                                             {purchaseStatusLabel(p.status)}
                                                         </span>
                                                         {p.paymentHold && (
-                                                            <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-amber-700 bg-amber-950/40 px-2 py-1 text-xs text-amber-300">
+                                                            <span className="ml-1 inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2 py-1 text-xs text-amber-700">
                                                                 <LockKeyhole size={11} /> Retenido
                                                             </span>
                                                         )}
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-bold text-emerald-400">
+                                                    <td className="px-4 py-3 text-right font-semibold tabular-nums text-emerald-700">
                                                         {formatCurrency(p.total)}
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
                                                         <div className="flex items-center justify-center gap-1">
                                                             <button
                                                                 onClick={() => viewInvoice(p)}
-                                                                className="p-2 hover:bg-blue-500/20 rounded-lg text-blue-400 transition-colors"
+                                                                className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-sky-700 hover:bg-sky-50"
                                                                 title="Ver Factura"
+                                                                aria-label={`Ver factura ${p.invoiceNumber}`}
                                                             >
                                                                 <Eye size={17} />
                                                             </button>
@@ -2302,8 +2006,9 @@ export default function Purchases() {
                                                                     type="button"
                                                                     onClick={() => handleOpenRetention(p.id)}
                                                                     disabled={openingRetentionId !== null}
-                                                                    className="p-2 hover:bg-violet-500/20 rounded-lg text-violet-400 transition-colors inline-flex disabled:opacity-60 disabled:cursor-not-allowed"
+                                                                    className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-violet-700 hover:bg-violet-50 disabled:cursor-not-allowed disabled:opacity-60"
                                                                     title="Constancia de Retención"
+                                                                    aria-label={`Abrir constancia de retención de la factura ${p.invoiceNumber}`}
                                                                 >
                                                                     {openingRetentionId === p.id
                                                                         ? <Loader2 size={17} className="animate-spin" />
@@ -2325,17 +2030,17 @@ export default function Purchases() {
 
             {selectedMatch && (
                 <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onClick={() => setSelectedMatch(null)}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="match-detail-title" className="max-h-[calc(100dvh-2rem)] w-full max-w-4xl overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="match-detail-title" className="nx-dark-context nx-ticket-surface max-h-[calc(100dvh-2rem)] w-full max-w-4xl overflow-y-auto rounded-card border shadow-2xl" onClick={event => event.stopPropagation()}>
                         <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-700 bg-slate-900/95 px-5 py-4 backdrop-blur">
                             <div>
                                 <h2 id="match-detail-title" className="flex items-center gap-2 font-bold text-white">
-                                    <GitCompareArrows size={20} className="text-orange-300" /> Conciliación #{selectedMatch.purchase.invoiceNumber}
+                                    <GitCompareArrows size={20} className="text-emerald-400" /> Conciliación #{selectedMatch.purchase.invoiceNumber}
                                 </h2>
                                 <p className="mt-1 text-sm text-slate-400">
                                     {selectedMatch.purchase.supplier.name}{selectedMatch.purchase.purchaseOrder ? ` · ${selectedMatch.purchase.purchaseOrder.orderNumber}` : ''}
                                 </p>
                             </div>
-                            <button type="button" onClick={() => setSelectedMatch(null)} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Cerrar detalle de conciliación"><X size={18} /></button>
+                            <button type="button" onClick={() => setSelectedMatch(null)} className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-slate-400 hover:bg-slate-800 hover:text-white" aria-label="Cerrar detalle de conciliación"><X size={18} /></button>
                         </div>
 
                         <div className="space-y-5 p-5">
@@ -2413,9 +2118,9 @@ export default function Purchases() {
                                 {selectedMatch.purchase.paymentHold ? 'Pago retenido' : 'Pago liberado'}
                             </p>
                             <div className="flex gap-2">
-                                <button type="button" onClick={() => setSelectedMatch(null)} className="rounded-lg border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800">Cerrar</button>
+                                <button type="button" onClick={() => setSelectedMatch(null)} className="nx-fluid-press min-h-11 rounded-control border border-slate-600 px-4 py-2 text-sm text-slate-200 hover:bg-slate-800">Cerrar</button>
                                 {canResolveMatches && selectedMatch.purchase.matchStatus === 'EXCEPTION' && (
-                                    <button type="button" onClick={() => openMatchResolution(selectedMatch.purchase)} className="rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-500">Resolver diferencia</button>
+                                    <button type="button" onClick={() => openMatchResolution(selectedMatch.purchase)} className="nx-fluid-press min-h-11 rounded-control bg-brand px-4 py-2 text-sm font-semibold text-brand-on hover:bg-brand-hover">Resolver diferencia</button>
                                 )}
                             </div>
                         </div>
@@ -2425,13 +2130,13 @@ export default function Purchases() {
 
             {matchResolution && (
                 <div className="fixed inset-0 z-modal flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm" onClick={closeMatchResolution}>
-                    <div role="dialog" aria-modal="true" aria-labelledby="match-resolution-title" aria-describedby="match-resolution-description" aria-busy={resolvingMatch} className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-700 bg-slate-900 shadow-2xl" onClick={event => event.stopPropagation()}>
+                    <div role="dialog" aria-modal="true" aria-labelledby="match-resolution-title" aria-describedby="match-resolution-description" aria-busy={resolvingMatch} className="nx-dark-context nx-ticket-surface max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-card border shadow-2xl" onClick={event => event.stopPropagation()}>
                         <div className="flex items-start justify-between gap-3 border-b border-slate-700 px-5 py-4">
                             <div>
                                 <h2 id="match-resolution-title" className="font-bold text-white">Resolver diferencia</h2>
                                 <p className="mt-1 text-sm text-slate-400">Factura #{matchResolution.invoiceNumber}</p>
                             </div>
-                            <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 disabled:opacity-50" aria-label="Cancelar resolución"><X size={18} /></button>
+                            <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-slate-400 hover:bg-slate-800 disabled:opacity-50" aria-label="Cancelar resolución"><X size={18} /></button>
                         </div>
                         <div className="space-y-4 p-5">
                             <p id="match-resolution-description" className="text-sm leading-6 text-slate-300">
@@ -2449,7 +2154,7 @@ export default function Purchases() {
                                         setMatchResolutionError('');
                                     }}
                                     placeholder="Ej: El proveedor notificó un ajuste de precio aprobado por gerencia…"
-                                    className="w-full resize-y rounded-xl border border-slate-600 bg-slate-800 px-3 py-2.5 font-normal text-white outline-none focus:border-orange-500"
+                                    className="w-full resize-y rounded-control border px-3 py-2.5 font-normal outline-none focus:border-emerald-500 bg-surface-900 text-slate-100 nx-form-field"
                                 />
                             </label>
                             <p className="text-right text-xs text-slate-500">{matchResolution.reason.length}/1000</p>
@@ -2458,8 +2163,8 @@ export default function Purchases() {
                             )}
                         </div>
                         <div className="flex justify-end gap-3 border-t border-slate-700 px-5 py-4">
-                            <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="rounded-lg border border-slate-600 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">Volver</button>
-                            <button type="button" onClick={() => void resolveMatch()} disabled={resolvingMatch} className="inline-flex min-w-36 items-center justify-center gap-2 rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-orange-500 disabled:cursor-wait disabled:opacity-60">
+                            <button type="button" onClick={closeMatchResolution} disabled={resolvingMatch} className="nx-fluid-press min-h-11 rounded-control border border-slate-600 px-4 py-2.5 text-sm text-slate-200 hover:bg-slate-800 disabled:opacity-50">Volver</button>
+                            <button type="button" onClick={() => void resolveMatch()} disabled={resolvingMatch} className="nx-fluid-press inline-flex min-h-11 min-w-36 items-center justify-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-wait disabled:opacity-60">
                                 {resolvingMatch && <Loader2 size={16} className="animate-spin" />}
                                 {resolvingMatch ? 'Confirmando…' : 'Resolver y liberar'}
                             </button>
@@ -2482,7 +2187,7 @@ export default function Purchases() {
                         aria-labelledby="confirm-payment-title"
                         aria-describedby="confirm-payment-description"
                         aria-busy={paying}
-                        className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-700 bg-slate-800 shadow-2xl"
+                        className="nx-dark-context nx-ticket-surface max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-card border shadow-2xl"
                         onClick={(event) => event.stopPropagation()}
                     >
                         <div className="flex items-start justify-between border-b border-slate-700 px-5 py-4">
@@ -2499,7 +2204,7 @@ export default function Purchases() {
                                 type="button"
                                 onClick={closePaymentDialog}
                                 disabled={paying}
-                                className="rounded-lg p-2 text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
+                                className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-slate-400 hover:bg-slate-700 hover:text-white disabled:opacity-50"
                                 aria-label="Cancelar pago"
                             >
                                 <X size={18} />
@@ -2527,11 +2232,12 @@ export default function Purchases() {
                                         placeholder="0.00"
                                         value={supplierPaymentForm.amount}
                                         onChange={(event) => {
-                                            setSupplierPaymentForm(current => ({ ...current, amount: sanitizeDecimalInput(event.target.value) }));
+                                            setSupplierPaymentForm(current => ({ ...current, amount: normalizeBodegaDecimalInput(event.target.value) }));
                                             setSupplierPaymentError('');
                                         }}
-                                        className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                        className="w-full rounded-xl border px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500 bg-surface-900 nx-form-field"
                                     />
+                                    <span className="block text-xs text-slate-500">{BODEGA_DECIMAL_HINT}</span>
                                 </label>
                                 <label className="space-y-1.5 text-sm text-slate-300">
                                     Método
@@ -2539,7 +2245,7 @@ export default function Purchases() {
                                         aria-label="Método del pago"
                                         value={supplierPaymentForm.method}
                                         onChange={(event) => setSupplierPaymentForm(current => ({ ...current, method: event.target.value as SupplierPaymentMethod }))}
-                                        className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                        className="w-full rounded-xl border px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500 bg-surface-900 nx-form-field"
                                     >
                                         <option value="CASH">Efectivo</option>
                                         <option value="TRANSFER">Transferencia</option>
@@ -2555,7 +2261,7 @@ export default function Purchases() {
                                     value={supplierPaymentForm.reference}
                                     onChange={(event) => setSupplierPaymentForm(current => ({ ...current, reference: event.target.value }))}
                                     placeholder="Número de transferencia o comprobante"
-                                    className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                    className="w-full rounded-xl border px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500 bg-surface-900 nx-form-field"
                                 />
                             </label>
                             <label className="block space-y-1.5 text-sm text-slate-300">
@@ -2565,7 +2271,7 @@ export default function Purchases() {
                                     rows={2}
                                     value={supplierPaymentForm.notes}
                                     onChange={(event) => setSupplierPaymentForm(current => ({ ...current, notes: event.target.value }))}
-                                    className="w-full rounded-xl border border-slate-600 bg-slate-900 px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500"
+                                    className="w-full rounded-xl border px-3 py-2.5 text-slate-100 outline-none focus:border-emerald-500 bg-surface-900 nx-form-field"
                                 />
                             </label>
                             <p className="text-xs text-slate-500">
@@ -2584,7 +2290,7 @@ export default function Purchases() {
                                 type="button"
                                 onClick={closePaymentDialog}
                                 disabled={paying}
-                                className="rounded-lg border border-slate-600 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
+                                className="nx-fluid-press min-h-11 rounded-control border border-slate-600 px-4 py-2.5 text-sm font-medium text-slate-200 hover:bg-slate-700 disabled:opacity-50"
                             >
                                 Cancelar
                             </button>
@@ -2592,7 +2298,7 @@ export default function Purchases() {
                                 type="button"
                                 onClick={() => void confirmPayment(true)}
                                 disabled={paying}
-                                className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/15 disabled:cursor-wait disabled:opacity-60"
+                                className="nx-fluid-press min-h-11 rounded-control border border-emerald-500/40 bg-emerald-500/10 px-4 py-2.5 text-sm font-semibold text-emerald-200 hover:bg-emerald-500/15 disabled:cursor-wait disabled:opacity-60"
                             >
                                 Liquidar todo
                             </button>
@@ -2601,7 +2307,7 @@ export default function Purchases() {
                                 onClick={() => void confirmPayment(false)}
                                 disabled={paying}
                                 aria-busy={paying}
-                                className="flex min-w-32 items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-emerald-500 disabled:cursor-wait disabled:opacity-60"
+                                className="nx-fluid-press flex min-h-11 min-w-32 items-center justify-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-wait disabled:opacity-60"
                             >
                                 {paying && <span className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />}
                                 {paying ? 'Registrando…' : 'Registrar abono'}
@@ -2616,67 +2322,67 @@ export default function Purchases() {
                ========================================== */}
             {showInvoiceModal && selectedPurchase && (
                 <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowInvoiceModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                    <div className="nx-light-context nx-canvas-card max-h-[90dvh] w-full max-w-3xl overflow-hidden shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Header */}
-                        <div className="bg-gradient-to-r from-orange-900/40 to-red-900/20 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                        <div className="flex items-center justify-between border-b border-slate-200 bg-slate-50 px-6 py-4">
                             <div>
-                                <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                    <FileText size={20} className="text-orange-400" />
+                                <h2 className="nx-module-header flex items-center gap-2 text-xl font-semibold text-slate-950">
+                                    <FileText size={20} className="text-emerald-600" />
                                     Factura de Compra #{selectedPurchase.invoiceNumber}
                                 </h2>
-                                <p className="text-sm text-slate-400 mt-1">
+                                <p className="mt-1 text-sm text-slate-500">
                                     {selectedPurchase.supplier.name} | {formatCalendarDate(selectedPurchase.date)}
                                 </p>
                             </div>
-                            <button onClick={() => setShowInvoiceModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
+                            <button onClick={() => setShowInvoiceModal(false)} className="nx-fluid-press inline-flex min-h-11 min-w-11 items-center justify-center rounded-control text-slate-500 hover:bg-slate-100 hover:text-slate-950" aria-label="Cerrar factura">
                                 <X size={20} />
                             </button>
                         </div>
 
                         {/* Invoice Preview */}
-                        <div className="p-6 overflow-y-auto max-h-[calc(90vh-200px)]">
+                        <div className="p-6 overflow-y-auto max-h-[calc(90dvh-200px)]">
                             {/* Company + Supplier Info */}
-                            <div className="grid grid-cols-2 gap-6 mb-6">
+                            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6">
                                 <div>
                                     <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Comprador</p>
-                                    <p className="text-white font-bold text-lg">{tenantName}</p>
+                                    <p className="text-lg font-semibold text-slate-950">{tenantName}</p>
                                 </div>
-                                <div className="text-right">
+                                <div className="sm:text-right">
                                     <p className="text-xs text-slate-500 uppercase tracking-wider mb-1">Proveedor</p>
-                                    <p className="text-white font-bold text-lg">{selectedPurchase.supplier.name}</p>
+                                    <p className="text-lg font-semibold text-slate-950">{selectedPurchase.supplier.name}</p>
                                 </div>
                             </div>
 
                             {/* Invoice Details */}
-                            <div className="grid grid-cols-4 gap-4 mb-6 bg-slate-900/60 rounded-lg p-4">
+                            <div className="mb-6 grid grid-cols-2 gap-4 rounded-control border border-slate-200 bg-slate-50 p-4 sm:grid-cols-4">
                                 <div>
                                     <p className="text-xs text-slate-500">Factura #</p>
-                                    <p className="text-white font-mono font-bold">{selectedPurchase.invoiceNumber}</p>
+                                    <p className="font-mono font-semibold text-slate-950">{selectedPurchase.invoiceNumber}</p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500">Fecha</p>
-                                    <p className="text-white">{formatCalendarDate(selectedPurchase.date)}</p>
+                                    <p className="text-slate-900">{formatCalendarDate(selectedPurchase.date)}</p>
                                 </div>
                                 <div>
-                                    <p className="text-xs text-slate-500">Metodo</p>
-                                    <p className={selectedPurchase.paymentMethod === 'CASH' ? 'text-emerald-400' : selectedPurchase.paymentMethod === 'NORTEX_CAPITAL' ? 'text-sky-400' : 'text-amber-400'}>
+                                    <p className="text-xs text-slate-500">Método</p>
+                                    <p className={selectedPurchase.paymentMethod === 'CASH' ? 'text-emerald-700' : selectedPurchase.paymentMethod === 'NORTEX_CAPITAL' ? 'text-sky-700' : 'text-amber-700'}>
                                         {purchaseMethodLabel(selectedPurchase.paymentMethod)}
                                     </p>
                                 </div>
                                 <div>
                                     <p className="text-xs text-slate-500">Estado</p>
                                     <span className={`text-xs px-2 py-1 rounded-full font-bold ${selectedPurchase.status === 'COMPLETED'
-                                        ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700'
+                                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
                                         : selectedPurchase.status === 'PARTIALLY_PAID'
-                                            ? 'bg-sky-900/40 text-sky-300 border border-sky-700'
-                                        : 'bg-red-900/40 text-red-300 border border-red-700'}`}>
+                                            ? 'bg-sky-50 text-sky-700 border border-sky-200'
+                                        : 'bg-red-50 text-red-700 border border-red-200'}`}>
                                         {purchaseStatusLabel(selectedPurchase.status).toUpperCase()}
                                     </span>
                                 </div>
                             </div>
 
                             <div className="mb-6 flex flex-wrap items-center gap-2">
-                                <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs text-slate-300">
+                                <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600">
                                     Documento: {selectedPurchase.documentStatus === 'POSTED' ? 'Contabilizado' : selectedPurchase.documentStatus || 'Histórico'}
                                 </span>
                                 {selectedPurchase.matchStatus && (
@@ -2685,28 +2391,29 @@ export default function Purchases() {
                                     </span>
                                 )}
                                 {selectedPurchase.paymentHold && (
-                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-700 bg-amber-950/40 px-2.5 py-1 text-xs font-semibold text-amber-300">
+                                    <span className="inline-flex items-center gap-1 rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700">
                                         <LockKeyhole size={12} /> Pago retenido
                                     </span>
                                 )}
                                 {selectedPurchase.postingDate && selectedPurchase.postingDate !== selectedPurchase.date && (
-                                    <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-1 text-xs text-slate-300">
+                                    <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600">
                                         Fecha contable: {formatCalendarDate(selectedPurchase.postingDate)}
                                     </span>
                                 )}
                             </div>
 
                             {selectedPurchase.dueDate && (
-                                <div className="bg-amber-950/30 border border-amber-800/50 rounded-lg p-3 mb-6 flex items-center gap-2">
-                                    <Calendar size={16} className="text-amber-400" />
-                                    <span className="text-sm text-amber-300">Vencimiento: {formatCalendarDate(selectedPurchase.dueDate)}</span>
+                                <div className="mb-6 flex items-center gap-2 rounded-control border border-amber-200 bg-amber-50 p-3">
+                                    <Calendar size={16} className="text-amber-600" />
+                                    <span className="text-sm text-amber-700">Vencimiento: {formatCalendarDate(selectedPurchase.dueDate)}</span>
                                 </div>
                             )}
 
                             {/* Items Table */}
-                            <table className="w-full mb-6">
+                            <div className="mb-6 overflow-x-auto rounded-control border border-slate-200">
+                            <table className="min-w-[600px] w-full">
                                 <thead>
-                                    <tr className="border-b-2 border-slate-600">
+                                    <tr className="border-b-2 border-slate-200 bg-slate-50">
                                         <th className="text-left py-2 px-3 text-xs text-slate-400 uppercase">Producto</th>
                                         <th className="text-center py-2 px-3 text-xs text-slate-400 uppercase">Cantidad</th>
                                         <th className="text-right py-2 px-3 text-xs text-slate-400 uppercase">Costo Unit.</th>
@@ -2715,34 +2422,35 @@ export default function Purchases() {
                                 </thead>
                                 <tbody>
                                     {selectedPurchase.items.map((item, idx) => (
-                                        <tr key={idx} className="border-b border-slate-700/50">
-                                            <td className="py-3 px-3 text-white">{item.productName}</td>
-                                            <td className="py-3 px-3 text-center text-slate-300">
+                                        <tr key={idx} className="border-b border-slate-100">
+                                            <td className="px-3 py-3 text-slate-950">{item.productName}</td>
+                                            <td className="px-3 py-3 text-center text-slate-700">
                                                 {formatQuantityValue(exactPurchaseQuantity(item))} {item.unit || 'unidad'}
                                             </td>
-                                            <td className="py-3 px-3 text-right text-slate-400">{formatCurrency(parseFloat(item.unitCost as any))}</td>
-                                            <td className="py-3 px-3 text-right text-white font-bold">{formatCurrency(parseFloat(item.totalCost as any))}</td>
+                                            <td className="px-3 py-3 text-right text-slate-600">{formatCurrency(parseFloat(item.unitCost as any))}</td>
+                                            <td className="px-3 py-3 text-right font-semibold text-slate-950">{formatCurrency(parseFloat(item.totalCost as any))}</td>
                                         </tr>
                                     ))}
                                 </tbody>
                             </table>
+                            </div>
 
                             {/* Totals */}
-                            <div className="border-t-2 border-slate-600 pt-4 space-y-2">
+                            <div className="space-y-2 border-t-2 border-slate-200 pt-4">
                                 <div className="flex justify-between text-sm">
                                     <span className="text-slate-400">Subtotal</span>
-                                    <span className="text-white">{formatCurrency(parseFloat(selectedPurchase.subtotal as any))}</span>
+                                    <span className="text-slate-950">{formatCurrency(parseFloat(selectedPurchase.subtotal as any))}</span>
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-slate-400">IVA (15%)</span>
-                                    <span className="text-white">{formatCurrency(parseFloat(selectedPurchase.tax as any))}</span>
+                                    <span className="text-slate-950">{formatCurrency(parseFloat(selectedPurchase.tax as any))}</span>
                                 </div>
-                                <div className="flex justify-between text-xl font-bold border-t border-slate-600 pt-3">
-                                    <span className="text-white">TOTAL</span>
-                                    <span className="text-emerald-400">{formatCurrency(parseFloat(selectedPurchase.total as any))}</span>
+                                <div className="flex justify-between border-t border-slate-200 pt-3 text-xl font-semibold">
+                                    <span className="text-slate-950">TOTAL</span>
+                                    <span className="text-emerald-700">{formatCurrency(parseFloat(selectedPurchase.total as any))}</span>
                                 </div>
                                 {!isNortexCapitalPurchase(selectedPurchase) && effectivePurchaseBalance(selectedPurchase).greaterThan(0) && (
-                                    <div className="flex justify-between text-base font-bold text-amber-300">
+                                    <div className="flex justify-between text-base font-semibold text-amber-700">
                                         <span>SALDO PENDIENTE</span>
                                         <span>{formatCurrency(effectivePurchaseBalance(selectedPurchase))}</span>
                                     </div>
@@ -2750,26 +2458,26 @@ export default function Purchases() {
                             </div>
 
                             {selectedPurchase.notes && (
-                                <div className="mt-4 bg-slate-900/60 rounded-lg p-3">
+                                <div className="mt-4 rounded-control bg-slate-50 p-3">
                                     <p className="text-xs text-slate-500 mb-1">Notas:</p>
-                                    <p className="text-sm text-slate-300">{selectedPurchase.notes}</p>
+                                    <p className="text-sm text-slate-700">{selectedPurchase.notes}</p>
                                 </div>
                             )}
                         </div>
 
                         {/* Footer - Print Buttons */}
-                        <div className="bg-slate-900/80 px-6 py-4 border-t border-slate-700 flex items-center justify-between">
+                        <div className="flex flex-col items-stretch justify-between gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4 sm:flex-row sm:items-center">
                             <p className="text-xs text-slate-500">Generado por NORTEX ERP</p>
-                            <div className="flex gap-3">
+                            <div className="flex flex-wrap gap-3">
                                 <button
                                     onClick={() => printInvoice('ticket')}
-                                    className="flex items-center gap-2 px-4 py-2.5 bg-slate-700 hover:bg-slate-600 rounded-lg text-white font-medium text-sm transition-colors"
+                                    className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-100"
                                 >
                                     <Printer size={16} /> Ticket 80mm
                                 </button>
                                 <button
                                     onClick={() => printInvoice('a4')}
-                                    className="flex items-center gap-2 px-4 py-2.5 bg-orange-600 hover:bg-orange-700 rounded-lg text-white font-bold text-sm transition-colors"
+                                    className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover"
                                 >
                                     <Printer size={16} /> Factura A4
                                 </button>
@@ -2778,7 +2486,7 @@ export default function Purchases() {
                                         type="button"
                                         onClick={() => handleOpenRetention(selectedPurchase.id)}
                                         disabled={openingRetentionId !== null}
-                                        className="flex items-center gap-2 px-4 py-2.5 bg-violet-700 hover:bg-violet-600 rounded-lg text-white font-bold text-sm transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                                        className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-60"
                                     >
                                         {openingRetentionId === selectedPurchase.id
                                             ? <Loader2 size={16} className="animate-spin" />

@@ -182,7 +182,8 @@ describe('guardas estructurales de devoluciones', () => {
         expect(accountingBlock).toContain('exemptTotal: resolved.exemptTotal');
         expect(accountingBlock).toContain('creditReduction,');
         expect(accountingBlock).toContain('settledRefund,');
-        expect(accountingBlock).toContain("refundMethod: refundMethod ?? 'CASH'");
+        expect(accountingBlock).toContain("refundMethod: resolution === 'REFUND' ? (refundMethod ?? 'CASH') : 'STORE_CREDIT'");
+        expect(accountingBlock).toContain("refundPending: resolution === 'REFUND'");
         expect(auditIndex).toBeGreaterThan(accountingIndex);
         expect(returnRoute.slice(auditIndex)).toContain('cashMovementId,');
         expect(returnRoute.slice(auditIndex)).toContain('refundShiftId,');

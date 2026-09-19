@@ -1,5 +1,17 @@
 # Auditoría UX + Retención + Seguimiento — Agosto 2026
 
+> **Revalidación 2026-09-04:** el cuerpo conserva el análisis histórico de su fecha.
+> La evidencia actual está en [AUDITORIA_GENERAL_2026-09-04.md](AUDITORIA_GENERAL_2026-09-04.md)
+> y la prioridad en [PLAN_TRANSFORMACION_TOTAL_2026.md](PLAN_TRANSFORMACION_TOTAL_2026.md).
+> No ejecutar una receta antigua sin contrastarla con código, pruebas y reglas de integridad.
+> Estado local, staging y producción se registran por separado.
+
+> Cambios locales ya presentes: trial 30 días/precio $20, contacto/lifecycle,
+> lista de dormidos/export, navegación integrada y PWA con inicio /app/pos.
+> La suite local de esta auditoría pasó con omisiones documentadas; no se revalidó
+> cada hallazgo UX ni el funcionamiento en dispositivos/producción. Conservar
+> los casos de regresión, no volver a implementar por defecto todos los pendientes de agosto.
+
 **Pregunta del CEO:** *"Llega gente, solo se registra y se va, y no hay forma de
 seguimiento. ¿Dónde estoy fallando en experiencia de usuario? ¿Mi sitio está mal?"*
 

@@ -60,6 +60,7 @@ export interface RequestedReturnItem {
 }
 
 export interface ReturnIdempotencyPayload {
+    correctionRequestId?: string;
     saleId: string;
     items: readonly RequestedReturnItem[];
     reason: string;
@@ -471,8 +472,10 @@ export const buildReturnPayloadHash = (payload: ReturnIdempotencyPayload): strin
             return leftKey.localeCompare(rightKey);
         });
 
+    const correctionRequestId = payload.correctionRequestId?.trim() || null;
     const canonicalPayload = JSON.stringify({
-        version: 1,
+        version: correctionRequestId ? 2 : 1,
+        ...(correctionRequestId ? { correctionRequestId } : {}),
         saleId: payload.saleId.trim(),
         items: canonicalItems,
         reason: payload.reason.trim(),

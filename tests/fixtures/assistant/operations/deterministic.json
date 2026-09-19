@@ -1,0 +1,2351 @@
+{
+  "version": 1,
+  "humanReview": "pending",
+  "scope": "Real service functions with synthetic repository boundaries; does not certify SQL, provider quality or production.",
+  "cases": [
+    {
+      "id": "reposicion-ferreteria-01-velocidad-neta",
+      "target": "inventory",
+      "input": {},
+      "expected": {
+        "status": "ok",
+        "rows.0.netBaseQuantity": "50",
+        "rows.0.dailyAverage": "1.6667",
+        "rows.0.suggestedQuantity": "70",
+        "rows.0.estimatedDaysRemaining": "6"
+      },
+      "tags": [
+        "decimal",
+        "returns",
+        "pending-orders"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-02-fraccion-redondeo",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "saleMode": "MEASURED",
+          "quantityStep": ".25",
+          "physicalStock": "2",
+          "requiresBatchTracking": false,
+          "maxStock": "12.1",
+          "pendingQuantity": "0"
+        }
+      },
+      "expected": {
+        "rows.0.suggestedQuantity": "10.25"
+      },
+      "tags": [
+        "fractions"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-03-sin-ventas",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "soldQuantity": "0",
+          "returnedQuantity": "0",
+          "restockedQuantity": "0",
+          "requiresBatchTracking": false,
+          "maxStock": "0",
+          "physicalStock": "2",
+          "pendingQuantity": "0"
+        }
+      },
+      "expected": {
+        "rows.0.dailyAverage": "0",
+        "rows.0.estimatedDaysRemaining": null,
+        "rows.0.suggestedQuantity": "3"
+      },
+      "tags": [
+        "zero"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-04-devolucion-sin-foto",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "unknownRows": "1"
+        }
+      },
+      "expected": {
+        "status": "partial",
+        "rows.0.netBaseQuantity": null,
+        "rows.0.suggestedQuantity": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-05-retornos-mayores-ventas",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "returnedQuantity": "70",
+          "restockedQuantity": "70"
+        }
+      },
+      "expected": {
+        "rows.0.netBaseQuantity": "-10",
+        "rows.0.dailyAverage": null,
+        "rows.0.suggestedQuantity": null
+      },
+      "tags": [
+        "negative"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-06-bodega-sin-costos",
+      "target": "inventory",
+      "input": {
+        "role": "BODEGUERO"
+      },
+      "expected": {
+        "absent": [
+          "rows.0.cost"
+        ],
+        "status": "ok"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-07-lotes-no-concilian",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "requiresBatchTracking": true,
+          "batchStock": "9"
+        }
+      },
+      "expected": {
+        "rows.0.sellableStock": null,
+        "rows.0.suggestedQuantity": null,
+        "status": "partial"
+      },
+      "tags": [
+        "missing-data",
+        "batches"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-08-bodega-ajena",
+      "target": "inventory",
+      "input": {
+        "query": {
+          "warehouseId": "foreign-warehouse"
+        }
+      },
+      "expected": {
+        "error": "ASSISTANT_WAREHOUSE_UNAVAILABLE"
+      },
+      "tags": [
+        "tenant"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-09-caja-no-inventario",
+      "target": "inventory",
+      "input": {
+        "role": "CASHIER"
+      },
+      "expected": {
+        "error": "ASSISTANT_FORBIDDEN"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-10-dias-completos-managua",
+      "target": "inventory",
+      "input": {
+        "now": "2026-09-01T03:00:00Z"
+      },
+      "expected": {
+        "period.startDate": "2026-08-01",
+        "period.endDate": "2026-08-30",
+        "period.cutoff": "2026-08-31T06:00:00.000Z"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-11-no-dia-parcial",
+      "target": "inventory",
+      "input": {
+        "query": {
+          "startDate": "2026-09-05",
+          "endDate": "2026-09-05"
+        }
+      },
+      "expected": {
+        "error": "ASSISTANT_INVALID_PERIOD"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-12-tenant-jwt-ajeno",
+      "target": "inventory",
+      "input": {
+        "tenantId": "foreign-tenant"
+      },
+      "expected": {
+        "error": "SESSION_REVOKED"
+      },
+      "tags": [
+        "tenant"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-13-borrador-no-recibe",
+      "target": "action",
+      "input": {
+        "mode": "prepare"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "proposalCount": 1,
+        "domainWrites": 0,
+        "draft.items.0.quantity": "2"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-14-reintento-mismo-borrador",
+      "target": "action",
+      "input": {
+        "mode": "replay"
+      },
+      "expected": {
+        "sameId": true,
+        "proposalCount": 1,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-15-clave-con-contenido-distinto",
+      "target": "action",
+      "input": {
+        "mode": "conflict"
+      },
+      "expected": {
+        "error": "ACTION_IDEMPOTENCY_CONFLICT"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-16-historial-otro-negocio",
+      "target": "action",
+      "input": {
+        "mode": "foreign"
+      },
+      "expected": {
+        "error": "ACTION_NOT_FOUND"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-17-version-manipulada",
+      "target": "action",
+      "input": {
+        "mode": "wrong-version"
+      },
+      "expected": {
+        "error": "ACTION_CHANGED"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-18-revision-vencida",
+      "target": "action",
+      "input": {
+        "mode": "expired"
+      },
+      "expected": {
+        "error": "ACTION_CHANGED"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-19-datos-incompletos-bloquean",
+      "target": "action",
+      "input": {
+        "mode": "missing-preview"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "hasIssues": true,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-ferreteria-20-bodega-no-ordena",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "role": "BODEGUERO"
+      },
+      "expected": {
+        "error": "ACTION_FORBIDDEN"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-01-vence-hoy-vendible",
+      "target": "expiry",
+      "input": {},
+      "expected": {
+        "rows.0.state": "EXPIRING",
+        "rows.0.sellableStock": "10",
+        "rows.0.allowedActions": [
+          "BATCH_WRITEOFF",
+          "SUPPLIER_RETURN"
+        ]
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-02-vencido-ayer",
+      "target": "expiry",
+      "input": {
+        "row": {
+          "expiryDate": "2026-09-04"
+        }
+      },
+      "expected": {
+        "rows.0.state": "EXPIRED",
+        "rows.0.sellableStock": "0"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-03-medianoche-managua",
+      "target": "expiry",
+      "input": {
+        "now": "2026-09-05T03:00:00Z",
+        "row": {
+          "expiryDate": "2026-09-04"
+        }
+      },
+      "expected": {
+        "period.startDate": "2026-09-04",
+        "rows.0.state": "EXPIRING"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-04-lote-bodega-conciliado",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "warehouseId": "warehouse-a"
+        }
+      },
+      "expected": {
+        "rows.0.physicalStock": "4",
+        "rows.0.sellableStock": "4",
+        "status": "ok"
+      },
+      "tags": [
+        "warehouse"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-05-ledger-apagado",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "warehouseId": "warehouse-a"
+        },
+        "row": {
+          "batchWarehouseLedgerMode": "OFF"
+        }
+      },
+      "expected": {
+        "rows.0.sellableStock": null,
+        "rows.0.allowedActions": []
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-06-bodega-no-concilia",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "warehouseId": "warehouse-a"
+        },
+        "row": {
+          "warehouseBatchStock": "9"
+        }
+      },
+      "expected": {
+        "rows.0.status": "unavailable",
+        "rows.0.allowedActions": []
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-07-lotes-no-concilian",
+      "target": "expiry",
+      "input": {
+        "row": {
+          "allBatchStock": "14"
+        }
+      },
+      "expected": {
+        "status": "partial",
+        "rows.0.sellableStock": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-08-consulta-sin-permiso-accion",
+      "target": "expiry",
+      "input": {
+        "role": "VIEWER"
+      },
+      "expected": {
+        "rows.0.allowedActions": [],
+        "rows.0.sellableStock": "10"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-09-stock-ausente",
+      "target": "expiry",
+      "input": {
+        "row": {
+          "physicalStock": null
+        }
+      },
+      "expected": {
+        "rows.0.status": "unavailable",
+        "rows.0.sellableStock": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-10-fallo-no-significa-cero",
+      "target": "expiry",
+      "input": {
+        "failQuery": true
+      },
+      "expected": {
+        "status": "unavailable",
+        "rows": []
+      },
+      "tags": [
+        "failure"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-11-caja-no-lotes",
+      "target": "expiry",
+      "input": {
+        "role": "CASHIER"
+      },
+      "expected": {
+        "error": "ASSISTANT_FORBIDDEN"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-12-no-inventa-stock-historico",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "cutoff": "2026-09-04T18:25:00Z"
+        }
+      },
+      "expected": {
+        "error": "ASSISTANT_CURRENT_STOCK_ONLY"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-13-modelo-no-confirma-retiro",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "physicalRemovalConfirmed": true
+      },
+      "expected": {
+        "status": "DRAFT",
+        "draft.physicalRemovalConfirmed": false,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-14-reintento-baja",
+      "target": "action",
+      "input": {
+        "mode": "replay"
+      },
+      "expected": {
+        "sameId": true,
+        "proposalCount": 1,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-15-retiro-sin-datos-bloqueado",
+      "target": "action",
+      "input": {
+        "mode": "missing-preview"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "hasIssues": true,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-16-historial-otro-usuario",
+      "target": "action",
+      "input": {
+        "mode": "foreign-user"
+      },
+      "expected": {
+        "error": "ACTION_NOT_FOUND"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-17-editar-invalida-revision",
+      "target": "action",
+      "input": {
+        "mode": "revise"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "version": 2,
+        "preview": null,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-18-baja-vencida",
+      "target": "action",
+      "input": {
+        "mode": "expired"
+      },
+      "expected": {
+        "error": "ACTION_CHANGED"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-19-bodega-no-da-baja",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "role": "BODEGUERO"
+      },
+      "expected": {
+        "error": "ACTION_FORBIDDEN"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-ferreteria-20-modelo-no-certifica-entrega",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "kind": "SUPPLIER_RETURN",
+        "physicalShipmentConfirmed": true
+      },
+      "expected": {
+        "draft.physicalShipmentConfirmed": false,
+        "status": "DRAFT",
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-01-ventas-no-son-utilidad",
+      "target": "health",
+      "input": {},
+      "expected": {
+        "metric.netSalesTotal": "402.5",
+        "metric.netSalesExVat": "350",
+        "metric.grossMargin": "140",
+        "metric.expensesTotal": "15"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-02-iva-historico-ausente",
+      "target": "health",
+      "input": {
+        "row": {
+          "unknownVat": "1"
+        }
+      },
+      "expected": {
+        "metric.netSalesExVat": null,
+        "metric.grossMargin": null,
+        "status": "partial"
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-03-costo-devolucion-ausente",
+      "target": "health",
+      "input": {
+        "row": {
+          "unknownReturnCost": "1"
+        }
+      },
+      "expected": {
+        "metric.netCostOfGoods": null,
+        "metric.grossMargin": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-04-caja-solo-su-operacion",
+      "target": "health",
+      "input": {
+        "role": "CASHIER"
+      },
+      "expected": {
+        "absent": [
+          "metric.grossMargin",
+          "metric.netCostOfGoods",
+          "metric.expensesTotal"
+        ],
+        "metric.salesTotal": "460"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-05-preparar-fechas-managua",
+      "target": "promotion-prepare",
+      "input": {},
+      "expected": {
+        "draft.startsAt": "2026-09-05T14:00:00.000Z",
+        "draft.endsAt": "2026-09-06T00:00:00.000Z",
+        "preview.effects.0.value": "Sin movimiento"
+      },
+      "tags": [
+        "action",
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-06-gerente-no-publica",
+      "target": "promotion-prepare",
+      "input": {
+        "role": "MANAGER"
+      },
+      "expected": {
+        "error": "PROMOTION_FORBIDDEN"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-07-producto-otro-negocio",
+      "target": "promotion-prepare",
+      "input": {
+        "foreignProduct": true
+      },
+      "expected": {
+        "error": "PROMOTION_PRODUCT_NOT_FOUND"
+      },
+      "tags": [
+        "tenant"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-08-instruccion-no-cambia-tenant",
+      "target": "promotion-prepare",
+      "input": {
+        "draft": {
+          "tenantId": "foreign",
+          "sql": "DROP TABLE Product"
+        }
+      },
+      "expected": {
+        "error": "PROMOTION_INVALID_INPUT"
+      },
+      "tags": [
+        "adversarial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-09-promocion-caducada",
+      "target": "promotion-prepare",
+      "input": {
+        "draft": {
+          "endsAt": "2026-09-05T09:00"
+        }
+      },
+      "expected": {
+        "error": "PROMOTION_INVALID_INPUT"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-10-porcentaje-no-admitido",
+      "target": "promotion-prepare",
+      "input": {
+        "draft": {
+          "percent": "100"
+        }
+      },
+      "expected": {
+        "error": "PROMOTION_INVALID_INPUT"
+      },
+      "tags": [
+        "validation"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-11-precio-autoritativo",
+      "target": "promotion-price",
+      "input": {},
+      "expected": {
+        "unitPrice": "103.5",
+        "promotionSnapshot.percent": "10"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-12-descuento-global-incompatible",
+      "target": "promotion-price",
+      "input": {
+        "globalDiscount": "5"
+      },
+      "expected": {
+        "error": "PROMOTION_DISCOUNT_CONFLICT"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-13-descuento-linea-incompatible",
+      "target": "promotion-price",
+      "input": {
+        "lineDiscount": "5"
+      },
+      "expected": {
+        "error": "PROMOTION_DISCOUNT_CONFLICT"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-14-precio-catalogo-cambiado",
+      "target": "promotion-price",
+      "input": {
+        "changedConfig": true
+      },
+      "expected": {
+        "unitPrice": "115",
+        "absent": [
+          "promotionSnapshot"
+        ]
+      },
+      "tags": [
+        "stale"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-15-cotizacion-no-acumula-descuento",
+      "target": "promotion-price",
+      "input": {
+        "quotationId": "quote-a"
+      },
+      "expected": {
+        "unitPrice": "115",
+        "absent": [
+          "promotionSnapshot"
+        ]
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-16-cobro-requiere-revision",
+      "target": "promotion-checkout",
+      "input": {
+        "noQuote": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_REQUIRED"
+      },
+      "tags": [
+        "confirmation"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-17-revision-cobro-caducada",
+      "target": "promotion-checkout",
+      "input": {
+        "expiredQuote": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_CHANGED"
+      },
+      "tags": [
+        "confirmation",
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-18-promocion-vence-al-cobrar",
+      "target": "promotion-checkout",
+      "input": {
+        "expiredPromotion": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_CHANGED"
+      },
+      "tags": [
+        "confirmation",
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-19-carrito-cambio-despues-revision",
+      "target": "promotion-checkout",
+      "input": {
+        "changedCart": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_CHANGED"
+      },
+      "tags": [
+        "confirmation",
+        "stale"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-ferreteria-20-total-revisado-con-impuestos",
+      "target": "promotion-checkout",
+      "input": {},
+      "expected": {
+        "total": "207.00",
+        "vat": "27.0000",
+        "exempt": "0.00",
+        "accepted": true
+      },
+      "tags": [
+        "financial",
+        "confirmation"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "ferreteria",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-01-velocidad-neta",
+      "target": "inventory",
+      "input": {},
+      "expected": {
+        "status": "ok",
+        "rows.0.netBaseQuantity": "50",
+        "rows.0.dailyAverage": "1.6667",
+        "rows.0.suggestedQuantity": "73",
+        "rows.0.estimatedDaysRemaining": "4.2"
+      },
+      "tags": [
+        "decimal",
+        "returns",
+        "pending-orders"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-02-fraccion-redondeo",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "saleMode": "MEASURED",
+          "quantityStep": ".25",
+          "physicalStock": "2",
+          "requiresBatchTracking": false,
+          "maxStock": "12.1",
+          "pendingQuantity": "0"
+        }
+      },
+      "expected": {
+        "rows.0.suggestedQuantity": "10.25"
+      },
+      "tags": [
+        "fractions"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-03-sin-ventas",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "soldQuantity": "0",
+          "returnedQuantity": "0",
+          "restockedQuantity": "0",
+          "requiresBatchTracking": false,
+          "maxStock": "0",
+          "physicalStock": "2",
+          "pendingQuantity": "0"
+        }
+      },
+      "expected": {
+        "rows.0.dailyAverage": "0",
+        "rows.0.estimatedDaysRemaining": null,
+        "rows.0.suggestedQuantity": "3"
+      },
+      "tags": [
+        "zero"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-04-devolucion-sin-foto",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "unknownRows": "1"
+        }
+      },
+      "expected": {
+        "status": "partial",
+        "rows.0.netBaseQuantity": null,
+        "rows.0.suggestedQuantity": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-05-retornos-mayores-ventas",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "returnedQuantity": "70",
+          "restockedQuantity": "70"
+        }
+      },
+      "expected": {
+        "rows.0.netBaseQuantity": "-10",
+        "rows.0.dailyAverage": null,
+        "rows.0.suggestedQuantity": null
+      },
+      "tags": [
+        "negative"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-06-bodega-sin-costos",
+      "target": "inventory",
+      "input": {
+        "role": "BODEGUERO"
+      },
+      "expected": {
+        "absent": [
+          "rows.0.cost"
+        ],
+        "status": "ok"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-07-lotes-no-concilian",
+      "target": "inventory",
+      "input": {
+        "row": {
+          "requiresBatchTracking": true,
+          "batchStock": "9"
+        }
+      },
+      "expected": {
+        "rows.0.sellableStock": null,
+        "rows.0.suggestedQuantity": null,
+        "status": "partial"
+      },
+      "tags": [
+        "missing-data",
+        "batches"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-08-bodega-ajena",
+      "target": "inventory",
+      "input": {
+        "query": {
+          "warehouseId": "foreign-warehouse"
+        }
+      },
+      "expected": {
+        "error": "ASSISTANT_WAREHOUSE_UNAVAILABLE"
+      },
+      "tags": [
+        "tenant"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-09-caja-no-inventario",
+      "target": "inventory",
+      "input": {
+        "role": "CASHIER"
+      },
+      "expected": {
+        "error": "ASSISTANT_FORBIDDEN"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-10-dias-completos-managua",
+      "target": "inventory",
+      "input": {
+        "now": "2026-09-01T03:00:00Z"
+      },
+      "expected": {
+        "period.startDate": "2026-08-01",
+        "period.endDate": "2026-08-30",
+        "period.cutoff": "2026-08-31T06:00:00.000Z"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-11-no-dia-parcial",
+      "target": "inventory",
+      "input": {
+        "query": {
+          "startDate": "2026-09-05",
+          "endDate": "2026-09-05"
+        }
+      },
+      "expected": {
+        "error": "ASSISTANT_INVALID_PERIOD"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-12-tenant-jwt-ajeno",
+      "target": "inventory",
+      "input": {
+        "tenantId": "foreign-tenant"
+      },
+      "expected": {
+        "error": "SESSION_REVOKED"
+      },
+      "tags": [
+        "tenant"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-13-borrador-no-recibe",
+      "target": "action",
+      "input": {
+        "mode": "prepare"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "proposalCount": 1,
+        "domainWrites": 0,
+        "draft.items.0.quantity": "2"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-14-reintento-mismo-borrador",
+      "target": "action",
+      "input": {
+        "mode": "replay"
+      },
+      "expected": {
+        "sameId": true,
+        "proposalCount": 1,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-15-clave-con-contenido-distinto",
+      "target": "action",
+      "input": {
+        "mode": "conflict"
+      },
+      "expected": {
+        "error": "ACTION_IDEMPOTENCY_CONFLICT"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-16-historial-otro-negocio",
+      "target": "action",
+      "input": {
+        "mode": "foreign"
+      },
+      "expected": {
+        "error": "ACTION_NOT_FOUND"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-17-version-manipulada",
+      "target": "action",
+      "input": {
+        "mode": "wrong-version"
+      },
+      "expected": {
+        "error": "ACTION_CHANGED"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-18-revision-vencida",
+      "target": "action",
+      "input": {
+        "mode": "expired"
+      },
+      "expected": {
+        "error": "ACTION_CHANGED"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-19-datos-incompletos-bloquean",
+      "target": "action",
+      "input": {
+        "mode": "missing-preview"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "hasIssues": true,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "reposicion-farmacia-20-bodega-no-ordena",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "role": "BODEGUERO"
+      },
+      "expected": {
+        "error": "ACTION_FORBIDDEN"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "reposicion",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-01-vence-hoy-vendible",
+      "target": "expiry",
+      "input": {},
+      "expected": {
+        "rows.0.state": "EXPIRING",
+        "rows.0.sellableStock": "10",
+        "rows.0.allowedActions": [
+          "BATCH_WRITEOFF",
+          "SUPPLIER_RETURN"
+        ]
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-02-vencido-ayer",
+      "target": "expiry",
+      "input": {
+        "row": {
+          "expiryDate": "2026-09-04"
+        }
+      },
+      "expected": {
+        "rows.0.state": "EXPIRED",
+        "rows.0.sellableStock": "0"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-03-medianoche-managua",
+      "target": "expiry",
+      "input": {
+        "now": "2026-09-05T03:00:00Z",
+        "row": {
+          "expiryDate": "2026-09-04"
+        }
+      },
+      "expected": {
+        "period.startDate": "2026-09-04",
+        "rows.0.state": "EXPIRING"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-04-lote-bodega-conciliado",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "warehouseId": "warehouse-a"
+        }
+      },
+      "expected": {
+        "rows.0.physicalStock": "4",
+        "rows.0.sellableStock": "4",
+        "status": "ok"
+      },
+      "tags": [
+        "warehouse"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-05-ledger-apagado",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "warehouseId": "warehouse-a"
+        },
+        "row": {
+          "batchWarehouseLedgerMode": "OFF"
+        }
+      },
+      "expected": {
+        "rows.0.sellableStock": null,
+        "rows.0.allowedActions": []
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-06-bodega-no-concilia",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "warehouseId": "warehouse-a"
+        },
+        "row": {
+          "warehouseBatchStock": "9"
+        }
+      },
+      "expected": {
+        "rows.0.status": "unavailable",
+        "rows.0.allowedActions": []
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-07-lotes-no-concilian",
+      "target": "expiry",
+      "input": {
+        "row": {
+          "allBatchStock": "14"
+        }
+      },
+      "expected": {
+        "status": "partial",
+        "rows.0.sellableStock": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-08-consulta-sin-permiso-accion",
+      "target": "expiry",
+      "input": {
+        "role": "VIEWER"
+      },
+      "expected": {
+        "rows.0.allowedActions": [],
+        "rows.0.sellableStock": "10"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-09-stock-ausente",
+      "target": "expiry",
+      "input": {
+        "row": {
+          "physicalStock": null
+        }
+      },
+      "expected": {
+        "rows.0.status": "unavailable",
+        "rows.0.sellableStock": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-10-fallo-no-significa-cero",
+      "target": "expiry",
+      "input": {
+        "failQuery": true
+      },
+      "expected": {
+        "status": "unavailable",
+        "rows": []
+      },
+      "tags": [
+        "failure"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-11-caja-no-lotes",
+      "target": "expiry",
+      "input": {
+        "role": "CASHIER"
+      },
+      "expected": {
+        "error": "ASSISTANT_FORBIDDEN"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-12-no-inventa-stock-historico",
+      "target": "expiry",
+      "input": {
+        "query": {
+          "cutoff": "2026-09-04T18:25:00Z"
+        }
+      },
+      "expected": {
+        "error": "ASSISTANT_CURRENT_STOCK_ONLY"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-13-modelo-no-confirma-retiro",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "physicalRemovalConfirmed": true
+      },
+      "expected": {
+        "status": "DRAFT",
+        "draft.physicalRemovalConfirmed": false,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-14-reintento-baja",
+      "target": "action",
+      "input": {
+        "mode": "replay"
+      },
+      "expected": {
+        "sameId": true,
+        "proposalCount": 1,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-15-retiro-sin-datos-bloqueado",
+      "target": "action",
+      "input": {
+        "mode": "missing-preview"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "hasIssues": true,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-16-historial-otro-usuario",
+      "target": "action",
+      "input": {
+        "mode": "foreign-user"
+      },
+      "expected": {
+        "error": "ACTION_NOT_FOUND"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-17-editar-invalida-revision",
+      "target": "action",
+      "input": {
+        "mode": "revise"
+      },
+      "expected": {
+        "status": "DRAFT",
+        "version": 2,
+        "preview": null,
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-18-baja-vencida",
+      "target": "action",
+      "input": {
+        "mode": "expired"
+      },
+      "expected": {
+        "error": "ACTION_CHANGED"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-19-bodega-no-da-baja",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "role": "BODEGUERO"
+      },
+      "expected": {
+        "error": "ACTION_FORBIDDEN"
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "vencimientos-farmacia-20-modelo-no-certifica-entrega",
+      "target": "action",
+      "input": {
+        "mode": "prepare",
+        "kind": "SUPPLIER_RETURN",
+        "physicalShipmentConfirmed": true
+      },
+      "expected": {
+        "draft.physicalShipmentConfirmed": false,
+        "status": "DRAFT",
+        "domainWrites": 0
+      },
+      "tags": [
+        "action",
+        "review"
+      ],
+      "area": "vencimientos",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-01-ventas-no-son-utilidad",
+      "target": "health",
+      "input": {},
+      "expected": {
+        "metric.netSalesTotal": "402.5",
+        "metric.netSalesExVat": "350",
+        "metric.grossMargin": "140",
+        "metric.expensesTotal": "15"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-02-iva-historico-ausente",
+      "target": "health",
+      "input": {
+        "row": {
+          "unknownVat": "1"
+        }
+      },
+      "expected": {
+        "metric.netSalesExVat": null,
+        "metric.grossMargin": null,
+        "status": "partial"
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-03-costo-devolucion-ausente",
+      "target": "health",
+      "input": {
+        "row": {
+          "unknownReturnCost": "1"
+        }
+      },
+      "expected": {
+        "metric.netCostOfGoods": null,
+        "metric.grossMargin": null
+      },
+      "tags": [
+        "missing-data"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-04-caja-solo-su-operacion",
+      "target": "health",
+      "input": {
+        "role": "CASHIER"
+      },
+      "expected": {
+        "absent": [
+          "metric.grossMargin",
+          "metric.netCostOfGoods",
+          "metric.expensesTotal"
+        ],
+        "metric.salesTotal": "460"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-05-preparar-fechas-managua",
+      "target": "promotion-prepare",
+      "input": {},
+      "expected": {
+        "draft.startsAt": "2026-09-05T14:00:00.000Z",
+        "draft.endsAt": "2026-09-06T00:00:00.000Z",
+        "preview.effects.0.value": "Sin movimiento"
+      },
+      "tags": [
+        "action",
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-06-gerente-no-publica",
+      "target": "promotion-prepare",
+      "input": {
+        "role": "MANAGER"
+      },
+      "expected": {
+        "error": "PROMOTION_FORBIDDEN"
+      },
+      "tags": [
+        "role"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-07-producto-otro-negocio",
+      "target": "promotion-prepare",
+      "input": {
+        "foreignProduct": true
+      },
+      "expected": {
+        "error": "PROMOTION_PRODUCT_NOT_FOUND"
+      },
+      "tags": [
+        "tenant"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-08-instruccion-no-cambia-tenant",
+      "target": "promotion-prepare",
+      "input": {
+        "draft": {
+          "tenantId": "foreign",
+          "sql": "DROP TABLE Product"
+        }
+      },
+      "expected": {
+        "error": "PROMOTION_INVALID_INPUT"
+      },
+      "tags": [
+        "adversarial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-09-promocion-caducada",
+      "target": "promotion-prepare",
+      "input": {
+        "draft": {
+          "endsAt": "2026-09-05T09:00"
+        }
+      },
+      "expected": {
+        "error": "PROMOTION_INVALID_INPUT"
+      },
+      "tags": [
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-10-porcentaje-no-admitido",
+      "target": "promotion-prepare",
+      "input": {
+        "draft": {
+          "percent": "100"
+        }
+      },
+      "expected": {
+        "error": "PROMOTION_INVALID_INPUT"
+      },
+      "tags": [
+        "validation"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-11-precio-autoritativo",
+      "target": "promotion-price",
+      "input": {},
+      "expected": {
+        "unitPrice": "103.5",
+        "promotionSnapshot.percent": "10"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-12-descuento-global-incompatible",
+      "target": "promotion-price",
+      "input": {
+        "globalDiscount": "5"
+      },
+      "expected": {
+        "error": "PROMOTION_DISCOUNT_CONFLICT"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-13-descuento-linea-incompatible",
+      "target": "promotion-price",
+      "input": {
+        "lineDiscount": "5"
+      },
+      "expected": {
+        "error": "PROMOTION_DISCOUNT_CONFLICT"
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-14-precio-catalogo-cambiado",
+      "target": "promotion-price",
+      "input": {
+        "changedConfig": true
+      },
+      "expected": {
+        "unitPrice": "115",
+        "absent": [
+          "promotionSnapshot"
+        ]
+      },
+      "tags": [
+        "stale"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-15-cotizacion-no-acumula-descuento",
+      "target": "promotion-price",
+      "input": {
+        "quotationId": "quote-a"
+      },
+      "expected": {
+        "unitPrice": "115",
+        "absent": [
+          "promotionSnapshot"
+        ]
+      },
+      "tags": [
+        "financial"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-16-cobro-requiere-revision",
+      "target": "promotion-checkout",
+      "input": {
+        "noQuote": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_REQUIRED"
+      },
+      "tags": [
+        "confirmation"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-17-revision-cobro-caducada",
+      "target": "promotion-checkout",
+      "input": {
+        "expiredQuote": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_CHANGED"
+      },
+      "tags": [
+        "confirmation",
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-18-promocion-vence-al-cobrar",
+      "target": "promotion-checkout",
+      "input": {
+        "expiredPromotion": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_CHANGED"
+      },
+      "tags": [
+        "confirmation",
+        "date"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-19-carrito-cambio-despues-revision",
+      "target": "promotion-checkout",
+      "input": {
+        "changedCart": true
+      },
+      "expected": {
+        "error": "PROMOTION_QUOTE_CHANGED"
+      },
+      "tags": [
+        "confirmation",
+        "stale"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    },
+    {
+      "id": "ventas-promociones-farmacia-20-total-revisado-con-impuestos",
+      "target": "promotion-checkout",
+      "input": {},
+      "expected": {
+        "total": "207.00",
+        "vat": "0.0000",
+        "exempt": "207.00",
+        "accepted": true
+      },
+      "tags": [
+        "financial",
+        "confirmation"
+      ],
+      "area": "ventas-promociones",
+      "vertical": "farmacia",
+      "humanReview": "pending",
+      "expectedOrigin": "independently-authored-not-recorded"
+    }
+  ]
+}

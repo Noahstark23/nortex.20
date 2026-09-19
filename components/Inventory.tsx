@@ -1,23 +1,29 @@
-import { EmptyState, TableEmptyState, type EmptyStateProps } from './ui/EmptyState';
-import { SkeletonTableRows } from './ui/Skeleton';
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { EmptyState, type EmptyStateProps } from './ui/EmptyState';
+import { useInventoryBarcode } from '../hooks/useInventoryBarcode';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 // xlsx (~430 KB) se importa dinámicamente en handleExport — fuera del bundle inicial.
 import ImageUploader from './ImageUploader';
+import { resolveProductQuantityRules } from '../utils/productQuantityRules';
 import { sanitizeDecimalInput, formatMoney } from '../utils/money';
 import { formatQuantityValue, validateQuantity } from '../utils/quantity';
 import { trackEvent } from '../utils/analytics';
+import { batchExpiryPresentation } from '../utils/batchExpiry';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
-import { buildCreateProductPayload, productValidationMessage } from '../utils/productForm';
+import { buildCreateProductPayload, normalizeProductQuantityInput, productValidationMessage } from '../utils/productForm';
+import { clearInventoryAdjustmentAttempt, inventoryAdjustmentScope, isConfirmedInventoryAdjustment, isRejectedInventoryAdjustment, readInventoryAdjustmentAttempt, saveInventoryAdjustmentAttempt, type InventoryAdjustmentAttempt, type InventoryAdjustmentScope } from '../utils/inventoryAdjustmentAttempt';
 import {
     Package, Plus, Search, Eye, Edit, Trash2, AlertTriangle,
     RotateCcw, TrendingDown, TrendingUp, Clock, User, FileWarning, Upload, Zap, Globe, CheckSquare, EyeOff,
     Shield, ChevronDown, X, ArrowDownCircle, ArrowUpCircle, Wrench, Layers, Download, ChevronLeft, ChevronRight,
     Tag, DollarSign, Printer
 } from 'lucide-react';
-import { ModuleHeader } from './ui/ModuleHeader';
+import { InventoryCatalog, type InventoryCatalogFilters } from './inventory/InventoryCatalog';
+import { StockProductPane, StockPaneEmpty } from './inventory/StockProductPane';
+import { FluidSheet } from './ui/FluidSheet';
+import './inventory/stockWorkspace.css';
 import { IconButton } from './ui/IconButton';
 import { ActionMenu } from './ui/ActionMenu';
-import { InventoryTabs } from './ui/InventoryTabs';
 import ProductImporter from './ProductImporter';
 import QuickAddProduct from './QuickAddProduct';
 import { maybeAutostartTour } from '../utils/tours';
@@ -30,6 +36,7 @@ import { ToastViewport, useToast } from './ui/Toast';
 
 interface Product {
     id: string;
+    brand?: string | null;
     name: string;
     sku: string;
     description?: string;
@@ -143,10 +150,7 @@ interface KardexEntry {
 
 type AdjustType = 'ADJUST_LOSS' | 'ADJUST_GAIN' | 'IN_PURCHASE' | 'RETURN';
 /** El bodeguero registra hallazgos físicos; compras y devoluciones tienen su flujo propio. */
-export const adjustmentTypesForRole = (isBodeguero: boolean): AdjustType[] =>
-    isBodeguero
-        ? ['ADJUST_LOSS', 'ADJUST_GAIN']
-        : ['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN'];
+export const adjustmentTypesForRole = (_isBodeguero: boolean): AdjustType[] => ['ADJUST_LOSS', 'ADJUST_GAIN'];
 
 // ==========================================
 // HELPERS
@@ -159,7 +163,7 @@ const MOVEMENT_LABELS: Record<string, { label: string; color: string; icon: stri
     'OUT': { label: 'Salida', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
     'SALE': { label: 'Venta', color: 'bg-red-900/60 text-red-300 border-red-700', icon: '' },
     'ADJUST_LOSS': { label: 'Pérdida', color: 'bg-orange-900/60 text-orange-300 border-orange-700', icon: '' },
-    'ADJUST_GAIN': { label: 'Ganancia', color: 'bg-blue-900/60 text-blue-300 border-blue-700', icon: '' },
+    'ADJUST_GAIN': { label: 'Sobrante', color: 'bg-emerald-900/60 text-emerald-300 border-emerald-700', icon: '' },
     'ADJUSTMENT': { label: 'Ajuste', color: 'bg-yellow-900/60 text-yellow-300 border-yellow-700', icon: '' },
     'RETURN': { label: 'Devolución', color: 'bg-purple-900/60 text-purple-300 border-purple-700', icon: '↩' },
 };
@@ -191,15 +195,15 @@ const TarjetaKpi: React.FC<{
         <>
             <div className="flex items-center gap-2 mb-1">
                 {icono}
-                <span className="text-xs text-slate-400 uppercase tracking-wider">{titulo}</span>
+                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">{titulo}</span>
             </div>
-            <p className="text-kpi font-bold text-slate-100 tabular-nums">{valor}</p>
-            <p className="text-xs text-slate-400">{nota}</p>
+            <p className="whitespace-nowrap text-xl font-bold tabular-nums text-slate-950 sm:text-kpi">{valor}</p>
+            <p className="hidden text-xs text-slate-500 sm:block">{nota}</p>
         </>
     );
 
     if (!onClick) {
-        return <div className="bg-slate-800/80 border border-slate-700 rounded-card p-4 text-left">{contenido}</div>;
+        return <div className="nx-canvas-card p-3 text-left sm:p-4">{contenido}</div>;
     }
 
     return (
@@ -208,8 +212,8 @@ const TarjetaKpi: React.FC<{
             onClick={onClick}
             aria-pressed={activa}
             aria-label={etiquetaAccion ?? titulo}
-            className={`bg-slate-800/80 border rounded-card p-4 text-left transition-colors cursor-pointer hover:bg-slate-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
-                activa ? 'border-brand' : 'border-slate-700 hover:border-slate-600'
+            className={`nx-canvas-card nx-fluid-press cursor-pointer p-3 text-left transition-colors sm:p-4 hover:bg-slate-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring ${
+                activa ? 'border-brand bg-brand-soft' : 'hover:border-slate-300'
             }`}
         >
             {contenido}
@@ -238,14 +242,14 @@ const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', {
 // MAIN COMPONENT
 // ==========================================
 
-export default function Inventory() {
+function InventoryWorkspace() {
     const userRole = currentSessionRole() || 'EMPLOYEE';
     const {
         isBodeguero,
         canManageProducts,
         canAdjustStock,
         canViewKardex,
-        canViewInventoryValuation,
+        canViewInventoryValuation, canTransferStock, canManagePurchaseOrders, canReceivePurchaseOrders,
     } = roleCapabilitiesFor(userRole);
     // Conserva el nombre histórico usado en el render; ahora su definición
     // vive antes de hooks que dependen de ella y no mezcla ajustes con edición.
@@ -259,7 +263,42 @@ export default function Inventory() {
     const [seeding, setSeeding] = useState(false);
     const [seedError, setSeedError] = useState('');
     const [loading, setLoading] = useState(true);
-    const [searchTerm, setSearchTerm] = useState('');
+    const [inventoryParams] = useSearchParams();
+    const navigate = useNavigate();
+    const [activeProduct, setActiveProduct] = useState<Product | null>(null);
+    const [stockRevision, setStockRevision] = useState(0);
+    const [receivingBusy, setReceivingBusy] = useState(false);
+    const [receivingOpen, setReceivingOpen] = useState(false);
+    const receivingOpenRef = useRef(false);
+    const updateReceivingOpen = (open: boolean) => {
+        receivingOpenRef.current = open;
+        setReceivingOpen(open);
+        if (!open && typeof matchMedia === 'function') setCompactPane(matchMedia('(max-width: 1100px)').matches);
+    };
+    const [showSummary, setShowSummary] = useState(false);
+    const [bulkMode, setBulkMode] = useState(false);
+    const [compactPane, setCompactPane] = useState(() => typeof matchMedia === 'function' && matchMedia('(max-width: 1100px)').matches);
+    useEffect(() => {
+        if (typeof matchMedia !== 'function') return;
+        const media = matchMedia('(max-width: 1100px)');
+        const update = () => { if (!receivingOpenRef.current) setCompactPane(media.matches); };
+        media.addEventListener('change', update);
+        return () => media.removeEventListener('change', update);
+    }, []);
+    useEffect(() => {
+        if (!receivingBusy) return;
+        const preventLeave = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };
+        const preventLink = (event: MouseEvent) => {
+            const target = event.target as HTMLElement;
+            if (!target.closest('.nx-stock-pane') && !target.closest('[aria-label="Cerrar sesión"]')) { event.preventDefault(); event.stopPropagation(); }
+        };
+        window.addEventListener('beforeunload', preventLeave);
+        document.addEventListener('click', preventLink, true);
+        return () => { window.removeEventListener('beforeunload', preventLeave); document.removeEventListener('click', preventLink, true); };
+    }, [receivingBusy]);
+    const alertSearch = inventoryParams.get('search') ?? '';
+    const [searchTerm, setSearchTerm] = useState(alertSearch);
+    useEffect(() => { setSearchTerm(alertSearch); }, [alertSearch]);
     const [debouncedSearch, setDebouncedSearch] = useState('');
 
     // Paginación / filtros / orden (server-side)
@@ -273,6 +312,7 @@ export default function Inventory() {
     const [sortField, setSortField] = useState('name');
     const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc');
     const [categories, setCategories] = useState<string[]>([]);
+    const [statsError, setStatsError] = useState(false);
     const [stats, setStats] = useState<{ totalProducts: number; inventoryValue: number; totalUnits: number; outOfStock: number; lowStockCount: number } | null>(null);
     const [exporting, setExporting] = useState(false);
 
@@ -284,7 +324,6 @@ export default function Inventory() {
     const [showKardexModal, setShowKardexModal] = useState(false);
     const [showAdjustModal, setShowAdjustModal] = useState(false);
     const [showEditModal, setShowEditModal] = useState(false);
-    const [showDropdown, setShowDropdown] = useState(false);
     const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
     const [showBatchesModal, setShowBatchesModal] = useState(false);
     const [showBulkEditModal, setShowBulkEditModal] = useState(false);
@@ -332,18 +371,39 @@ export default function Inventory() {
     const [adjustWarehousesLoading, setAdjustWarehousesLoading] = useState(false);
     const [adjustStockLoading, setAdjustStockLoading] = useState(false);
     const [adjustError, setAdjustError] = useState('');
+    const [adjustRecovery, setAdjustRecovery] = useState<InventoryAdjustmentAttempt | null>(null);
+    const [adjustRecoveryBlocked, setAdjustRecoveryBlocked] = useState(false);
+    const adjustPending = useRef(false);
+    const adjustWarehouseRequest = useRef(0);
+    const adjustScopeAtOpen = useRef<InventoryAdjustmentScope | null>(null);
+    const closeAdjust = () => { if (!adjustPending.current) setShowAdjustModal(false); };
 
     // Edit form (solo datos cosméticos/comerciales — sin stock para no disparar Kardex)
     const [editForm, setEditForm] = useState({
-        name: '', description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
+        name: '', brand: '', sku: '', minStock: '0', ivaExento: false, requiresBatchTracking: false, description: '', category: '', price: '', imageUrl: '', reorderPoint: '', maxStock: '', defaultSupplierId: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
         unit: 'unidad', saleMode: 'LEGACY' as 'LEGACY' | 'COUNTED' | 'MEASURED', quantityStep: '', productFamily: 'GENERAL'
     });
     const [editSubmitting, setEditSubmitting] = useState(false);
+    const editPending = useRef(false);
+    const closeEdit = () => { if (!editPending.current) setShowEditModal(false); };
+    const [editError, setEditError] = useState('');
+    const [kardexError, setKardexError] = useState('');
+    const [batchLoadError, setBatchLoadError] = useState('');
+    const batchRequest = useRef(0);
+    const kardexRequest = useRef(0);
+    const productRequest = useRef(0);
+    const statsRequest = useRef(0);
     const [suppliers, setSuppliers] = useState<{ id: string; name: string }[]>([]);
+    useEffect(() => {
+        if (!showEditModal) return;
+        const onEscape = (event: KeyboardEvent) => { if (document.querySelector('[data-camera-scanner]')) return; if (event.key === 'Escape') closeEdit(); };
+        window.addEventListener('keydown', onEscape);
+        return () => window.removeEventListener('keydown', onEscape);
+    }, [showEditModal]);
 
     // Create form
     const [formData, setFormData] = useState({
-        name: '', sku: '', description: '', category: '',
+        name: '', brand: '', sku: '', description: '', category: '',
         price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '',
         wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '',
         saleMode: 'COUNTED' as 'COUNTED' | 'MEASURED', quantityStep: '1', productFamily: 'GENERAL' as ProductFamily
@@ -355,13 +415,22 @@ export default function Inventory() {
         'Authorization': `Bearer ${token}`
     }), [token]);
 
+    useEffect(() => {
+        if (!showAdjustModal || !adjustScopeAtOpen.current) return;
+        try {
+            const scope = inventoryAdjustmentScope(token);
+            if (scope.tenantId === adjustScopeAtOpen.current.tenantId && scope.userId === adjustScopeAtOpen.current.userId) return;
+        } catch { /* A closed or different session cannot display this recovery. */ }
+        setShowAdjustModal(false);
+        setAdjustRecovery(null);
+        setAdjustError('');
+    }, [token, showAdjustModal]);
+
     const adjustQuantityState = useMemo(() => {
         if (!adjustForm.quantity || !selectedProduct) return { value: null as number | null, error: '' };
 
         try {
-            const saleMode = selectedProduct.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
-            const quantityStep = selectedProduct.quantityStep?.toString()
-                || (saleMode === 'COUNTED' ? '1' : '0.0001');
+            const { saleMode, quantityStep } = resolveProductQuantityRules(selectedProduct);
             return {
                 value: validateQuantity(adjustForm.quantity, { saleMode, quantityStep }).toNumber(),
                 error: '',
@@ -377,7 +446,8 @@ export default function Inventory() {
     useEffect(() => {
         if (!showAdjustModal) return;
         const closeOnEscape = (event: KeyboardEvent) => {
-            if (event.key === 'Escape' && !adjustSubmitting) setShowAdjustModal(false);
+            if (document.querySelector('[data-camera-scanner]')) return;
+            if (event.key === 'Escape') closeAdjust();
         };
         window.addEventListener('keydown', closeOnEscape);
         return () => window.removeEventListener('keydown', closeOnEscape);
@@ -388,6 +458,7 @@ export default function Inventory() {
     // ==========================================
 
     const fetchProducts = useCallback(async () => {
+        const request = ++productRequest.current;
         try {
             setLoading(true);
             const params = new URLSearchParams({ page: String(page), pageSize: String(PAGE_SIZE), sort: sortField, dir: sortDir });
@@ -397,8 +468,10 @@ export default function Inventory() {
             if (modeFilter) params.set('mode', modeFilter);
             if (statusFilter) params.set('status', statusFilter);
             const res = await fetch(`/api/products?${params.toString()}`, { headers });
+            if (request !== productRequest.current) return;
             if (res.ok) {
                 const data = await res.json();
+                if (request !== productRequest.current) return;
                 setProducts(data.products || []);
                 setTotal(data.total || 0);
                 setProductsError(false);
@@ -408,19 +481,24 @@ export default function Inventory() {
                 setProductsError(true);
             }
         } catch (e) {
-            console.error('Error fetching products:', e);
-            setProductsError(true);
+            if (request === productRequest.current) setProductsError(true);
         } finally {
-            setLoading(false);
-            setSelectedProductIds([]); // Reset selection on fetch
+            if (request === productRequest.current) {
+                setLoading(false);
+                setSelectedProductIds([]);
+            }
         }
     }, [page, debouncedSearch, categoryFilter, familyFilter, modeFilter, statusFilter, sortField, sortDir, headers]);
 
     const fetchStats = useCallback(async () => {
+        const request = ++statsRequest.current;
+        setStatsError(false);
         try {
             const res = await fetch('/api/reports/inventory', { headers });
+            if (!res.ok) throw new Error('No se pudo cargar el resumen.');
             if (res.ok) {
                 const d = await res.json();
+                if (request !== statsRequest.current) return;
                 setStats({
                     totalProducts: d.totalProducts || 0,
                     inventoryValue: d.inventoryValue || 0,
@@ -429,7 +507,9 @@ export default function Inventory() {
                     lowStockCount: Math.max(0, (d.lowStock?.length || 0) - (d.outOfStock || 0)),
                 });
             }
-        } catch (e) { console.error('Error fetching stats:', e); }
+        } catch {
+            if (request === statsRequest.current) { setStats(null); setStatsError(true); }
+        }
     }, [headers]);
 
     const fetchCategories = useCallback(async () => {
@@ -441,9 +521,11 @@ export default function Inventory() {
 
     // Recarga todo (lista + KPIs) tras una mutación.
     const reload = useCallback(() => {
+        setStockRevision(value => value + 1);
         fetchProducts();
+        fetchCategories();
         if (canViewInventoryValuation) fetchStats();
-    }, [canViewInventoryValuation, fetchProducts, fetchStats]);
+    }, [canViewInventoryValuation, fetchProducts, fetchStats, fetchCategories]);
 
     // Catálogo de EJEMPLO por giro (retención R2): mismo endpoint que el POS.
     const seedCatalog = useCallback(async () => {
@@ -476,12 +558,14 @@ export default function Inventory() {
             if (modeFilter) params.set('mode', modeFilter);
             if (statusFilter) params.set('status', statusFilter);
             const res = await fetch(`/api/products?${params.toString()}`, { headers });
-            const data = res.ok ? await res.json() : [];
-            const arr = Array.isArray(data) ? data : (data.products || []);
+            if (!res.ok) throw new Error('No se pudo cargar el catálogo para exportar.');
+            const data = await res.json();
+            if (receivingOpenRef.current) return;
+                            const arr = Array.isArray(data) ? data : (data.products || []);
             const rows = arr.map((p: any) => ({
-                SKU: p.sku, Producto: p.name, 'Categoría': p.category || '', Unidad: p.unit,
+                SKU: p.sku, Producto: p.name, Marca: p.brand || '', 'Categoría': p.category || '', Unidad: p.unit,
                 'Modo de venta': p.saleMode || 'LEGACY',
-                'Paso de cantidad': p.quantityStep == null ? '' : String(p.quantityStep),
+                'Cantidad mínima por paso': p.quantityStep == null ? '' : String(p.quantityStep),
                 'Familia operativa': p.productFamily || 'GENERAL',
                 'Unidad de empaque': p.packUnit || '',
                 'Tamaño de empaque': p.packSize == null ? '' : String(p.packSize),
@@ -566,11 +650,14 @@ export default function Inventory() {
         }
     }, [canManageProducts]);
 
+    const scanWithCamera = useInventoryBarcode<Product>(product => { if (!receivingOpenRef.current) { setSearchTerm(product.sku); setActiveProduct(product); } });
+
     // ==========================================
     // SCAN DETECTION
     // ==========================================
 
     const playScanSound = useCallback((found: boolean) => {
+        try {
         const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         const oscillator = audioContext.createOscillator();
         const gainNode = audioContext.createGain();
@@ -589,6 +676,8 @@ export default function Inventory() {
             oscillator.start(audioContext.currentTime);
             oscillator.stop(audioContext.currentTime + 0.15);
         }
+        oscillator.onended = () => { void audioContext.close().catch(() => {}); };
+        } catch { /* El escáner conserva su resultado aunque no haya audio. */ }
     }, []);
 
     useEffect(() => {
@@ -597,8 +686,9 @@ export default function Inventory() {
 
         const handleKeyDown = (e: KeyboardEvent) => {
             const target = e.target as HTMLElement;
-            if (showCreateModal || showImportModal || showQuickAddModal || showKardexModal || showAdjustModal || showEditModal) return;
-            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+            if (document.querySelector('[data-camera-scanner]')) return;
+            if (receivingOpen || receivingBusy || (compactPane && activeProduct) || showSummary || showCreateModal || showImportModal || showQuickAddModal || showKardexModal || showAdjustModal || showEditModal || showBatchesModal || showBulkEditModal) return;
+            if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable) return;
 
             const currentTime = Date.now();
 
@@ -615,10 +705,15 @@ export default function Inventory() {
                     (async () => {
                         try {
                             const res = await fetch(`/api/products?search=${encodeURIComponent(scannedCode)}`, { headers });
-                            const data = res.ok ? await res.json() : [];
+                            if (!res.ok) {
+                                showToast({ tone: 'error', title: 'No pudimos buscar el código', message: 'Reintentá la búsqueda. No se pudo comprobar si el producto existe.' });
+                                return;
+                            }
+                            const data = await res.json();
+                            if (receivingOpenRef.current) return;
                             const arr = Array.isArray(data) ? data : (data.products || []);
                             const found = arr.find((p: any) => p.sku === scannedCode || p.sku === scannedCode.toUpperCase());
-                            if (found) { playScanSound(true); setSearchTerm(found.sku); }
+                            if (found) { playScanSound(true); setSearchTerm(found.sku); setActiveProduct(found); }
                             else {
                                 playScanSound(false);
                                 if (canManageProducts) {
@@ -626,7 +721,10 @@ export default function Inventory() {
                                     setShowQuickAddModal(true);
                                 }
                             }
-                        } catch { playScanSound(false); }
+                        } catch {
+                            showToast({ tone: 'error', title: 'No pudimos buscar el código', message: 'Reintentá la búsqueda. No se pudo comprobar si el producto existe.' });
+                            playScanSound(false);
+                        }
                     })();
                 }
                 buffer = '';
@@ -637,7 +735,7 @@ export default function Inventory() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [canManageProducts, headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, playScanSound]);
+    }, [receivingOpen, receivingBusy, compactPane, activeProduct, showSummary, canManageProducts, headers, showCreateModal, showImportModal, showQuickAddModal, showKardexModal, showAdjustModal, showEditModal, showBatchesModal, showBulkEditModal, playScanSound, showToast]);
 
     // ==========================================
     // INVENTORY TOTALS
@@ -645,11 +743,13 @@ export default function Inventory() {
 
     /** Alterna el filtro: volver a tocar la tarjeta activa lo quita. */
     const aplicarFiltroEstado = useCallback((valor: string) => {
+        setShowSummary(false);
         setStatusFilter(prev => (prev === valor ? '' : valor));
         setPage(1);
     }, []);
 
     const limpiarFiltros = useCallback(() => {
+        setShowSummary(false);
         setStatusFilter('');
         setCategoryFilter('');
         setFamilyFilter('');
@@ -675,22 +775,27 @@ export default function Inventory() {
     // Fetch paginado del Kardex (A5). from/to son días locales (YYYY-MM-DD); el
     // backend los interpreta en hora Nicaragua (UTC-6).
     const fetchKardex = async (productId: string, targetPage: number, from: string, to: string) => {
+        const request = ++kardexRequest.current;
         setKardexLoading(true);
+        setKardexError('');
+        setKardexData([]);
         try {
             const params = new URLSearchParams({ page: String(targetPage), pageSize: String(KARDEX_PAGE_SIZE) });
             if (from) params.set('from', from);
             if (to) params.set('to', to);
             const res = await fetch(`/api/kardex/${productId}?${params.toString()}`, { headers });
+            if (!res.ok) throw new Error('No pudimos cargar los movimientos. Reintentá.');
             if (res.ok) {
                 const data = await res.json();
+                if (request !== kardexRequest.current) return;
                 setKardexData(data.entries || []);
                 setKardexTotal(data.total || 0);
                 setKardexPage(data.page || targetPage);
             }
         } catch (e) {
-            console.error('Error fetching kardex:', e);
+            if (request === kardexRequest.current) setKardexError('No pudimos cargar los movimientos. Reintentá.');
         } finally {
-            setKardexLoading(false);
+            if (request === kardexRequest.current) setKardexLoading(false);
         }
     };
 
@@ -708,6 +813,10 @@ export default function Inventory() {
     // ==========================================
 
     const openBatches = async (product: Product) => {
+        const request = ++batchRequest.current;
+        setBatchesData([]);
+        setBatchWarehouses([]);
+        setBatchLoadError('');
         setSelectedProduct(product);
         setShowBatchesModal(true);
         setShowAddBatchForm(false);
@@ -722,9 +831,14 @@ export default function Inventory() {
                 fetch(`/api/inventory/batches/${product.id}`, { headers }),
                 fetch('/api/warehouses', { headers }),
             ]);
-            if (batchResponse.ok) setBatchesData(await batchResponse.json());
+            if (request !== batchRequest.current) return;
+            if (!batchResponse.ok) throw new Error('No pudimos cargar los lotes de este producto.');
+            const batches = await batchResponse.json();
+            if (request !== batchRequest.current) return;
+            setBatchesData(batches);
 
             const warehouseData: any = await warehouseResponse.json().catch(() => ({}));
+            if (request !== batchRequest.current) return;
             if (warehouseResponse.ok) {
                 const available = (Array.isArray(warehouseData.data) ? warehouseData.data : [])
                     .filter((warehouse: WarehouseOption) => warehouse.isActive);
@@ -739,19 +853,26 @@ export default function Inventory() {
                 setBatchCommandError(warehouseData.error || 'No se pudieron cargar las bodegas activas.');
             }
         } catch (e) {
-            console.error('Error fetching batches:', e);
+            if (request !== batchRequest.current) return;
+            setBatchesData([]);
             setBatchWarehouses([]);
-            setBatchCommandError('No pudimos cargar lotes y bodegas. Revisá tu conexión.');
+            setBatchLoadError('No pudimos cargar los lotes de este producto. Revisá tu conexión y reintentá.');
         } finally {
-            setBatchesLoading(false);
-            setBatchWarehousesLoading(false);
+            if (request === batchRequest.current) {
+                setBatchesLoading(false);
+                setBatchWarehousesLoading(false);
+            }
         }
     };
 
     const refreshSelectedProductBatches = async () => {
         if (!selectedProduct) return;
+        const request = batchRequest.current;
         const response = await fetch(`/api/inventory/batches/${selectedProduct.id}`, { headers });
-        if (response.ok) setBatchesData(await response.json());
+        if (request !== batchRequest.current) return;
+        if (!response.ok) { setBatchLoadError('El movimiento se registró, pero no pudimos actualizar la lista de lotes. Reintentá cargarla.'); return; }
+        const batches = await response.json();
+        if (request === batchRequest.current) { setBatchesData(batches); setBatchLoadError(''); }
     };
 
     const editBatchForm = (patch: Partial<Pick<ManualBatchFormState, 'batchNumber' | 'expiryDate' | 'quantity' | 'warehouseId'>>) => {
@@ -907,37 +1028,39 @@ export default function Inventory() {
     // ADJUST
     // ==========================================
 
-    const loadAdjustWarehouses = useCallback(async () => {
+    const loadAdjustWarehouses = useCallback(async (recovery: InventoryAdjustmentAttempt | null = null) => {
+        const request = ++adjustWarehouseRequest.current;
         setAdjustWarehousesLoading(true);
-        setAdjustError('');
-        setAdjustWarehouseId('');
+        setAdjustWarehouseId(recovery?.payload.warehouseId || '');
         setAdjustWarehouseStock(null);
         try {
             const response = await fetch('/api/warehouses', { headers });
             const data: any = await response.json().catch(() => ({}));
+            if (request !== adjustWarehouseRequest.current) return;
             if (!response.ok) {
                 setAdjustWarehouses([]);
-                setAdjustError(data.error || 'No se pudieron cargar las bodegas activas.');
+                setAdjustError(current => current || data.error || 'No se pudieron cargar las bodegas activas.');
                 return;
             }
 
             const available = (Array.isArray(data.data) ? data.data : [])
                 .filter((warehouse: WarehouseOption) => warehouse.isActive);
             setAdjustWarehouses(available);
-            setAdjustWarehouseId(soleActiveWarehouseId(available));
+            setAdjustWarehouseId(recovery?.payload.warehouseId || soleActiveWarehouseId(available));
             if (available.length === 0) {
-                setAdjustError('No hay una bodega activa. Pedile a un administrador que active una.');
+                setAdjustError(current => current || 'No hay una bodega activa. Pedile a un administrador que active una.');
             }
         } catch {
+            if (request !== adjustWarehouseRequest.current) return;
             setAdjustWarehouses([]);
-            setAdjustError('No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
+            setAdjustError(current => current || 'No pudimos cargar las bodegas. Revisá tu conexión e intentá de nuevo.');
         } finally {
-            setAdjustWarehousesLoading(false);
+            if (request === adjustWarehouseRequest.current) setAdjustWarehousesLoading(false);
         }
     }, [headers]);
 
     useEffect(() => {
-        if (!showAdjustModal || !selectedProduct || !adjustWarehouseId) {
+        if (!showAdjustModal || !selectedProduct || !adjustWarehouseId || adjustRecovery || adjustRecoveryBlocked) {
             setAdjustWarehouseStock(null);
             setAdjustStockLoading(false);
             return;
@@ -946,7 +1069,6 @@ export default function Inventory() {
         let cancelled = false;
         setAdjustStockLoading(true);
         setAdjustWarehouseStock(null);
-        setAdjustError('');
         void fetch(`/api/warehouses/${adjustWarehouseId}/stock`, { headers })
             .then(async response => {
                 const data: any = await response.json().catch(() => ({}));
@@ -956,22 +1078,37 @@ export default function Inventory() {
                 setAdjustWarehouseStock(localStockForProduct(items, selectedProduct.id));
             })
             .catch(error => {
-                if (!cancelled) setAdjustError(error?.message || 'No se pudo leer el stock local.');
+                if (!cancelled) setAdjustError(current => current || error?.message || 'No se pudo leer el stock local.');
             })
             .finally(() => {
                 if (!cancelled) setAdjustStockLoading(false);
             });
 
         return () => { cancelled = true; };
-    }, [adjustWarehouseId, headers, selectedProduct, showAdjustModal]);
+    }, [adjustWarehouseId, headers, selectedProduct, showAdjustModal, adjustRecovery, adjustRecoveryBlocked]);
 
     const openAdjust = (product: Product) => {
+        if (adjustPending.current) return;
         setSelectedProduct(product);
-        setAdjustForm({ type: 'ADJUST_LOSS', quantity: '', reason: '' });
         setAdjustError('');
+        setAdjustRecoveryBlocked(false);
+        let recovery: InventoryAdjustmentAttempt | null = null;
+        adjustScopeAtOpen.current = null;
+        try {
+            const scope = inventoryAdjustmentScope(localStorage.getItem('nortex_token'));
+            adjustScopeAtOpen.current = scope;
+            recovery = readInventoryAdjustmentAttempt(scope, product.id);
+        } catch (error) {
+            setAdjustRecoveryBlocked(true);
+            setAdjustError(error instanceof Error ? error.message : 'No pudimos recuperar el ajuste pendiente.');
+        }
+        setAdjustRecovery(recovery);
+        setAdjustForm(recovery
+            ? { type: recovery.payload.type, quantity: String(Math.abs(recovery.payload.quantity)), reason: recovery.payload.reason }
+            : { type: 'ADJUST_LOSS', quantity: '', reason: '' });
         setAdjustWarehouseStock(null);
         setShowAdjustModal(true);
-        void loadAdjustWarehouses();
+        void loadAdjustWarehouses(recovery);
     };
 
     // ==========================================
@@ -979,9 +1116,16 @@ export default function Inventory() {
     // ==========================================
 
     const openEditModal = (product: Product) => {
+        if (editPending.current) return;
+        setEditError('');
         setSelectedProduct(product);
         setEditForm({
             name: product.name,
+            sku: product.sku,
+            minStock: String(product.minStock ?? 0),
+            ivaExento: Boolean(product.ivaExento),
+            requiresBatchTracking: Boolean(product.requiresBatchTracking),
+            brand: product.brand || '',
             description: product.description || '',
             category: product.category || '',
             price: String(product.price),
@@ -1004,7 +1148,9 @@ export default function Inventory() {
 
     const handleEdit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedProduct) return;
+        if (!selectedProduct || editPending.current) return;
+        editPending.current = true;
+        setEditError('');
         setEditSubmitting(true);
         try {
             const res = await fetch(`/api/products/${selectedProduct.id}`, {
@@ -1012,7 +1158,12 @@ export default function Inventory() {
                 headers,
                 body: JSON.stringify({
                     name: editForm.name,
+                    sku: editForm.sku.trim(),
+                    minStock: normalizeProductQuantityInput(editForm.minStock) ?? '0',
+                    ivaExento: editForm.ivaExento,
+                    requiresBatchTracking: editForm.requiresBatchTracking,
                     description: editForm.description,
+                    brand: editForm.brand.trim() || null,
                     category: editForm.category,
                     price: parseFloat(editForm.price),
                     imageUrl: editForm.imageUrl,
@@ -1028,7 +1179,7 @@ export default function Inventory() {
                     saleMode: editForm.saleMode === 'LEGACY' ? null : editForm.saleMode,
                     quantityStep: editForm.saleMode === 'LEGACY' ? null : editForm.quantityStep,
                     productFamily: editForm.productFamily,
-                    // stock/cost/minStock siguen excluidos: se ajustan por Kardex.
+                    // La ficha nunca reemplaza existencias ni el costo contable.
                 })
             });
             if (res.ok) {
@@ -1042,81 +1193,138 @@ export default function Inventory() {
                 reload();
             } else {
                 const err = await res.json().catch(() => ({}));
-                alert(`Error: ${productValidationMessage(err, 'No pudimos actualizar el producto.')}`);
+                setEditError(productValidationMessage(err, 'No pudimos actualizar el producto.'));
             }
         } catch {
-            alert('Error actualizando producto');
+            setEditError('No pudimos confirmar los cambios. Conservamos lo que escribiste para reintentar.');
         } finally {
+            editPending.current = false;
             setEditSubmitting(false);
         }
     };
 
     const handleAdjust = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (!selectedProduct) return;
+        if (!selectedProduct || adjustPending.current || adjustRecoveryBlocked) return;
         setAdjustError('');
-
-        if (!adjustmentTypesForRole(isBodeguero).includes(adjustForm.type)) {
-            setAdjustError('Usá Compras o Devoluciones para registrar ese movimiento.');
+        let attempt: InventoryAdjustmentAttempt;
+        let requestToken: string | null;
+        try {
+            requestToken = localStorage.getItem('nortex_token');
+            const scope = inventoryAdjustmentScope(requestToken);
+            const openedScope = adjustScopeAtOpen.current;
+            if (!openedScope || scope.tenantId !== openedScope.tenantId || scope.userId !== openedScope.userId) {
+                throw new Error('La sesión cambió. Cerrá y volvé a abrir el ajuste desde tu cuenta actual.');
+            }
+            const stored = readInventoryAdjustmentAttempt(scope, selectedProduct.id);
+            if (stored && adjustRecovery && JSON.stringify(stored) !== JSON.stringify(adjustRecovery)) {
+                setAdjustRecoveryBlocked(true);
+                setAdjustError('La recuperación guardada cambió. Cerrá y volvé a abrir el formulario para revisar sus datos antes de enviarla.');
+                return;
+            }
+            if (stored && !adjustRecovery) {
+                setAdjustRecovery(stored);
+                setAdjustWarehouseId(stored.payload.warehouseId);
+                setAdjustForm({ type: stored.payload.type, quantity: String(Math.abs(stored.payload.quantity)), reason: stored.payload.reason });
+                setAdjustError('Recuperamos un ajuste pendiente. Revisá sus datos antes de recuperar el resultado.');
+                return;
+            }
+            // A replay asks for the already committed result, so current stock,
+            // warehouse availability and changed product rules cannot prevent it.
+            const recovery = stored || adjustRecovery;
+            if (recovery) {
+                if (recovery.scope.tenantId !== scope.tenantId || recovery.scope.userId !== scope.userId) throw new Error('La sesión cambió. Volvé a abrir el ajuste.');
+                attempt = recovery;
+            } else {
+                if (!adjustmentTypesForRole(isBodeguero).includes(adjustForm.type)) {
+                    setAdjustError('Usá Compras o Devoluciones para registrar ese movimiento.');
+                    return;
+                }
+                if (!adjustWarehouseId) {
+                    setAdjustError('Seleccioná la bodega donde ocurrió este movimiento.');
+                    return;
+                }
+                if (adjustWarehouseStock === null) {
+                    setAdjustError('Esperá a que cargue el stock de la bodega seleccionada.');
+                    return;
+                }
+                if (!adjustmentFormReady || adjustQuantityState.value === null) {
+                    setAdjustError('Revisá la bodega, el tipo, la cantidad y la justificación antes de registrar.');
+                    return;
+                }
+                if (adjustForm.reason.trim().length > 300) {
+                    setAdjustError('La justificación puede tener hasta 300 caracteres.');
+                    return;
+                }
+                const adjustedQty = adjustForm.type === 'ADJUST_LOSS' ? -adjustQuantityState.value : adjustQuantityState.value;
+                if (adjustedQty < 0 && Math.abs(adjustedQty) > adjustWarehouseStock) {
+                    setAdjustError(`Stock insuficiente en esta bodega. Disponible: ${adjustWarehouseStock}.`);
+                    return;
+                }
+                attempt = {
+                    version: 1, scope, createdAt: new Date().toISOString(),
+                    warehouseName: selectedAdjustWarehouse?.name || adjustWarehouseId,
+                    payload: {
+                        productId: selectedProduct.id,
+                        warehouseId: adjustWarehouseId,
+                        quantity: adjustedQty,
+                        reason: adjustForm.reason.trim(),
+                        type: adjustForm.type as 'ADJUST_LOSS' | 'ADJUST_GAIN',
+                        clientEventId: newManualBatchClientEventId(),
+                    },
+                };
+            }
+            // Persist and verify BEFORE dispatch. Never mint a replacement for
+            // uncertain evidence, including malformed storage or an unproven 4xx.
+            saveInventoryAdjustmentAttempt(attempt);
+        } catch (error) {
+            setAdjustError(error instanceof Error ? error.message : 'No se envió el ajuste: no pudimos guardar su evidencia.');
             return;
         }
-
-        if (!adjustWarehouseId) {
-            setAdjustError('Seleccioná la bodega donde ocurrió este movimiento.');
-            return;
-        }
-        if (adjustWarehouseStock === null) {
-            setAdjustError('Esperá a que cargue el stock de la bodega seleccionada.');
-            return;
-        }
-
-        if (!adjustmentFormReady || adjustQuantityState.value === null) {
-            setAdjustError('Revisá la bodega, el tipo, la cantidad y la justificación antes de registrar.');
-            return;
-        }
-
-        const adjustedQty = adjustForm.type === 'ADJUST_LOSS'
-            ? -adjustQuantityState.value
-            : adjustQuantityState.value;
-
-        if (adjustedQty < 0 && Math.abs(adjustedQty) > adjustWarehouseStock) {
-            setAdjustError(`Stock insuficiente en esta bodega. Disponible: ${adjustWarehouseStock}.`);
-            return;
-        }
-
+        adjustPending.current = true;
+        setAdjustRecovery(attempt);
         setAdjustSubmitting(true);
-        setAdjustError('');
-
         try {
             const res = await fetch('/api/inventory/adjust', {
                 method: 'POST',
-                headers,
-                body: JSON.stringify({
-                    productId: selectedProduct.id,
-                    warehouseId: adjustWarehouseId,
-                    quantity: adjustedQty,
-                    reason: adjustForm.reason.trim(),
-                    type: adjustForm.type
-                })
+                headers: { ...headers, Authorization: `Bearer ${requestToken}` },
+                body: JSON.stringify(attempt.payload),
             });
-
             const data = await res.json().catch(() => ({}));
-
-            if (res.ok) {
-                const warehouseName = selectedAdjustWarehouse?.name || 'la bodega seleccionada';
+            const currentScope = inventoryAdjustmentScope(localStorage.getItem('nortex_token'));
+            if (currentScope.tenantId !== attempt.scope.tenantId || currentScope.userId !== attempt.scope.userId) return;
+            if (res.ok && isConfirmedInventoryAdjustment(data, attempt)) {
+                try {
+                    clearInventoryAdjustmentAttempt(attempt);
+                } catch {
+                    setAdjustError('El ajuste se confirmó, pero no pudimos limpiar la recuperación de esta pestaña. Recuperá el resultado de nuevo antes de registrar otro ajuste.');
+                    reload();
+                    return;
+                }
+                setAdjustRecovery(null);
                 setShowAdjustModal(false);
                 reload();
                 showToast({
                     tone: 'success',
                     title: 'Ajuste registrado',
-                    message: `Existencia actualizada en ${warehouseName}.`,
+                    message: `Existencia actualizada en ${attempt.warehouseName}.`,
                 });
+            } else if (!res.ok && isRejectedInventoryAdjustment(data, attempt)) {
+                try {
+                    clearInventoryAdjustmentAttempt(attempt);
+                } catch {
+                    setAdjustError('No se aplicó el ajuste, pero no pudimos limpiar su recuperación. Recuperá el resultado otra vez antes de corregir los datos.');
+                    return;
+                }
+                setAdjustRecovery(null);
+                setAdjustError(`No se aplicó el ajuste. ${data.error || 'El servidor rechazó este movimiento.'} Corregí los datos para intentarlo de nuevo.`);
             } else {
-                setAdjustError(data.error || 'No pudimos registrar el ajuste.');
+                setAdjustError(`${data.error || 'No pudimos confirmar el ajuste.'} Conservamos el intento. Recuperá su resultado antes de registrar otro ajuste para este producto.`);
             }
-        } catch (e) {
-            setAdjustError('No pudimos registrar el ajuste. Revisá tu conexión e intentá de nuevo.');
+        } catch {
+            setAdjustError('No pudimos confirmar el ajuste. Recuperá su resultado: conservamos los mismos datos y el identificador para evitar duplicados.');
         } finally {
+            adjustPending.current = false;
             setAdjustSubmitting(false);
         }
     };
@@ -1147,7 +1355,7 @@ export default function Inventory() {
                     });
                 }
                 setShowCreateModal(false);
-                setFormData({ name: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'GENERAL' });
+                setFormData({ name: '', brand: '', sku: '', description: '', category: '', price: '', cost: '', stock: '', minStock: '5', unit: 'unidad', isPublished: false, imageUrl: '', requiresBatchTracking: false, ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '', packUnit: '', packSize: '', packPrice: '', saleMode: 'COUNTED', quantityStep: '1', productFamily: 'GENERAL' });
                 reload();
                 alert('Producto creado exitosamente');
             } else {
@@ -1163,26 +1371,6 @@ export default function Inventory() {
     // DELETE PRODUCT
     // ==========================================
 
-    const handleDelete = async (id: string, name: string) => {
-        if (!confirm(`Eliminar producto "${name}"? Solo se puede eliminar si stock = 0`)) return;
-
-        try {
-            const res = await fetch(`/api/products/${id}`, {
-                method: 'DELETE',
-                headers
-            });
-
-            if (res.ok) {
-                reload();
-                alert('Producto eliminado');
-            } else {
-                const error = await res.json();
-                alert(`Error: ${error.error}`);
-            }
-        } catch (e) {
-            alert('Error eliminando producto');
-        }
-    };
 
     // ==========================================
     // TOGGLE PUBLISH PRODUCT
@@ -1326,7 +1514,6 @@ export default function Inventory() {
 
     // El servidor ya filtra y pagina; la página actual es `products`.
     const filteredProducts = products;
-    const inventoryTableColumnCount = isOwner ? 9 : isBodeguero ? 5 : 6;
     const selectedAdjustWarehouse = adjustWarehouses.find(warehouse => warehouse.id === adjustWarehouseId);
     const adjustmentQuantity = adjustQuantityState.value ?? 0;
     const projectedWarehouseStock = adjustWarehouseStock === null
@@ -1368,9 +1555,9 @@ export default function Inventory() {
 
         // Para BODEGUERO el ajuste queda visible como acción diaria. En roles
         // administrativos permanece en el menú, conservando la jerarquía previa.
-        if (isOwner && canAdjustStock) {
+        if (canAdjustStock) {
             actions.push({
-                label: 'Ajuste de stock (Kardex)',
+                label: 'Registrar pérdida o sobrante',
                 icon: <Wrench size={16} />,
                 onClick: () => openAdjust(product),
             });
@@ -1382,22 +1569,11 @@ export default function Inventory() {
                 icon: <Globe size={16} />,
                 onClick: () => handleTogglePublish(product.id, product.isPublished || false, product.name),
             });
-            actions.push({
-                label: 'Eliminar producto',
-                icon: <Trash2 size={16} />,
-                onClick: () => handleDelete(product.id, product.name),
-                danger: true,
-            });
+
         }
 
         return actions;
     };
-
-    // El semáforo de existencias también es compartido entre tabla y tarjetas.
-    const estadoStock = (product: Product) => ({
-        agotado: product.stock === 0,
-        bajo: product.stock <= product.minStock && product.stock > 0,
-    });
 
     // El vacío dice lo MISMO en los dos modos; solo cambia el envoltorio
     // (`<tr><td colSpan>` en la tabla, bloque suelto en las tarjetas). Declararlo
@@ -1410,12 +1586,12 @@ export default function Inventory() {
             description: 'Puede ser tu conexión. Tus productos siguen ahí — reintentá.',
             action: { label: 'Reintentar', onClick: () => fetchProducts() },
         }
-        : searchTerm
+        : hayFiltro
             ? {
                 mode: 'no-results',
                 title: 'No se encontraron resultados',
-                description: `Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.`,
-                action: { label: 'Limpiar búsqueda', onClick: () => setSearchTerm('') },
+                description: searchTerm ? `Ningún producto coincide con "${searchTerm}". Probá con otro nombre o SKU.` : 'Ningún producto coincide con estos filtros. Tus otros productos siguen en el catálogo.',
+                action: { label: 'Limpiar filtros', onClick: limpiarFiltros },
             }
             : {
                 icon: <Package size={32} />,
@@ -1423,7 +1599,7 @@ export default function Inventory() {
                 description: isBodeguero
                     ? 'Todavía no hay productos para operar. Pedile a un administrador que cargue el catálogo.'
                     : 'Importá tu lista desde Excel y Nortex arma el catálogo solo.',
-                action: isOwner ? { label: 'Modo rápido', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
+                action: isOwner ? { label: 'Nuevo producto', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
                 secondaryAction: isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined,
                 linkAction: isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined,
                 errorText: seedError,
@@ -1433,105 +1609,108 @@ export default function Inventory() {
     // en el teléfono se habría ido con ella, dejando al dueño encerrado en los
     // primeros 50 de 1,003 productos sin ninguna señal de que hay más.
     const paginacion = total > PAGE_SIZE ? (
-        <div className="flex items-center justify-between px-4 py-3 border-t border-slate-700 text-sm text-slate-400">
+        <div className="flex items-center justify-between border-t border-slate-200 px-4 py-3 text-sm text-slate-600">
             <span>{((page - 1) * PAGE_SIZE) + 1}–{Math.min(page * PAGE_SIZE, total)} de {total.toLocaleString()}</span>
             <div className="flex items-center gap-2">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
-                    className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><ChevronLeft size={16} /> <span className="hidden sm:inline">Anterior</span></button>
-                <span className="text-slate-300 font-mono">{page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
-                <button onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / PAGE_SIZE)}
-                    className="px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 disabled:opacity-40 flex items-center gap-1 transition-colors"><span className="hidden sm:inline">Siguiente</span> <ChevronRight size={16} /></button>
+                <button type="button" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+                    className="nx-fluid-press flex min-h-tap items-center gap-1 rounded-control border border-slate-300 bg-white px-3 text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40"><ChevronLeft size={16} /> <span className="hidden sm:inline">Anterior</span></button>
+                <span className="font-mono text-slate-700">{page} / {Math.max(1, Math.ceil(total / PAGE_SIZE))}</span>
+                <button type="button" onClick={() => setPage(p => p + 1)} disabled={page >= Math.ceil(total / PAGE_SIZE)}
+                    className="nx-fluid-press flex min-h-tap items-center gap-1 rounded-control border border-slate-300 bg-white px-3 text-slate-700 transition-colors hover:bg-slate-100 disabled:opacity-40"><span className="hidden sm:inline">Siguiente</span> <ChevronRight size={16} /></button>
             </div>
         </div>
     ) : null;
+
+    useEffect(() => {
+        const id = inventoryParams.get('productId');
+        if (receivingBusy) return;
+        setActiveProduct(current => {
+            const updated = products.find(product => product.id === (current?.id ?? id));
+            return updated ?? current;
+        });
+    }, [products, inventoryParams, receivingBusy]);
+    const changeFilters = (next: Partial<InventoryCatalogFilters>) => {
+        if (receivingBusy) return;
+        if (next.search !== undefined) setSearchTerm(next.search);
+        if (next.category !== undefined) setCategoryFilter(next.category);
+        if (next.family !== undefined) setFamilyFilter(next.family);
+        if (next.mode !== undefined) setModeFilter(next.mode);
+        if (next.status !== undefined) setStatusFilter(next.status);
+        if (next.sortField !== undefined) setSortField(next.sortField);
+        if (next.sortDir !== undefined) setSortDir(next.sortDir);
+        setPage(1);
+    };
+    const closeProductPane = () => {
+        if (receivingBusy) return;
+        updateReceivingOpen(false);
+        setActiveProduct(null);
+    };
+    const productPane = activeProduct ? <StockProductPane key={activeProduct.id} product={activeProduct} revision={stockRevision}
+        canReceive={canManagePurchaseOrders} canReceiveOrders={canReceivePurchaseOrders} canTransfer={canTransferStock}
+        canCount={canAdjustStock} canViewPrice={!isBodeguero} onBusyChange={setReceivingBusy} onReceivingChange={updateReceivingOpen}
+        onClose={closeProductPane}
+        onCompleted={reload}
+        onNavigate={(route, warehouseId) => {
+            if (receivingBusy) return;
+            const params = new URLSearchParams({ productId: activeProduct.id, search: searchTerm || activeProduct.sku });
+            if (warehouseId) params.set('warehouseId', warehouseId);
+            if (route === '/app/warehouses' && warehouseId) params.set('transfer', '1');
+            navigate(`${route}?${params}`);
+        }}
+        actions={<>
+            {canManageProducts && <button type="button" className="nx-fluid-press" aria-label={`Editar ${activeProduct.name}`} onClick={() => openEditModal(activeProduct)}>Editar producto</button>}
+            {canViewKardex && <button type="button" className="nx-fluid-press" aria-label={`Auditar kardex de ${activeProduct.name}`} onClick={() => openKardex(activeProduct)}>Movimientos</button>}
+            <ActionMenu label={`Más acciones de ${activeProduct.name}`} items={accionesDe(activeProduct)}/>
+        </>}/> : null;
 
     // ==========================================
     // RENDER
     // ==========================================
 
     return (
-        <div className="h-full overflow-y-auto p-6 space-y-6">
+        <div className="nx-light-context nx-workspace h-full overflow-y-auto bg-slate-50 text-slate-950">
             <ToastViewport toast={toast} onDismiss={dismissToast} />
-            {/* HEADER — altura única de módulo (antes: bloque de ~110px con un
-                cuadrado degradado azul→cian y los enlaces incrustados entre el
-                título y el subtítulo). */}
-            <ModuleHeader
-                icon={<Shield size={20} />}
-                title={isBodeguero ? 'Existencias' : 'Mis Productos'}
-                subtitle={isBodeguero
-                    ? 'Consultá el stock, revisá el Kardex y registrá ajustes justificados'
-                    : 'Tu catálogo, precios y existencias — cada movimiento queda registrado'}
-                // Las pestañas viven en un componente compartido montado también en
-                // Bodegas y Series: antes solo existían acá y entrar a las otras dos
-                // dejaba al usuario sin camino de vuelta.
-                contextLinks={<InventoryTabs />}
-                actions={isOwner && (
-                    <div className="relative">
-                        <button
-                            data-tour="inv-new"
-                            onClick={() => setShowDropdown(!showDropdown)}
-                            className="btn-primary flex items-center gap-2"
-                        >
-                            <Plus size={20} />
-                            Nuevo Producto
-                            <ChevronDown size={16} className={`transition-transform ${showDropdown ? 'rotate-180' : ''}`} />
-                        </button>
-
-                        {showDropdown && (
-                            <>
-                                <div className="fixed inset-0 z-10" onClick={() => setShowDropdown(false)} />
-                                <div className="absolute right-0 mt-2 w-56 bg-slate-800 border border-slate-700 rounded-lg shadow-2xl overflow-hidden z-20">
-                                    <button
-                                        onClick={() => { setShowCreateModal(true); setShowDropdown(false); }}
-                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
-                                    >
-                                        <Plus size={18} className="text-blue-400" />
-                                        <div>
-                                            <p className="font-semibold">Crear Manual</p>
-                                            <p className="text-xs text-slate-400">Producto individual</p>
-                                        </div>
-                                    </button>
-                                    <div className="border-t border-slate-700" />
-                                    <button
-                                        onClick={() => { setShowQuickAddModal(true); setQuickAddSKU(''); setShowDropdown(false); }}
-                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
-                                    >
-                                        <Zap size={18} className="text-orange-400" />
-                                        <div>
-                                            <p className="font-semibold">Modo Rápido </p>
-                                            <p className="text-xs text-slate-400">Escáner / Teclado</p>
-                                        </div>
-                                    </button>
-                                    <div className="border-t border-slate-700" />
-                                    <button
-                                        onClick={() => { setShowImportModal(true); setShowDropdown(false); }}
-                                        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-700/60 text-left text-white transition-colors"
-                                    >
-                                        <Upload size={18} className="text-emerald-400" />
-                                        <div>
-                                            <p className="font-semibold">Importar Masivo</p>
-                                            <p className="text-xs text-slate-400">Carga desde Excel/CSV</p>
-                                        </div>
-                                    </button>
-                                </div>
-                            </>
-                        )}
-                    </div>
-                )}
-            />
-
-            {/* KPI CARDS — las tres accionables FILTRAN la tabla.
-                "¿Qué tengo que comprar?" es la pregunta más frecuente del dueño de
-                bodega, y la respuesta ya estaba en pantalla: la tarjeta contaba los
-                productos bajo mínimo pero el número era decorativo — no se podía
-                hacer clic ni existía la opción en el filtro de estado. Había que
-                ordenar por stock ascendente y contar a ojo dónde terminaba el rojo. */}
-            {canViewInventoryValuation && <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className={`nx-stock-workspace ${receivingOpen ? 'nx-stock-workspace--receiving' : ''}`}>
+                <fieldset className="nx-stock-workspace__catalog" disabled={receivingOpen}>
+                    <InventoryCatalog onCreateScannedProduct={canManageProducts ? code => { setQuickAddSKU(code); setShowQuickAddModal(true); } : undefined} onCameraCode={scanWithCamera} title="Mis productos" products={productsError ? [] : products} total={total} loading={loading} error={productsError}
+                        filters={{search:searchTerm,category:categoryFilter,family:familyFilter,mode:modeFilter,status:statusFilter,sortField,sortDir}}
+                        onFiltersChange={changeFilters} categories={categories} selectedProductId={activeProduct?.id ?? null}
+                        onSelectProduct={product => { if (!receivingOpen) setActiveProduct(product as Product); }} canViewPrice={!isBodeguero}
+                        actions={{
+                            create: isOwner ? () => { setQuickAddSKU(''); setShowQuickAddModal(true); } : undefined,
+                            fullCreate: isOwner ? () => setShowCreateModal(true) : undefined,
+                            import: isOwner ? () => setShowImportModal(true) : undefined,
+                            export: handleExport,
+                            showSummary: canViewInventoryValuation ? () => setShowSummary(true) : undefined,
+                            warehouses: canTransferStock ? () => navigate('/app/warehouses') : undefined,
+                            receiving: canReceivePurchaseOrders ? () => navigate(isBodeguero ? '/app/purchase-orders' : '/app/purchases') : undefined,
+                            count: canAdjustStock ? () => navigate('/app/inventory-count') : undefined,
+                            serials: !isBodeguero ? () => navigate('/app/serials') : undefined,
+                            bulk: isOwner ? () => { setBulkMode(value => !value); setSelectedProductIds([]); } : undefined,
+                        }} exporting={exporting}
+                        selection={{enabled:bulkMode,ids:selectedProductIds,onToggle:toggleSelection,onToggleAll:toggleSelectAll}}
+                        bulkActions={selectedProductIds.length > 0 && isOwner ? <div className="nx-stock-bulk">
+                            <button type="button" className="nx-fluid-press" onClick={openBulkEdit}>Editar precio/categoría</button>
+                            <button type="button" className="nx-fluid-press" onClick={handlePrintLabels}>Etiquetas</button>
+                            <button type="button" className="nx-fluid-press" onClick={() => handleBulkPublish(true)}>Publicar</button>
+                            <button type="button" className="nx-fluid-press" onClick={() => handleBulkPublish(false)}>Ocultar</button>
+                        </div> : null}
+                        emptyState={<EmptyState {...propsVacio}/>} pagination={paginacion}/>
+                </fieldset>
+                {!compactPane && <aside className="nx-stock-workspace__detail">{productPane ?? <StockPaneEmpty/>}</aside>}
+            </div>
+            {compactPane && <FluidSheet open={Boolean(activeProduct) && !showQuickAddModal && !showEditModal && !showKardexModal && !showAdjustModal && !showBatchesModal}
+                onClose={closeProductPane} ariaLabel="Detalle del producto" panelClassName="nx-light-context nx-stock-mobile-panel" size="content"
+                closeOnBackdrop={!receivingBusy} closeOnEscape={!receivingBusy} dragToDismiss={!receivingBusy}>{productPane}</FluidSheet>}
+            <FluidSheet open={showSummary} onClose={() => setShowSummary(false)} ariaLabel="Resumen de inventario" panelClassName="nx-light-context" size="content">
+                <div className="nx-stock-summary"><div className="flex items-center justify-between"><h2>Resumen de inventario</h2><button type="button" className="nx-fluid-press nx-stock-icon" aria-label="Cerrar resumen" onClick={() => setShowSummary(false)}><X size={20}/></button></div>
+                <p className="mb-4 text-sm text-slate-500">Todo el catálogo. Tocá un indicador para ver los productos.</p>
+            {canViewInventoryValuation && <section aria-label="Resumen de inventario" className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
                 <TarjetaKpi
-                    icono={<Package size={16} className="text-blue-400" />}
+                    icono={<Package size={16} className="text-brand" />}
                     titulo="Productos"
-                    valor={(stats?.totalProducts ?? 0).toLocaleString()}
-                    nota={`${totals.totalItems.toLocaleString()} unidades en bodega`}
+                    valor={stats ? stats.totalProducts.toLocaleString() : '—'}
+                    nota="Cada producto conserva su unidad de medida"
                     activa={statusFilter === '' && categoryFilter === '' && familyFilter === '' && modeFilter === '' && !searchTerm}
                     onClick={limpiarFiltros}
                     etiquetaAccion="Ver todo el catálogo, sin filtros"
@@ -1541,13 +1720,13 @@ export default function Inventory() {
                 <TarjetaKpi
                     icono={<TrendingUp size={16} className="text-emerald-400" />}
                     titulo="Valor Inventario"
-                    valor={formatCurrency(totals.totalValue)}
+                    valor={stats ? formatCurrency(totals.totalValue) : '—'}
                     nota="Al costo de compra"
                 />
                 <TarjetaKpi
                     icono={<AlertTriangle size={16} className="text-amber-400" />}
                     titulo="Stock Bajo"
-                    valor={String(totals.lowStockCount)}
+                    valor={stats ? String(totals.lowStockCount) : '—'}
                     nota="Productos bajo mínimo"
                     activa={statusFilter === 'low'}
                     onClick={() => aplicarFiltroEstado('low')}
@@ -1556,527 +1735,44 @@ export default function Inventory() {
                 <TarjetaKpi
                     icono={<FileWarning size={16} className="text-red-400" />}
                     titulo="Agotados"
-                    valor={String(totals.outOfStockCount)}
+                    valor={stats ? String(totals.outOfStockCount) : '—'}
                     nota="Stock en cero"
                     activa={statusFilter === 'out'}
                     onClick={() => aplicarFiltroEstado('out')}
                     etiquetaAccion="Ver solo los productos agotados"
                 />
-            </div>}
+            </section>}
 
-            {/* Las tarjetas cuentan SIEMPRE sobre el catálogo completo (vienen del
-                endpoint de stats, no de la página visible). Con un filtro puesto,
-                decirlo evita que el dueño lea "1,003 productos" sobre una tabla de 5
-                y no sepa si el valor del inventario es del filtro o del total. */}
-            {canViewInventoryValuation && hayFiltro && (
-                <p className="text-xs text-slate-400 -mt-2">
-                    Los totales de arriba son de tu catálogo completo; la tabla está filtrada.
-                </p>
-            )}
-
-            {/* SEARCH + FILTROS + ORDEN + EXPORTAR
-
-                En el teléfono `flex-wrap` repartía los 5 controles en 3 renglones
-                de alturas distintas (buscador solo, dos selects, select + Excel):
-                ocupaba media pantalla antes de que apareciera un producto. Debajo
-                de `sm` el buscador va a lo ancho y los otros cuatro caen en una
-                grilla de 2×2 pareja. `sm:contents` disuelve ese envoltorio de
-                `sm` para arriba, así que en escritorio el layout queda idéntico
-                al de antes — una sola fila flex. */}
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
-                <div className="w-full sm:flex-1 sm:min-w-[200px] relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-                    <input
-                        data-tour="inv-search"
-                        type="text"
-                        placeholder="Buscar por nombre, SKU o categoría..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                        className="w-full pl-10 pr-4 py-2.5 bg-slate-800 border border-slate-700 rounded-lg text-white placeholder-slate-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
-                    />
+            {canViewInventoryValuation && statsError && <div role="alert" className="text-sm text-red-700">No pudimos cargar el resumen. <button type="button" onClick={fetchStats} className="nx-fluid-press min-h-tap underline">Reintentar resumen</button></div>}
                 </div>
-                <div className="grid grid-cols-2 gap-3 sm:contents">
-                <select value={categoryFilter} onChange={(e) => { setCategoryFilter(e.target.value); setPage(1); }}
-                    className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
-                    <option value="">Todas las categorías</option>
-                    {categories.map(c => <option key={c} value={c}>{c}</option>)}
-                </select>
-                <select value={familyFilter} onChange={(e) => { setFamilyFilter(e.target.value); setPage(1); }}
-                    aria-label="Filtrar por familia operativa"
-                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
-                    <option value="">Todas las familias</option>
-                    <option value="GENERAL">General</option>
-                    <option value="MEAT">Carnes</option>
-                    <option value="POULTRY">Aves</option>
-                    <option value="ANIMAL_FEED">Alimento animal</option>
-                    <option value="AGRO_INPUT">Agroinsumos</option>
-                    <option value="VETERINARY">Veterinaria</option>
-                </select>
-                <select value={modeFilter} onChange={(e) => { setModeFilter(e.target.value); setPage(1); }}
-                    aria-label="Filtrar por forma de venta"
-                    className="bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
-                    <option value="">Todas las formas</option>
-                    <option value="COUNTED">Contados</option>
-                    <option value="MEASURED">Medidos</option>
-                    <option value="LEGACY">Legado fraccionable</option>
-                </select>
-                <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
-                    className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
-                    <option value="">Todos</option>
-                    <option value="low">Bajo mínimo</option>
-                    <option value="reorder">Toca reponer</option>
-                    <option value="out">Agotados</option>
-                    {!isBodeguero && <option value="published">Publicados</option>}
-                    {!isBodeguero && <option value="unpublished">Ocultos</option>}
-                </select>
-                <select value={`${sortField}:${sortDir}`} onChange={(e) => { const [f, d] = e.target.value.split(':'); setSortField(f); setSortDir(d as 'asc' | 'desc'); setPage(1); }}
-                    className="min-w-0 bg-slate-800 border border-slate-700 rounded-lg text-white text-sm px-3 py-2.5 focus:border-blue-500">
-                    <option value="name:asc">Nombre A-Z</option>
-                    <option value="name:desc">Nombre Z-A</option>
-                    <option value="stock:asc">Stock ↑ (bajos primero)</option>
-                    <option value="stock:desc">Stock ↓</option>
-                    {!isBodeguero && <option value="price:desc">Precio ↓</option>}
-                    {!isBodeguero && <option value="price:asc">Precio ↑</option>}
-                    {canViewInventoryValuation && <option value="cost:desc">Costo ↓</option>}
-                </select>
-                {!isBodeguero && (
-                    <button onClick={handleExport} disabled={exporting}
-                        className="min-w-0 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 border border-slate-600 disabled:opacity-50 transition-colors">
-                        <Download size={16} /> {exporting ? 'Exportando…' : 'Excel'}
-                    </button>
-                )}
-                </div>
-            </div>
-
-            {/* BULK ACTIONS BAR
-
-                En el teléfono esta barra estaba ANTES del listado: para seleccionar
-                productos hay que bajar, y al bajar la barra —con los botones que
-                aplican el cambio— se iba para arriba de la pantalla. Uno terminaba
-                marcando 20 productos y subiendo a ciegas a buscar el botón.
-
-                Debajo de `lg` queda anclada abajo, 72px sobre el borde para no
-                taparse con la barra de navegación (h-16 = 64px, fija). Es `fixed`
-                y no `sticky` a propósito: medido en el navegador, `sticky` NO se
-                anclaba dentro de esta vista —quedaba en -532px, fuera de pantalla—
-                y una barra que depende de dónde quedó el scroll no sirve para
-                confirmar un cambio de precios masivo. De `lg` para arriba vuelve a
-                ser un bloque normal en el flujo.
-
-                El botón "Quitar" existe porque una barra anclada sin salida es una
-                trampa: sin él, deseleccionar exige volver a tocar 20 casillas. */}
-            {selectedProductIds.length > 0 && isOwner && (
-                <div className="fixed bottom-[72px] left-4 right-4 z-30 lg:static lg:bottom-auto lg:left-auto lg:right-auto lg:z-auto bg-blue-950/95 lg:bg-blue-900/40 backdrop-blur-sm border border-blue-500/30 rounded-lg p-3 mb-4 shadow-lg animate-in fade-in slide-in-from-bottom-2 lg:slide-in-from-top-2 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-                    <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 min-w-0">
-                            <CheckSquare size={18} className="text-blue-400 shrink-0" />
-                            <span className="text-white font-medium truncate">
-                                {selectedProductIds.length} {selectedProductIds.length === 1 ? 'producto seleccionado' : 'productos seleccionados'}
-                            </span>
-                        </div>
-                        <button
-                            onClick={() => setSelectedProductIds([])}
-                            className="text-sm text-slate-300 hover:text-white underline underline-offset-2 shrink-0 lg:hidden"
-                        >
-                            Quitar
-                        </button>
-                    </div>
-                    <div className="grid grid-cols-2 gap-2 lg:flex lg:items-center lg:gap-3">
-                        <button
-                            onClick={openBulkEdit}
-                            className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
-                        >
-                            <Edit size={16} />
-                            <span className="truncate">Editar precio<span className="hidden lg:inline">/categoría</span></span>
-                        </button>
-                        <button
-                            onClick={handlePrintLabels}
-                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors border border-slate-600"
-                        >
-                            <Printer size={16} />
-                            Etiquetas
-                        </button>
-                        <button
-                            onClick={() => handleBulkPublish(true)}
-                            className="bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
-                        >
-                            <Globe size={16} />
-                            Publicar
-                        </button>
-                        <button
-                            onClick={() => handleBulkPublish(false)}
-                            className="bg-slate-700 hover:bg-slate-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors border border-slate-600"
-                        >
-                            <EyeOff size={16} />
-                            Ocultar
-                        </button>
-                    </div>
-                </div>
-            )}
-
-            {/* PRODUCTS TABLE — solo de `lg` para arriba.
-
-                Medido en el navegador con el rol de dueño (8 columnas): la tabla
-                mide 849px de ancho natural. La caja que la contiene da 313px a
-                360px, 343px a 390px y 593px a 640px — o sea que en CUALQUIER
-                teléfono quedaban afuera Precio, Costo, Valor Total y Acciones.
-                No es que se vieran apretados: el `overflow-x-auto` los escondía
-                detrás de un scroll lateral que nadie descubre, así que el dueño
-                no podía ver el precio de su propio producto ni tocar "Editar".
-
-                Debajo de `lg` el listado se pinta como tarjetas (bloque siguiente).
-                A `lg` (1024px) la caja da 737px contra los 849px de la tabla, así
-                que ahí se esconde la columna Costo hasta `xl` — es el dato menos
-                urgente y el único cuya ausencia no rompe una decisión de venta;
-                Valor Total se queda porque es el que el dueño mira para saber
-                cuánta plata tiene parada. */}
-            <div className="hidden lg:block bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden">
-                <div className="overflow-x-auto">
-                    <table className="table-premium w-full">
-                        <thead>
-                            <tr className="bg-slate-900/80">
-                                {isOwner && (
-                                    <th className="text-center px-2 xl:px-4 py-3">
-                                        <input
-                                            type="checkbox"
-                                            checked={filteredProducts.length > 0 && selectedProductIds.length === filteredProducts.length}
-                                            onChange={toggleSelectAll}
-                                            className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
-                                        />
-                                    </th>
-                                )}
-                                <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">SKU</th>
-                                <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Producto</th>
-                                <th className="text-left px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Categoría</th>
-                                <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Stock</th>
-                                {!isBodeguero && <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Precio</th>}
-                                {isOwner && (
-                                    <>
-                                        <th className="hidden xl:table-cell text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Costo</th>
-                                        <th className="text-right px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Valor Total</th>
-                                    </>
-                                )}
-                                <th className="text-center px-2 xl:px-4 py-3 text-xs text-slate-400 uppercase tracking-wider font-semibold">Acciones</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {loading ? (
-                                <SkeletonTableRows rows={6} cols={inventoryTableColumnCount} />
-                            ) : filteredProducts.length === 0 ? (
-                                <TableEmptyState colSpan={inventoryTableColumnCount} {...propsVacio} />
-                            ) : (
-                                filteredProducts.map((product) => {
-                                    const isLow = product.stock <= product.minStock && product.stock > 0;
-                                    const isOut = product.stock === 0;
-                                    const rowBg = isOut
-                                        ? 'bg-red-950/20'
-                                        : isLow
-                                            ? 'bg-amber-950/10'
-                                            : 'hover:bg-slate-700/30';
-
-                                    return (
-                                        <tr key={product.id} className={`${rowBg} transition-colors`}>
-                                            {isOwner && (
-                                                <td className="px-2 xl:px-4 py-3 text-center">
-                                                    <input
-                                                        type="checkbox"
-                                                        checked={selectedProductIds.includes(product.id)}
-                                                        onChange={() => toggleSelection(product.id)}
-                                                        className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
-                                                    />
-                                                </td>
-                                            )}
-                                            <td className="px-2 xl:px-4 py-3">
-                                                <span className="font-mono text-sm text-slate-300 bg-slate-900/60 px-2 py-0.5 rounded">
-                                                    {product.sku}
-                                                </span>
-                                            </td>
-                                            <td className="px-2 xl:px-4 py-3">
-                                                <div className="flex flex-col">
-                                                    <span className="text-white font-semibold">{product.name}</span>
-                                                    <span className="text-[10px] text-slate-500">
-                                                        {product.saleMode === 'COUNTED'
-                                                            ? `Contado · paso ${product.quantityStep || 1}`
-                                                            : product.saleMode === 'MEASURED'
-                                                                ? `Medido · paso ${product.quantityStep || '0.0001'}`
-                                                                : 'Legado fraccionable'}
-                                                        {' · '}{product.productFamily || 'GENERAL'}
-                                                    </span>
-                                                    {product.description && (
-                                                        <span className="text-xs text-slate-500 truncate max-w-[200px]">{product.description}</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            <td className="px-2 xl:px-4 py-3">
-                                                {product.category ? (
-                                                    <span className="text-xs bg-slate-700/60 text-slate-300 px-2 py-1 rounded-full">
-                                                        {product.category}
-                                                    </span>
-                                                ) : (
-                                                    <span className="text-slate-300">-</span>
-                                                )}
-                                            </td>
-                                            <td className="px-2 xl:px-4 py-3 text-right">
-                                                <div className="flex items-center justify-end gap-2">
-                                                    <span className={`font-mono tabular-nums font-bold ${isOut ? 'text-red-400' : isLow ? 'text-amber-400' : 'text-white'}`}>
-                                                        {formatQuantityValue(product.stock)}
-                                                    </span>
-                                                    <span className="text-xs text-slate-500">{product.unit}</span>
-                                                </div>
-                                                <div className="mt-1 flex justify-end">
-                                                    {isOut ? (
-                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
-                                                    ) : isLow ? (
-                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
-                                                    ) : (
-                                                        <span className="badge-soft-success">OK</span>
-                                                    )}
-                                                </div>
-                                            </td>
-                                            {!isBodeguero && (
-                                                <td className="px-2 xl:px-4 py-3 text-right text-emerald-400 font-semibold font-mono tabular-nums whitespace-nowrap">
-                                                    {formatCurrency(Number(product.price ?? 0))}
-                                                </td>
-                                            )}
-                                            {isOwner && (
-                                                <>
-                                                    <td className="hidden xl:table-cell px-2 xl:px-4 py-3 text-right text-slate-400 font-mono tabular-nums whitespace-nowrap">
-                                                        {formatCurrency(Number(product.cost ?? 0))}
-                                                    </td>
-                                                    <td className="px-2 xl:px-4 py-3 text-right font-semibold text-cyan-400 font-mono tabular-nums whitespace-nowrap">
-                                                        {formatCurrency(product.stock * Number(product.cost ?? 0))}
-                                                    </td>
-                                                </>
-                                            )}
-                                            <td className="px-2 xl:px-4 py-3">
-                                                {/* Antes había 6 íconos de ~33px pegados, con "Eliminar"
-                                                    al lado de "Ajustar stock". Con el dedo y con prisa,
-                                                    esa vecindad borra productos. Ahora quedan visibles
-                                                    las dos acciones de uso diario y el resto —incluida
-                                                    la destructiva, separada— vive en el menú. */}
-                                                <div className="flex items-center justify-center gap-1">
-                                                    {(canViewKardex || canAdjustStock) && (
-                                                        <>
-                                                            {canViewKardex && (
-                                                                <IconButton
-                                                                    icon={<Eye size={16} />}
-                                                                    label={`Auditar kardex de ${product.name}`}
-                                                                    onClick={() => openKardex(product)}
-                                                                />
-                                                            )}
-                                                            {canManageProducts && (
-                                                                    <IconButton
-                                                                        icon={<Edit size={16} />}
-                                                                        label={`Editar ${product.name}`}
-                                                                        onClick={() => openEditModal(product)}
-                                                                    />
-                                                            )}
-                                                            {isBodeguero && canAdjustStock && (
-                                                                <IconButton
-                                                                    icon={<Wrench size={16} />}
-                                                                    label={`Ajustar existencias de ${product.name}`}
-                                                                    onClick={() => openAdjust(product)}
-                                                                />
-                                                            )}
-                                                            <ActionMenu
-                                                                label={`Más acciones de ${product.name}`}
-                                                                items={accionesDe(product)}
-                                                            />
-                                                        </>
-                                                    )}
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    );
-                                })
-                            )}
-                        </tbody>
-                    </table>
-                </div>
-                {paginacion}
-            </div>
-
-            {/* CATÁLOGO EN TARJETAS — el modo de teléfono y tablet (< lg).
-
-                Cada tarjeta muestra de una lo que la tabla escondía tras el
-                scroll lateral: nombre, SKU, existencias con su semáforo, PRECIO
-                y las acciones. Costo y Valor Total quedan en una segunda línea
-                solo para el dueño, que es el único a quien le sirven.
-
-                Se mantiene la casilla de selección para que la edición masiva
-                —el atajo para subir precios cuando cambia el dólar— siga siendo
-                posible desde el teléfono. */}
-            <div className={`lg:hidden bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden ${
-                // Con la barra de acciones anclada abajo, sin este colchón las
-                // últimas tarjetas y la paginación quedan debajo de ella.
-                selectedProductIds.length > 0 && isOwner ? 'pb-36' : ''
-            }`}>
-                {isOwner && filteredProducts.length > 0 && !loading && (
-                    <label className="flex items-center gap-3 px-4 py-3 border-b border-slate-700 bg-slate-900/60 cursor-pointer">
-                        <input
-                            type="checkbox"
-                            checked={selectedProductIds.length === filteredProducts.length}
-                            onChange={toggleSelectAll}
-                            className="w-5 h-5 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
-                        />
-                        <span className="text-sm text-slate-300 font-medium">Seleccionar los {filteredProducts.length} de esta página</span>
-                    </label>
-                )}
-
-                {loading ? (
-                    <div className="divide-y divide-slate-700/60">
-                        {Array.from({ length: 6 }).map((_, i) => (
-                            <div key={i} className="p-4 space-y-2">
-                                <div className="h-4 w-2/3 rounded bg-slate-700/60 animate-pulse" />
-                                <div className="h-3 w-1/3 rounded bg-slate-700/40 animate-pulse" />
-                            </div>
-                        ))}
-                    </div>
-                ) : filteredProducts.length === 0 ? (
-                    <EmptyState {...propsVacio} />
-                ) : (
-                    <ul className="divide-y divide-slate-700/60">
-                        {filteredProducts.map((product) => {
-                            const { agotado, bajo } = estadoStock(product);
-                            const fondo = agotado ? 'bg-red-950/20' : bajo ? 'bg-amber-950/10' : '';
-                            const seleccionado = selectedProductIds.includes(product.id);
-
-                            return (
-                                <li key={product.id} data-fila-producto className={`${fondo} p-4`}>
-                                    <div className="flex items-start gap-3">
-                                        {isOwner && (
-                                            <input
-                                                type="checkbox"
-                                                aria-label={`Seleccionar ${product.name}`}
-                                                checked={seleccionado}
-                                                onChange={() => toggleSelection(product.id)}
-                                                className="mt-0.5 w-5 h-5 shrink-0 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500/50 focus:ring-offset-slate-900"
-                                            />
-                                        )}
-
-                                        <div className="min-w-0 flex-1">
-                                            {/* El nombre se lleva el renglón entero. Compartiéndolo con el
-                                                precio y tres botones, "Broca modelo 100" caía en tres
-                                                líneas de dos palabras y el producto dejaba de leerse. */}
-                                            <p className="text-white font-semibold leading-snug break-words">{product.name}</p>
-
-                                            <div className="mt-1.5 flex flex-wrap items-center gap-2">
-                                                <span className="font-mono text-xs text-slate-300 bg-slate-900/60 px-2 py-0.5 rounded">
-                                                    {product.sku}
-                                                </span>
-                                                {product.category && (
-                                                    <span className="text-xs bg-slate-700/60 text-slate-300 px-2 py-0.5 rounded-full">
-                                                        {product.category}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {/* Existencias a la izquierda, precio a la derecha: los dos
-                                                datos por los que se abre esta pantalla, en un renglón. */}
-                                            <div className="mt-2 flex items-center justify-between gap-3">
-                                                <div className="flex flex-wrap items-center gap-2 min-w-0">
-                                                    <span className={`font-mono tabular-nums font-bold ${agotado ? 'text-red-400' : bajo ? 'text-amber-400' : 'text-white'}`}>
-                                                        {product.stock}
-                                                    </span>
-                                                    <span className="text-xs text-slate-500">{product.unit}</span>
-                                                    {agotado ? (
-                                                        <span className="badge-soft-danger"><AlertTriangle size={11} /> Agotado</span>
-                                                    ) : bajo ? (
-                                                        <span className="badge-soft-warning"><AlertTriangle size={11} /> Reorden · mín {product.minStock}</span>
-                                                    ) : (
-                                                        <span className="badge-soft-success">OK</span>
-                                                    )}
-                                                </div>
-                                                {!isBodeguero && (
-                                                    <span className="shrink-0 text-emerald-400 font-bold font-mono tabular-nums">
-                                                        {formatCurrency(Number(product.price ?? 0))}
-                                                    </span>
-                                                )}
-                                            </div>
-
-                                            {isOwner && (
-                                                <div className="mt-2 flex items-center justify-between gap-3">
-                                                    {/* Sin `truncate`: con los tres botones al lado, "Valor"
-                                                        se cortaba en "V…" y desaparecía justo la cifra que
-                                                        dice cuánta plata hay parada en ese producto. Que
-                                                        baje a dos líneas es mejor que ocultarla. */}
-                                                    <p className="min-w-0 text-xs text-slate-400 font-mono tabular-nums">
-                                                        Costo {formatCurrency(Number(product.cost ?? 0))} · Valor <span className="text-cyan-400">{formatCurrency(product.stock * Number(product.cost ?? 0))}</span>
-                                                    </p>
-                                                    <div className="flex shrink-0 items-center gap-1">
-                                                        <IconButton
-                                                            icon={<Eye size={16} />}
-                                                            label={`Auditar kardex de ${product.name}`}
-                                                            onClick={() => openKardex(product)}
-                                                        />
-                                                        <IconButton
-                                                            icon={<Edit size={16} />}
-                                                            label={`Editar ${product.name}`}
-                                                            onClick={() => openEditModal(product)}
-                                                        />
-                                                        <ActionMenu
-                                                            label={`Más acciones de ${product.name}`}
-                                                            items={accionesDe(product)}
-                                                        />
-                                                    </div>
-                                                </div>
-                                            )}
-                                            {isBodeguero && (
-                                                <div className="mt-3 flex items-center justify-end gap-1">
-                                                    {canViewKardex && (
-                                                        <IconButton
-                                                            icon={<Eye size={16} />}
-                                                            label={`Auditar kardex de ${product.name}`}
-                                                            onClick={() => openKardex(product)}
-                                                        />
-                                                    )}
-                                                    {canAdjustStock && (
-                                                        <IconButton
-                                                            icon={<Wrench size={16} />}
-                                                            label={`Ajustar existencias de ${product.name}`}
-                                                            onClick={() => openAdjust(product)}
-                                                        />
-                                                    )}
-                                                    <ActionMenu
-                                                        label={`Más acciones de ${product.name}`}
-                                                        items={accionesDe(product)}
-                                                    />
-                                                </div>
-                                            )}
-                                        </div>
-                                    </div>
-                                </li>
-                            );
-                        })}
-                    </ul>
-                )}
-                {paginacion}
-            </div>
+            </FluidSheet>
 
             {/* ==========================================
                 MODAL: KARDEX (HISTORIAL DE AUDITORÍA)
                ========================================== */}
             {showKardexModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowKardexModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowKardexModal(false)}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-5xl max-h-[90dvh] overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Kardex Header */}
-                        <div className="bg-gradient-to-r from-blue-900/50 to-cyan-900/30 px-6 py-4 flex items-center justify-between border-b border-slate-700">
+                        <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
                                 <div className="flex items-center gap-2">
-                                    <Shield size={20} className="text-blue-400" />
+                                    <Shield size={20} className="text-brand" />
                                     <h2 className="text-xl font-bold text-white">Kardex - {selectedProduct.name}</h2>
                                 </div>
                                 <p className="text-sm text-slate-400 mt-1">
                                     SKU: <span className="font-mono text-slate-300">{selectedProduct.sku}</span>
                                     {' '} | Stock Actual: <span className={`font-bold ${selectedProduct.stock <= selectedProduct.minStock ? 'text-red-400' : 'text-emerald-400'}`}>{formatQuantityValue(selectedProduct.stock)} {selectedProduct.unit}</span>
                                     {canViewInventoryValuation && (
-                                        <> {' '} | Valor: <span className="text-cyan-400 font-semibold">{formatCurrency(selectedProduct.stock * selectedProduct.cost)}</span></>
+                                        <> {' '} | Valor: <span className="font-semibold text-emerald-300">{formatCurrency(selectedProduct.stock * selectedProduct.cost)}</span></>
                                     )}
                                 </p>
                             </div>
-                            <button onClick={() => setShowKardexModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
-                                <X size={20} />
-                            </button>
+                            <IconButton
+                                icon={<X size={18} />}
+                                label="Cerrar historial de Kardex"
+                                onClick={() => setShowKardexModal(false)}
+                            />
                         </div>
 
                         {/* Kardex: Filtro por fecha (A5) */}
@@ -2087,7 +1783,7 @@ export default function Inventory() {
                                     type="date"
                                     value={kardexFrom}
                                     onChange={(e) => setKardexFrom(e.target.value)}
-                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                            className="rounded-control border px-3 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring bg-surface-900 nx-form-field"
                                 />
                             </div>
                             <div>
@@ -2096,19 +1792,19 @@ export default function Inventory() {
                                     type="date"
                                     value={kardexTo}
                                     onChange={(e) => setKardexTo(e.target.value)}
-                                    className="bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-blue-500"
+                                    className="rounded-control border px-3 py-1.5 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring bg-surface-900 nx-form-field"
                                 />
                             </div>
                             <button
                                 onClick={() => fetchKardex(selectedProduct.id, 1, kardexFrom, kardexTo)}
-                                className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                className="nx-fluid-press flex min-h-tap items-center gap-2 rounded-control bg-brand px-4 text-sm font-semibold text-brand-on transition-colors hover:bg-brand-hover"
                             >
                                 <Search size={15} /> Filtrar
                             </button>
                             {(kardexFrom || kardexTo) && (
                                 <button
                                     onClick={() => { setKardexFrom(''); setKardexTo(''); fetchKardex(selectedProduct.id, 1, '', ''); }}
-                                    className="text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
+                                    className="nx-fluid-press min-h-tap text-slate-400 hover:text-white px-3 py-1.5 rounded-lg text-sm border border-slate-600 hover:bg-slate-700 transition-colors"
                                 >
                                     Limpiar
                                 </button>
@@ -2119,13 +1815,13 @@ export default function Inventory() {
                         </div>
 
                         {/* Kardex Table — overflow-x: 6 columnas no caben en 360px */}
-                        <div className="overflow-y-auto overflow-x-auto max-h-[calc(90vh-250px)]">
+                        <div className="overflow-y-auto overflow-x-auto max-h-[calc(90dvh-250px)]">
                             {kardexLoading ? (
                                 <div className="flex flex-col items-center justify-center py-16">
-                                    <div className="w-10 h-10 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
+                                    <div className="mb-3 h-10 w-10 animate-spin rounded-full border-2 border-brand border-t-transparent" />
                                     <span className="text-slate-400">Cargando historial...</span>
                                 </div>
-                            ) : kardexData.length === 0 ? (
+                            ) : kardexError ? (<div role="alert" className="p-6 text-red-300">{kardexError}<button type="button" onClick={() => fetchKardex(selectedProduct.id, kardexPage, kardexFrom, kardexTo)} className="nx-fluid-press ml-3 min-h-tap underline">Reintentar</button></div>) : kardexData.length === 0 ? (
                                 <div className="flex flex-col items-center justify-center py-16 text-slate-400">
                                     <Clock size={40} className="opacity-30 mb-2" />
                                     <p>No hay movimientos registrados</p>
@@ -2198,14 +1894,14 @@ export default function Inventory() {
                                     <button
                                         disabled={kardexPage <= 1 || kardexLoading}
                                         onClick={() => fetchKardex(selectedProduct.id, kardexPage - 1, kardexFrom, kardexTo)}
-                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                        className="nx-fluid-press min-h-tap px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
                                     >
                                         <ChevronLeft size={15} /> Anterior
                                     </button>
                                     <button
                                         disabled={kardexPage >= Math.ceil(kardexTotal / KARDEX_PAGE_SIZE) || kardexLoading}
                                         onClick={() => fetchKardex(selectedProduct.id, kardexPage + 1, kardexFrom, kardexTo)}
-                                        className="px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
+                                        className="nx-fluid-press min-h-tap px-3 py-1.5 rounded-lg text-sm border border-slate-600 text-slate-300 hover:bg-slate-700 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1 transition-colors"
                                     >
                                         Siguiente <ChevronRight size={15} />
                                     </button>
@@ -2221,18 +1917,18 @@ export default function Inventory() {
                ========================================== */}
             {showAdjustModal && selectedProduct && (
                 <div
-                    className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200"
-                    onClick={() => { if (!adjustSubmitting) setShowAdjustModal(false); }}
+                    className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+                    onClick={closeAdjust}
                 >
                     <div
                         role="dialog"
                         aria-modal="true"
                         aria-labelledby="inventory-adjust-title"
-                        className="bg-slate-800 rounded-2xl w-full max-w-lg max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-700"
+                        className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[92dvh] overflow-y-auto rounded-card shadow-2xl"
                         onClick={(e) => e.stopPropagation()}
                     >
                         {/* Adjust Header */}
-                        <div className="bg-gradient-to-r from-amber-900/30 to-orange-900/20 px-6 py-4 border-b border-slate-700">
+                        <div className="border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div className="flex items-center justify-between">
                                 <div>
                                     <h2 id="inventory-adjust-title" className="text-xl font-bold text-white flex items-center gap-2">
@@ -2244,19 +1940,23 @@ export default function Inventory() {
                                         <span className="font-mono text-xs"> · {selectedProduct.sku}</span>
                                     </p>
                                 </div>
-                                <button
-                                    type="button"
-                                    aria-label="Cerrar ajuste de inventario"
+                                <IconButton
+                                    icon={<X size={18} />}
+                                    label="Cerrar ajuste de inventario"
                                     disabled={adjustSubmitting}
-                                    onClick={() => setShowAdjustModal(false)}
-                                    className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white disabled:opacity-40 disabled:cursor-not-allowed"
-                                >
-                                    <X size={20} />
-                                </button>
+                                    onClick={closeAdjust}
+                                />
                             </div>
                         </div>
 
                         <form onSubmit={handleAdjust} aria-busy={adjustSubmitting} className="p-6 space-y-5">
+                            {adjustRecovery && (
+                                <div role="status" className="rounded-lg border border-amber-700/50 bg-amber-950/40 p-3 text-sm text-amber-200">
+                                    <p className="font-semibold">Hay un ajuste pendiente de confirmar.</p>
+                                    <p className="mt-1">Recuperá su resultado con los mismos datos para evitar duplicarlo. Podés cerrar este formulario y volver; conservá esta pestaña del navegador hasta resolverlo.</p>
+                                    <p className="mt-1 text-xs">Bodega: {adjustRecovery.warehouseName}</p>
+                                </div>
+                            )}
                             {/* Warn banner */}
                             <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2">
                                 <AlertTriangle size={18} className="text-amber-400 mt-0.5 shrink-0" />
@@ -2279,8 +1979,8 @@ export default function Inventory() {
                                         setAdjustWarehouseId(event.target.value);
                                         setAdjustError('');
                                     }}
-                                    disabled={adjustWarehousesLoading}
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60"
+                                    disabled={adjustWarehousesLoading || adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked}
+                                    className="w-full px-4 py-2.5 border rounded-control focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60 bg-surface-900 text-slate-100 nx-form-field"
                                 >
                                     <option value="">
                                         {adjustWarehousesLoading
@@ -2294,6 +1994,9 @@ export default function Inventory() {
                                             {warehouse.name}{warehouse.isDefault ? ' · Principal' : ''}
                                         </option>
                                     ))}
+                                    {adjustRecovery && !adjustWarehouses.some(warehouse => warehouse.id === adjustRecovery.payload.warehouseId) && (
+                                        <option value={adjustRecovery.payload.warehouseId}>{adjustRecovery.warehouseName}</option>
+                                    )}
                                 </select>
                                 {adjustStockLoading && (
                                     <p className="mt-2 text-xs text-slate-400">Consultando el stock de esta bodega…</p>
@@ -2315,7 +2018,7 @@ export default function Inventory() {
                                     {([
                                         { value: 'ADJUST_LOSS', label: 'Pérdida / Merma', icon: TrendingDown, selectedClass: 'border-red-500 bg-red-950/40 text-red-300' },
                                         { value: 'ADJUST_GAIN', label: 'Ganancia / Hallazgo', icon: TrendingUp, selectedClass: 'border-emerald-500 bg-emerald-950/40 text-emerald-300' },
-                                        { value: 'IN_PURCHASE', label: 'Compra / Entrada', icon: ArrowDownCircle, selectedClass: 'border-blue-500 bg-blue-950/40 text-blue-300' },
+                                        { value: 'IN_PURCHASE', label: 'Compra / Entrada', icon: ArrowDownCircle, selectedClass: 'border-brand bg-emerald-950/40 text-emerald-300' },
                                         { value: 'RETURN', label: 'Devolución', icon: RotateCcw, selectedClass: 'border-purple-500 bg-purple-950/40 text-purple-300' },
                                     ] as const)
                                         .filter(opt => adjustmentTypesForRole(isBodeguero).includes(opt.value))
@@ -2327,12 +2030,12 @@ export default function Inventory() {
                                                 key={opt.value}
                                                 type="button"
                                                 aria-pressed={isSelected}
-                                                disabled={adjustSubmitting}
+                                                disabled={adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked}
                                                 onClick={() => {
                                                     setAdjustForm(current => ({ ...current, type: opt.value as AdjustType }));
                                                     setAdjustError('');
                                                 }}
-                                                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-all disabled:opacity-50 disabled:cursor-not-allowed ${isSelected
+                                                className={`nx-fluid-press min-h-tap flex items-center gap-2 px-3 py-2.5 rounded-lg border text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${isSelected
                                                     ? opt.selectedClass
                                                     : 'border-slate-700 bg-slate-900/40 text-slate-400 hover:border-slate-600'
                                                     }`}
@@ -2359,7 +2062,7 @@ export default function Inventory() {
                                     inputMode={selectedProduct.saleMode === 'MEASURED' ? 'decimal' : 'numeric'}
                                     pattern={selectedProduct.saleMode === 'MEASURED' ? undefined : '[0-9]*'}
                                     value={adjustForm.quantity}
-                                    disabled={adjustSubmitting || !adjustWarehouseId}
+                                    disabled={adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked || !adjustWarehouseId}
                                     aria-invalid={Boolean(adjustQuantityState.error || adjustLossExceedsStock)}
                                     aria-describedby="inventory-adjust-quantity-help"
                                     onChange={(e) => {
@@ -2372,9 +2075,9 @@ export default function Inventory() {
                                         setAdjustError('');
                                     }}
                                     placeholder="Ej: 5"
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
+                                    className="w-full px-4 py-2.5 border rounded-control text-lg font-bold font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60 disabled:cursor-not-allowed transition-colors bg-surface-900 nx-form-field"
                                 />
-                                <div id="inventory-adjust-quantity-help" className="mt-1.5 text-xs">
+                                <div id="inventory-adjust-quantity-help" className="mt-1.5 text-xs" hidden={Boolean(adjustRecovery)}>
                                     {adjustQuantityState.error && <p className="text-red-300">{adjustQuantityState.error}</p>}
                                     {!adjustQuantityState.error && adjustLossExceedsStock && (
                                         <p className="text-red-300">
@@ -2398,8 +2101,9 @@ export default function Inventory() {
                                     id="inventory-adjust-reason"
                                     required
                                     minLength={3}
+                                    maxLength={300}
                                     value={adjustForm.reason}
-                                    disabled={adjustSubmitting}
+                                    disabled={adjustSubmitting || Boolean(adjustRecovery) || adjustRecoveryBlocked}
                                     aria-invalid={Boolean(adjustForm.reason && adjustForm.reason.trim().length < 3)}
                                     onChange={(e) => {
                                         setAdjustForm(current => ({ ...current, reason: e.target.value }));
@@ -2407,7 +2111,7 @@ export default function Inventory() {
                                     }}
                                     placeholder='Ej: “Producto dañado durante el traslado”'
                                     rows={3}
-                                    className="w-full px-4 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white placeholder-slate-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed transition-colors resize-none"
+                                    className="w-full resize-none rounded-control border px-4 py-2.5 placeholder-slate-600 transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring disabled:cursor-not-allowed disabled:opacity-60 bg-surface-900 text-slate-100 nx-form-field"
                                 />
                                 {adjustForm.reason && adjustForm.reason.trim().length < 3 && (
                                     <p className="mt-1.5 text-xs text-red-300">Escribí al menos 3 caracteres para dejar un rastro útil.</p>
@@ -2425,20 +2129,20 @@ export default function Inventory() {
                                 <button
                                     type="button"
                                     disabled={adjustSubmitting}
-                                    onClick={() => setShowAdjustModal(false)}
-                                    className="sm:w-auto px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                    onClick={closeAdjust}
+                                    className="nx-fluid-press sm:w-auto px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                                 >
-                                    Cancelar
+                                    {adjustRecovery ? 'Cerrar y recuperar después' : 'Cancelar'}
                                 </button>
                                 <button
                                     type="submit"
-                                    disabled={adjustSubmitting || adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady}
-                                    className={`flex-1 py-3 rounded-lg font-bold text-white transition-all ${adjustForm.type === 'ADJUST_LOSS'
+                                    disabled={adjustSubmitting || adjustRecoveryBlocked || (!adjustRecovery && (adjustWarehousesLoading || adjustStockLoading || !adjustmentFormReady))}
+                                    className={`nx-fluid-press flex-1 py-3 rounded-lg font-bold text-white transition-colors ${adjustForm.type === 'ADJUST_LOSS'
                                         ? 'bg-red-600 hover:bg-red-700 disabled:bg-red-800'
-                                        : 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800'
+                                        : 'bg-brand hover:bg-brand-hover disabled:bg-emerald-900'
                                         } disabled:opacity-50 disabled:cursor-not-allowed`}
                                 >
-                                    {adjustSubmitting ? 'Procesando...' : (
+                                    {adjustSubmitting ? 'Procesando...' : adjustRecovery ? 'Recuperar resultado del ajuste' : (
                                         adjustForm.type === 'ADJUST_LOSS'
                                             ? 'Registrar pérdida'
                                             : adjustForm.type
@@ -2456,23 +2160,35 @@ export default function Inventory() {
                 MODAL: EDITAR PRODUCTO (solo datos comerciales)
                ========================================== */}
             {showEditModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowEditModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeEdit}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-lg max-h-[90dvh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
                         {/* Header */}
-                        <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/20 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                        <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                    <Edit size={20} className="text-blue-400" />
+                                    <Edit size={20} className="text-brand" />
                                     Editar Producto
                                 </h2>
                                 <p className="text-xs text-slate-400 mt-0.5 font-mono">{selectedProduct.sku}</p>
                             </div>
-                            <button onClick={() => setShowEditModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white transition-colors">
-                                <X size={20} />
-                            </button>
+                            <IconButton
+                                icon={<X size={18} />}
+                                label="Cerrar edición de producto"
+                                disabled={editSubmitting}
+                                onClick={closeEdit}
+                            />
                         </div>
 
-                        <form onSubmit={handleEdit} className="p-6 space-y-4">
+                        <form onSubmit={handleEdit} aria-busy={editSubmitting} className="p-6">
+                            <fieldset disabled={editSubmitting} className="space-y-4">
+                            {editError && <p role="alert" className="text-sm text-red-300">{editError}</p>}
+                            <p className="text-sm text-slate-400">Acá cambiás la ficha. Para cambiar existencias, recibí mercadería o hacé un conteo.</p>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <label className="text-sm text-slate-300">Código del producto<input required aria-label="Código del producto" value={editForm.sku} onChange={e => setEditForm({ ...editForm, sku: e.target.value })} className="input-premium w-full min-h-tap mt-1" /></label>
+                                <label className="text-sm text-slate-300">Avisarme cuando queden<input required aria-label="Avisarme cuando queden" inputMode="decimal" value={editForm.minStock} onChange={e => setEditForm({ ...editForm, minStock: e.target.value })} className="input-premium w-full min-h-tap mt-1" /><span className="text-xs text-slate-400">{editForm.unit}</span></label>
+                            </div>
+                            <label className="flex gap-2 text-sm text-slate-300"><input type="checkbox" checked={editForm.ivaExento} onChange={e => setEditForm({ ...editForm, ivaExento: e.target.checked })} />Exento de IVA</label>
+                            <label className="flex gap-2 text-sm text-slate-300"><input type="checkbox" checked={editForm.requiresBatchTracking} onChange={e => setEditForm({ ...editForm, requiresBatchTracking: e.target.checked })} />Controlar lotes y vencimientos</label>
                             {/* Nombre */}
                             <div>
                                 <label className="block text-sm text-slate-300 mb-1 font-medium">Nombre del Producto *</label>
@@ -2480,17 +2196,18 @@ export default function Inventory() {
                                     required
                                     value={editForm.name}
                                     onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    className="w-full rounded-control border px-3 py-2.5 transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                 />
                             </div>
 
+                            <label className="block text-sm text-slate-300">Marca (opcional)<input aria-label="Marca (opcional)" maxLength={100} value={editForm.brand} onChange={e => setEditForm({ ...editForm, brand: e.target.value })} className="input-premium w-full min-h-tap mt-1" placeholder="Ej. Truper" /></label>
                             {/* Categoría */}
                             <div>
                                 <label className="block text-sm text-slate-300 mb-1 font-medium">Categoría</label>
                                 <input
                                     value={editForm.category}
                                     onChange={(e) => setEditForm({ ...editForm, category: e.target.value })}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    className="w-full rounded-control border px-3 py-2.5 transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                 />
                             </div>
 
@@ -2501,7 +2218,7 @@ export default function Inventory() {
                                     value={editForm.description}
                                     onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
                                     rows={2}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors resize-none"
+                                    className="w-full resize-none rounded-control border px-3 py-2.5 transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                 />
                             </div>
 
@@ -2522,9 +2239,9 @@ export default function Inventory() {
                                                         : '',
                                             });
                                         }}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
+                                        className="w-full px-3 py-2 border rounded-control bg-surface-900 text-slate-100 nx-form-field"
                                     >
-                                        <option value="LEGACY">Legado fraccionable</option>
+                                        <option value="LEGACY">Configuración anterior</option>
                                         <option value="COUNTED">Por unidades contadas</option>
                                         <option value="MEASURED">Por peso/medida</option>
                                     </select>
@@ -2532,12 +2249,12 @@ export default function Inventory() {
                                 <div>
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Unidad base</label>
                                     <select value={editForm.unit} onChange={(e) => setEditForm({ ...editForm, unit: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white">
+                                        className="w-full px-3 py-2 border rounded-control bg-surface-900 text-slate-100 nx-form-field">
                                         {['unidad', 'g', 'kg', 'oz', 'lb', 'ml', 'litro', 'metro', 'saco', 'caja', 'frasco', 'bolsa'].map(value => <option key={value}>{value}</option>)}
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Paso de cantidad</label>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cantidad mínima por paso</label>
                                     <input
                                         type="text"
                                         inputMode="decimal"
@@ -2545,13 +2262,13 @@ export default function Inventory() {
                                         value={editForm.quantityStep}
                                         onChange={(e) => setEditForm({ ...editForm, quantityStep: sanitizeDecimalInput(e.target.value) })}
                                         placeholder={editForm.saleMode === 'MEASURED' ? '0.001' : '1'}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white disabled:opacity-50"
+                                        className="w-full px-3 py-2 border rounded-control disabled:opacity-50 bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Familia</label>
                                     <select value={editForm.productFamily} onChange={(e) => setEditForm({ ...editForm, productFamily: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white">
+                                        className="w-full px-3 py-2 border rounded-control bg-surface-900 text-slate-100 nx-form-field">
                                         <option value="GENERAL">General</option>
                                         <option value="MEAT">Carnes</option>
                                         <option value="POULTRY">Pollos y aves</option>
@@ -2571,7 +2288,7 @@ export default function Inventory() {
                                     inputMode="decimal"
                                     value={editForm.price}
                                     onChange={(e) => setEditForm({ ...editForm, price: sanitizeDecimalInput(e.target.value) })}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                    className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                 />
                             </div>
 
@@ -2585,7 +2302,7 @@ export default function Inventory() {
                                         value={editForm.wholesalePrice}
                                         onChange={(e) => setEditForm({ ...editForm, wholesalePrice: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Vacío = sin mayoreo"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2596,7 +2313,7 @@ export default function Inventory() {
                                         value={editForm.wholesaleMinQty}
                                         onChange={(e) => setEditForm({ ...editForm, wholesaleMinQty: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Ej: 12 (docena)"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                             </div>
@@ -2610,7 +2327,7 @@ export default function Inventory() {
                                         value={editForm.packUnit}
                                         onChange={(e) => setEditForm({ ...editForm, packUnit: e.target.value })}
                                         placeholder="caja / fardo"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2621,7 +2338,7 @@ export default function Inventory() {
                                         value={editForm.packSize}
                                         onChange={(e) => setEditForm({ ...editForm, packSize: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Ej: 12"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2632,7 +2349,7 @@ export default function Inventory() {
                                         value={editForm.packPrice}
                                         onChange={(e) => setEditForm({ ...editForm, packPrice: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Vacío = solo atajo"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                             </div>
@@ -2647,7 +2364,7 @@ export default function Inventory() {
                                         value={editForm.reorderPoint}
                                         onChange={(e) => setEditForm({ ...editForm, reorderPoint: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="0 = sin alerta"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2658,7 +2375,7 @@ export default function Inventory() {
                                         value={editForm.maxStock}
                                         onChange={(e) => setEditForm({ ...editForm, maxStock: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="sugiere cuánto comprar"
-                                        className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors"
+                                        className="w-full px-3 py-2.5 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand transition-colors bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                             </div>
@@ -2669,7 +2386,7 @@ export default function Inventory() {
                                 <select
                                     value={editForm.defaultSupplierId}
                                     onChange={(e) => setEditForm({ ...editForm, defaultSupplierId: e.target.value })}
-                                    className="w-full px-3 py-2.5 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition-colors"
+                                    className="w-full rounded-control border px-3 py-2.5 transition-colors focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                 >
                                     <option value="">— Sin proveedor —</option>
                                     {suppliers.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
@@ -2688,9 +2405,9 @@ export default function Inventory() {
 
                             {/* Aviso de seguridad */}
                             <div className="bg-slate-900/60 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
-                                <Shield size={14} className="text-blue-400 mt-0.5 shrink-0" />
+                                <Shield size={14} className="mt-0.5 shrink-0 text-brand" />
                                 <p className="text-xs text-slate-400">
-                                    El stock y el costo <span className="text-blue-300 font-semibold">no se modifican aquí</span>. Cambiar unidad, modo o paso no altera ventas anteriores; el stock actual debe ser compatible con el nuevo paso.
+                                    El stock y el costo <span className="font-semibold text-emerald-300">no se modifican aquí</span>. Cambiar unidad, modo o paso no altera ventas anteriores; el stock actual debe ser compatible con el nuevo paso.
                                 </p>
                             </div>
 
@@ -2699,18 +2416,19 @@ export default function Inventory() {
                                 <button
                                     type="submit"
                                     disabled={editSubmitting}
-                                    className="flex-1 bg-blue-600 py-3 rounded-lg hover:bg-blue-700 disabled:bg-blue-800 disabled:opacity-50 text-white font-bold transition-colors"
+                                    className="nx-fluid-press flex-1 rounded-control bg-brand py-3 font-bold text-brand-on transition-colors hover:bg-brand-hover disabled:bg-emerald-900 disabled:opacity-50"
                                 >
                                     {editSubmitting ? 'Guardando...' : 'Guardar Cambios'}
                                 </button>
                                 <button
                                     type="button"
-                                    onClick={() => setShowEditModal(false)}
-                                    className="px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
+                                    onClick={closeEdit}
+                                    className="nx-fluid-press px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
                                 >
                                     Cancelar
                                 </button>
                             </div>
+                            </fieldset>
                         </form>
                     </div>
                 </div>
@@ -2720,19 +2438,22 @@ export default function Inventory() {
                 MODAL: NUEVO PRODUCTO
                ========================================== */}
             {showCreateModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowCreateModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
-                        <div className="bg-gradient-to-r from-blue-900/40 to-cyan-900/20 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowCreateModal(false)}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-2xl max-h-[90dvh] overflow-y-auto rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                <Plus size={20} className="text-blue-400" />
+                                <Plus size={20} className="text-brand" />
                                 Nuevo Producto
                             </h2>
-                            <button onClick={() => setShowCreateModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
-                                <X size={20} />
-                            </button>
+                            <IconButton
+                                icon={<X size={18} />}
+                                label="Cerrar creación de producto"
+                                onClick={() => setShowCreateModal(false)}
+                            />
                         </div>
 
                         <form onSubmit={handleCreate} className="p-6 space-y-4">
+                            <label className="block text-sm text-slate-300">Marca (opcional)<input aria-label="Marca (opcional)" maxLength={100} value={formData.brand} onChange={e => setFormData({ ...formData, brand: e.target.value })} className="input-premium w-full min-h-tap mt-1" placeholder="Ej. Truper" /></label>
                             <div className="grid grid-cols-2 gap-4">
                                 <div>
                                     <label className="block text-sm text-slate-300 mb-1 font-medium">Nombre del Producto *</label>
@@ -2740,7 +2461,7 @@ export default function Inventory() {
                                         required
                                         value={formData.name}
                                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        className="w-full rounded-control border px-3 py-2 focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2749,7 +2470,7 @@ export default function Inventory() {
                                         required
                                         value={formData.sku}
                                         onChange={(e) => setFormData({ ...formData, sku: e.target.value.toUpperCase() })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        className="w-full rounded-control border px-3 py-2 font-mono focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                             </div>
@@ -2759,7 +2480,7 @@ export default function Inventory() {
                                 <textarea
                                     value={formData.description}
                                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none"
+                                    className="w-full resize-none rounded-control border px-3 py-2 focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                     rows={2}
                                 />
                             </div>
@@ -2770,7 +2491,7 @@ export default function Inventory() {
                                     <input
                                         value={formData.category}
                                         onChange={(e) => setFormData({ ...formData, category: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                                        className="w-full rounded-control border px-3 py-2 focus:border-brand focus:ring-2 focus:ring-brand-ring bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2778,7 +2499,7 @@ export default function Inventory() {
                                     <select
                                         value={formData.unit}
                                         onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
+                                        className="w-full px-3 py-2 border rounded-control bg-surface-900 text-slate-100 nx-form-field"
                                     >
                                         <option>unidad</option>
                                         <option>g</option>
@@ -2811,14 +2532,14 @@ export default function Inventory() {
                                                 quantityStep: saleMode === 'COUNTED' ? '1' : '0.001',
                                             });
                                         }}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white"
+                                        className="w-full px-3 py-2 border rounded-control bg-surface-900 text-slate-100 nx-form-field"
                                     >
                                         <option value="COUNTED">Por unidades</option>
                                         <option value="MEASURED">Por peso/medida</option>
                                     </select>
                                 </div>
                                 <div>
-                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Paso de cantidad</label>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Cantidad mínima por paso</label>
                                     <input
                                         required
                                         type="text"
@@ -2826,7 +2547,7 @@ export default function Inventory() {
                                         value={formData.quantityStep}
                                         onChange={(e) => setFormData({ ...formData, quantityStep: sanitizeDecimalInput(e.target.value) })}
                                         placeholder={formData.saleMode === 'MEASURED' ? '0.001' : '1'}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono"
+                                        className="w-full px-3 py-2 border rounded-control font-mono bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div>
@@ -2846,7 +2567,7 @@ export default function Inventory() {
                                             // Fiscalidad y precios permanecen bajo confirmación del dueño.
                                         });
                                     }}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white">
+                                        className="w-full px-3 py-2 border rounded-control bg-surface-900 text-slate-100 nx-form-field">
                                         <option value="GENERAL">General</option>
                                         <option value="MEAT">Carnes</option>
                                         <option value="POULTRY">Pollos y aves</option>
@@ -2869,18 +2590,17 @@ export default function Inventory() {
                                         inputMode="decimal"
                                         value={formData.price}
                                         onChange={(e) => setFormData({ ...formData, price: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
-                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Costo de Compra *</label>
+                                    <label className="block text-sm text-slate-300 mb-1 font-medium">Costo de Compra (opcional)</label>
                                     <input
-                                        required
                                         type="text"
                                         inputMode="decimal"
                                         value={formData.cost}
                                         onChange={(e) => setFormData({ ...formData, cost: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2891,7 +2611,7 @@ export default function Inventory() {
                                         value={formData.wholesalePrice}
                                         onChange={(e) => setFormData({ ...formData, wholesalePrice: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Vacío = sin mayoreo"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2902,7 +2622,7 @@ export default function Inventory() {
                                         value={formData.wholesaleMinQty}
                                         onChange={(e) => setFormData({ ...formData, wholesaleMinQty: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Ej: 12 (docena)"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-1">
@@ -2912,7 +2632,7 @@ export default function Inventory() {
                                         value={formData.packUnit}
                                         onChange={(e) => setFormData({ ...formData, packUnit: e.target.value })}
                                         placeholder="caja"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-1">
@@ -2923,7 +2643,7 @@ export default function Inventory() {
                                         value={formData.packSize}
                                         onChange={(e) => setFormData({ ...formData, packSize: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="12"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2934,7 +2654,7 @@ export default function Inventory() {
                                         value={formData.packPrice}
                                         onChange={(e) => setFormData({ ...formData, packPrice: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="Vacío = solo atajo"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2944,7 +2664,7 @@ export default function Inventory() {
                                         inputMode="decimal"
                                         value={formData.stock}
                                         onChange={(e) => setFormData({ ...formData, stock: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2954,7 +2674,7 @@ export default function Inventory() {
                                         inputMode="decimal"
                                         value={formData.minStock}
                                         onChange={(e) => setFormData({ ...formData, minStock: sanitizeDecimalInput(e.target.value) })}
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2965,7 +2685,7 @@ export default function Inventory() {
                                         value={formData.reorderPoint}
                                         onChange={(e) => setFormData({ ...formData, reorderPoint: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="0 = sin alerta"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-2">
@@ -2976,7 +2696,7 @@ export default function Inventory() {
                                         value={formData.maxStock}
                                         onChange={(e) => setFormData({ ...formData, maxStock: sanitizeDecimalInput(e.target.value) })}
                                         placeholder="para sugerir cuánto comprar"
-                                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-white font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand"
+                                        className="w-full px-3 py-2 border rounded-control font-mono tabular-nums focus:border-brand focus:ring-1 focus:ring-brand bg-surface-900 text-slate-100 nx-form-field"
                                     />
                                 </div>
                                 <div className="col-span-4 mt-2">
@@ -2987,15 +2707,15 @@ export default function Inventory() {
                                     />
                                 </div>
                                 <div className="col-span-4 mt-2">
-                                    <label className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500/50 transition-colors">
+                                    <label className="flex cursor-pointer items-center gap-3 rounded-control border border-slate-700 bg-slate-900 p-3 transition-colors hover:border-brand/50">
                                         <div className="relative flex items-center">
                                             <input
                                                 type="checkbox"
                                                 checked={formData.isPublished}
                                                 onChange={(e) => setFormData({ ...formData, isPublished: e.target.checked })}
-                                                className="sr-only"
+                                                className="sr-only bg-surface-900 text-slate-100 border rounded-control nx-form-field"
                                             />
-                                            <div className={`w-10 h-5 bg-slate-700 rounded-full transition-colors ${formData.isPublished ? 'bg-blue-600' : ''}`}></div>
+                                            <div className={`h-5 w-10 rounded-full bg-slate-700 transition-colors ${formData.isPublished ? 'bg-brand' : ''}`}></div>
                                             <div className={`absolute left-1 top-1 w-3 h-3 bg-surface-900 rounded-full transition-transform ${formData.isPublished ? 'translate-x-5' : ''}`}></div>
                                         </div>
                                         <div className="flex flex-col">
@@ -3005,13 +2725,13 @@ export default function Inventory() {
                                     </label>
                                 </div>
                                 <div className="col-span-4 mt-2">
-                                    <label className="flex items-center gap-3 p-3 bg-slate-900 border border-slate-700 rounded-lg cursor-pointer hover:border-blue-500/50 transition-colors">
+                                    <label className="flex cursor-pointer items-center gap-3 rounded-control border border-slate-700 bg-slate-900 p-3 transition-colors hover:border-brand/50">
                                         <div className="relative flex items-center">
                                             <input
                                                 type="checkbox"
                                                 checked={formData.requiresBatchTracking}
                                                 onChange={(e) => setFormData({ ...formData, requiresBatchTracking: e.target.checked })}
-                                                className="sr-only"
+                                                className="sr-only bg-surface-900 text-slate-100 border rounded-control nx-form-field"
                                             />
                                             <div className={`w-10 h-5 bg-slate-700 rounded-full transition-colors ${formData.requiresBatchTracking ? 'bg-orange-600' : ''}`}></div>
                                             <div className={`absolute left-1 top-1 w-3 h-3 bg-surface-900 rounded-full transition-transform ${formData.requiresBatchTracking ? 'translate-x-5' : ''}`}></div>
@@ -3029,7 +2749,7 @@ export default function Inventory() {
                                                 type="checkbox"
                                                 checked={formData.ivaExento}
                                                 onChange={(e) => setFormData({ ...formData, ivaExento: e.target.checked })}
-                                                className="sr-only"
+                                                className="sr-only bg-surface-900 text-slate-100 border rounded-control nx-form-field"
                                             />
                                             <div className={`w-10 h-5 rounded-full transition-colors ${formData.ivaExento ? 'bg-accent' : 'bg-surface-700'}`}></div>
                                             <div className={`absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-transform ${formData.ivaExento ? 'translate-x-5' : ''}`}></div>
@@ -3045,14 +2765,14 @@ export default function Inventory() {
                             <div className="flex gap-3 pt-4">
                                 <button
                                     type="submit"
-                                    className="flex-1 bg-blue-600 py-3 rounded-lg hover:bg-blue-700 text-white font-bold transition-colors"
+                                    className="nx-fluid-press flex-1 rounded-control bg-brand py-3 font-bold text-brand-on transition-colors hover:bg-brand-hover"
                                 >
                                     Crear Producto
                                 </button>
                                 <button
                                     type="button"
                                     onClick={() => setShowCreateModal(false)}
-                                    className="px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
+                                    className="nx-fluid-press px-6 bg-slate-700 py-3 rounded-lg hover:bg-slate-600 text-white font-medium transition-colors"
                                 >
                                     Cancelar
                                 </button>
@@ -3070,7 +2790,6 @@ export default function Inventory() {
                     onClose={() => setShowImportModal(false)}
                     onSuccess={() => {
                         reload();
-                        setShowImportModal(false);
                     }}
                 />
             )}
@@ -3081,8 +2800,9 @@ export default function Inventory() {
                 <QuickAddProduct
                     initialSKU={quickAddSKU}
                     onClose={() => setShowQuickAddModal(false)}
-                    onSuccess={() => {
+                    onSuccess={created => {
                         reload();
+                        if (created) setActiveProduct(created as Product);
                     }}
                 />
             )}
@@ -3091,9 +2811,9 @@ export default function Inventory() {
                 MODAL: BATCHES (LOTES)
                ========================================== */}
             {showBatchesModal && selectedProduct && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => !batchSubmitting && !writeoffSubmitting && setShowBatchesModal(false)}>
-                    <div role="dialog" aria-modal="true" aria-label={`Lotes de ${selectedProduct.name}`} className="bg-slate-800 rounded-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
-                        <div className="bg-gradient-to-r from-orange-900/50 to-amber-900/30 px-6 py-4 flex items-center justify-between border-b border-slate-700">
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => !batchSubmitting && !writeoffSubmitting && setShowBatchesModal(false)}>
+                    <div role="dialog" aria-modal="true" aria-label={`Lotes de ${selectedProduct.name}`} className="nx-dark-context nx-ticket-surface flex w-full max-w-3xl max-h-[90dvh] flex-col overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
                                 <div className="flex items-center gap-2">
                                     <Layers size={20} className="text-orange-400" />
@@ -3115,19 +2835,18 @@ export default function Inventory() {
                                                 return !current;
                                             });
                                         }}
-                                        disabled={batchWarehousesLoading || batchWarehouses.length === 0}
-                                        className="bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
+                                        disabled={batchesLoading || Boolean(batchLoadError) || batchWarehousesLoading || batchWarehouses.length === 0}
+                                        className="nx-fluid-press min-h-tap bg-orange-600 hover:bg-orange-500 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                                     >
                                         <Plus size={16} /> Agregar lote
                                     </button>
                                 )}
-                                <button
+                                <IconButton
+                                    icon={<X size={18} />}
+                                    label="Cerrar lotes activos"
                                     onClick={() => setShowBatchesModal(false)}
                                     disabled={batchSubmitting || writeoffSubmitting}
-                                    className="p-2 hover:bg-slate-700 disabled:opacity-40 rounded-lg text-slate-400 hover:text-white transition-colors"
-                                >
-                                    <X size={24} />
-                                </button>
+                                />
                             </div>
                         </div>
 
@@ -3141,7 +2860,7 @@ export default function Inventory() {
                                         value={batchForm.batchNumber}
                                         onChange={(e) => editBatchForm({ batchNumber: e.target.value })}
                                         placeholder="L-2026-001"
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white font-mono focus:outline-none focus:border-orange-500"
+                                        className="w-full border rounded-control px-3 py-2 text-sm font-mono focus:outline-none focus:border-orange-500 bg-surface-900 nx-form-field"
                                     />
                                 </div>
                                 <div className="sm:col-span-1">
@@ -3150,7 +2869,7 @@ export default function Inventory() {
                                         type="date"
                                         value={batchForm.expiryDate}
                                         onChange={(e) => editBatchForm({ expiryDate: e.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                        className="w-full border rounded-control px-3 py-2 text-sm focus:outline-none focus:border-orange-500 bg-surface-900 nx-form-field"
                                     />
                                 </div>
                                 <div className="sm:col-span-1">
@@ -3163,7 +2882,7 @@ export default function Inventory() {
                                         value={batchForm.quantity}
                                         onChange={(e) => editBatchForm({ quantity: e.target.value })}
                                         placeholder="0"
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                        className="w-full border rounded-control px-3 py-2 text-sm focus:outline-none focus:border-orange-500 bg-surface-900 nx-form-field"
                                     />
                                 </div>
                                 <div className="sm:col-span-2">
@@ -3173,7 +2892,7 @@ export default function Inventory() {
                                         value={batchForm.warehouseId}
                                         onChange={(event) => editBatchForm({ warehouseId: event.target.value })}
                                         disabled={batchWarehousesLoading}
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-orange-500"
+                                        className="w-full border rounded-control px-3 py-2 text-sm focus:outline-none focus:border-orange-500 bg-surface-900 nx-form-field"
                                     >
                                         <option value="">Seleccioná una bodega</option>
                                         {batchWarehouses.map(warehouse => (
@@ -3184,7 +2903,7 @@ export default function Inventory() {
                                 <button
                                     type="submit"
                                     disabled={batchSubmitting || batchWarehousesLoading || !batchForm.warehouseId}
-                                    className="bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
+                                    className="nx-fluid-press min-h-tap bg-orange-600 hover:bg-orange-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors"
                                 >
                                     {batchSubmitting ? 'Guardando...' : (<><Plus size={16} /> Sumar al stock</>)}
                                 </button>
@@ -3201,7 +2920,12 @@ export default function Inventory() {
                                         <p className="text-sm font-semibold text-red-200">Merma del lote {writeoffForm.batchNumber}</p>
                                         <p className="text-xs text-slate-400">Indicá la cantidad que existe físicamente en una bodega. No se reparte ni se adivina ubicación.</p>
                                     </div>
-                                    <button type="button" onClick={() => setWriteoffForm(null)} disabled={writeoffSubmitting} className="text-slate-400 hover:text-white"><X size={18} /></button>
+                                    <IconButton
+                                        icon={<X size={16} />}
+                                        label="Cancelar merma del lote"
+                                        onClick={() => setWriteoffForm(null)}
+                                        disabled={writeoffSubmitting}
+                                    />
                                 </div>
                                 <div className="sm:col-span-2">
                                     <label className="block text-[11px] text-slate-400 uppercase tracking-wide mb-1">Bodega</label>
@@ -3209,7 +2933,7 @@ export default function Inventory() {
                                         aria-label="Bodega de la merma"
                                         value={writeoffForm.warehouseId}
                                         onChange={(event) => editWriteoffForm({ warehouseId: event.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                                        className="w-full border rounded-control px-3 py-2 text-sm bg-surface-900 nx-form-field"
                                     >
                                         <option value="">Seleccioná una bodega</option>
                                         {batchWarehouses.map(warehouse => (
@@ -3227,7 +2951,7 @@ export default function Inventory() {
                                         step={selectedProduct.quantityStep?.toString() || (selectedProduct.saleMode === 'COUNTED' ? '1' : '0.0001')}
                                         value={writeoffForm.quantity}
                                         onChange={(event) => editWriteoffForm({ quantity: event.target.value })}
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                                        className="w-full border rounded-control px-3 py-2 text-sm bg-surface-900 nx-form-field"
                                     />
                                 </div>
                                 <div className="sm:col-span-2">
@@ -3239,19 +2963,20 @@ export default function Inventory() {
                                         value={writeoffForm.reason}
                                         onChange={(event) => editWriteoffForm({ reason: event.target.value })}
                                         placeholder="Ej. vencimiento o daño"
-                                        className="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white"
+                                        className="w-full border rounded-control px-3 py-2 text-sm bg-surface-900 nx-form-field"
                                     />
                                 </div>
                                 <button
                                     type="submit"
                                     disabled={writeoffSubmitting || !writeoffForm.warehouseId}
-                                    className="bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+                                    className="nx-fluid-press min-h-tap bg-red-700 hover:bg-red-600 disabled:opacity-50 text-white px-4 py-2 rounded-lg text-sm font-semibold"
                                 >
                                     {writeoffSubmitting ? 'Registrando...' : 'Confirmar merma'}
                                 </button>
                             </form>
                         )}
 
+                        {batchLoadError && (<div role="alert" className="p-4 text-sm text-red-300">{batchLoadError}<button type="button" onClick={() => openBatches(selectedProduct)} className="nx-fluid-press ml-3 min-h-tap underline">Reintentar carga</button></div>)}
                         {batchCommandError && (
                             <div role="alert" className="px-6 py-3 border-b border-red-900/50 bg-red-950/30 text-sm text-red-200">
                                 {batchCommandError}
@@ -3286,8 +3011,9 @@ export default function Inventory() {
                                         </tr>
                                     ) : (
                                         batchesData.map((batch) => {
-                                            const isExpired = new Date(batch.expiryDate) < new Date();
-                                            const isExpiringSoon = new Date(batch.expiryDate) < new Date(Date.now() + 90 * 24 * 60 * 60 * 1000);
+                                            const expiry = batchExpiryPresentation(batch.expiryDate);
+                                            const isExpired = expiry.status === 'expired';
+                                            const isExpiringSoon = expiry.status === 'expiring' || expiry.status === 'unknown';
 
                                             return (
                                                 <tr key={batch.id} className="hover:bg-slate-700/20 transition-colors">
@@ -3296,7 +3022,7 @@ export default function Inventory() {
                                                     </td>
                                                     <td className="px-6 py-4 text-sm">
                                                         <span className={`px-2 py-1 rounded-full text-xs font-semibold ${isExpired ? 'bg-red-900/40 text-red-400' : isExpiringSoon ? 'bg-amber-900/40 text-amber-400' : 'bg-emerald-900/40 text-emerald-400'}`}>
-                                                            {isExpired ? '' : ''}{new Date(batch.expiryDate).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {isExpired ? 'Vencido · ' : ''}{expiry.label}
                                                         </span>
                                                     </td>
                                                     <td className="px-6 py-4 text-sm text-right font-bold text-white">
@@ -3306,7 +3032,7 @@ export default function Inventory() {
                                                         <td className="px-6 py-4 text-right">
                                                             <button
                                                                 onClick={() => openWriteoffBatch(batch)}
-                                                                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
+                                                                className={`nx-fluid-press min-h-tap px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${isExpired ? 'bg-red-600/20 border-red-600/50 text-red-300 hover:bg-red-600/40' : 'border-slate-600 text-slate-400 hover:bg-slate-700'}`}
                                                                 title="Dar de baja este lote (merma)"
                                                             >
                                                                 Dar de baja
@@ -3328,26 +3054,28 @@ export default function Inventory() {
                 MODAL: EDICIÓN MASIVA (A2 — categoría / precio)
                ========================================== */}
             {showBulkEditModal && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200" onClick={() => setShowBulkEditModal(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg shadow-2xl border border-slate-700" onClick={(e) => e.stopPropagation()}>
-                        <div className="bg-gradient-to-r from-blue-900/50 to-cyan-900/30 px-6 py-4 border-b border-slate-700 flex items-center justify-between">
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowBulkEditModal(false)}>
+                    <div className="nx-dark-context nx-ticket-surface w-full max-w-lg overflow-hidden rounded-card shadow-2xl" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center justify-between border-b border-white/[0.08] bg-slate-900/55 px-6 py-4">
                             <div>
                                 <h2 className="text-xl font-bold text-white flex items-center gap-2">
-                                    <Edit size={20} className="text-blue-400" />
+                                    <Edit size={20} className="text-brand" />
                                     Edición masiva
                                 </h2>
                                 <p className="text-sm text-slate-400 mt-1">
                                     {selectedProductIds.length} producto{selectedProductIds.length === 1 ? '' : 's'} seleccionado{selectedProductIds.length === 1 ? '' : 's'}
                                 </p>
                             </div>
-                            <button onClick={() => setShowBulkEditModal(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white">
-                                <X size={20} />
-                            </button>
+                            <IconButton
+                                icon={<X size={18} />}
+                                label="Cerrar edición masiva"
+                                onClick={() => setShowBulkEditModal(false)}
+                            />
                         </div>
 
                         <form onSubmit={handleBulkEdit} className="p-6 space-y-5">
                             <div className="bg-slate-900/40 border border-slate-700 rounded-lg p-3 flex items-start gap-2">
-                                <Shield size={16} className="text-blue-400 mt-0.5 shrink-0" />
+                                <Shield size={16} className="mt-0.5 shrink-0 text-brand" />
                                 <p className="text-xs text-slate-400">
                                     Solo se cambia lo que llenes. El <strong className="text-slate-300">stock</strong> y el <strong className="text-slate-300">costo</strong> no se tocan (el costo lo calcula el sistema por promedio ponderado).
                                 </p>
@@ -3364,7 +3092,7 @@ export default function Inventory() {
                                     value={bulkEditForm.category}
                                     onChange={(e) => setBulkEditForm({ ...bulkEditForm, category: e.target.value })}
                                     placeholder="Dejar vacío para no cambiar"
-                                    className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                    className="w-full rounded-control border px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring bg-surface-900 nx-form-field"
                                 />
                                 <datalist id="bulk-category-list">
                                     {categories.map((c) => <option key={c} value={c} />)}
@@ -3380,21 +3108,21 @@ export default function Inventory() {
                                     <button
                                         type="button"
                                         onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: '', priceValue: '' })}
-                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                        className={`nx-fluid-press min-h-tap px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === '' ? 'bg-slate-700 border-slate-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
                                     >
                                         Sin cambio
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'set', priceValue: '' })}
-                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'set' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                        className={`nx-fluid-press min-h-tap rounded-control border px-3 py-2 text-sm font-medium transition-colors ${bulkEditForm.priceMode === 'set' ? 'border-brand bg-brand text-brand-on' : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
                                     >
                                         Fijar C$
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setBulkEditForm({ ...bulkEditForm, priceMode: 'pct', priceValue: '' })}
-                                        className={`px-3 py-2 rounded-lg text-sm font-medium border transition-colors ${bulkEditForm.priceMode === 'pct' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400 hover:bg-slate-800'}`}
+                                        className={`nx-fluid-press min-h-tap rounded-control border px-3 py-2 text-sm font-medium transition-colors ${bulkEditForm.priceMode === 'pct' ? 'border-brand bg-brand text-brand-on' : 'border-slate-700 bg-slate-900 text-slate-400 hover:bg-slate-800'}`}
                                     >
                                         Ajustar %
                                     </button>
@@ -3407,7 +3135,7 @@ export default function Inventory() {
                                             value={bulkEditForm.priceValue}
                                             onChange={(e) => setBulkEditForm({ ...bulkEditForm, priceValue: bulkEditForm.priceMode === 'pct' ? sanitizeSignedDecimal(e.target.value) : sanitizeDecimalInput(e.target.value) })}
                                             placeholder={bulkEditForm.priceMode === 'set' ? 'Nuevo precio en C$' : 'Ej: 10 (sube 10%) o -5 (baja 5%)'}
-                                            className="w-full bg-slate-900 border border-slate-600 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                                            className="w-full rounded-control border px-3 py-2 text-sm focus:border-brand focus:outline-none focus:ring-2 focus:ring-brand-ring bg-surface-900 nx-form-field"
                                         />
                                         <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">
                                             {bulkEditForm.priceMode === 'set' ? 'C$' : '%'}
@@ -3420,14 +3148,14 @@ export default function Inventory() {
                                 <button
                                     type="button"
                                     onClick={() => setShowBulkEditModal(false)}
-                                    className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                    className="nx-fluid-press min-h-tap flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
                                 >
                                     Cancelar
                                 </button>
                                 <button
                                     type="submit"
                                     disabled={bulkEditSubmitting}
-                                    className="flex-1 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors"
+                                    className="nx-fluid-press flex-1 rounded-control bg-brand px-4 py-2.5 text-sm font-semibold text-brand-on transition-colors hover:bg-brand-hover disabled:opacity-50"
                                 >
                                     {bulkEditSubmitting ? 'Aplicando...' : `Aplicar a ${selectedProductIds.length}`}
                                 </button>
@@ -3438,4 +3166,16 @@ export default function Inventory() {
             )}
         </div>
     );
+}
+
+/** A changed authenticated session discards all visible catalogue and receipt state. */
+export default function Inventory() {
+    const [, refreshSession] = useState(0);
+    useEffect(() => {
+        const refresh = () => refreshSession(value => value + 1);
+        window.addEventListener('storage', refresh);
+        window.addEventListener('focus', refresh);
+        return () => { window.removeEventListener('storage', refresh); window.removeEventListener('focus', refresh); };
+    }, []);
+    return <InventoryWorkspace key={`${localStorage.getItem('nortex_token')}:${currentSessionRole()}`}/>;
 }

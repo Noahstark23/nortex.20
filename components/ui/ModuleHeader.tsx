@@ -47,7 +47,7 @@ export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
     className = '',
 }) => (
     <header
-        className={`${sticky ? 'sticky top-0 z-sticky bg-slate-950/95 backdrop-blur' : ''} ${className}`}
+        className={`nx-module-header ${sticky ? 'nx-module-header-sticky sticky top-0 z-sticky backdrop-blur' : ''} ${className}`}
     >
         {/* En móvil la fila ENVUELVE (las acciones bajan a su propia línea):
             con altura fija + dos bloques shrink-0, en 390px el botón primario
@@ -56,7 +56,7 @@ export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
         <div className="md:h-module py-3 md:py-0 flex flex-wrap md:flex-nowrap items-center justify-between gap-x-4 gap-y-2">
             <div className="flex items-center gap-3 min-w-0">
                 {icon && (
-                    <div className="w-10 h-10 shrink-0 rounded-control bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300">
+                    <div className="nx-module-header-icon flex h-10 w-10 shrink-0 items-center justify-center rounded-control border">
                         {icon}
                     </div>
                 )}
@@ -67,10 +67,10 @@ export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
                         "M…": el header dejaba de decir en qué módulo estás. En md+
                         vuelven a la misma línea, sin cambios. */}
                     <div className="flex flex-wrap md:flex-nowrap items-center gap-x-3 gap-y-2 min-w-0">
-                        <h1 className="text-title font-bold text-slate-100 truncate basis-full md:basis-auto">{title}</h1>
+                        <h1 className="nx-canvas-text basis-full truncate text-title font-bold md:basis-auto">{title}</h1>
                         {contextLinks && <div className="flex items-center gap-2 flex-wrap md:flex-nowrap md:shrink-0">{contextLinks}</div>}
                     </div>
-                    {subtitle && <p className="text-sm text-slate-400 truncate">{subtitle}</p>}
+                    {subtitle && <p className="nx-canvas-muted truncate text-sm">{subtitle}</p>}
                 </div>
             </div>
 
@@ -89,7 +89,7 @@ export const ModuleHeader: React.FC<ModuleHeaderProps> = ({
 export const ModuleHeaderLink: React.FC<{ href: string; children: React.ReactNode }> = ({ href, children }) => (
     <a
         href={href}
-        className="inline-flex items-center min-h-tap px-3 rounded-control border border-slate-700 bg-slate-800 text-xs font-semibold text-slate-200 hover:border-brand hover:text-slate-100 transition-colors"
+        className="nx-module-context-link nx-fluid-press inline-flex min-h-tap items-center rounded-control border px-3 text-xs font-semibold transition-colors"
     >
         {children}
     </a>

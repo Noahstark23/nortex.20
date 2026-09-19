@@ -1,181 +1,317 @@
 import express from 'express';
 // @ts-ignore
-import { PrismaClient } from '@prisma/client';
-// @ts-ignore
 import bcrypt from 'bcryptjs';
+import { z } from 'zod';
 import Decimal from 'decimal.js';
 import { authenticate, AuthRequest } from '../middleware/auth';
 import { checkRole } from '../middleware/checkRole';
+import prisma from '../lib/prisma.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
-
-const prisma = new PrismaClient();
-const router = express.Router();
 
 // Solo dueños/administradores gestionan la flota propia y resetean el PIN de
 // login del repartidor (evita que un cajero se auto-provisione credenciales de Driver App).
 const ROLES_FLOTA = ['OWNER', 'ADMIN'];
+const normalizePhone = (raw: string): string => raw.replace(/\D/gu, '');
 
-// GET /api/v1/motorizados
-// Listar motorizados (propios del tenant + los globales de NORTEX si están activos)
-router.get('/', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    try {
-        const motorizados = await prisma.motorizado.findMany({
-            where: {
-                OR: [
-                    { tenantId: authReq.tenantId },
-                    // Red NORTEX: solo repartidores con KYC aprobado y activos —
-                    // nadie sin revisión aparece como asignable a los negocios.
-                    { tipoFlota: 'NORTEX', kycStatus: 'APROBADO', activo: true }
-                ]
-            },
-            orderBy: {
-                tipoFlota: 'asc' // NORTEX (freelance) primero o PROPIA primero
-            }
-        });
-        res.json({ motorizados });
-    } catch (error) {
-        console.error('List Motorizados Error:', error);
-        res.status(500).json({ error: 'Error al obtener los motorizados.' });
+const PhoneSchema = z
+    .string('El teléfono es obligatorio.')
+    .trim()
+    .min(1, 'El teléfono es obligatorio.')
+    .max(32, 'El teléfono es demasiado largo.')
+    .regex(/^[+\d\s().-]+$/u, 'El teléfono contiene caracteres no permitidos.')
+    .transform(normalizePhone)
+    .refine((value) => /^\d{8,15}$/u.test(value), {
+        message: 'El teléfono debe contener entre 8 y 15 dígitos.',
+    });
+
+const PlateSchema = z
+    .string('La placa debe ser texto.')
+    .trim()
+    .min(1, 'La placa no puede quedar vacía.')
+    .max(20, 'La placa no puede superar 20 caracteres.')
+    .transform((value) => value.toUpperCase());
+
+const PinSchema = z
+    .string('El PIN debe ser texto para conservar ceros iniciales.')
+    .regex(/^\d{4,6}$/u, 'El PIN debe ser de 4 a 6 dígitos.');
+
+export const FleetRiderCreateSchema = z.object({
+    nombre: z
+        .string('El nombre es obligatorio.')
+        .trim()
+        .min(3, 'El nombre debe tener al menos 3 caracteres.')
+        .max(100, 'El nombre no puede superar 100 caracteres.'),
+    telefono: PhoneSchema,
+    zonaCobertura: z
+        .string('La zona de cobertura es obligatoria.')
+        .trim()
+        .min(2, 'La zona de cobertura debe tener al menos 2 caracteres.')
+        .max(100, 'La zona de cobertura no puede superar 100 caracteres.'),
+    vehiculoPlaca: PlateSchema.optional(),
+    pin: PinSchema.optional(),
+    // Compatibilidad con clientes PWA anteriores. Solo se acepta el literal
+    // seguro y el servidor sigue imponiendo PROPIA; jamás toma el tipo del body.
+    tipoFlota: z.literal('PROPIA').optional(),
+}).strict();
+
+export const FleetRiderPatchSchema = z.object({
+    activo: z.boolean('El estado activo debe ser verdadero o falso.').optional(),
+    zonaCobertura: z
+        .string('La zona de cobertura debe ser texto.')
+        .trim()
+        .min(2, 'La zona de cobertura debe tener al menos 2 caracteres.')
+        .max(100, 'La zona de cobertura no puede superar 100 caracteres.')
+        .optional(),
+    // null elimina una placa o PIN; undefined conserva el valor actual.
+    vehiculoPlaca: z.union([PlateSchema, z.null()]).optional(),
+    pin: z.union([PinSchema, z.null()]).optional(),
+}).strict().refine(
+    (value) => Object.values(value).some((field) => field !== undefined),
+    { message: 'Debés enviar al menos un campo para actualizar.' },
+);
+
+const motorizadoOperationalSelect = {
+    id: true,
+    tenantId: true,
+    tipoFlota: true,
+    nombre: true,
+    telefono: true,
+    zonaCobertura: true,
+    activo: true,
+    calificacionPromedio: true,
+    vehiculoPlaca: true,
+    createdAt: true,
+    kycStatus: true,
+} as const;
+
+const validationErrorMessage = (error: z.ZodError): string => {
+    if (error.issues.some((issue) => issue.code === 'unrecognized_keys')) {
+        return 'La solicitud contiene campos no permitidos.';
     }
-});
+    return [...new Set(error.issues.map((issue) => issue.message))].join(' | ');
+};
 
-// POST /api/v1/motorizados
-// Registrar nuevo motorizado (por defecto es de la ferretería: PROPIA)
-router.post('/', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { nombre, telefono, zonaCobertura, pin } = req.body;
+const requireTenantId = (authReq: AuthRequest, res: any): string | null => {
+    if (authReq.tenantId) return authReq.tenantId;
+    res.status(401).json({ error: 'No se pudo identificar el negocio de la sesión.' });
+    return null;
+};
 
-    if (!nombre || !telefono || !zonaCobertura) {
-        return res.status(400).json({ error: 'Faltan datos requeridos.' });
-    }
-    if (pin !== undefined && !/^\d{4,6}$/.test(String(pin))) {
-        return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
-    }
+export const buildMotorizadosRouter = () => {
+    const router = express.Router();
 
-    try {
-        // PIN opcional al crear flota propia: necesario para que el repartidor
-        // entre a su app con teléfono+PIN (el magic-link ya no existe).
-        const pinHash = pin !== undefined ? await bcrypt.hash(String(pin), 10) : null;
+    // GET /api/v1/motorizados
+    // Listar motorizados (propios del tenant + los globales de NORTEX si están activos)
+    router.get('/', authenticate, async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const tenantId = requireTenantId(authReq, res);
+        if (!tenantId) return;
+        try {
+            const motorizados = await prisma.motorizado.findMany({
+                where: {
+                    OR: [
+                        { tenantId },
+                        // Red NORTEX: solo repartidores con KYC aprobado y activos —
+                        // nadie sin revisión aparece como asignable a los negocios.
+                        { tipoFlota: 'NORTEX', kycStatus: 'APROBADO', activo: true }
+                    ]
+                },
+                orderBy: {
+                    tipoFlota: 'asc' // NORTEX (freelance) primero o PROPIA primero
+                },
+                take: 250,
+                select: motorizadoOperationalSelect,
+            });
+            res.json({ motorizados });
+        } catch (error) {
+            console.error('List Motorizados Error:', error);
+            res.status(500).json({ error: 'Error al obtener los motorizados.' });
+        }
+    });
 
-        const motorizado = await prisma.motorizado.create({
-            data: {
-                tenantId: authReq.tenantId,
-                nombre,
-                telefono: String(telefono).replace(/\D/g, ''),
-                zonaCobertura,
-                tipoFlota: 'PROPIA',
-                activo: true,
-                pinHash,
-                // Flota propia: la confianza la pone el dueño que lo contrata —
-                // no pasa por el KYC de la Red NORTEX.
-                kycStatus: 'APROBADO'
-            }
-        });
-        res.status(201).json({ message: 'Motorizado registrado con éxito.', motorizado });
-    } catch (error) {
-        console.error('Create Motorizado Error:', error);
-        res.status(500).json({ error: 'Error al registrar al motorizado.' });
-    }
-});
+    // POST /api/v1/motorizados
+    // Registrar nuevo motorizado (por defecto es de la ferretería: PROPIA)
+    router.post('/', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const tenantId = requireTenantId(authReq, res);
+        if (!tenantId) return;
 
-// PATCH /api/v1/motorizados/:id
-// Actualizar información o activar/desactivar
-router.patch('/:id', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
-    const { activo, zonaCobertura, pin } = req.body;
-
-    try {
-        // Solo un dueño de ferretería puede editar SU propia flota
-        const existing = await prisma.motorizado.findFirst({
-            where: { id, tenantId: authReq.tenantId }
-        });
-
-        if (!existing) {
-            return res.status(404).json({ error: 'Motorizado no encontrado o no pertenece a tu flota.' });
+        const parsed = FleetRiderCreateSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: validationErrorMessage(parsed.error) });
         }
 
-        const dataUpdate: any = {};
-        if (typeof activo === 'boolean') dataUpdate.activo = activo;
-        if (zonaCobertura) dataUpdate.zonaCobertura = zonaCobertura;
-        // Asignar / resetear el PIN de login del repartidor propio
-        if (pin !== undefined) {
-            if (!/^\d{4,6}$/.test(String(pin))) {
-                return res.status(400).json({ error: 'El PIN debe ser de 4 a 6 dígitos.' });
+        const data = parsed.data;
+
+        try {
+            const duplicate = await prisma.motorizado.findFirst({
+                where: {
+                    tenantId,
+                    tipoFlota: 'PROPIA',
+                    telefono: data.telefono,
+                },
+                select: { id: true },
+            });
+            if (duplicate) {
+                return res.status(409).json({
+                    error: 'Ya existe un motorizado con ese teléfono en tu flota.',
+                });
             }
-            dataUpdate.pinHash = await bcrypt.hash(String(pin), 10);
+
+            // PIN opcional al crear flota propia: necesario para que el repartidor
+            // entre a su app con teléfono+PIN (el magic-link ya no existe).
+            const pinHash = data.pin !== undefined ? await bcrypt.hash(data.pin, 10) : null;
+
+            const motorizado = await prisma.motorizado.create({
+                data: {
+                    tenantId,
+                    nombre: data.nombre,
+                    telefono: data.telefono,
+                    zonaCobertura: data.zonaCobertura,
+                    vehiculoPlaca: data.vehiculoPlaca ?? null,
+                    tipoFlota: 'PROPIA',
+                    activo: true,
+                    pinHash,
+                    // Flota propia: la confianza la pone el dueño que lo contrata —
+                    // no pasa por el KYC de la Red NORTEX.
+                    kycStatus: 'APROBADO',
+                },
+                select: motorizadoOperationalSelect,
+            });
+            res.status(201).json({ message: 'Motorizado registrado con éxito.', motorizado });
+        } catch (error) {
+            console.error('Create Motorizado Error:', error);
+            res.status(500).json({ error: 'Error al registrar al motorizado.' });
+        }
+    });
+
+    // PATCH /api/v1/motorizados/:id
+    // Actualizar información o activar/desactivar
+    router.patch('/:id', authenticate, checkRole(ROLES_FLOTA), async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const { id } = req.params;
+        const tenantId = requireTenantId(authReq, res);
+        if (!tenantId) return;
+
+        const parsed = FleetRiderPatchSchema.safeParse(req.body);
+        if (!parsed.success) {
+            return res.status(400).json({ error: validationErrorMessage(parsed.error) });
         }
 
-        const motorizado = await prisma.motorizado.update({
-            where: { id },
-            data: dataUpdate
-        });
+        try {
+            // Solo un dueño de ferretería puede editar SU propia flota.
+            const existing = await prisma.motorizado.findFirst({
+                where: { id, tenantId, tipoFlota: 'PROPIA' },
+                select: { id: true },
+            });
 
-        res.json({ message: 'Motorizado actualizado.', motorizado });
-    } catch (error) {
-        console.error('Update Motorizado Error:', error);
-        res.status(500).json({ error: 'Error al actualizar el motorizado.' });
-    }
-});
-
-// GET /api/v1/motorizados/:id/liquidacion
-// Liquidación Diaria Automática (Efectivo Neto a entregar en Caja Central)
-router.get('/:id/liquidacion', authenticate, async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { id } = req.params;
-
-    try {
-        const motorizado = await prisma.motorizado.findFirst({
-            where: { id, tenantId: authReq.tenantId }
-        });
-
-        if (!motorizado) {
-            return res.status(404).json({ error: 'Motorizado no encontrado.' });
-        }
-
-        const todayStart = new Date();
-        todayStart.setHours(0, 0, 0, 0);
-
-        // Fetch today's delivered orders for this driver
-        const hoyPedidos = await prisma.pedido.findMany({
-            where: {
-                motorizadoId: id,
-                tenantId: authReq.tenantId,
-                estado: 'entregado',
-                entregadoAt: { gte: todayStart }
+            if (!existing) {
+                return res.status(404).json({ error: 'Motorizado no encontrado o no pertenece a tu flota.' });
             }
-        });
 
-        let totalCobradoEfectivo = new Decimal(0);
-        let totalComisiones = new Decimal(0); // Comisión dinámica = costoEntrega (asuminos que el delivery fee es del driver)
-
-        for (const p of hoyPedidos) {
-            // Asumimos que todos cobrados al momento (CASH default for deliveries in this flow)
-            totalCobradoEfectivo = totalCobradoEfectivo.plus(new Decimal(p.total.toString()));
-            totalComisiones = totalComisiones.plus(new Decimal(p.costoEntrega.toString()));
-        }
-
-        const netoADepositar = totalCobradoEfectivo.minus(totalComisiones);
-
-        res.json({
-            motorizado: {
-                nombre: motorizado.nombre,
-                walletId: motorizado.walletId,
-                calificacionPromedio: motorizado.calificacionPromedio
-            },
-            liquidacionDiaria: {
-                pedidosEntregados: hoyPedidos.length,
-                totalCobrado: totalCobradoEfectivo.toDecimalPlaces(2).toNumber(),
-                comisionesGanadas: totalComisiones.toDecimalPlaces(2).toNumber(),
-                netoADepositarA_Tienda: (netoADepositar.gt(0) ? netoADepositar : new Decimal(0)).toDecimalPlaces(2).toNumber()
+            const dataUpdate: {
+                activo?: boolean;
+                zonaCobertura?: string;
+                vehiculoPlaca?: string | null;
+                pinHash?: string | null;
+            } = {};
+            if (parsed.data.activo !== undefined) dataUpdate.activo = parsed.data.activo;
+            if (parsed.data.zonaCobertura !== undefined) dataUpdate.zonaCobertura = parsed.data.zonaCobertura;
+            if (parsed.data.vehiculoPlaca !== undefined) dataUpdate.vehiculoPlaca = parsed.data.vehiculoPlaca;
+            // null revoca el acceso; un PIN válido lo asigna o lo resetea.
+            if (parsed.data.pin !== undefined) {
+                dataUpdate.pinHash = parsed.data.pin === null
+                    ? null
+                    : await bcrypt.hash(parsed.data.pin, 10);
             }
-        });
-    } catch (error) {
-        console.error('Liquidacion Error:', error);
-        res.status(500).json({ error: 'Error al calcular liquidación.' });
-    }
-});
 
-export default router;
+            // La escritura vuelve a incluir tenant+tipo para cerrar la carrera
+            // entre la comprobación de propiedad y la actualización.
+            await prisma.motorizado.updateMany({
+                where: { id, tenantId, tipoFlota: 'PROPIA' },
+                data: dataUpdate,
+            });
+
+            const motorizado = await prisma.motorizado.findFirst({
+                where: { id, tenantId, tipoFlota: 'PROPIA' },
+                select: motorizadoOperationalSelect,
+            });
+            if (!motorizado) {
+                return res.status(404).json({ error: 'Motorizado no encontrado o no pertenece a tu flota.' });
+            }
+
+            res.json({ message: 'Motorizado actualizado.', motorizado });
+        } catch (error) {
+            console.error('Update Motorizado Error:', error);
+            res.status(500).json({ error: 'Error al actualizar el motorizado.' });
+        }
+    });
+
+    // GET /api/v1/motorizados/:id/liquidacion
+    // Liquidación Diaria Automática (Efectivo Neto a entregar en Caja Central)
+    router.get('/:id/liquidacion', authenticate, async (req: any, res: any) => {
+        const authReq = req as AuthRequest;
+        const { id } = req.params;
+        const tenantId = requireTenantId(authReq, res);
+        if (!tenantId) return;
+
+        try {
+            const motorizado = await prisma.motorizado.findFirst({
+                where: { id, tenantId },
+            });
+
+            if (!motorizado) {
+                return res.status(404).json({ error: 'Motorizado no encontrado.' });
+            }
+
+            const todayStart = new Date();
+            todayStart.setHours(0, 0, 0, 0);
+
+            // Fetch today's delivered orders for this driver
+            const hoyPedidos = await prisma.pedido.findMany({
+                where: {
+                    motorizadoId: id,
+                    tenantId,
+                    estado: 'entregado',
+                    entregadoAt: { gte: todayStart },
+                },
+            });
+
+            let totalCobradoEfectivo = new Decimal(0);
+            // Comisión dinámica = costoEntrega (asuminos que el delivery fee es del driver)
+            let totalComisiones = new Decimal(0);
+
+            for (const p of hoyPedidos) {
+                // Asumimos que todos cobrados al momento (CASH default for deliveries in this flow)
+                totalCobradoEfectivo = totalCobradoEfectivo.plus(new Decimal(p.total.toString()));
+                totalComisiones = totalComisiones.plus(new Decimal(p.costoEntrega.toString()));
+            }
+
+            const netoADepositar = totalCobradoEfectivo.minus(totalComisiones);
+
+            res.json({
+                motorizado: {
+                    nombre: motorizado.nombre,
+                    walletId: motorizado.walletId,
+                    calificacionPromedio: motorizado.calificacionPromedio,
+                },
+                liquidacionDiaria: {
+                    pedidosEntregados: hoyPedidos.length,
+                    totalCobrado: totalCobradoEfectivo.toDecimalPlaces(2).toNumber(),
+                    comisionesGanadas: totalComisiones.toDecimalPlaces(2).toNumber(),
+                    netoADepositarA_Tienda: (
+                        netoADepositar.gt(0) ? netoADepositar : new Decimal(0)
+                    ).toDecimalPlaces(2).toNumber(),
+                },
+            });
+        } catch (error) {
+            console.error('Liquidacion Error:', error);
+            res.status(500).json({ error: 'Error al calcular liquidación.' });
+        }
+    });
+
+    return router;
+};
+
+export default buildMotorizadosRouter();

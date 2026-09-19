@@ -39,9 +39,8 @@ import {
     PurchaseOrderCloseShortError,
 } from '../lib/purchaseOrderCloseShort';
 import { executePurchaseOrderCloseShortTransaction } from '../services/purchaseOrderCloseShortService';
+import { executePurchaseOrderDraft, PurchaseOrderDraftError } from '../services/purchaseOrderDraftService';
 import {
-    extractPurchaseOrderProductIds,
-    normalizePurchaseOrderLines,
     PurchaseOrderQuantityError,
 } from '../../utils/purchaseOrderQuantities.js';
 
@@ -430,108 +429,17 @@ router.get('/:id', authenticate, checkRole(PURCHASE_ORDER_READ_ROLES), async (re
 
 // ── POST / — crear borrador ─────────────────────────────────────────────────
 router.post('/', authenticate, checkRole(ROLES_WRITE), async (req: any, res: any) => {
-    const tenantId: string = req.tenantId;
-    const { supplierId, notes, expectedDate, items } = req.body ?? {};
-
-    if (!supplierId || typeof supplierId !== 'string') {
-        return res.status(400).json({ error: 'supplierId es requerido' });
-    }
-    if (!Array.isArray(items) || items.length === 0) {
-        return res.status(400).json({ error: 'Se requiere al menos un ítem' });
-    }
-
     try {
-        // Estructura y duplicados se validan antes de consultar. Después, cada
-        // producto se vuelve a cargar con tenantId: el cliente no decide modo,
-        // paso, unidad, nombre ni pertenencia.
-        const productIds = extractPurchaseOrderProductIds(items);
-        const result = await prisma.$transaction(async (tx) => {
-            // Primera lectura de la tx: serializa crear OC con bloquear,
-            // suspender o eliminar lógicamente al proveedor.
-            const supplierRows = await tx.$queryRaw<Array<{
-                id: string;
-                status: string;
-                deletedAt: Date | null;
-            }>>`
-                SELECT id, \`status\`, \`deletedAt\` FROM \`Supplier\`
-                WHERE id = ${supplierId} AND \`tenantId\` = ${tenantId}
-                FOR UPDATE`;
-            const supplier = supplierRows[0];
-            if (!supplier) return { outcome: 'SUPPLIER_NOT_FOUND' as const };
-            if (supplier.status !== 'ACTIVE' || supplier.deletedAt !== null) {
-                return { outcome: 'SUPPLIER_NOT_ACTIVE' as const };
-            }
-
-            const products = await tx.product.findMany({
-                where: { id: { in: productIds }, tenantId },
-                select: { id: true, name: true, unit: true, saleMode: true, quantityStep: true },
-            });
-            const normalizedItems = normalizePurchaseOrderLines(items, products);
-
-            // Correlativo por tenant. El @@unique([tenantId, orderNumber]) protege la integridad.
-            const count = await tx.purchaseOrder.count({ where: { tenantId } });
-            const orderNumber = `OC-${String(count + 1).padStart(4, '0')}`;
-
-            const created = await tx.purchaseOrder.create({
-                data: {
-                    tenantId,
-                    supplierId,
-                    orderNumber,
-                    status: 'DRAFT',
-                    notes: notes ? String(notes) : null,
-                    expectedDate: expectedDate ? new Date(expectedDate) : null,
-                    createdBy: req.userId,
-                    items: {
-                        create: normalizedItems.map((item) => ({
-                            productId: item.productId,
-                            productName: item.productName,
-                            // Float queda como sombra para clientes históricos; el
-                            // Decimal nullable es la autoridad en toda fila nueva.
-                            quantityOrdered: item.quantity.toNumber(),
-                            quantityOrderedExact: item.quantity.toString(),
-                            quantityReceivedExact: '0',
-                            unitAtOrder: item.unitAtOrder,
-                            saleModeAtOrder: item.saleModeAtOrder,
-                            quantityStepAtOrder: item.quantityStepAtOrder,
-                            unitCost: item.unitCost.toFixed(2),
-                            unitCostExact: item.unitCost.toString(),
-                        })),
-                    },
-                },
-                include: { items: true },
-            });
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId,
-                    userId: req.userId,
-                    action: 'PO_CREATED',
-                    details: JSON.stringify({
-                        poId: created.id,
-                        orderNumber: created.orderNumber,
-                        before: null,
-                        after: {
-                            status: created.status,
-                            supplierId: created.supplierId,
-                            itemCount: created.items.length,
-                        },
-                    }),
-                },
-            });
-            return { outcome: 'CREATED' as const, data: created };
+        const result = await executePurchaseOrderDraft({
+            principal: { tenantId: req.tenantId, userId: req.userId, role: req.role },
+            input: req.body,
+            requestKey: req.get?.('Idempotency-Key'),
         });
-
-        if (result.outcome === 'SUPPLIER_NOT_FOUND') {
-            return res.status(404).json({ error: 'Proveedor no encontrado' });
-        }
-        if (result.outcome === 'SUPPLIER_NOT_ACTIVE') {
-            return res.status(409).json({
-                error: 'El proveedor no está activo para nuevas órdenes de compra',
-                code: 'SUPPLIER_NOT_ACTIVE',
-            });
-        }
-        res.status(201).json({ success: true, data: result.data });
+        res.status(201).json({ success: true, data: result.purchaseOrder });
     } catch (e: any) {
+        if (e instanceof PurchaseOrderDraftError) {
+            return res.status(e.httpStatus).json({ error: e.message, code: e.code });
+        }
         if (e instanceof PurchaseOrderQuantityError) {
             return res.status(400).json({ error: e.message, code: e.code });
         }

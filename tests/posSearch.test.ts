@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
     normalizar,
     indexarProductos,
@@ -30,6 +30,79 @@ const catalogo = (): ProductoBuscable[] => [
     p('4', 'Lámina de zinc', 'ZIN-004', 'Construcción'),
     p('5', 'Pala jardinera', 'PAL-005', 'Ferretería'),
 ];
+
+describe('actualización del índice sin conservar existencias viejas', () => {
+    it('reutiliza texto pero devuelve el objeto vigente, incluso con stock cero y precio nuevo', () => {
+        const original = [{ ...p('1', 'Suero oral', 'ABC'), stock: 4, price: 10 }];
+        const index = indexarProductos(original);
+        const fresh = [{ ...original[0], stock: 0, price: 12 }];
+        const normalization = vi.spyOn(String.prototype, 'normalize');
+        let updated: typeof index;
+        try {
+            updated = indexarProductos(fresh, index);
+            // Mide el trabajo real: cambios de existencias/precio no deben
+            // volver a normalizar el nombre ni el SKU de la fila sin cambios.
+            expect(normalization).not.toHaveBeenCalled();
+        } finally {
+            normalization.mockRestore();
+        }
+        expect(buscarProductos(updated, 'ABC', 10).visibles).toEqual(fresh);
+        expect(buscarProductos(updated, 'Suero', 10).visibles[0]).toBe(fresh[0]);
+        expect(original[0].stock).toBe(4);
+    });
+    it.each([
+        { field: 'nombre', patch: { name: 'Tornillo' }, oldTerm: 'Suero', newTerm: 'Tornillo' },
+        { field: 'SKU', patch: { sku: 'XYZ' }, oldTerm: 'ABC', newTerm: 'XYZ' },
+        { field: 'categoría', patch: { category: 'Ferretería' }, oldTerm: 'Farmacia', newTerm: 'Ferretería' },
+        { field: 'categoría eliminada', patch: { category: undefined }, oldTerm: 'Farmacia', newTerm: 'Suero' },
+    ])('invalida una modificación independiente de $field', ({ patch, oldTerm, newTerm }) => {
+        const original = p('1', 'Suero', 'ABC', 'Farmacia');
+        const fresh = { ...original, ...patch };
+        const updated = indexarProductos([fresh], indexarProductos([original]));
+        expect(buscarProductos(updated, oldTerm, 10).total).toBe(0);
+        expect(buscarProductos(updated, newTerm, 10).visibles).toEqual([fresh]);
+        expect(buscarProductos(updated, fresh.sku, 10)).toMatchObject({
+            visibles: [fresh], coincidenciaExacta: true,
+        });
+    });
+    it('invalida nombre, categoría y SKU; respeta borrados y conserva el primer SKU duplicado', () => {
+        const original = [p('1', 'Suero', 'OLD', 'Farmacia'), p('2', 'Clavo', 'DUP')];
+        const fresh = [p('1', 'Tornillo', 'DUP', 'Ferretería'), p('3', 'Otro', 'DUP')];
+        const index = indexarProductos(fresh, indexarProductos(original));
+        expect(buscarProductos(index, 'OLD', 10).total).toBe(0);
+        expect(buscarProductos(index, 'Farmacia', 10).total).toBe(0);
+        expect(buscarProductos(index, 'Clavo', 10).total).toBe(0);
+        expect(buscarProductos(index, 'DUP', 10).visibles).toEqual([fresh[0]]);
+        expect(buscarProductos(index, 'Ferretería', 10).visibles).toEqual([fresh[0]]);
+    });
+    it('admite entradas anteriores sin SKU precalculado', () => {
+        const product = p('1', 'Clavo', ' CÓDIGO ');
+        const competing = p('2', 'Adaptador para código', 'ADAPTADOR');
+        expect(buscarProductos([
+            { producto: competing, texto: 'adaptador para codigo adaptador' },
+            { producto: product, texto: 'clavo codigo' },
+        ], 'codigo', 10)).toEqual({ visibles: [product], total: 1, ocultos: 0, coincidenciaExacta: true });
+    });
+    it('completa el SKU de un índice anterior una vez y lo reutiliza en búsquedas sucesivas', () => {
+        const product = p('1', 'Clavo', ' CÓDIGO ');
+        const legacy = [{ producto: product, texto: 'clavo codigo' }];
+        const normalization = vi.spyOn(String.prototype, 'normalize');
+        try {
+            const updated = indexarProductos([{ ...product }], legacy);
+            expect(normalization).toHaveBeenCalledTimes(1);
+            expect(updated[0].skuNormalizado).toBe('codigo');
+            normalization.mockClear();
+            const exact = buscarProductos(updated, 'CÓDIGO', 10);
+            const partial = buscarProductos(updated, 'clav', 10);
+            // Una normalización por término; el SKU no se recalcula por tecla.
+            expect(normalization).toHaveBeenCalledTimes(2);
+            expect(exact.coincidenciaExacta).toBe(true);
+            expect(partial.visibles).toEqual([product]);
+        } finally {
+            normalization.mockRestore();
+        }
+    });
+});
 
 describe('normalizar', () => {
     it('baja a minúsculas y saca las tildes', () => {
@@ -65,6 +138,22 @@ describe('normalizar', () => {
 });
 
 describe('buscarProductos — sin término', () => {
+    it('recorta un catálogo grande sin comparar el texto de todas sus filas', () => {
+        const products = Array.from({ length: 1000 }, (_, index) => p(`${index}`, `Producto ${index}`, `SKU-${index}`));
+        const index = indexarProductos(products);
+        const includes = vi.spyOn(String.prototype, 'includes');
+        let result: ReturnType<typeof buscarProductos<ProductoBuscable>>;
+        try {
+            result = buscarProductos(index, '', 24);
+            // Cuenta comparaciones reales, sin depender del reloj o del equipo.
+            // Un recorrido difuso con includes('') daría lo mismo pero sería O(n).
+            expect(includes).not.toHaveBeenCalled();
+        } finally {
+            includes.mockRestore();
+        }
+        expect(result.visibles.map(product => product.id)).toEqual(Array.from({ length: 24 }, (_, index) => `${index}`));
+        expect(result).toMatchObject({ total: 1000, ocultos: 976, coincidenciaExacta: false });
+    });
     it('devuelve el catálogo recortado al tope y DECLARA lo que ocultó', () => {
         const r = buscarProductos(indexarProductos(catalogo()), '', 2);
         expect(r.visibles).toHaveLength(2);

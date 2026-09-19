@@ -15,7 +15,7 @@ export const POS_SALE_ROLES = [
     'VENDEDOR',
 ];
 
-/** Clientes/CxC: lectura operativa desde CRM/POS y conciliación contable. */
+/** Búsqueda básica de clientes desde POS/CRM, incluida el alta operativa de EMPLOYEE. */
 export const CUSTOMER_READ_ROLES = [
     'OWNER',
     'ADMIN',
@@ -24,6 +24,18 @@ export const CUSTOMER_READ_ROLES = [
     'CASHIER',
     'VIEWER',
     'EMPLOYEE',
+    'VENDEDOR',
+    'ACCOUNTANT',
+];
+
+/** Cartera enriquecida, historial y estados de cuenta: EMPLOYEE solo consulta la ficha básica. */
+export const CUSTOMER_PORTFOLIO_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
+    'VIEWER',
     'VENDEDOR',
     'ACCOUNTANT',
 ];
@@ -231,6 +243,15 @@ export const ACCOUNTING_READ_ROLES = [
     'ACCOUNTANT',
 ];
 
+/** Expedientes salariales y vistas gerenciales: misma lectura que nómina y empleados. */
+export const HR_READ_ROLES = [
+    'OWNER',
+    'ADMIN',
+    'SUPER_ADMIN',
+    'MANAGER',
+    'ACCOUNTANT',
+];
+
 /** Lectura operativa de pedidos; VIEWER puede observar, nunca mutar. */
 export const PEDIDO_READ_ROLES = [
     'OWNER',
@@ -255,6 +276,8 @@ export const RETURN_SEARCH_ROLES = [
     'OWNER',
     'ADMIN',
     'SUPER_ADMIN',
+    'MANAGER',
+    'CASHIER',
 ];
 
 /** VIEWER puede consultar proformas y pedidos web, pero no convertir/crear. */

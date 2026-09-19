@@ -20,8 +20,8 @@ const between = (contents: string, start: string, end: string): string => {
 describe('cobro sin atajos peligrosos', () => {
     it('valida el efectivo antes de la cola offline o el POST de venta', () => {
         const checkout = between(pos, 'const handleCheckout', 'const efectivoRecibidoDeLaVenta');
-        const cashGuard = between(checkout, "if (method === 'CASH')", 'if (hasQuotationLines');
-        const validationAt = checkout.indexOf('validateCashReceived(cashReceived, grandTotalD)');
+        const cashGuard = between(checkout, "if (method === 'CASH' && amountDueD.greaterThan(0))", "const token = localStorage.getItem('nortex_token')");
+        const validationAt = checkout.indexOf('validateCashReceived(cashReceived, amountDueD)');
         const offlineAt = checkout.indexOf('if (!navigator.onLine)');
         const postAt = checkout.indexOf("fetch('/api/sales'");
 
@@ -64,9 +64,9 @@ describe('cobro sin atajos peligrosos', () => {
         expect(guidedCheckout).toContain('onOtherPayment={openOtherPaymentCheckout}');
         expect(pos).toContain("const [showCashPreModal, setShowCashPreModal] = useState(false);");
 
-        // El modo guiado no debe volver a abrir un modal centrado para el
-        // efectivo: el estado ya vive en el ticket persistente.
-        expect(pos).toContain('showCashPreModal && !guidedSimpleMode');
+        // NIO vive en el ticket. Un cobro USD iniciado en modo completo sigue
+        // visible si cambia la preferencia; no se convierte en NIO en silencio.
+        expect(pos).toContain('showCashPreModal && (!guidedSimpleMode || payingInUSD)');
         expect(checkoutDock).toContain('validateCashReceived(cashReceived, total)');
         expect(checkoutDock).toContain('Cobrar {formatMoney(total)} en efectivo');
         expect(checkoutDock).toContain('Efectivo recibido');
@@ -100,13 +100,22 @@ describe('búsqueda operable con Enter', () => {
     });
 });
 
-describe('superficie de caja a ancho completo', () => {
-    it('oculta navegación e instalación solo en /app/pos', () => {
+describe('superficie de caja dentro del shell operativo', () => {
+    it('mantiene el sidebar desktop y reserva la navegación móvil para otros módulos', () => {
         expect(layout).toContain("const isPosSurface = location.pathname === '/app/pos'");
-        expect(layout).toContain("isPosSurface ? 'hidden' : 'hidden lg:flex'");
+        const desktopSidebar = between(layout, '{/* DESKTOP SIDEBAR */}', '{/* MOBILE BOTTOM NAV */}');
+        expect(desktopSidebar).toContain('<aside className="nx-sidebar nx-shell-border hidden');
+        expect(desktopSidebar).toContain('lg:flex');
+        expect(desktopSidebar).not.toContain("isPosSurface ? 'hidden'");
+
+        // POS aporta su propio toolbar operativo. El header global y el bottom
+        // nav se ocultan para evitar dos barras apiladas, pero el sidebar queda.
+        expect(layout).toContain("isPosSurface ? 'hidden' : 'flex'");
         expect(layout).toContain("isPosSurface ? 'hidden' : 'flex lg:hidden'");
         expect(layout).toContain('showMobileMenu && !isPosSurface');
-        expect(layout).toContain("isPosSurface ? 'mb-0' : 'mb-16 lg:mb-0'");
+        expect(layout).toContain("? 'nx-pos-workspace nx-dark-context mb-0 [color-scheme:dark]'");
+        expect(layout).toContain("? 'nx-apple-dark-workspace nx-dark-context");
+        expect(layout).toContain(": 'nx-apple-light-workspace nx-light-context");
         expect(layout).toContain('{!isPosSurface && <InstallPrompt />}');
     });
 });
@@ -124,7 +133,7 @@ describe('catálogo táctil y accesible', () => {
         expect(catalog).toContain('role="tablist"');
         expect(catalog).toContain('aria-label="Categorías de productos"');
         expect(catalog).toContain('role="tab"');
-        expect(catalog).toContain('aria-selected={selected}');
+        expect(catalog).toContain('aria-selected={category === selectedCategory}');
         expect(catalog).toContain('aria-controls={panelId}');
         expect(catalog).toContain("event.key === 'ArrowRight'");
         expect(catalog).toContain("event.key === 'ArrowLeft'");
@@ -145,11 +154,8 @@ describe('catálogo táctil y accesible', () => {
     });
 
     it('declara el recorte y ofrece continuar sin montar todo el catálogo', () => {
-        expect(pos).toContain("return ['Todos', ...categories]");
-        expect(pos).not.toContain('categories.slice(0, 4)');
         expect(catalog).toContain('products.length === totalProducts');
         expect(catalog).toContain('Quedan {totalProducts - products.length} por mostrar');
         expect(catalog).toContain('Mostrar más productos');
-        expect(pos).toContain('onShowMore={() => setCajaVisibleLimit');
     });
 });

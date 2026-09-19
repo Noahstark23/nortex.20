@@ -8,10 +8,12 @@ export type MeasurementPricePolicy = 'RECALCULATE' | 'REQUIRE_MATCH' | 'ACCEPT_L
 
 export interface Product {
   id: string;
+  brand?: string | null;
   name: string;
   price: number;
   costPrice: number; // NUEVO: Para calcular utilidad real
   stock: number;
+  minStock?: number | null;
   sku: string;
   category: string;
   // Foto del producto (opcional). El schema ya la tiene (`Product.imageUrl`);

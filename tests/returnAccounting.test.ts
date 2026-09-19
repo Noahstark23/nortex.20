@@ -29,7 +29,9 @@ const build = (overrides: Partial<{
     exemptTotal: number | null;
     creditReduction: number;
     settledRefund: number;
+    storeCreditRestoration: number;
     refundMethod: 'CASH' | 'CARD' | 'TRANSFER' | 'QR';
+    refundPending: boolean;
 }> = {}) => buildReturnJournalLines({
     total: 115,
     costTotal: 60,
@@ -106,6 +108,38 @@ describe('canal del importe ya liquidado', () => {
         expect(amountFor(lines, '1.1.2', 'credit').toString()).toBe('115');
         expect(amountFor(lines, '1.1.1', 'credit').toString()).toBe('0');
         expectBalanced(lines);
+    });
+});
+
+describe('reembolsos pendientes y saldo a favor', () => {
+    it('un reembolso externo pendiente acredita la obligación, no Bancos', () => {
+        const lines = build({ refundMethod: 'CARD', refundPending: true });
+        expect(amountFor(lines, '2.1.13', 'credit').toString()).toBe('115');
+        expect(amountFor(lines, '1.1.2', 'credit').toString()).toBe('0');
+        expectBalanced(lines);
+    });
+
+    it('saldo a favor acredita el pasivo de clientes', () => {
+        const lines = buildReturnJournalLines({
+            total: 115, costTotal: 60, creditReduction: 0, settledRefund: 115,
+            refundMethod: 'STORE_CREDIT',
+        });
+        expect(amountFor(lines, '2.1.14', 'credit').toString()).toBe('115');
+        expect(amountFor(lines, '1.1.1', 'credit').toString()).toBe('0');
+        expectBalanced(lines);
+    });
+
+    it('restaura saldo consumido y reembolsa solo el efectivo restante', () => {
+        const lines = build({ settledRefund: 75, storeCreditRestoration: 40 });
+        expect(amountFor(lines, '1.1.1', 'credit').toString()).toBe('75');
+        expect(amountFor(lines, '2.1.14', 'credit').toString()).toBe('40');
+        expectBalanced(lines);
+    });
+
+    it('nombra el campo si la restauración de saldo es inválida', () => {
+        expect(() => build({ settledRefund: 115, storeCreditRestoration: -1 })).toThrow(
+            'storeCreditRestoration debe ser finito y no negativo',
+        );
     });
 });
 

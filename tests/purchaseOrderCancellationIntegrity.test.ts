@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 const routeSource = readFileSync(resolve(process.cwd(), 'backend/routes/purchaseOrders.ts'), 'utf8');
+const draftSource = readFileSync(resolve(process.cwd(), 'backend/services/purchaseOrderDraftService.ts'), 'utf8');
 
 const cancellationState = (
     status: string,
@@ -154,25 +155,28 @@ describe('integridad de cancelación de órdenes de compra', () => {
             "router.post('/:id/cancel'",
         );
 
-        const createTransactionIndex = create.indexOf('prisma.$transaction');
-        const createLockIndex = create.indexOf('FOR UPDATE');
-        const createStateReadIndex = create.indexOf("supplier.status !== 'ACTIVE'");
-        const createWriteIndex = create.indexOf('tx.purchaseOrder.create');
-        const createAuditIndex = create.indexOf('tx.auditLog.create');
-        expect(createTransactionIndex).toBeGreaterThanOrEqual(0);
-        expect(createLockIndex).toBeGreaterThan(createTransactionIndex);
+        expect(create).toContain('executePurchaseOrderDraft');
+        expect(draftSource).toContain('db.$transaction(tx => executePurchaseOrderDraftInTransaction');
+        const transaction = draftSource.slice(draftSource.indexOf('export async function executePurchaseOrderDraftInTransaction'));
+        const createLockIndex = transaction.indexOf('FROM \\`Supplier\\`');
+        const createStateReadIndex = transaction.indexOf('const preview = await prepareResolvedDraft');
+        const createWriteIndex = transaction.indexOf('tx.purchaseOrder.create');
+        const createAuditIndex = transaction.indexOf('tx.auditLog.create');
+        expect(createLockIndex).toBeGreaterThanOrEqual(0);
+        expect(transaction.slice(createLockIndex, createStateReadIndex)).toContain('FOR UPDATE');
         expect(createStateReadIndex).toBeGreaterThan(createLockIndex);
         expect(createWriteIndex).toBeGreaterThan(createStateReadIndex);
         expect(createAuditIndex).toBeGreaterThan(createWriteIndex);
-        expect(create).toContain('supplier.deletedAt !== null');
-        expect(create).toContain("action: 'PO_CREATED'");
-        expect(create).toContain('before: null');
-        expect(create).toContain('after: {');
-        expect(create).toContain("code: 'SUPPLIER_NOT_ACTIVE'");
+        expect(draftSource).toContain("supplier.status !== 'ACTIVE'");
+        expect(draftSource).toContain('supplier.deletedAt !== null');
+        expect(transaction).toContain("action: 'PO_CREATED'");
+        expect(transaction).toContain('before: null');
+        expect(transaction).toContain('after: {');
+        expect(draftSource).toContain("PurchaseOrderDraftError('SUPPLIER_NOT_ACTIVE', 409");
         expect(approve).toContain('\\`deletedAt\\` IS NULL');
         expect(approve).toContain("\\`status\\` = ${'ACTIVE'}");
         expect(approve).toContain("code: 'SUPPLIER_NOT_ACTIVE'");
-        expect(create).toContain('WHERE id = ${supplierId} AND \\`tenantId\\` = ${tenantId}');
+        expect(transaction).toContain('WHERE id = ${input.supplierId} AND \\`tenantId\\` = ${principal.tenantId}');
         expect(approve).toContain('WHERE id = ${po.supplierId}');
         expect(approve).toContain('AND \\`tenantId\\` = ${tenantId}');
         expect(approve.indexOf('FROM \\`PurchaseOrder\\`')).toBeLessThan(approve.indexOf('FROM \\`Supplier\\`'));
@@ -184,11 +188,12 @@ describe('integridad de cancelación de órdenes de compra', () => {
         const purchaseOrderCreate = vi.fn();
         const createAudit = vi.fn();
         const createTx = {
-            $queryRaw: vi.fn().mockResolvedValue([{
+            $queryRaw: vi.fn().mockResolvedValueOnce([{ id: 'user-a', role: 'OWNER', status: 'ACTIVE' }]).mockResolvedValue([{
                 id: 'supplier-blocked',
                 status: 'BLOCKED',
                 deletedAt: null,
             }]),
+            supplier: { findFirst: vi.fn().mockResolvedValue({ id: 'supplier-blocked', status: 'BLOCKED', deletedAt: null }) },
             product: { findMany: vi.fn() },
             purchaseOrder: {
                 count: vi.fn(),
@@ -229,11 +234,12 @@ describe('integridad de cancelación de órdenes de compra', () => {
         await postHandler(router, '/')({
             tenantId: 'tenant-a',
             userId: 'user-a',
+            role: 'OWNER',
             body: { supplierId: 'supplier-blocked', items: [{ productId: 'product-a' }] },
         }, createResponse);
         expect(createResponse.statusCode).toBe(409);
         expect(createResponse.body).toMatchObject({ code: 'SUPPLIER_NOT_ACTIVE' });
-        expect(createTx.$queryRaw).toHaveBeenCalledOnce();
+        expect(createTx.$queryRaw).toHaveBeenCalledTimes(3);
         expect(purchaseOrderCreate).not.toHaveBeenCalled();
         expect(createAudit).not.toHaveBeenCalled();
 

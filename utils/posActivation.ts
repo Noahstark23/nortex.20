@@ -1,5 +1,6 @@
 import Decimal from 'decimal.js';
 import { validateNonNegativeQuantity } from './quantity';
+import { resolveProductQuantityRules } from './productQuantityRules';
 
 export interface QuickProductDraft {
     name: string;
@@ -15,32 +16,16 @@ export interface PosQuantityProduct {
     unit?: string | null;
 }
 
-/**
- * Compatibilidad del catálogo legacy:
- * antes de `saleMode`, el alta común del POS/inventario sembraba productos por
- * pieza con `unit = "unidad"` y sin reglas físicas. Si el POS los interpreta
- * como medidos, el `+` vuelve a sumar 0.0001 y bloquea la venta.
- */
-function prefersLegacyCounted(product: PosQuantityProduct): boolean {
-    return typeof product.unit === 'string'
-        && product.unit.trim().toLowerCase() === 'unidad'
-        && product.saleMode == null
-        && product.quantityStep == null;
-}
-
 /** Mantiene fracciones legacy medidas, pero un producto contado usa enteros. */
 export function effectivePosSaleMode(product: PosQuantityProduct): 'COUNTED' | 'MEASURED' {
-    if (product.saleMode === 'COUNTED') return 'COUNTED';
-    if (prefersLegacyCounted(product)) return 'COUNTED';
-    return 'MEASURED';
+    return resolveProductQuantityRules(product).saleMode;
 }
 
 export function effectivePosQuantityStep(product: PosQuantityProduct): number {
     if (Number.isFinite(product.quantityStep) && Number(product.quantityStep) > 0) {
         return Number(product.quantityStep);
     }
-    if (prefersLegacyCounted(product)) return 1;
-    return product.saleMode === 'COUNTED' ? 1 : 0.0001;
+    return effectivePosSaleMode(product) === 'COUNTED' ? 1 : 0.0001;
 }
 
 /**
@@ -98,7 +83,7 @@ const decimalFromDraft = (value: string): Decimal | null => {
 /**
  * Contrato del alta rápida del POS.
  *
- * Un artículo creado con nombre + precio es una unidad contable. Los productos
+ * Un artículo creado con nombre, precio y existencia es una unidad contable. Los productos
  * por peso/volumen se configuran explícitamente en Inventario; no se degradan a
  * `saleMode: null`, porque ese legado hace que el botón + sume 0.0001.
  *
@@ -127,13 +112,17 @@ export function validateQuickProductDraft(
     }
 
     let stock: Decimal | null = null;
-    try {
-        stock = validateNonNegativeQuantity(draft.stock.trim() === '' ? '0' : draft.stock, {
-            saleMode: 'COUNTED',
-            quantityStep: '1',
-        });
-    } catch (error) {
-        errors.stock = error instanceof Error ? error.message : 'La existencia no es válida.';
+    if (draft.stock.trim() === '') {
+        errors.stock = 'Ingresá la existencia real (0 si no tenés).';
+    } else {
+        try {
+            stock = validateNonNegativeQuantity(draft.stock, {
+                saleMode: 'COUNTED',
+                quantityStep: '1',
+            });
+        } catch (error) {
+            errors.stock = error instanceof Error ? error.message : 'La existencia no es válida.';
+        }
     }
 
     if (Object.keys(errors).length > 0 || !price || !cost || !stock) {

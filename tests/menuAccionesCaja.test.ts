@@ -68,7 +68,7 @@ describe('el menú de acciones de caja no queda recortado', () => {
 
     it('el menú tiene alto máximo: en un teléfono acostado no se sale por abajo', () => {
         const menu = bloqueMenu();
-        expect(menu).toMatch(/max-h-\[calc\(100vh/);
+        expect(menu).toMatch(/max-h-\[calc\(100dvh/);
         expect(menu).toContain('overflow-y-auto');
     });
 });
