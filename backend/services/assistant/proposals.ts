@@ -6,6 +6,9 @@ import { preparePurchasePreview, registerPurchase, type PurchasePreview } from '
 import { invoiceDraftSchema, draftIssues, toPurchaseInput, totalIssues } from './proposalValidation.js';
 import { readManualPurchaseSource, assertManualPurchaseSource, appendManualPurchaseEvidence, type ManualPurchaseSource } from './purchaseSource.js';
 import type { AssistantPrincipal, AssistantProposalDTO, AssistantOperationDTO, AssistantPurchasePreview, InvoiceDraft } from '../../../shared/assistant';
+import type { AssistantDocumentDecision } from '../../../shared/assistantDocumentReview.js';
+import { createDocumentPurchaseSource, readDocumentPurchaseSource, documentReviewDTO, documentReviewIssues, reconcileDocumentReview } from './purchaseDocumentReview.js';
+import { mergePurchaseDocumentContext, type PurchaseDocumentContext } from './purchaseDocumentContext.js';
 
 type Database = PrismaClient | Prisma.TransactionClient;
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
@@ -15,10 +18,18 @@ export class AssistantProposalError extends Error {
 const notFound = () => new AssistantProposalError(404, 'PROPOSAL_NOT_FOUND', 'No encontramos esa propuesta para tu sesión.');
 
 function toDTO(row: any): AssistantProposalDTO {
+  const manual=readManualPurchaseSource(row.source);
+  const source=readDocumentPurchaseSource(row.source),review=source?documentReviewDTO(source,row.draft as InvoiceDraft):undefined;
   return {id: row.id, version: row.version, status: row.status,
-    source: readManualPurchaseSource(row.source) ? 'MANUAL' : 'DOCUMENT',
-    draft: row.draft as InvoiceDraft, issues: row.issues as string[], preview: row.preview as AssistantPurchasePreview | null,
+    source: manual ? 'MANUAL' : 'DOCUMENT',
+    draft: row.draft as InvoiceDraft, issues: [...new Set([...(row.issues as string[]),...(source?documentReviewIssues(source,row.draft):[])])],
+    preview: review?.hasUnresolved?null:row.preview as AssistantPurchasePreview | null,...(review?{documentReview:review}:{}),
     attachmentIds: row.attachmentIds as string[], expiresAt: row.expiresAt.toISOString(), ...(row.result ? {result: row.result as AssistantOperationDTO} : {})};
+}
+async function legacyContextIssue(principal:AssistantPrincipal,row:any,db:Database) {
+  if(row.source!=null)return null;
+  const job=await db.assistantJob.findFirst({where:{proposalId:row.id,...owner(principal)},select:{intakeContext:true}});
+  return job?.intakeContext ? 'Esta propuesta antigua conserva una declaración, pero no las fuentes completas de la factura. Volvé a leerla para resolver las diferencias.' : null;
 }
 const owner = (principal: AssistantPrincipal) => ({tenantId: principal.tenantId, userId: principal.userId, roleAtCreation: principal.role});
 async function findOwned(principal: AssistantPrincipal, id: string, db: Database) {
@@ -45,6 +56,7 @@ async function assertProposalEvidence(principal: AssistantPrincipal, row: any, d
 export async function createProposalFromManual(principal: AssistantPrincipal, draft: InvoiceDraft, rawSource: ManualPurchaseSource, options: {db?: Database; id?: string} = {}) {
   const db = options.db ?? prisma;
   await assertAssistantAccess(principal, 'purchasePrepare', db as PrismaClient);
+  if(rawSource?.kind!=='MANUAL')throw new AssistantProposalError(400, 'PURCHASE_SOURCE_INVALID', 'La compra necesita su conversación de origen.');
   const source = readManualPurchaseSource(rawSource);
   if (!source) throw new AssistantProposalError(400, 'PURCHASE_SOURCE_INVALID', 'La compra necesita su conversación de origen.');
   await assertManualPurchaseSource(principal, source, db);
@@ -89,13 +101,17 @@ export async function cancelUncommittedProposal(principal: AssistantPrincipal, i
 }
 
 /** El worker sólo genera un borrador. Nunca valida un pago o recepción por OCR. */
-export async function createProposalFromExtraction(principal: AssistantPrincipal, draft: InvoiceDraft, attachmentIds: string[], options: {db?: Database; id?: string; declaredPaymentMethod?: 'CASH' | 'CREDIT'} = {}) {
+export async function createProposalFromExtraction(principal: AssistantPrincipal, draft: InvoiceDraft, attachmentIds: string[], options: {
+  db?: Database; id?: string; declaredPaymentMethod?: 'CASH' | 'CREDIT';documentContext?:PurchaseDocumentContext|null;extractedDraft?:InvoiceDraft;
+} = {}) {
   const db = options.db ?? prisma;
   await assertAssistantAccess(principal, 'invoicePrepare', db as PrismaClient);
   await assertAttachments(principal, attachmentIds, db);
-  const safe = invoiceDraftSchema.parse({...draft, receivedConfirmed: false, paymentConfirmed: false, paymentMethod: options.declaredPaymentMethod});
+  const source=createDocumentPurchaseSource(options.extractedDraft??draft,options.documentContext??null);
+  const combined=mergePurchaseDocumentContext(source.document,source.context);
+  const safe = invoiceDraftSchema.parse({...combined, receivedConfirmed: false, paymentConfirmed: false, paymentMethod: options.declaredPaymentMethod});
   const row = await db.assistantProposal.create({data: {
-    id: options.id ?? randomUUID(), ...owner(principal), attachmentIds, draft: asJson(safe),
+    id: options.id ?? randomUUID(), ...owner(principal), attachmentIds, source:asJson(source),draft: asJson(safe),
     issues: ['Revisá los datos extraídos y confirmá las condiciones de la compra.'], status: 'DRAFT',
     expiresAt: new Date(Date.now() + 7 * 86400_000),
   }});
@@ -104,7 +120,9 @@ export async function createProposalFromExtraction(principal: AssistantPrincipal
 
 export async function getProposal(principal: AssistantPrincipal, id: string, db: PrismaClient = prisma) {
   await assertAssistantAccess(principal, 'invoiceRead', db);
-  return toDTO(await findOwned(principal,id,db));
+  const row=await findOwned(principal,id,db),dto=toDTO(row),legacy=await legacyContextIssue(principal,row,db);
+  if(legacy){dto.issues=[...dto.issues,legacy];dto.preview=null;}
+  return dto;
 }
 
 function mapPreview(preview: PurchasePreview, draft: InvoiceDraft): AssistantPurchasePreview {
@@ -120,14 +138,20 @@ function mapPreview(preview: PurchasePreview, draft: InvoiceDraft): AssistantPur
   };
 }
 
-export async function reviseProposal(principal: AssistantPrincipal, id: string, version: number, raw: unknown, db: PrismaClient = prisma) {
+export async function reviseProposal(principal: AssistantPrincipal, id: string, version: number, raw: unknown, db: PrismaClient = prisma, decisions?:AssistantDocumentDecision[]) {
   await assertAssistantAccess(principal, 'invoiceRead', db);
   const existing = await findOwned(principal,id,db);
   await assertAssistantAccess(principal, readManualPurchaseSource(existing.source) ? 'purchasePrepare' : 'invoicePrepare', db);
   if (!['DRAFT','READY'].includes(existing.status) || existing.version !== version) throw new AssistantProposalError(409,'PROPOSAL_CHANGED','La propuesta cambió. Actualizala antes de revisar.');
   await assertProposalEvidence(principal, existing,db);
-  const draft = invoiceDraftSchema.parse(raw);
-  const issues = draftIssues(draft);
+  let draft = invoiceDraftSchema.parse(raw);
+  const source=readDocumentPurchaseSource(existing.source);
+  if(!source&&decisions?.length)throw new AssistantProposalError(400,'DOCUMENT_DECISION_INVALID','Esta propuesta no tiene fuentes documentales para esa decisión.');
+  const review=source?reconcileDocumentReview(source,draft,decisions,principal,version+1):null;
+  if(review)draft=review.draft;
+  const legacy=await legacyContextIssue(principal,existing,db);
+  const issues = [...draftIssues(draft),...(review?.issues??[]),...(legacy?[legacy]:[])];
+  if(review?.requiresFreshReview)issues.push('Guardaste una decisión sobre las fuentes. Volvé a revisar y calcular los efectos de esta versión.');
   let preview: AssistantPurchasePreview | null = null;
   if (!issues.length) {
     try {
@@ -144,7 +168,7 @@ export async function reviseProposal(principal: AssistantPrincipal, id: string, 
   }
   const status = issues.length ? 'DRAFT' : 'READY';
   const changed = await db.assistantProposal.updateMany({where: {id,...owner(principal),version,status:{in:['DRAFT','READY']},expiresAt:{gt:new Date()}},
-    data: {version:{increment:1},draft:asJson(draft),issues:asJson(issues),preview:preview ? asJson(preview) : Prisma.DbNull,
+    data: {version:{increment:1},draft:asJson(draft),...(review?{source:asJson(review.source)}:{}),issues:asJson(issues),preview:preview ? asJson(preview) : Prisma.DbNull,
       payloadHash: preview?.hash ?? null,status}});
   if (changed.count !== 1) throw new AssistantProposalError(409,'PROPOSAL_CHANGED','Otra revisión modificó la propuesta. Actualizala.');
   return toDTO(await findOwned(principal,id,db));
@@ -157,8 +181,10 @@ export async function confirmProposal(principal: AssistantPrincipal, id: string,
   if (row.status === 'COMMITTED' && row.result) return {...row.result as unknown as AssistantOperationDTO,replayed:true};
   if (row.status !== 'READY' || !row.payloadHash) throw new AssistantProposalError(409,'PROPOSAL_NOT_READY','Revisá y corregí la propuesta antes de confirmar.');
   const draft = invoiceDraftSchema.parse(row.draft);
-  if (draftIssues(draft).length) throw new AssistantProposalError(409,'PROPOSAL_NOT_READY','La propuesta tiene datos pendientes.');
   await assertProposalEvidence(principal,row,db);
+  const source=readDocumentPurchaseSource(row.source);
+  if((source&&documentReviewIssues(source,draft).length)||await legacyContextIssue(principal,row,db))throw new AssistantProposalError(409,'PROPOSAL_NOT_READY','Las fuentes de la propuesta necesitan una resolución explícita.');
+  if (draftIssues(draft).length) throw new AssistantProposalError(409,'PROPOSAL_NOT_READY','La propuesta tiene datos pendientes.');
   const operation = (purchaseId: string): AssistantOperationDTO => ({id:idempotencyKey,proposalId:id,purchaseId,
     message: 'Compra registrada y comprobante confirmado.',replayed:false});
   try {

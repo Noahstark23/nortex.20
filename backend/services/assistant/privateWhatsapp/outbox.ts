@@ -4,6 +4,8 @@ import prisma from '../../../lib/prisma.js';
 import { requirePrivateWaBinding } from './identity.js';
 import { PrivateWhatsappError,privateWhatsappConfig } from './config.js';
 import { createPrivateWaSender } from './transport.js';
+import { validateAssistantKnowledgeReferences } from '../knowledge/service.js';
+import { knowledgeReferencesSchema } from '../operations/runValidation.js';
 import type { PrivateWaDependencies } from './types.js';
 
 /** Un proceso caído después de SENDING deja incertidumbre, nunca vuelve a PENDING. */
@@ -34,8 +36,11 @@ export async function dispatchPrivateWaOutboxOnce(deps:PrivateWaDependencies={})
     let invoked=false;
     try {
       if(row.expiresAt<=now)throw new PrivateWhatsappError('PRIVATE_WA_REPLY_EXPIRED','La respuesta venció.',422);
-      const {binding}=await requirePrivateWaBinding(row.bindingId,row.bindingVersion,db);
+      const {binding,principal}=await requirePrivateWaBinding(row.bindingId,row.bindingVersion,db);
       if(binding.tenantId!==row.tenantId||binding.userId!==row.userId||binding.roleAtBinding!==row.roleAtCreation||binding.waId!==row.waId||binding.phoneNumberId!==row.phoneNumberId||row.phoneNumberId!==config.phoneNumberId)throw new PrivateWhatsappError('PRIVATE_WA_REVOKED','El vínculo cambió.',403);
+      // null identifica salidas legacy sin procedencia demostrable: no reenviarlas ni regenerarlas.
+      const references=knowledgeReferencesSchema.safeParse(row.knowledgeReferences);
+      if(!references.success||!await validateAssistantKnowledgeReferences(principal,references.data,db,'WHATSAPP_PRIVATE'))throw new PrivateWhatsappError('PRIVATE_WA_KNOWLEDGE_UNAVAILABLE','La ayuda de esta respuesta ya no está disponible.',409);
       const sender=deps.sender??createPrivateWaSender(config);
       invoked=true;
       const result=await sender.send(row.waId,row.text);

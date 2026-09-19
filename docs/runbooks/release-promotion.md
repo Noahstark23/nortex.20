@@ -17,6 +17,11 @@ urgentes y cambios exclusivamente documentales. Los informes dentro de
 una auditoría de frontend, complementá este procedimiento con el
 [runbook de preproducción](frontend-preprod-audit.md).
 
+La preparación local del 2026-09-19 y la última observación remota constan en
+[el expediente NortexGPT](../NORTEXGPT_PREPARACION_DEPLOY_2026-09-19.md). Sus SHAs
+son una fotografía fechada, no valores para copiar en una promoción futura.
+Preparar el expediente no autoriza ejecutar staging ni producción.
+
 ## El contrato que evita una promoción accidental
 
 El incidente que motivó este cambio permitió que un push a `main`, incluso uno de
@@ -215,6 +220,18 @@ ruta manual, lo siguiente:
 Si cualquiera de estos controles no se puede verificar, el estado es
 `LISTO PARA PRODUCCIÓN BLOQUEADO`, no una excepción implícita. Documentá el
 bloqueo y escalalo al responsable de infraestructura.
+
+**Revisor ya elegido por el usuario:** en esta sesión el dueño eligió su propia
+cuenta, `Noahstark23`, para revisar producción. No volver a pedirle otra cuenta
+como si esa decisión no existiera. La lectura de GitHub del 2026-09-19 encontró
+esa cuenta como reviewer y `prevent_self_review=false`. Es un estado observado,
+no evidencia de una segunda persona independiente ni autorización para un nuevo
+SHA. La elección se conserva en el expediente junto con la diferencia respecto
+al control independiente de la tabla. Ningún agente debe cambiar protecciones,
+activar bypass o declarar cumplida la revisión independiente para resolver esa
+diferencia. Antes de una promoción, el responsable registra cómo aplica la
+decisión del dueño al iniciador y aprobador concretos; esta preparación no cambia
+la política ni la configuración externa.
 
 Solo con autorización externa registrada, el responsable de infraestructura fija en
 Coolify `git_commit_sha` al candidato autorizado. El workflow no escribe esa

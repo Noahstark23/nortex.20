@@ -3,9 +3,12 @@ import { describe, expect, it } from 'vitest';
 
 // Trinquete: sólo baja. La base conversacional tenía 14,638 líneas.
 // Nuevas capacidades pertenecen a rutas/servicios; el servidor sólo compone.
-const MAX_SERVER_LINES = 13190;
+const MAX_SERVER_LINES = 13177;
 
 describe('presupuesto de composición del backend', () => {
+  it('conserva la extracción del validador de snapshots fuera de reportes', () => {
+    expect(readFileSync('backend/services/salesReportService.ts', 'utf8').trimEnd().split('\n').length).toBeLessThanOrEqual(933);
+  });
   it('impide recuperar espacio extraído para ampliar el monolito', () => {
     const source = readFileSync('backend/server.ts', 'utf8');
     const lines = source.trimEnd().split('\n').length;

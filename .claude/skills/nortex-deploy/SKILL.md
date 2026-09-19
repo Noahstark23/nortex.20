@@ -7,8 +7,11 @@ description: Despliegue y operaciones de Nortex — Docker, variables de entorno
 
 Leer `CLAUDE.md`, `AGENTS.md` y `docs/runbooks/release-promotion.md` antes de actuar.
 Para respaldos o un cambio de schema, aplicar también `nortex-backup-recovery`.
-Revisión documental del 2026-09-08 contra el candidato `484f58a`; comprobar nuevamente
-los contratos si los workflows o verificadores cambian.
+Revisión documental del 2026-09-19 contra la base
+`67f1832502ee68ef67ac12b0803bdbfce48a4cef`; comprobar nuevamente los contratos si
+los workflows o verificadores cambian. El expediente de preparación vigente es
+`docs/NORTEXGPT_PREPARACION_DEPLOY_2026-09-19.md`: distingue la base remota, el
+candidato local en integración y lo realmente observado en los entornos.
 
 ## Imagen y arranque
 
@@ -51,8 +54,10 @@ El contrato Coolify vive en `scripts/verify-coolify-staging-target.mjs` y
   redirecciones ni imprime respuestas; el token no debe viajar a CI ni al otro entorno.
 - `git_commit_sha` exactamente igual al candidato, build desde Git **`dockerfile`
   o `dockercompose`**, y `settings.is_auto_deploy_enabled` booleano `false`.
-- Si el webhook exige bearer, un `COOLIFY_*_DEPLOY_TOKEN` separado con permiso
-  `deploy`; no mezclar lectura con `write`, `read:sensitive` o `root`.
+- Si el webhook exige bearer, usar el nombre que consume cada workflow:
+  `COOLIFY_TOKEN` en `staging` y `COOLIFY_PROD_DEPLOY_TOKEN` en `production`, con
+  permiso `deploy` y separados de los tokens de lectura. No mezclar lectura con
+  `write`, `read:sensitive` o `root`.
 
 Los webhooks usan POST explícito; no reintentar automáticamente un resultado
 incierto. Coolify 4.1.2 omite `settings` en GET application y no satisface la
@@ -67,6 +72,18 @@ Tokens distintos por environment no prueban aislamiento entre aplicaciones. Comp
 su equipo y alcance efectivo; registrar vencimiento y responsable de renovación.
 Los verificadores leen el pin, nunca lo escriben. Un token existente, una app sana
 con otro SHA o un environment aprobado no subsanan identidad/pin incompletos.
+
+Para una preparación sin despliegue, leer configuración y estado; no ejecutar un
+workflow de promoción como prueba. La prueba determinista de los controles usa
+dobles de red y no acredita la configuración externa. Si una compuerta fue
+rechazada por la revisión automática de permisos, conservar ese bloqueo: no
+reintentar mediante `release:preflight`, otro wrapper o un dispatch remoto. No
+convertir el bloqueo en un resultado aprobado ni reducir el alcance requerido.
+
+La cuenta revisora ya elegida por el usuario no se vuelve a preguntar. Registrar
+quién inicia y quién aprueba cada run: la misma cuenta no acredita revisión
+independiente. La diferencia entre la protección exigida y la configuración viva
+se registra en el expediente; no modificar GitHub para resolverla por cuenta propia.
 
 ## Variables del producto
 

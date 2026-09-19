@@ -140,6 +140,7 @@ model Tenant {
 
   // NortexGPT: aislamiento y activación por negocio.
   assistantConfig        AssistantTenantConfig?
+  assistantBudgetRequests AssistantBudgetRequest[]
   assistantConversations AssistantConversation[]
   assistantMessages      AssistantMessage[]
   assistantAttachments   AssistantAttachment[]
@@ -186,6 +187,7 @@ model User {
   password  String
   name      String
   role      String    @default("EMPLOYEE") // OWNER, ADMIN, MANAGER, CASHIER, VIEWER
+  assistantBudgetOwner Boolean @default(false) // Granted by Nortex or new-tenant registration; never inferred from HR.
   status    String    @default("ACTIVE") // ACTIVE, DISABLED
   lastLogin DateTime?
   invitedBy String?
@@ -245,7 +247,28 @@ model AssistantTenantConfig {
   promotionsEnabled Boolean @default(false)
   privateWhatsappEnabled Boolean @default(false)
   monthlyBudgetUsd  Decimal @default(10) @db.Decimal(18, 6)
+  /// Entitlement aprobado por Nortex. El default también protege configuraciones legacy de US$10.
+  approvedMonthlyBudgetUsd Decimal @default(2) @db.Decimal(18, 6)
   tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+}
+
+model AssistantBudgetRequest {
+  id             String @id @default(cuid())
+  tenantId       String
+  requestedBy    String
+  requestKey     String @db.VarChar(191)
+  requestedUsd   Decimal @db.Decimal(18, 6)
+  reason         String @db.VarChar(500)
+  status         String @default("PENDING") @db.VarChar(16)
+  decidedBy      String?
+  decisionReason String? @db.VarChar(500)
+  decidedAt      DateTime?
+  createdAt      DateTime @default(now())
+  tenant         Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, createdAt])
+  @@index([status, createdAt, id])
 }
 
 model AssistantConversation {
@@ -409,6 +432,8 @@ model PurchaseCommand {
 /// Ejecución acotada: sus pasos son evidencia, nunca autorización de una mutación.
 model AssistantRun {
   id String @id @default(cuid())
+  /// Canal de origen inmutable; null sólo para ejecuciones anteriores a publicaciones versionadas.
+  knowledgeChannel String? @db.VarChar(24)
   tenantId String
   userId String
   roleAtCreation String @db.VarChar(32)
@@ -680,6 +705,8 @@ model AssistantWaOutbox {
   phoneNumberId String @db.VarChar(64)
   waId String @db.VarChar(32)
   text String @db.Text
+  /// null es procedencia legacy desconocida; [] acredita respuesta nueva sin ayuda documental.
+  knowledgeReferences Json?
   status String @default("PENDING") @db.VarChar(24)
   providerMessageId String? @unique @db.VarChar(191)
   attempts Int @default(0)
@@ -695,6 +722,58 @@ model AssistantWaOutbox {
   @@index([expiresAt])
   @@index([phoneNumberId, waId, status, sequence])
   @@index([createdAt, status])
+}
+
+/// Publicación de ayuda oficial; no contiene los documentos internos de desarrollo.
+model AssistantKnowledgeControl {
+  id String @id @db.VarChar(64)
+  activeReleaseId String? @db.VarChar(128)
+  generation Int @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model AssistantKnowledgeRelease {
+  id String @id @db.VarChar(128)
+  formatVersion Int @default(1)
+  manifest Json
+  manifestHash String @db.Char(64)
+  status String @default("DRAFT") @db.VarChar(16)
+  createdById String
+  reviewedById String?
+  reviewedAt DateTime?
+  publishedAt DateTime?
+  retiredAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  reviewNotes AssistantKnowledgeReviewNote[]
+  @@index([status, createdAt])
+  @@index([status, createdAt, id])
+}
+
+model AssistantKnowledgeReviewNote {
+  id String @id @db.VarChar(64)
+  releaseId String @db.VarChar(128)
+  manifestHash String @db.Char(64)
+  tenantId String
+  authorId String
+  body String @db.VarChar(2000)
+  createdAt DateTime @default(now())
+  release AssistantKnowledgeRelease @relation(fields: [releaseId], references: [id], onDelete: Restrict)
+  @@index([releaseId, createdAt, id])
+}
+
+model AssistantKnowledgeVersion {
+  documentId String @db.VarChar(128)
+  version String @db.VarChar(64)
+  sectionId String @db.VarChar(64)
+  payload Json
+  contentHash String @db.Char(64)
+  status String @default("DRAFT") @db.VarChar(16)
+  retiredAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@id([documentId, version, sectionId])
+  @@index([status, documentId])
 }
 
 model Invitation {
@@ -2033,6 +2112,7 @@ model Shift {
 
   @@index([tenantId])
   @@index([tenantId, status, startTime])
+  @@index([tenantId, status, endTime])
   @@index([userId])
   @@index([employeeId])
   @@unique([tenantId, closeEventId])
@@ -2116,6 +2196,7 @@ model CashMovement {
   @@index([shiftId])
   @@index([createdAt])
   @@index([tenantId, shiftId, isVoided])
+  @@index([tenantId, shiftId, createdAt, id])
 }
 
 // Cabeza de la cadena del libro por tenant. El UPDATE con increment toma
@@ -3739,4 +3820,48 @@ model WhatsappInboundMessage {
 
   @@index([tenantId])
   @@index([createdAt]) // Para job de cleanup mensual
+}
+
+// Continuidad privada de W01. No es un cierre ni una aceptación de conciliación.
+model AssistantWorkItem {
+  id String @id @default(cuid())
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  kind String @default("W01_CASH_REVIEW") @db.VarChar(32)
+  runId String
+  conversationId String
+  evidenceId String @db.VarChar(191)
+  sourceHash String @db.Char(64)
+  sourceSummary Json
+  status String @default("IN_REVIEW") @db.VarChar(16)
+  version Int @default(0)
+  eventCount Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  expiresAt DateTime
+  events AssistantWorkEvent[]
+  @@unique([tenantId, userId, runId])
+  @@index([tenantId, userId, roleAtCreation, createdAt, id])
+  @@index([expiresAt, id])
+}
+
+// Notas humanas y transiciones: UUID + payload exacto, dentro de la transacción del item.
+model AssistantWorkEvent {
+  id String @id @default(cuid())
+  workItemId String
+  eventId String @db.VarChar(36)
+  tenantId String
+  userId String
+  roleAtCreation String @db.VarChar(32)
+  payloadHash String @db.Char(64)
+  type String @db.VarChar(16)
+  note String? @db.VarChar(2000)
+  fromStatus String? @db.VarChar(16)
+  status String @db.VarChar(16)
+  version Int
+  createdAt DateTime @default(now())
+  workItem AssistantWorkItem @relation(fields: [workItemId], references: [id], onDelete: Restrict)
+  @@unique([workItemId, eventId])
+  @@index([workItemId, version, id])
 }

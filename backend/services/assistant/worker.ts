@@ -102,6 +102,7 @@ export async function runAssistantWorkerOnce(deps:WorkerDependencies={}):Promise
       const active=await tx.assistantJob.updateMany({where:{id:candidate.id,tenantId:principal.tenantId,leaseToken,status:'PROCESSING',leaseUntil:{gt:deps.now?.()??new Date()}},data:{errorCode:null}});
       if(active.count!==1) throw new AssistantDocumentError('LEASE_LOST','Otro intento retomó la lectura.',409);
       const proposal=await createProposal(principal,draft,ids,{db:tx,id:candidate.id,
+        documentContext:context,extractedDraft:extracted,
         ...(context?.draft.paymentMethod?{declaredPaymentMethod:context.draft.paymentMethod}:{}),
       });
       if(context&&current) {

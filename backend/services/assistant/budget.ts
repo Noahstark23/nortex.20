@@ -5,6 +5,7 @@ import prisma from '../../lib/prisma.js';
 import { assertAssistantAccess } from './access.js';
 import { AssistantDocumentError } from './attachments.js';
 import type { AssistantPrincipal } from '../../../shared/assistant.js';
+import { effectiveAssistantBudget } from './budgetPolicy.js';
 
 export const GLOBAL_BUDGET_USD = '20';
 export const TENANT_BUDGET_USD = '10';
@@ -52,8 +53,13 @@ export async function reserveAssistantBudget(principal: AssistantPrincipal, requ
   if (!amount.isFinite() || amount.lte(0) || amount.gt(MAX_EXTRACTION_RESERVATION_USD)) throw new AssistantDocumentError('BUDGET_RESERVATION','La reserva de consumo no es válida.',400);
   await assertAssistantAccess(principal,deps.capability??'invoicePrepare',db);
   return db.$transaction(async tx=>{
-    const config=await tx.assistantTenantConfig.findUnique({where:{tenantId:principal.tenantId},select:{monthlyBudgetUsd:true}});
-    const tenantLimit=Decimal.min(TENANT_BUDGET_USD,config?.monthlyBudgetUsd?.toString()??'0');
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM User WHERE id = ${principal.userId} AND tenantId = ${principal.tenantId} FOR UPDATE`);
+    // Mismo lock que solicitud/aprobación. Una ampliación nunca reinicia los buckets.
+    await tx.$queryRaw(Prisma.sql`SELECT tenantId FROM AssistantTenantConfig WHERE tenantId = ${principal.tenantId} FOR UPDATE`);
+    // Revalidar después de cualquier espera: nunca reservar para una sesión/capacidad revocada.
+    await assertAssistantAccess(principal,deps.capability??'invoicePrepare',tx as typeof prisma);
+    const config=await tx.assistantTenantConfig.findUnique({where:{tenantId:principal.tenantId},select:{monthlyBudgetUsd:true,approvedMonthlyBudgetUsd:true}});
+    const tenantLimit=effectiveAssistantBudget(config);
     const global=await lockBudget(tx,'global',month,GLOBAL_BUDGET_USD);
     const tenant=await lockBudget(tx,`tenant:${principal.tenantId}`,month,tenantLimit.toString());
     for (const bucket of [global,tenant]) {

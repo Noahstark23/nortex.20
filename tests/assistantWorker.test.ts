@@ -114,7 +114,7 @@ describe('worker durable de lectura sin efectos financieros',()=>{
     await runAssistantWorkerOnce({...s.deps,readIntake,attachDocumentProposal});
     expect(s.job().status).toBe('SUCCEEDED');
     expect(s.provider.extract.mock.calls[0]).toHaveLength(2);
-    expect(s.createProposal).toHaveBeenCalledWith(principal,expect.objectContaining({receivedConfirmed:false,paymentConfirmed:false,items:[expect.objectContaining({quantity:'40'})],warnings:expect.arrayContaining([expect.stringContaining('conversación «50»; documento «40»')])}),['a'],expect.objectContaining({id:'job',declaredPaymentMethod:'CASH'}));
+    expect(s.createProposal).toHaveBeenCalledWith(principal,expect.objectContaining({receivedConfirmed:false,paymentConfirmed:false,items:[expect.objectContaining({quantity:'50'})],warnings:expect.arrayContaining([expect.stringContaining('conversación «50»; documento «40»')])}),['a'],expect.objectContaining({id:'job',declaredPaymentMethod:'CASH',documentContext:snapshot,extractedDraft:expect.objectContaining({items:[expect.objectContaining({quantity:'40'})]})}));
     expect(attachDocumentProposal).toHaveBeenCalledWith(principal,'conversation','intake','job',expect.anything(),3);
     expect(s.job().intakeContext.draft.items[0].quantity).toBe('50');
   });

@@ -239,21 +239,21 @@ qa('NortexGPT: propuestas y privacidad mediante HTTP + MySQL', () => {
     finally { await prisma.assistantTenantConfig.update({ where: { tenantId: owner.tenantId }, data: { executionEnabled: true } }); }
   });
 
-  it('MySQL serializa reservas concurrentes y nunca excede US$10 del negocio', async () => {
+  it('MySQL serializa reservas concurrentes y nunca excede US$2 del negocio', async () => {
     const month = `${2040 + Math.floor(Math.random() * 200)}-06`;
     const deps = { now: () => new Date(`${month}-15T12:00:00Z`) };
     const results = await Promise.allSettled(Array.from({ length: 50 }, () => reserveAssistantBudget(owner, '0.25', deps)));
     const failures = results.filter(row => row.status === 'rejected') as PromiseRejectedResult[];
-    expect(results.filter(row => row.status === 'fulfilled'), JSON.stringify({ codes: failures.map(row => row.reason.code), first: failures[0]?.reason.message })).toHaveLength(40);
+    expect(results.filter(row => row.status === 'fulfilled'), JSON.stringify({ codes: failures.map(row => row.reason.code), first: failures[0]?.reason.message })).toHaveLength(8);
     for (const row of results.filter(row => row.status === 'rejected')) {
       expect((row as PromiseRejectedResult).reason.code).toBe('BUDGET_EXHAUSTED');
     }
     const tenant = await prisma.assistantBudget.findUniqueOrThrow({ where: { id: `tenant:${owner.tenantId}:${month}` } });
-    expect(tenant.reservedUsd.toFixed(6)).toBe('10.000000'); expect(tenant.spentUsd.toFixed(6)).toBe('0.000000');
+    expect(tenant.reservedUsd.toFixed(6)).toBe('2.000000'); expect(tenant.spentUsd.toFixed(6)).toBe('0.000000');
     const row = results.find(result => result.status === 'fulfilled') as PromiseFulfilledResult<any>;
     await settleAssistantBudget(owner, row.value.id, null);
     expect((await prisma.assistantUsage.findUniqueOrThrow({ where: { id: row.value.id } })).status).toBe('UNKNOWN');
-    expect((await prisma.assistantBudget.findUniqueOrThrow({ where: { id: tenant.id } })).reservedUsd.toFixed(6)).toBe('10.000000');
+    expect((await prisma.assistantBudget.findUniqueOrThrow({ where: { id: tenant.id } })).reservedUsd.toFixed(6)).toBe('2.000000');
   }, 120_000);
 
   it('liquidación de consumo repetida cobra una sola vez y no usa reserva ajena', async () => {
