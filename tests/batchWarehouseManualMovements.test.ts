@@ -55,11 +55,7 @@ const seedCatalogRoute = between(
     "app.post('/api/onboarding/seed-catalog'",
     "app.use('/api/onboarding'",
 );
-const createProductRoute = between(
-    server,
-    "app.post('/api/products'",
-    "app.post('/api/products/bulk'",
-);
+const createProductRoute = readFileSync(resolve(process.cwd(), 'backend/services/productCreationService.ts'), 'utf8');
 const bulkProductRoute = between(
     server,
     "app.post('/api/products/bulk'",
@@ -310,7 +306,7 @@ describe('guard de mutaciones agregadas batch-tracked', () => {
         expect(seedCatalogRoute).toContain('const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, tenantId)');
         expect(seedCatalogRoute.indexOf('assertAggregateBatchMutationAllowed({'))
             .toBeLessThan(seedCatalogRoute.indexOf('applyStockDelta(tx'));
-        expect(createProductRoute).toContain('const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!)');
+        expect(createProductRoute).toContain('const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, principal.tenantId)');
         expect(createProductRoute.indexOf('assertAggregateBatchMutationAllowed({'))
             .toBeLessThan(createProductRoute.indexOf('applyStockDelta(tx'));
         expect(bulkProductRoute).toContain('const mode = await resolveBatchWarehouseLedgerMode(tx, tenantId)');

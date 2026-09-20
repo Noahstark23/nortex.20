@@ -25,7 +25,7 @@ export function cameraErrorMessage(error: unknown): string {
     return 'No pudimos iniciar el lector. Reintentá o escribí el código.';
 }
 export function startCameraBarcode(video: HTMLVideoElement, onCode: (code: string) => void,
-    onError: (message: string) => void, dependencies: CameraDependencies = defaults) {
+    onError: (message: string) => void, dependencies: CameraDependencies = defaults, shouldAccept: (code: string) => boolean = () => true) {
     let closed = false;
     let stream: MediaStream | undefined;
     let controls: { stop(): void } | undefined;
@@ -50,6 +50,7 @@ export function startCameraBarcode(video: HTMLVideoElement, onCode: (code: strin
                 if (!result) return;
                 const code = result.getText().trim();
                 if (!code || code.length > 100 || /[\u0000-\u001f\u007f]/u.test(code)) return;
+                if (!shouldAccept(code)) return;
                 stop(); // Una imagen repetida jamás agrega otra unidad.
                 onCode(code);
             });

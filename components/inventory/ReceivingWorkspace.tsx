@@ -1,3 +1,4 @@
+import { ProductEnrollmentEntry } from '../products/ProductEnrollmentEntry';
 import Decimal from 'decimal.js';
 import React, { useEffect, useRef } from 'react';
 import { ChevronDown, CreditCard, Package, Plus, Search, Trash2, Truck, X } from 'lucide-react';
@@ -52,6 +53,7 @@ interface ReceivingWorkspaceProps {
     onDocumentChange: (patch: Partial<ReceivingDocument>) => void;
     onSearch: (value: string) => void;
     onAdd: (product: PurchaseEntryProduct) => void;
+    onCreated?: (product: PurchaseEntryProduct) => void;
     onUpdate: (key: string, field: 'quantity' | 'unitCost' | 'salePrice' | 'batchNumber' | 'expiryDate', value: string) => void;
     onPurchaseUnit: (key: string, unit: PurchaseUnit) => void;
     onRemove: (key: string) => void;
@@ -113,6 +115,7 @@ export default function ReceivingWorkspace(p: ReceivingWorkspaceProps) {
                     )}
                     <div className="receiving-columns">
                         <section className="receiving-products" aria-labelledby="receiving-products-title">
+                            {p.onCreated && <ProductEnrollmentEntry onSaved={p.onCreated} completionLabel="Guardar y volver a la recepción"/>}
                             <div className="receiving-section-heading">
                                 <h3 id="receiving-products-title">
                                     {doc.purchaseOrderId ? 'Lo recibido pendiente de facturar' : '¿Qué llegó?'}

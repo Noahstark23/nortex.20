@@ -1,3 +1,5 @@
+import { executeProductCreation, DuplicateProductCode } from './services/productCreationService';
+import productEnrollmentRouter from './routes/productEnrollment';
 import { registerRetentionCertificate } from './routes/retentionCertificate';
 import { registerFiscalExports } from './routes/fiscalExports';
 import { executeShiftHandover, ShiftHandoverError } from './services/shiftHandoverService';
@@ -532,7 +534,7 @@ app.use('/api/purchase-orders', purchaseOrdersRouter); // Órdenes de Compra (pr
 app.use('/api/suppliers', suppliersRouter); // Proveedor 360, contactos y metadata documental
 app.use('/api/procurement/matches', procurementMatchesRouter); // Conciliación OC-recepción-factura
 app.use('/api/serials', serialsRouter); // Control de series (números de serie por unidad)
-app.use('/api/products', productLookupRouter, productCatalogRouter);
+app.use('/api/products', productEnrollmentRouter, productLookupRouter, productCatalogRouter);
 app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundación)
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/batch-warehouse-ledger', batchWarehouseLedgerRouter);
@@ -6009,166 +6011,14 @@ const productQuantityErrorResponse = (res: any, error: unknown, productName?: st
  * lo recibido). Ningún cálculo tocado vuelve a leer este surrogate.
  */
 
-// POST /api/products - Crear producto (OWNER o ADMIN)
+// POST /api/products - autoridad compartida de creación, stock y auditoría.
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateProductSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const {
-        name, sku, description, brand, category, price, cost, stock, minStock, unit,
-        saleMode, quantityStep, productFamily, isPublished, imageUrl,
-        requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId,
-        wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento,
-    } = req.body;
-
-    const decimalOrNull = (value: unknown): number | null =>
-        value === undefined || value === null || value === '' ? null : new Decimal(value as Decimal.Value).toNumber();
-    const wp = decimalOrNull(wholesalePrice);
-    const wq = decimalOrNull(wholesaleMinQty);
-    const pUnit = typeof packUnit === 'string' && packUnit.trim() !== '' ? packUnit.trim() : null;
-    const pSize = decimalOrNull(packSize);
-    const pPrice = decimalOrNull(packPrice);
-    if (pPrice !== null && pSize === null) {
-        return res.status(400).json({ error: 'El precio de empaque requiere definir el tamaño del empaque (unidades por caja/fardo)' });
-    }
-
     try {
-        const config = { unit, saleMode, quantityStep };
-        const initialStock = contextualProductQuantity(stock ?? '0', config, { allowZero: true });
-        const initialMinStock = contextualProductQuantity(minStock ?? '5', config, { allowZero: true });
-        const reorder = contextualProductQuantity(reorderPoint ?? '0', config, { allowZero: true });
-        const maximum = contextualProductQuantity(maxStock ?? '0', config, { allowZero: true });
-
-        // Verificar que SKU no exista
-        const existing = await prisma.product.findUnique({
-            where: {
-                tenantId_sku: {
-                    tenantId: authReq.tenantId!,
-                    sku: sku.toUpperCase(),
-                }
-            }
-        });
-
-        if (existing) {
-            return res.status(400).json({ error: 'SKU ya existe en tu inventario' });
-        }
-
-        if (initialStock > 0 && Boolean(requiresBatchTracking)) {
-            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(prisma, authReq.tenantId!);
-            assertAggregateBatchMutationAllowed({
-                mode: batchWarehouseLedgerMode,
-                requiresBatchTracking: true,
-                delta: initialStock,
-            });
-        }
-
-        // La bodega default se materializa antes de la tx para evitar la carrera
-        // de creación bajo REPEATABLE READ documentada en stockService.
-        if (initialStock > 0) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
-
-        const product = await prisma.$transaction(async (tx: any) => {
-            if (initialStock > 0 && Boolean(requiresBatchTracking)) {
-                const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
-                assertAggregateBatchMutationAllowed({
-                    mode: authoritativeBatchMode,
-                    requiresBatchTracking: true,
-                    delta: initialStock,
-                });
-            }
-            if (defaultSupplierId) {
-                const supplier = await tx.supplier.findFirst({
-                    where: { id: defaultSupplierId, tenantId: authReq.tenantId! },
-                    select: { id: true },
-                });
-                if (!supplier) throw new Error('PROVEEDOR_NO_ENCONTRADO');
-            }
-
-            // Nace en cero y el stock inicial entra por el mismo camino atómico
-            // que cualquier otro movimiento, manteniendo ProductStock y Kardex.
-            const created = await tx.product.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    name,
-                    sku: sku.toUpperCase(),
-                    description: description || null,
-                    brand: brand || null,
-                    category: category || null,
-                    price: new Decimal(price).toNumber(),
-                    cost: new Decimal(cost ?? 0).toNumber(),
-                    stock: 0,
-                    minStock: initialMinStock,
-                    unit,
-                    saleMode: saleMode ?? null,
-                    quantityStep: quantityStep || null,
-                    productFamily: productFamily ?? null,
-                    isPublished: Boolean(isPublished),
-                    ivaExento: Boolean(ivaExento),
-                    imageUrl: imageUrl || null,
-                    requiresBatchTracking: Boolean(requiresBatchTracking),
-                    reorderPoint: reorder,
-                    maxStock: maximum,
-                    defaultSupplierId: defaultSupplierId || null,
-                    wholesalePrice: wp,
-                    wholesaleMinQty: wq,
-                    packUnit: pUnit,
-                    packSize: pSize,
-                    packPrice: pPrice,
-                    createdBy: authReq.userId!,
-                },
-            });
-
-            if (initialStock > 0) {
-                const stockResult = await applyStockDelta(tx, {
-                    tenantId: authReq.tenantId!,
-                    productId: created.id,
-                    delta: initialStock,
-                    enforceSufficient: false,
-                });
-                await tx.kardexMovement.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        productId: created.id,
-                        type: 'IN',
-                        quantity: initialStock,
-                        stockBefore: stockResult.stockBefore,
-                        stockAfter: stockResult.stockAfter,
-                        referenceType: 'INITIAL',
-                        reason: 'Stock inicial al crear producto',
-                        userId: authReq.userId!,
-                        warehouseId: stockResult.warehouseId,
-                    },
-                });
-            }
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'PRODUCT_CREATED',
-                    details: JSON.stringify({
-                        productId: created.id,
-                        after: {
-                            sku: created.sku,
-                            name: created.name,
-                            unit: created.unit,
-                            saleMode: created.saleMode,
-                            quantityStep: created.quantityStep?.toString() ?? null,
-                            productFamily: created.productFamily,
-                            stock: initialStock,
-                        },
-                    }),
-                },
-            });
-
-            return tx.product.findUniqueOrThrow({ where: { id: created.id } });
-        });
-
-        res.json(product);
+        res.json(await executeProductCreation(prisma, { tenantId: req.tenantId, userId: req.userId }, req.body));
     } catch (error: any) {
-        if (productQuantityErrorResponse(res, error)) return;
-        if (manualBatchErrorResponse(res, error)) return;
-        if (error?.message === 'PROVEEDOR_NO_ENCONTRADO') {
-            return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
-        }
-        console.error('Error creating product:', error);
+        if (productQuantityErrorResponse(res, error) || manualBatchErrorResponse(res, error)) return;
+        if (error instanceof DuplicateProductCode) return res.status(400).json({ error: error.message });
+        if (error?.message === 'PROVEEDOR_NO_ENCONTRADO') return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
         res.status(500).json({ error: 'Error creando producto' });
     }
 });

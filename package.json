@@ -27,7 +27,10 @@
     "assistant:worker": "tsx backend/workers/assistant.ts",
     "assistant:whatsapp-worker": "tsx backend/workers/assistantPrivateWhatsapp.ts",
     "assistant:evaluate": "node scripts/assistant-evaluation/evaluate.mjs",
-    "assistant:corpus": "node scripts/assistant-evaluation/generate.mjs"
+    "assistant:corpus": "node scripts/assistant-evaluation/generate.mjs",
+    "predev": "node scripts/prepare-product-ocr.mjs",
+    "prebuild": "node scripts/prepare-product-ocr.mjs",
+    "prebuild:seo": "node scripts/prepare-product-ocr.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.97.1",
@@ -36,6 +39,7 @@
     "@google/generative-ai": "^0.24.1",
     "@prisma/client": "6.4.1",
     "@sentry/node": "^10.65.0",
+    "@tesseract.js-data/spa": "1.0.0",
     "bcryptjs": "^3.0.3",
     "browser-image-compression": "^2.0.2",
     "compression": "^1.8.0",
@@ -58,6 +62,7 @@
     "resend": "^4.0.0",
     "stripe": "^17.0.0",
     "swr": "^2.4.2",
+    "tesseract.js": "6.0.1",
     "tsx": "^4.23.12",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.4.3"

@@ -702,7 +702,7 @@ const AccountsReceivable: React.FC = () => {
 
           {/* Filter */}
           <div className="mt-4 flex gap-2">
-            <button type="button" onClick={() => setFilter('today')} aria-pressed={filter === 'today'} className={`nx-fluid-press h-touch rounded-control px-3 text-sm font-semibold transition-colors ${filter === 'today' ? 'bg-brand text-brand-on shadow-sm' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>
+            <button data-learning="receivables-today" type="button" onClick={() => setFilter('today')} aria-pressed={filter === 'today'} className={`nx-fluid-press h-touch rounded-control px-3 text-sm font-semibold transition-colors ${filter === 'today' ? 'bg-brand text-brand-on shadow-sm' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>
               Cobrar hoy {summary ? `(${summary.overdueCount + summary.dueSoonCount})` : ''}
             </button>
             <button type="button" onClick={() => setFilter('all')} aria-pressed={filter === 'all'} className={`nx-fluid-press h-touch rounded-control px-3 text-sm font-semibold transition-colors ${filter === 'all' ? 'bg-brand text-brand-on shadow-sm' : 'border border-slate-300 bg-white text-slate-700 hover:bg-slate-100'}`}>

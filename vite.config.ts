@@ -59,6 +59,7 @@ export default defineConfig(() => {
           },
           workbox: {
             globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+            globIgnores: ['**/product-ocr-v1/**'],
             // El bundle del SPA ronda los 2 MB (sobre el límite por defecto de
             // Workbox de 2 MiB). Subimos el tope para que el PWA precachee toda
             // la app y siga funcionando offline. (Build fallaba al superar 2 MiB.)

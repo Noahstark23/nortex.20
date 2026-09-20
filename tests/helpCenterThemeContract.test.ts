@@ -55,6 +55,6 @@ describe('HelpCenter: contrato visual Día/Noche', () => {
         expect(source).toContain('onClick={reshowChecklist}');
         expect(source).toContain('clearOnboardingFlags(localStorage, currentOnboardingStorageKeys())');
         expect(source).toContain('homePathFor(role, resolveUiMode(type, localStorage.getItem(UI_MODE_KEY)))');
-        expect(source).toContain('window.location.assign(`${home}?welcome=1`)');
+        expect(source).toContain('navigate(`${home}?welcome=1`)');
     });
 });
