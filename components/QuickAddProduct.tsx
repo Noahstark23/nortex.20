@@ -27,10 +27,8 @@ interface QuickAddProductProps {
     onSuccess: (product?: Product) => void;
 }
 
-const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onClose, onSuccess }) => {
-    // Form state
-    const [formData, setFormData] = useState({
-        sku: initialSKU,
+const newQuickProduct = () => ({
+        sku: '',
         name: '',
         brand: '',
         category: '',
@@ -46,6 +44,9 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
         ivaExento: false, reorderPoint: '', maxStock: '', wholesalePrice: '', wholesaleMinQty: '',
         packUnit: '', packSize: '', packPrice: '',
     });
+
+const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onClose, onSuccess }) => {
+    const [formData, setFormData] = useState(() => ({...newQuickProduct(), sku: initialSKU}));
 
     // UI state
     const [continuousMode, setContinuousMode] = useState(false);
@@ -163,22 +164,8 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                 onSuccess({ ...newProduct, ...data });
 
                 if (continuousMode) {
-                    // Clear form but keep category
-                    const lastCategory = formData.category;
-                    setFormData({
-                        ...formData,
-                        sku: '',
-                        name: '',
-                        category: lastCategory,
-                        price: '',
-                        cost: '',
-                        stock: '',
-                        imageUrl: '',
-                        unit: formData.unit,
-                        saleMode: formData.saleMode,
-                        quantityStep: formData.quantityStep,
-                        productFamily: formData.productFamily,
-                    });
+                    // Cada ficha empieza limpia: no heredar marca, impuestos ni lotes.
+                    setFormData(newQuickProduct());
                     // Refocus SKU
                     setTimeout(() => skuInputRef.current?.focus(), 100);
                 } else {

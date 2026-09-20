@@ -1,3 +1,4 @@
+import { CameraProductEnrollment } from './products/CameraProductEnrollment';
 import { EmptyState, type EmptyStateProps } from './ui/EmptyState';
 import { useInventoryBarcode } from '../hooks/useInventoryBarcode';
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
@@ -262,10 +263,6 @@ function InventoryWorkspace() {
     const [products, setProducts] = useState<Product[]>([]);
     // Distingue "inventario vacío" de "no pudimos cargarlo" (auditoría C8).
     const [productsError, setProductsError] = useState(false);
-    // Catálogo de ejemplo por giro también acá: el checklist manda PRIMERO a
-    // Inventario, pero el atajo solo existía en el POS (detrás del PIN de caja).
-    const [seeding, setSeeding] = useState(false);
-    const [seedError, setSeedError] = useState('');
     const [loading, setLoading] = useState(true);
     const [inventoryParams] = useSearchParams();
     const navigate = useNavigate();
@@ -324,6 +321,7 @@ function InventoryWorkspace() {
     const [showCreateModal, setShowCreateModal] = useState(false);
     const [showImportModal, setShowImportModal] = useState(false);
     const [showQuickAddModal, setShowQuickAddModal] = useState(false);
+    const [cameraEnrollment, setCameraEnrollment] = useState<string | null>(null);
     const [quickAddSKU, setQuickAddSKU] = useState('');
     const [showKardexModal, setShowKardexModal] = useState(false);
     const [showAdjustModal, setShowAdjustModal] = useState(false);
@@ -530,26 +528,6 @@ function InventoryWorkspace() {
         fetchCategories();
         if (canViewInventoryValuation) fetchStats();
     }, [canViewInventoryValuation, fetchProducts, fetchStats, fetchCategories]);
-
-    // Catálogo de EJEMPLO por giro (retención R2): mismo endpoint que el POS.
-    const seedCatalog = useCallback(async () => {
-        setSeeding(true); setSeedError('');
-        try {
-            const res = await fetch('/api/onboarding/seed-catalog', { method: 'POST', headers });
-            if (res.ok) {
-                trackEvent('seed_catalog_used', { source: 'inventory' });
-                window.dispatchEvent(new CustomEvent('nortex:data-changed'));
-                reload();
-            } else {
-                const d = await res.json().catch(() => ({}));
-                setSeedError(d.error || 'No se pudo cargar el catálogo de ejemplo.');
-            }
-        } catch {
-            setSeedError('No se pudo cargar el catálogo. Revisá tu conexión.');
-        } finally {
-            setSeeding(false);
-        }
-    }, [headers, reload]);
 
     // Exporta a Excel TODO lo que coincide con el filtro actual (no solo la página).
     const handleExport = async () => {
@@ -1602,11 +1580,10 @@ function InventoryWorkspace() {
                 title: 'Tu inventario está vacío',
                 description: isBodeguero
                     ? 'Todavía no hay productos para operar. Pedile a un administrador que cargue el catálogo.'
-                    : 'Importá tu lista desde Excel y Nortex arma el catálogo solo.',
+                    : 'Agregá tu primer producto con cámara o cargalo manualmente. Si ya tenés una lista, importala desde Más.',
                 action: isOwner ? { label: 'Nuevo producto', icon: <Zap size={18} />, onClick: () => { setShowQuickAddModal(true); setQuickAddSKU(''); } } : undefined,
                 secondaryAction: isOwner ? { label: 'Cargar manual', icon: <Plus size={18} />, onClick: () => setShowCreateModal(true) } : undefined,
-                linkAction: isOwner ? { label: 'O cargá un catálogo de ejemplo de tu giro para probar', onClick: seedCatalog, loading: seeding, loadingLabel: 'Cargando catálogo…' } : undefined,
-                errorText: seedError,
+                linkAction: isOwner ? { label: 'Aprender con ejemplos sin cambiar mi inventario', onClick: () => navigate('/app/ayuda') } : undefined,
             };
 
     // La paginación vivía DENTRO del contenedor de la tabla. Al ocultar la tabla
@@ -1676,11 +1653,12 @@ function InventoryWorkspace() {
             <ToastViewport toast={toast} onDismiss={dismissToast} />
             <div className={`nx-stock-workspace ${receivingOpen ? 'nx-stock-workspace--receiving' : ''}`}>
                 <fieldset className="nx-stock-workspace__catalog" disabled={receivingOpen}>
-                    <InventoryCatalog onCreateScannedProduct={canManageProducts ? code => { setQuickAddSKU(code); setShowQuickAddModal(true); } : undefined} onCameraCode={scanWithCamera} title="Mis productos" products={productsError ? [] : products} total={total} loading={loading} error={productsError}
+                    <InventoryCatalog onCreateScannedProduct={canManageProducts ? code => setCameraEnrollment(code) : undefined} onCameraCode={scanWithCamera} title="Mis productos" products={productsError ? [] : products} total={total} loading={loading} error={productsError}
                         filters={{search:searchTerm,category:categoryFilter,family:familyFilter,mode:modeFilter,status:statusFilter,sortField,sortDir}}
                         onFiltersChange={changeFilters} categories={categories} selectedProductId={activeProduct?.id ?? null}
                         onSelectProduct={product => { if (!receivingOpen) setActiveProduct(product as Product); }} canViewPrice={!isBodeguero}
                         actions={{
+                        cameraCreate: canManageProducts ? () => setCameraEnrollment('') : undefined,
                             create: isOwner ? () => { setQuickAddSKU(''); setShowQuickAddModal(true); } : undefined,
                             fullCreate: isOwner ? () => setShowCreateModal(true) : undefined,
                             import: isOwner ? () => setShowImportModal(true) : undefined,
@@ -2800,6 +2778,7 @@ function InventoryWorkspace() {
             {/* ==========================================
             MODAL: QUICK ADD SCANNER MODE
            ========================================== */}
+            {cameraEnrollment !== null && <CameraProductEnrollment initialCode={cameraEnrollment} onClose={() => setCameraEnrollment(null)} onSaved={() => { void reload(); }}/>}
             {showQuickAddModal && (
                 <QuickAddProduct
                     initialSKU={quickAddSKU}

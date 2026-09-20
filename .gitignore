@@ -46,3 +46,6 @@ tmp-backups/
 reports/assistant-evaluation/
 # Evidencia local efímera de integración (fixtures y respuestas de QA).
 reports/quality-*/
+
+# Optional on-device OCR assets, copied from locked npm dependencies.
+/public/product-ocr-v1/

@@ -72,4 +72,18 @@ describe('alta rápida de productos', () => {
         expect(fetcher).not.toHaveBeenCalled();
         expect(screen.getByRole('alert')).toHaveTextContent('con lote, vencimiento y bodega');
     });
+    it('el modo continuo no hereda marca, lote ni impuesto al siguiente producto', async () => {
+        vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ok:true,json:async()=>({id:'qa'})}));
+        render(<QuickAddProduct onClose={vi.fn()} onSuccess={vi.fn()}/>);
+        fill();
+        fireEvent.change(screen.getByRole('textbox',{name:'Marca (opcional)'}),{target:{value:'Primera marca'}});
+        fireEvent.click(screen.getByLabelText('Controlar lotes y vencimiento'));
+        fireEvent.click(screen.getByLabelText('Producto exento de IVA (según su clasificación fiscal)'));
+        fireEvent.click(screen.getByLabelText('Guardar y seguir agregando productos'));
+        fireEvent.click(screen.getByRole('button',{name:/Guardar \(F2/}));
+        await waitFor(()=>expect(screen.getByRole('textbox',{name:'Marca (opcional)'})).toHaveValue(''));
+        expect(screen.getByLabelText('Controlar lotes y vencimiento')).not.toBeChecked();
+        expect(screen.getByLabelText('Producto exento de IVA (según su clasificación fiscal)')).not.toBeChecked();
+    });
+
 });
