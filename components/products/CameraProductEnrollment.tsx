@@ -9,10 +9,11 @@ import './productEnrollment.css';
 
 function Capture({onCode,lastCode}: {onCode:(code:string)=>Promise<void>;lastCode:string}) {
     const video=useRef<HTMLVideoElement>(null), callback=useRef(onCode);callback.current=onCode;
+    const [hint,setHint]=useState('');
     const [error,setError]=useState(''), [attempt,setAttempt]=useState(0), [manual,setManual]=useState('');
     useEffect(()=>{
-        let active=true;
-        const capture=startCameraBarcode(video.current!,code=>{if(active) void callback.current(code);},message=>{if(active)setError(message);},undefined,code=>code.toUpperCase()!==lastCode.toUpperCase());
+        let active=true;setHint('');
+        const capture=startCameraBarcode(video.current!,code=>{if(active) void callback.current(code);},message=>{if(active)setError(message);},undefined,code=>code.toUpperCase()!==lastCode.toUpperCase(),message=>{if(active)setHint(message);});
         const pause=()=>{capture.stop();setError('Cámara pausada. Tocá Activar cámara para continuar.');};
         const visibility=()=>{if(document.hidden)pause();};
         document.addEventListener('visibilitychange',visibility);window.addEventListener('pagehide',pause);
@@ -21,6 +22,7 @@ function Capture({onCode,lastCode}: {onCode:(code:string)=>Promise<void>;lastCod
     return <div className="nx-enrollment-capture">
         <div className="nx-enrollment-view"><video ref={video} muted playsInline aria-label="Cámara para agregar productos"/><span aria-hidden="true"/></div>
         <p>Apuntá al código del producto{lastCode ? ' siguiente' : ''}.</p>
+        {hint && !error && <p role="status">{hint}</p>}
         {error && <><p role="alert">{error}</p><button type="button" onClick={()=>{setError('');setAttempt(v=>v+1);}}>Activar cámara</button></>}
         <form onSubmit={e=>{e.preventDefault();void onCode(manual);}}><label htmlFor="enrollment-code">También podés escribir el código</label><div className="nx-enrollment-manual"><input id="enrollment-code" maxLength={100} autoComplete="off" value={manual} onChange={e=>setManual(e.target.value)}/><button type="submit" disabled={!manual.trim()}>Buscar</button></div></form>
     </div>;
