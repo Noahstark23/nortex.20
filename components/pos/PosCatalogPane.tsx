@@ -1,3 +1,4 @@
+import { ProductEnrollmentEntry } from '../products/ProductEnrollmentEntry';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Check, Keyboard, Package, PackagePlus, PlayCircle, Plus, Search, X, Zap } from 'lucide-react';
 import type { Product } from '../../types';
@@ -239,6 +240,7 @@ export function PosCatalogPane({
                             {guidedSimpleMode && searchTerm && <button type="button" aria-label="Borrar texto de búsqueda" className="nx-pos-clear-search" onClick={() => { setSearchTerm(''); if (searchRef && 'current' in searchRef) searchRef.current?.focus(); }}><X size={18} /></button>}
                         </div></>
                     </div>
+                    <ProductEnrollmentEntry onSaved={() => fetchProducts()}/>
                     {onCameraCode && <CameraScanButton onCode={onCameraCode}/>}
                     {guidedSimpleMode && <button type="button" onClick={openQuickCreate} className="nx-pos-create nx-fluid-press"><Plus size={17} /> Nuevo producto</button>}
                     {/* Quick Create */}

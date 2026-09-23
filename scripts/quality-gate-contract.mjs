@@ -49,6 +49,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/stockCountWarehouse.integration.test.ts',
   'tests/productWarehouseSnapshot.integration.test.ts',
   'tests/productBrandCamera.integration.test.ts',
+  'tests/productEnrollment.integration.test.ts',
   'tests/delivery.mysql.integration.test.ts',
 ];
 

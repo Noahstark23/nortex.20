@@ -49,9 +49,9 @@ describe('contrato visual de Inicio en tema claro y oscuro', () => {
     it('da presión fluida y tipo explícito a todos los botones de Inicio', () => {
         const buttons = [...source.matchAll(/<button\b[\s\S]*?<\/button>/g)].map(([button]) => button);
 
-        // Tres plantillas de botón en Inicio y cuatro en su acción de venta,
+        // Tres plantillas de botón en Inicio y cinco en su acción de venta,
         // incluida la recuperación de error. No depender de un botón Vender duplicado.
-        expect(buttons).toHaveLength(7);
+        expect(buttons).toHaveLength(8);
         for (const button of buttons) {
             expect(button).toContain('type="button"');
             expect(button).toContain('nx-fluid-press');

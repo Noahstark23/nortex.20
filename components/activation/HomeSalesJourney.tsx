@@ -54,6 +54,11 @@ export const HomeSalesJourney: React.FC<{ session: ActivationSession }> = ({ ses
                 {content.title}
             </h2>
             <p className="nx-canvas-muted mt-3 max-w-xl leading-relaxed">{content.description}</p>
+            {progress.status === 'ready' && progress.journey === 'first' && <div className="mt-4 nx-tone-positive-bg rounded-control p-4">
+                <p className="nx-canvas-text font-semibold">¿Todavía no sabés cómo empezar?</p>
+                <p className="nx-canvas-muted text-sm mt-1">Practicá con ejemplos y después cargá tus productos. Podés aprender sin registrar una venta real.</p>
+                <button type="button" onClick={() => navigate('/app/ayuda')} className="nx-fluid-press nx-tone-positive min-h-tap mt-2 font-bold">Aprender paso a paso <ArrowRight size={17} className="inline" aria-hidden="true" /></button>
+            </div>}
             <button
                 type="button"
                 onClick={startSale}

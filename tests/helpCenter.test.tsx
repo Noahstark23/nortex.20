@@ -30,10 +30,11 @@ describe('Centro de Ayuda', () => {
         expect(screen.getByRole('heading', { level: 1, name: 'Ayuda y Tutoriales' })).toBeInTheDocument();
         expect(screen.getByRole('region', { name: 'Tutoriales interactivos' })).toBeInTheDocument();
         expect(screen.getByRole('region', { name: 'Guías rápidas' })).toBeInTheDocument();
-        expect(screen.getAllByRole('article')).toHaveLength(7);
+        expect(screen.getAllByRole('article')).toHaveLength(4);
+        expect(screen.getByRole('button', { name: 'Practicar una venta' })).toBeVisible();
 
         const buttons = screen.getAllByRole('button');
-        expect(buttons).toHaveLength(5);
+        expect(buttons).toHaveLength(10);
         for (const button of buttons) {
             expect(button).toHaveAttribute('type', 'button');
             expect(button).toHaveClass('nx-fluid-press');
@@ -52,7 +53,7 @@ describe('Centro de Ayuda', () => {
         ] as const;
 
         for (const [name, destination] of tutorials) {
-            fireEvent.click(screen.getByRole('button', { name: new RegExp(name, 'i') }));
+            fireEvent.click(screen.getByRole('button', { name: `Guía en mi negocio: ${name}` }));
             expect(screen.getByLabelText('ruta actual')).toHaveTextContent(destination);
         }
     });

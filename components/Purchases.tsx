@@ -896,7 +896,7 @@ export default function Purchases({ embedded = false, entryContext, onClose, onC
         warehouses.length === 1 ? warehouses[0].id : ''
     );
 
-    const addToCart = (product: Product) => {
+    const addToCart = (product: Product, costPending = false) => {
         setCart(currentCart => {
             const existing = !product.requiresBatchTracking && currentCart.find(c => c.productId === product.id);
             if (existing) {
@@ -920,7 +920,7 @@ export default function Purchases({ embedded = false, entryContext, onClose, onC
             }
 
             const initialQuantity = new Decimal(product.quantityStep || 1).toString();
-            const initialCost = typeof product.cost === 'number' && Number.isFinite(product.cost)
+            const initialCost = !costPending && typeof product.cost === 'number' && Number.isFinite(product.cost)
                 ? new Decimal(product.cost).toDecimalPlaces(6).toString() : '';
             return [...currentCart, {
                 cartKey: product.requiresBatchTracking ? crypto.randomUUID() : product.id,
@@ -1686,6 +1686,7 @@ export default function Purchases({ embedded = false, entryContext, onClose, onC
         search={productSearch} products={filteredProducts} totals={cartTotals}
         resolveLine={resolveCartLine} hasPack={hasPackConfiguration}
         onDocumentChange={updateReceivingDocument} onSearch={setProductSearch} onAdd={addToCart}
+        onCreated={canEditPurchaseSalePrice ? product => addToCart(product, true) : undefined}
         onUpdate={updateCartItem} onPurchaseUnit={updatePurchaseUnit} onRemove={removeFromCart}
         onSubmit={() => void handleSubmit()} onClose={embedded ? closeReceiving : undefined}
     />;

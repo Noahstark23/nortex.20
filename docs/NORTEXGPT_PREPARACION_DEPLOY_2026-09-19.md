@@ -152,4 +152,3 @@ La revisión de las capacidades se mantiene en los contratos y planes de NortexG
 esta tabla es la lista de evidencias de release, no un segundo backlog de producto.
 Después de cerrar los pendientes se aplica el runbook canónico. Una respuesta
 incierta de un webhook no autoriza repetirlo: primero se recupera su estado.
-

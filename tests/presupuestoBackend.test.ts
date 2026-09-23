@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 // Trinquete: sólo baja. La base conversacional tenía 14,638 líneas.
 // Nuevas capacidades pertenecen a rutas/servicios; el servidor sólo compone.
-const MAX_SERVER_LINES = 13177;
+const MAX_SERVER_LINES = 13027;
 
 describe('presupuesto de composición del backend', () => {
   it('conserva la extracción del validador de snapshots fuera de reportes', () => {

@@ -3822,6 +3822,20 @@ model WhatsappInboundMessage {
   @@index([createdAt]) // Para job de cleanup mensual
 }
 
+// Alta con cámara: resultado durable para recuperar respuestas perdidas sin duplicar fichas.
+// El tenant/usuario se resuelve siempre desde JWT; el snapshot no se reinterpreta en un replay.
+model ProductEnrollment {
+  tenantId    String   @db.VarChar(191)
+  operationId String   @db.VarChar(36)
+  userId      String   @db.VarChar(191)
+  payloadHash String   @db.VarChar(64)
+  result      Json
+  createdAt   DateTime @default(now())
+
+  @@id([tenantId, operationId])
+  @@index([tenantId, userId, createdAt])
+}
+
 // Continuidad privada de W01. No es un cierre ni una aceptación de conciliación.
 model AssistantWorkItem {
   id String @id @default(cuid())
