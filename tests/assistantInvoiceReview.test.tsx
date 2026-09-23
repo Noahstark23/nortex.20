@@ -40,7 +40,14 @@ function readyProposal(): AssistantProposalDTO {
 function propsFor(proposal = readyProposal()) {
     return {
         proposal, capabilities: { ...capabilities }, busy: false, operation: null,
-        request: vi.fn(async () => ({ items: [] })) as AssistantRequest,
+        request: vi.fn(async (path: string) => {
+            const query = new URLSearchParams(path.split('?')[1]);
+            const items = query.get('kind') === 'products'
+                ? [{ id: 'product-1', label: 'Alcohol 70%', detail: 'ALC-70 · frasco' }]
+                : query.get('kind') === 'suppliers'
+                    ? [{ id: 'supplier-1', label: 'Proveedor de prueba', detail: 'RUC QA-101' }] : [];
+            return { items: query.has('selectedId') ? items.filter(item => item.id === query.get('selectedId')) : items, warnings: [] };
+        }) as AssistantRequest,
         onSave: vi.fn(async (_draft: InvoiceDraft) => {}),
         onConfirm: vi.fn(async (_key: string) => {}),
         onOpenPurchases: vi.fn(),
@@ -158,6 +165,7 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         expect(screen.getByRole('status')).toHaveTextContent('Guardá la revisión para recalcular sus efectos.');
         expect(screen.queryByRole('region', { name: 'Efectos de la compra' })).not.toBeInTheDocument();
         expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument();
+        await waitFor(() => expect(saveButton()).toBeEnabled());
         await user.click(saveButton());
         expect(props.onSave.mock.calls[0][0].items[0].unitCost).toBe('55.25');
         expect(props.proposal.draft.items[0].unitCost).toBe('50.00');
@@ -199,6 +207,55 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument();
         await user.click(screen.getByRole('button', { name: 'Consultar en Compras' }));
         expect(props.onOpenPurchases).toHaveBeenCalledTimes(1);
+        expect(props.onConfirm).not.toHaveBeenCalled();
+    });
+
+    it('recupera un intento incierto con la misma referencia aunque el catálogo deje de responder', async () => {
+        const user = userEvent.setup();
+        const props = propsFor();
+        const { rerender } = render(<PersistentReview {...props} visible />);
+        await waitFor(() => expect(reviewCheckbox()).toBeEnabled());
+        await user.click(reviewCheckbox());
+        await user.click(screen.getByRole('button', { name: /Confirmar y registrar compra/ }));
+        expect(props.onConfirm.mock.calls).toEqual([[confirmationKey]]);
+        rerender(<PersistentReview {...props} visible={false} />);
+        const unavailable = vi.fn(async () => { throw new Error('Catálogo no disponible'); }) as AssistantRequest;
+        rerender(<PersistentReview {...props} request={unavailable} visible />);
+        await waitFor(() => expect(screen.getAllByText(/No se pudo verificar la selección guardada/)).toHaveLength(2));
+        expect(reviewCheckbox()).toBeChecked();
+        expect(screen.getByRole('textbox', { name: 'Cantidad 1' })).toHaveValue('2');
+        expect(screen.getByRole('textbox', { name: 'Cantidad 1' })).toBeDisabled();
+        await user.click(screen.getByRole('button', { name: 'Reintentar confirmación con la misma referencia' }));
+        expect(props.onConfirm.mock.calls).toEqual([[confirmationKey], [confirmationKey]]);
+        expect(props.onSave).not.toHaveBeenCalled();
+    });
+
+    it('exige recalcular cuando cambia la ficha del mismo producto después de revisar', async () => {
+        const user = userEvent.setup();
+        const props = propsFor();
+        let detail = 'SKU ALC-70 · Unidad frasco · Empaque caja de 10';
+        const request: AssistantRequest = async <T,>(path: string) => {
+            const params = new URLSearchParams(path.split('?')[1]);
+            return { items: params.get('kind') === 'products'
+                ? [{ id: 'product-1', label: 'Alcohol 70%', detail }]
+                : params.get('kind') === 'suppliers'
+                    ? [{ id: 'supplier-1', label: 'Proveedor de prueba', detail: 'RUC QA-101' }] : [] } as T;
+        };
+        render(<AssistantInvoiceReview {...props} request={request} />);
+        await waitFor(() => expect(reviewCheckbox()).toBeEnabled());
+        await user.click(reviewCheckbox());
+        expect(screen.getByRole('button', { name: /Confirmar y registrar compra/ })).toBeEnabled();
+        detail = 'SKU ALC-70 · Unidad frasco · Empaque caja de 12';
+        await user.type(screen.getByRole('searchbox', { name: 'Buscar producto del catálogo 1' }), 'Alcohol');
+        await waitFor(() => expect(screen.getByText(/No se pudo verificar la selección guardada/)).toBeVisible());
+        expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument();
+        expect(screen.queryByRole('region', { name: 'Efectos de la compra' })).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: 'Volver a verificar selección' }));
+        await waitFor(() => expect(saveButton()).toBeEnabled());
+        expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument();
+        expect(screen.getByText(/Cambió una ficha seleccionada/)).toBeVisible();
+        await user.click(saveButton());
+        expect(props.onSave.mock.calls).toEqual([[props.proposal.draft]]);
         expect(props.onConfirm).not.toHaveBeenCalled();
     });
 
@@ -363,7 +420,7 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         const { rerender } = render(<AssistantInvoiceReview {...props} />);
         const warningReview = screen.getByRole('checkbox', { name: 'Revisé y corregí los datos señalados' });
         expect(warningReview).not.toBeChecked();
-        expect(saveButton()).toBeEnabled();
+        await waitFor(() => expect(saveButton()).toBeEnabled());
 
         await user.type(screen.getByRole('textbox', { name: 'Notas' }), ' · Lote verificado');
         await user.click(saveButton());
@@ -466,6 +523,7 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         expect(review).not.toBeChecked();
         expect(confirm).toBeDisabled();
         expect(screen.queryByRole('checkbox', { name: /Revisé el documento/ })).not.toBeInTheDocument();
+        await waitFor(() => expect(review).toBeEnabled());
         await user.click(review);
         await user.click(confirm);
         expect(props.onConfirm.mock.calls).toEqual([[confirmationKey]]);
@@ -480,7 +538,7 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         render(<AssistantInvoiceReview {...props} />);
 
         expect(draftIssues(proposal.draft)).toEqual([]);
-        expect(saveButton()).toBeEnabled();
+        await waitFor(() => expect(saveButton()).toBeEnabled());
         expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument();
         await user.click(saveButton());
         expect(props.onSave.mock.calls).toEqual([[proposal.draft]]);

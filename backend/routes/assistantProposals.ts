@@ -5,10 +5,11 @@ import { authenticate } from '../middleware/auth.js';
 import { assertAssistantAccess } from '../services/assistant/access.js';
 import { getProposal, reviseProposal, confirmProposal, getOperation } from '../services/assistant/proposals.js';
 import type { AssistantPrincipal } from '../../shared/assistant';
+import { documentDecisionsSchema } from '../services/assistant/purchaseDocumentReview.js';
 
 const principal = (req: any): AssistantPrincipal => ({tenantId:req.tenantId,userId:req.userId,role:req.role});
 const idSchema = z.string().min(1).max(191);
-const revisionSchema = z.object({version:z.number().int().positive(),draft:z.unknown()}).strict();
+const revisionSchema = z.object({version:z.number().int().positive(),draft:z.unknown(),documentDecisions:documentDecisionsSchema.optional()}).strict();
 const confirmationSchema = z.object({version:z.number().int().positive(),idempotencyKey:z.uuid().transform(value=>value.toLowerCase())}).strict();
 function respond(error: any, res: any) {
   if (error instanceof z.ZodError) return res.status(400).json({code:'INVALID_REQUEST',error:'Revisá los datos enviados.'});
@@ -22,7 +23,7 @@ export function createAssistantProposalsRouter() {
   const router = Router();
   router.use(authenticate);
   router.get('/proposals/:id', async(req,res)=> {try {res.json(await getProposal(principal(req),idSchema.parse(req.params.id)));}catch(error){respond(error,res);}});
-  router.patch('/proposals/:id',async(req,res)=> {try {const body=revisionSchema.parse(req.body);res.json(await reviseProposal(principal(req),idSchema.parse(req.params.id),body.version,body.draft));}catch(error){respond(error,res);}});
+  router.patch('/proposals/:id',async(req,res)=> {try {const body=revisionSchema.parse(req.body);res.json(await reviseProposal(principal(req),idSchema.parse(req.params.id),body.version,body.draft,prisma,body.documentDecisions));}catch(error){respond(error,res);}});
   router.post('/proposals/:id/confirm',async(req,res)=> {try {const body=confirmationSchema.parse(req.body);res.json(await confirmProposal(principal(req),idSchema.parse(req.params.id),body.version,body.idempotencyKey));}catch(error){respond(error,res);}});
   router.get('/operations/:id',async(req,res)=> {try {res.json(await getOperation(principal(req),z.uuid().parse(req.params.id)));}catch(error){respond(error,res);}});
   router.get('/catalog',async(req,res)=> {

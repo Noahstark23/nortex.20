@@ -5,7 +5,7 @@ import { getAssistantCatalogOptions, assistantCatalogOptionsSchema } from '../ba
 function fixture(role='OWNER') {
   const actor={tenantId:'tenant-a',userId:'user-a',role};
   const db={user:{findFirst:vi.fn().mockResolvedValue({id:actor.userId,role,status:'ACTIVE'})},assistantTenantConfig:{findUnique:vi.fn().mockResolvedValue({enabled:true})},
-    product:{findFirst:vi.fn().mockResolvedValue({id:'product-a'})},supplier:{findFirst:vi.fn().mockResolvedValue({id:'supplier-a'})},
+    product:{findFirst:vi.fn().mockResolvedValue({id:'product-a'}),findMany:vi.fn().mockResolvedValue([])},supplier:{findFirst:vi.fn().mockResolvedValue({id:'supplier-a'}),findMany:vi.fn().mockResolvedValue([])},
     warehouse:{findMany:vi.fn().mockResolvedValue([{id:'warehouse-a',name:'Principal'}])}, productBatch:{findMany:vi.fn().mockResolvedValue([])},
     $queryRaw:vi.fn().mockResolvedValue([]),$transaction:vi.fn()};
   return {actor,db,deps:{db:db as unknown as PrismaClient}};
@@ -72,5 +72,46 @@ describe('Catálogo autorizado: candidatos sin equivalencias supuestas',()=>{
   });
   it('no acepta alias compuesto sólo de signos',async()=>{
     const {actor,deps}=fixture(); await expect(approveAssistantCatalogAlias(actor,{productId:'p',alias:'%%%??'},deps.db)).rejects.toMatchObject({code:'ALIAS_INVALID'});
+  });
+});
+
+
+describe('H01 recuperación del ID seleccionado',()=>{
+  it('recupera el ID exacto aunque query sea otra, sólo con identidad autorizada',async()=>{
+    const h=fixture(),row={id:'exact',name:'Cemento',sku:'C-2',brand:'Marca real',unit:'bolsa',packUnit:'pallet',packSize:20};
+    h.db.product.findFirst.mockImplementation(async({where}:any)=>where.id===row.id&&where.tenantId===h.actor.tenantId?row:null);
+    h.db.product.findMany.mockResolvedValue([row]);
+    const result=await getAssistantCatalogOptions(h.actor,{kind:'products',selectedId:'exact',query:'otro nombre'},h.deps);
+    expect(result.items).toMatchObject([{id:'exact',label:'Cemento',brand:'Marca real',unit:'bolsa',packSize:'20'}]);
+    expect(result.items[0]).not.toHaveProperty('cost');expect(h.db.$queryRaw).toHaveBeenCalledTimes(1);
+    const peers=h.db.$queryRaw.mock.calls[0][0];expect(peers.sql).toContain('LIMIT 21');expect(peers.values).toContain(h.actor.tenantId);expect(peers.sql).not.toMatch(/\bLIKE\b|AssistantCatalogAlias/);
+  });
+  it('ID ajeno o inexistente devuelve vacío sin sustituirlo por fuzzy o query',async()=>{
+    const h=fixture();h.db.product.findFirst.mockResolvedValue(null);
+    expect((await getAssistantCatalogOptions(h.actor,{kind:'products',selectedId:'foreign',query:'cemento'},h.deps)).items).toEqual([]);
+    expect(h.db.$queryRaw).not.toHaveBeenCalled();expect(h.db.product.findMany).not.toHaveBeenCalled();
+  });
+  it('proveedor recuperado conserva bloqueo por identidad indistinguible',async()=>{
+    const h=fixture(),rows=[{id:'supplier-a',name:'Mismo',ruc:null,address:null},{id:'supplier-b',name:'Mismo',ruc:null,address:null}];
+    h.db.supplier.findFirst.mockResolvedValue(rows[0]);h.db.$queryRaw.mockResolvedValue(rows);
+    const result=await getAssistantCatalogOptions(h.actor,{kind:'suppliers',selectedId:'supplier-a'},h.deps);
+    expect(result.items[0].selectionIssue).toBeTruthy();expect(result.items[0]).not.toHaveProperty('phone');
+    expect(h.db.supplier.findFirst).toHaveBeenCalledWith(expect.objectContaining({where:{id:'supplier-a',tenantId:h.actor.tenantId,status:'ACTIVE',deletedAt:null}}));
+  });
+  it('más de veinte identidades equivalentes bloquea la recuperación',async()=>{
+    const h=fixture(),rows=Array.from({length:21},(_,i)=>({id:`s-${i}`,name:'Mismo',ruc:'RUC-IGUAL'}));
+    h.db.supplier.findFirst.mockResolvedValue(rows[0]);h.db.$queryRaw.mockResolvedValue(rows);
+    expect((await getAssistantCatalogOptions(h.actor,{kind:'suppliers',selectedId:rows[0].id},h.deps)).items[0].selectionIssue).toBeTruthy();
+  });
+  it('el mismo permiso se verifica después de recuperar el ID',async()=>{
+    const h=fixture();h.db.product.findFirst.mockImplementation(async()=>{h.db.user.findFirst.mockResolvedValue(null);return{id:'product-a',name:'Cemento'};});
+    await expect(getAssistantCatalogOptions(h.actor,{kind:'products',selectedId:'product-a'},h.deps)).rejects.toMatchObject({code:'SESSION_REVOKED'});
+  });
+  it.each(['warehouses','purchaseOrders','batches','returnSuppliers','supplierReturnSources'])('selectedId no se admite para %s',kind=>{
+    expect(()=>assistantCatalogOptionsSchema.parse({kind,selectedId:'x',productId:'p',supplierId:'s'})).toThrow();
+  });
+  it('proveedores omitidos de lectura por rol no se recuperan por ID',async()=>{
+    const h=fixture('BODEGUERO');await expect(getAssistantCatalogOptions(h.actor,{kind:'suppliers',selectedId:'supplier-a'},h.deps)).rejects.toMatchObject({statusCode:403});
+    expect(h.db.supplier.findFirst).not.toHaveBeenCalled();
   });
 });

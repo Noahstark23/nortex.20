@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { PrismaClient, Prisma } from '@prisma/client';
 import type { AssistantPrincipal } from '../../../shared/assistant';
 import { AssistantAccessError } from './access.js';
+import { readDocumentPurchaseSource } from './purchaseDocumentReview.js';
 
 const identifier = z.string().min(1).max(191);
 export const manualPurchaseSourceSchema = z.object({
@@ -15,6 +16,9 @@ export type ManualPurchaseSource = z.infer<typeof manualPurchaseSourceSchema>;
 
 export function readManualPurchaseSource(value: unknown): ManualPurchaseSource | null {
   if (value === null || value === undefined) return null;
+  if (typeof value === 'object' && (value as {kind?:unknown}).kind === 'DOCUMENT') {
+    readDocumentPurchaseSource(value);return null;
+  }
   const parsed = manualPurchaseSourceSchema.safeParse(value);
   if (!parsed.success) throw new AssistantAccessError(400, 'PURCHASE_SOURCE_INVALID', 'No pudimos verificar el origen de esta propuesta. Volvé a prepararla.');
   return parsed.data;

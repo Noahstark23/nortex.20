@@ -28,4 +28,16 @@ describe('CI: mínimo privilegio y toolchain fijado', () => {
         const mutation = workflow.jobs.verify.steps.find((step: Record<string, unknown>) => step.run === 'npm run test:mutation');
         expect(mutation?.if).toBe("github.event_name == 'workflow_dispatch' && vars.NORTEX_CI_MUTATION == 'true'");
     });
+
+    it('exige el espejo SQL y los estados parciales además del smoke de db push', () => {
+        const job = workflow.jobs['deploy-schema-smoke'];
+        const checkout = job.steps.find((step: Record<string, unknown>) => step.uses === 'actions/checkout@v4');
+        const mirror = job.steps.filter((step: Record<string, unknown>) => step.run === 'node scripts/qa/test-assistant-budget-upgrade.mjs');
+        expect(checkout?.with?.['fetch-depth']).toBe(0);
+        expect(mirror).toHaveLength(1);
+        expect(mirror[0].if).toBeUndefined();
+        expect(mirror[0]['continue-on-error']).toBeUndefined();
+        expect(job['continue-on-error']).toBeUndefined();
+        expect(mirror[0].env).toBeUndefined();
+    });
 });

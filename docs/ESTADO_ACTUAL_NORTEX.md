@@ -1,45 +1,74 @@
-# Estado actual de Nortex
+# Estado verificable de Nortex y sus agentes
 
-Revisión documental: 2026-09-08 (cierre de promoción en UTC del 09/09). Candidato desplegado: `07f30c9a2f372abfeb31c2e3ae0c1c8fae7818fc`. Corte de producto verificado: `484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b`, [PR 207](https://github.com/Noahstark23/nortex.20/pull/207). Este documento es el punto de entrada mantenido; los informes fechados describen su propio candidato. La actualización posterior de guías y perfiles necesita su propia comprobación; no cambia los resultados de producto ya registrados.
+Corte: **2026-09-19**, preparación local solicitada. Existe un candidato reunido
+sobre `main`; todavía no está aprobado ni desplegado. La
+[entrega](NORTEXGPT_ENTREGA_PREPARACION_2026-09-19.md) y el
+[expediente de promoción](NORTEXGPT_PREPARACION_DEPLOY_2026-09-19.md) separan código,
+pruebas, estado remoto y bloqueos. Dirección: [meta](META_NORTEX_EQUIPO_ADMINISTRATIVO.md)
+y [roadmap](ROADMAP_AGENTES_NORTEX.md).
 
-## Evidencia por estado
+## Procedencia
 
-| Área | Demostrado | Pendiente o límite |
+| Fuente | Representa | Límite |
 |---|---|---|
-| Código consolidado | Compras conversacionales, propuestas/idempotencia, operaciones del asistente, promociones online, cierre Z y correcciones de POS integradas con PR205/206 | Implementación no acredita activación en cada negocio |
-| QA local | Prisma generate/validate, TypeScript, diseño, build SEO; 5.736 pruebas generales aprobadas, cero fallidas | 318 omitidas no cuentan como aprobadas; QA visual/dispositivos y jornada real no sustituidas |
-| Integración financiera | 37 suites, 332 casos HTTP/MySQL 8 descartable, cero omisiones | Solo escenarios y candidato ejecutados |
-| Mutación local | 64 módulos, 100%; 5.759 eliminados + cuatro timeouts, cero sobrevivientes/sin cobertura; 20 exclusiones históricas | No es cobertura global ni mutación ejecutada en el run de PR |
-| CI | Cuatro jobs exitosos en el candidato desplegado `07f30c9`, [run 34293152828](https://github.com/Noahstark23/nortex.20/actions/runs/34293152828) | Mutación corresponde a la corrida local indicada arriba; el paso está omitido en este run de CI |
-| RAG | 12 artículos, búsqueda léxica/top-2 y filtros; datos del negocio desde herramientas deterministas | Curación, citas visibles del recorrido operativo, benchmark reservado y evaluación real siguen pendientes |
-| Infraestructura | Droplet 2 vCPU, 4 GiB RAM, 80 GiB; producción y staging comparten host. Muestra: 1.695 MiB disponibles y 879 MiB de swap usados | No existe capacidad de clientes concurrentes acreditada; faltan series, carga y p95 |
-| Respaldo real | Respaldo remoto restaurado en MySQL 8 aislado; schema candidato aplicado dos veces, con filas y agregados preservados y relaciones verificadas; cleanup aprobado | No acredita recuperación completa de la aplicación ni de originales privados; evidencia operativa conservada fuera del repositorio público |
-| Configuración | Identidad HTTPS/UUID y webhooks verificados; tokens de lectura separados y token de deploy de producción; ambos Auto Deploy apagados en la interfaz; main requiere PR/checks y environments solo main sin bypass administrativo | Tokens limitados al equipo, no por app. El usuario eligió su propia cuenta para revisar production: excepción explícita, no revisión independiente. Ambos pins corresponden al candidato desplegado; revalidar antes de cada promoción |
-| Despliegue | PR 207/208/209 fusionadas; staging [34296014918](https://github.com/Noahstark23/nortex.20/actions/runs/34296014918) y producción [34296529913](https://github.com/Noahstark23/nortex.20/actions/runs/34296529913) exitosos en `07f30c9`; smoke financiero sintético aprobado en ambos | Hubo HTTP 503 durante el reemplazo; duración continua no medida. Observación posterior de 30 minutos aprobada (31 muestras); piloto no acreditado |
-| Panel Coolify | Actualización real 4.1.2 → 4.3.18; backup cifrado fuera del host y en Mac; restauración SQL, 53 migraciones y reejecución ensayadas; sesión existente y API verificadas | No acredita rollback integral con consumidores reiniciados, recuperación del host ni originales privados de NortexGPT |
+| [Candidato reunido](/Users/stark/Developer/Nortex/candidates/nortexgpt-release-ready-20260919) | Copia ordinaria de main `67f1832502ee68ef67ac12b0803bdbfce48a4cef`, con presupuesto, W01/W01B, biblioteca/editorial, H01-1/2 y A01.W01.1–2 | Sin `.git`, sin commit nuevo ni deploy. Identidad por manifiesto/parche, no por el SHA de la base |
+| [Checkout original](/Users/stark/Documents/GitHub/nortex.20) | `codex/caja-nica-retention`, HEAD `d326c589…`; trabajo previo conservado | No se sustituyó con el candidato. No ejecutar su antigua receta de deploy para publicar el nuevo conjunto |
+| [Release congelado](/Users/stark/Developer/Nortex/candidates/release-20260908) | Base histórica `d44043b0…` | Fuente histórica, no versión remota actual |
+| [Ayuda](/Users/stark/Developer/Nortex/candidates/nortexgpt-knowledge-20260919) y [editorial](/Users/stark/Developer/Nortex/candidates/nortexgpt-editorial-20260919) | D01/D03/editor y dependencias previas | Se portaron archivos explícitos; evidencia original no se hereda automáticamente |
+| [Identidad H01-1](/Users/stark/Developer/Nortex/candidates/nortexgpt-catalog-20260919) | Selección por ID y catálogo sobre el checkout anterior | Sus 324 pruebas deterministas y 26 comprobaciones MySQL corresponden a ese parche, no al nuevo conjunto |
+| [Preparación H01-2](/Users/stark/Developer/Nortex/candidates/nortexgpt-ready-20260919) | Copia intermedia para desarrollar conflictos entre factura y conversación | Sus cambios se portaron al candidato reunido; no promover esta copia intermedia |
+| [Revisión humana H01](/Users/stark/Developer/Nortex/handoffs/nortexgpt-human-review-20260919/batch01/CONTRATO_Y_BRECHAS_H01.md) | A/B/C aprobados con precisiones | No artículo completo, expected del modelo, publicación o implementación |
 
-[Evidencia local y manifiesto](releases/evidence/2026-09-08-consolidated/local-verification.json) · [expediente del candidato](releases/2026-09-08-consolidated-candidate.md). Los datos de entorno de esta tabla son observaciones fechadas; revalidar antes de operar.
+Los enlaces locales requieren esta estación. El paquete de entrega conserva un
+manifiesto y parche contra la base para transportar el candidato sin mezclarlo con
+el checkout. Los cambios remotos de marca, inventario, caja, fiscal y POS se
+preservaron desde main, en vez de reemplazarlos con versiones antiguas.
 
-## Monolito y riesgo operativo
+## Capacidad y condición pendiente
 
-`backend/server.ts`: **14.131 líneas**; `components/POS.tsx`: **5.924 líneas**, **96 referencias textuales useState**. Las guardas ejecutables son `tests/presupuestoBackend.test.ts` y `tests/presupuestoPos.test.ts`; sus límites solo bajan. La extracción fiscal tuvo ocho pruebas conductuales antes/después: server 14.674→14.131, destinos 244+330 líneas, delta conjunto +31. Reducir un archivo no demuestra menor código total ni mejor rendimiento.
+| Capacidad | Implementado en el candidato reunido | Falta para acreditar el resultado |
+|---|---|---|
+| Orquestador | Herramientas cerradas, evidencia, límites de iteraciones/tiempo y presupuesto | Modelo real por recorrido; consumo conjunto entre procesos/canales y piloto |
+| Presupuesto | US$2 iniciales por negocio/mes; solicitud y aprobación de Nortex hasta US$10, global US$20; autoridad explícita | Integración financiera obligatoria del conjunto y configuración comprobada del entorno |
+| W01/W01B | Lecturas de revisión semanal e investigación de cierres; snapshots y actuales separados | Cifras contrastadas en MySQL del candidato, informe versionado/aceptado y utilidad |
+| A01.W01.1–2 | Guardar revisión propia, notas, espera, reanudación y cancelación; eventos con UUID/CAS, permisos y caducidad | Reinicio/concurrencia/limpieza con MySQL real. No incluye asignación a otros, aceptación final ni correcciones de caja |
+| RAG | Doce artículos LEGACY, búsqueda léxica, referencias, ciclo de versión y editor autenticado; revocación parcial de permisos retira contenido del panel | 48 borradores D02 sin aprobar/publicar; benchmark, expected humanos y modelo real. Salir de SuperAdmin puede perder un borrador editorial sin enviar |
+| Compras H01-1 | Identidad exacta e independiente de producto/proveedor, texto preservado y revisión invalidada | Aceptación visual en dispositivos y registro financiero del candidato |
+| Compras H01-2 | Declaración y documento separados; conflicto 50/40 exige elección humana; fuente original inmutable, edición invalida revisión y respuesta perdida se recupera leyendo la misma propuesta | Extracción real, integración financiera y QA completa del flujo. No implementa parciales H01-3 ni anticipos H01-4 |
+| RRHH/Finanzas y MCP | Motores y diseño previos aprovechables | W02/W03 y servidor MCP externo sobre capacidades aceptadas |
 
-El tamaño sigue siendo deuda de mantenimiento. El riesgo de caída también depende de consultas, conexiones, trabajos durables, recursos y recuperación: no se puede afirmar que cuatro clientes son una carga segura solo por su cantidad. El usuario indicó cuatro negocios; no se midió su simultaneidad. Hay 10 construcciones runtime de Prisma en el corte (nueve fuera del cliente compartido), además de estado por proceso en límites/caché y canal comercial. La cola privada ya es durable; no confundirla con la comercial.
+## Evidencia del conjunto
 
-Prioridad inmediata **C00**: mantener la restauración SQL ya ensayada, acreditar recuperación de adjuntos antes de habilitarlos, ventanas de observación, carga representativa fuera de producción, conciliación de venta/caja y primeros lotes de modularización. Los objetivos se fijan antes de medir aceptación; no se promete disponibilidad ni número de clientes sin evidencia.
+El expediente `release-evidence/ready-20260919/verification.json` registra la
+selección determinista ejecutada, el toolchain, Prisma validate/generate,
+TypeScript, diseño y build de producción/SEO. Las pruebas de UI usan jsdom; no
+acreditan navegación real en dispositivos. La selección excluye suites
+`.integration.`: cero casos omitidos en ella no significa integración aprobada.
 
-## Desarrollo siguiente
+Se reprodujeron y repararon el reemplazo 50/40, exposición de ayuda tras revocación
+parcial y confirmación visible antes de verificar de nuevo la identidad de catálogo.
+La recuperación conserva datos/identidad sin repetir una escritura financiera.
+No se llamó al proveedor ni se cambiaron flags, cupos reales o contenido publicado.
 
-- [Plan de estabilidad y RAG](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md): C00 y D00–D14 con dependencias y criterios.
-- [Equipo de desarrollo](EQUIPO_DESARROLLO_NORTEX.md): responsabilidades y propiedad de archivos.
-- [Capacidad del Droplet](CAPACIDAD_DROPLET_NORTEX_2026-09-08.md) y [auditoría de escalado](SCALING_AUDIT.md): mediciones y deuda.
-- [Promoción](runbooks/release-promotion.md): requisitos externos, SHA y verificaciones separadas.
-- [Mantenimiento documental](MANTENIMIENTO_DOCUMENTAL_NORTEX.md): distinguir guía vigente de evidencia histórica.
+La compuerta financiera anterior fue rechazada por revisión automática; no se
+reintentó por otra herramienta ni se acreditó con estos tests. Quedan sin ejecutar
+para este conjunto integración MySQL obligatoria, mutación pertinente, upgrade de
+migraciones/restauración, QA real del modelo y piloto.
 
-La revisión encontró deuda heredada que requiere reproducciones específicas: paginación/totales CxP, transiciones de seriales, decisiones/pagos de RRHH, caja bancaria y precios de B2B. Un total verde no demuestra el cierre de todos esos riesgos. No convertir recetas antiguas de efectos financieros fuera de transacción en reglas para código nuevo.
+## Estado remoto, separado
 
-La ferretería del piloto tiene una referencia de contacto aportada por el usuario. Faltan identificación del tenant/revisores, farmacia y evaluación humana de escenarios; no publicar datos personales ni inventar aprobaciones. Ayuda ampliada, valor del piloto y calidad del modelo se acreditan independientemente de QA determinista.
+Lecturas de esta entrega: CI de la **base** `67f1832…` aprobada; staging de esa base
+falló verificando destino Coolify antes del webhook. Health de staging y producción
+respondió 200, API/base disponibles, y SHA `98e54afad4bfa7a0ef5ae99c902102d40d0400ff`.
+Es una versión anterior. Las horas, runs y límites están en el
+[expediente](NORTEXGPT_PREPARACION_DEPLOY_2026-09-19.md#estado-remoto-observado).
+No se verificaron capacidad del Droplet, configuración completa de Coolify ni
+restauración actual. No existe CI ni staging del nuevo conjunto local.
 
-Actualización del intento de promoción: [incidente del verificador REST y reparación](releases/2026-09-08-workflow-run-path.md). La producción observada no tiene el asistente ni la extracción activos; publicar código no sustituye habilitación, workers, volumen privado y evaluación del piloto.
+## Siguiente condición
 
-Cierre del bloqueo de Coolify y promoción: [evidencia de producción](releases/2026-09-08-production-verification.md). El [informe de compatibilidad](releases/2026-09-08-coolify-compatibility.md) conserva el intento anterior como historia.
+Cerrar QA de persistencia/finanzas y schema del candidato; investigar el error
+saneado de destino staging; luego crear un SHA candidato y verificar CI y staging
+sobre él dentro de una promoción autorizada. En producto siguen A02.W01.3–4 y la
+revisión de contenido completo. No volver a pedir aprobación de A/B/C ni convertir
+esa aprobación en publicación. H01-3/4 se entregan por contrato separado.

@@ -1,5 +1,31 @@
 # CLAUDE.md — Guía para agentes en Nortex
 
+## Dirección vigente — 2026-09-19
+
+La [meta](docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md) es un equipo administrativo
+accesible de contabilidad, RRHH y finanzas. La unidad de avance es un trabajo
+comprobado: primero W01, revisión semanal de caja guardada, retomable y aceptada.
+El [roadmap](docs/ROADMAP_AGENTES_NORTEX.md) ordena A00–A07 y los pendientes H01/RAG;
+los planes y evidencias fechados de abajo conservan su alcance histórico.
+
+Aplicar [reglas de agentes](docs/REGLAS_AGENTES_NORTEX.md) y
+[arquitectura](docs/ARQUITECTURA_AGENTES_NORTEX.md). Separar conversación, encargo,
+run y propuesta/comprobante. Los agentes consultan/preparan; confirmación humana
+exacta y efectos permanecen en servicios de dominio. No ampliar monolitos.
+
+Política acordada: US$2 iniciales de IA por negocio/mes, ampliables por solicitud
+y aprobación de Nortex hasta US$10; techo conjunto US$20. El objetivo comercial
+de US$20 del servicio es distinto. El candidato reunido incorpora esa política;
+comprobar [fuente, QA y entorno](docs/ESTADO_ACTUAL_NORTEX.md) antes de habilitar
+gasto. No aumentar límites mediante una receta antigua.
+
+W01/W01B, biblioteca editorial, presupuesto y H01-1/2 están reunidos en el
+candidato identificado en el estado actual. A01.W01.1–2 incorpora guardado privado,
+notas, espera, reanudación y cancelación; faltan MySQL real, informe aceptado y
+encargo W01 completo. W02/W03 y MCP siguen pendientes. [H01](docs/CONTRATO_COMPRAS_CONVERSACIONALES_H01.md)
+registra A/B/C validados como conductas; la QA determinista local no acredita
+registro financiero, revisión/publicación de artículos ni calidad del modelo.
+
 
 > **Punto de entrada vigente:** [estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md),
 > [plan de estabilidad y RAG](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md)

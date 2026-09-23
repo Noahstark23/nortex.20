@@ -3,9 +3,12 @@ import type { AssistantCapabilities, AssistantOperationDTO, AssistantProposalDTO
 import type { AssistantCatalogItem, AssistantRequest } from '../../hooks/useNortexAssistant';
 import { formatMoney, toDecimal } from '../../utils/money';
 import { AssistantCatalogSelect, assistantButtonClass, assistantInputClass } from './AssistantCatalogSelect';
+import { useAssistantInvoiceCatalogVerification } from '../../hooks/useAssistantInvoiceCatalogVerification';
+import type { AssistantDocumentDecision } from '../../shared/assistantDocumentReview';
+import { AssistantDocumentConflicts, documentDecisionPayload, type DocumentDecisionDrafts } from './AssistantDocumentConflicts';
 
 type Props = { proposal: AssistantProposalDTO; capabilities: AssistantCapabilities; request: AssistantRequest; busy: boolean;
-    confirmationRejected?: boolean; editor?: ReturnType<typeof useAssistantInvoiceReviewState>; operation: AssistantOperationDTO | null; onSave: (draft: InvoiceDraft) => Promise<void>; onConfirm: (key: string) => Promise<void>; onOpenPurchases: () => void };
+    confirmationRejected?: boolean; editor?: ReturnType<typeof useAssistantInvoiceReviewState>; operation: AssistantOperationDTO | null; onSave: (draft: InvoiceDraft, documentDecisions?: AssistantDocumentDecision[]) => Promise<void>; onConfirm: (key: string) => Promise<void>; onOpenPurchases: () => void };
 const cloneDraft = (draft: InvoiceDraft): InvoiceDraft => ({ ...draft, warnings: [...draft.warnings], items: draft.items.map(item => ({ ...item })) });
 const fieldLabels: Array<[keyof InvoiceDraft, string, string]> = [
     ['supplierName', 'Proveedor escrito en la factura', 'text'], ['invoiceNumber', 'Número de factura', 'text'], ['currency', 'Moneda', 'text'],
@@ -19,23 +22,28 @@ export function useAssistantInvoiceReviewState(proposal: AssistantProposalDTO | 
     const [draft, setDraft] = useState<InvoiceDraft | null>(() => proposal ? cloneDraft(proposal.draft) : null);
     const [dirty, setDirty] = useState(false); const [warningsReviewed, setWarningsReviewed] = useState(false);
     const [reviewed, setReviewed] = useState(false); const [confirmStarted, setConfirmStarted] = useState(false);
+    const [documentDecisions, setDocumentDecisions] = useState<DocumentDecisionDrafts>({});
     const [orderItems, setOrderItems] = useState<NonNullable<AssistantCatalogItem['items']>>([]);
     const confirmation = useRef({ proposalId: proposal?.id, version: proposal?.version, key: crypto.randomUUID() });
     useEffect(() => {
         setDraft(proposal ? cloneDraft(proposal.draft) : null); setDirty(false); setReviewed(false); setWarningsReviewed(false); setConfirmStarted(false); setOrderItems([]);
+        setDocumentDecisions({});
         if (confirmation.current.proposalId !== proposal?.id || confirmation.current.version !== proposal?.version) {
             confirmation.current = { proposalId: proposal?.id, version: proposal?.version, key: crypto.randomUUID() };
         }
     }, [proposal?.id, proposal?.version]);
-    return { draft, setDraft, dirty, setDirty, warningsReviewed, setWarningsReviewed, reviewed, setReviewed, confirmStarted, setConfirmStarted, orderItems, setOrderItems, confirmation };
+    return { draft, setDraft, dirty, setDirty, warningsReviewed, setWarningsReviewed, reviewed, setReviewed, confirmStarted, setConfirmStarted, orderItems, setOrderItems, confirmation, documentDecisions, setDocumentDecisions };
 }
 
 /** El navegador edita un borrador; el impacto y el registro siempre provienen de Nortex. */
 export const AssistantInvoiceReview: React.FC<Props> = ({ proposal, capabilities, request, busy, operation, onSave, onConfirm, onOpenPurchases, editor, confirmationRejected = false }) => {
     const fallbackEditor = useAssistantInvoiceReviewState(proposal);
-    const { draft: editedDraft, setDraft, dirty, setDirty, warningsReviewed, setWarningsReviewed, reviewed, setReviewed, confirmStarted, setConfirmStarted, orderItems, setOrderItems, confirmation } = editor ?? fallbackEditor;
+    const { draft: editedDraft, setDraft, dirty, setDirty, warningsReviewed, setWarningsReviewed, reviewed, setReviewed, confirmStarted, setConfirmStarted, orderItems, setOrderItems, confirmation, documentDecisions, setDocumentDecisions } = editor ?? fallbackEditor;
     useEffect(() => { if (confirmationRejected) { setConfirmStarted(false); setReviewed(false); } }, [confirmationRejected]);
     const draft = editedDraft ?? proposal.draft;
+    const catalog = useAssistantInvoiceCatalogVerification(request, proposal.id, proposal.version, draft);
+    useEffect(() => { if (!catalog.verified && !confirmStarted) setReviewed(false); }, [catalog.verified, confirmStarted, setReviewed]);
+    useEffect(() => { if (catalog.changed && !confirmStarted) { setDirty(true); setReviewed(false); } }, [catalog.changed, confirmStarted, setDirty, setReviewed]);
     if (confirmation.current.proposalId !== proposal.id || confirmation.current.version !== proposal.version) return <p role="status" className="nx-shell-muted text-sm">Preparando la revisión actual…</p>;
     const manual = proposal.source === 'MANUAL';
     const canPrepare = manual ? capabilities.purchasePrepare === true : capabilities.invoicePrepare;
@@ -43,8 +51,15 @@ export const AssistantInvoiceReview: React.FC<Props> = ({ proposal, capabilities
     const change = (patch: Partial<InvoiceDraft>) => { setDraft(current => ({ ...current, ...patch })); setDirty(true); setReviewed(false); };
     const changeLine = (index: number, patch: Partial<InvoiceDraftLine>) => change({ items: draft.items.map((item, i) => i === index ? { ...item, ...patch } : item) });
     const cashIdentified = !proposal.preview || !toDecimal(proposal.preview.cashOut).gt(0) || Boolean(proposal.preview.cashShiftId && proposal.preview.cashShiftLabel);
-    const ready = !dirty && proposal.status === 'READY' && !!proposal.preview && proposal.issues.length === 0 && cashIdentified;
-    const confirm = async () => { setConfirmStarted(true); await onConfirm(confirmation.current.key); };
+    const documentPending = !!proposal.documentReview && (proposal.documentReview.hasUnresolved || proposal.documentReview.conflicts.some(conflict => conflict.kind === 'LINE_MATCH' || conflict.status !== 'RESOLVED' || !conflict.resolution));
+    const decisionPayload = documentDecisionPayload(proposal.documentReview, documentDecisions);
+    const ready = !dirty && (confirmStarted || (!catalog.changed && !documentPending)) && proposal.status === 'READY' && !!proposal.preview && proposal.issues.length === 0 && cashIdentified;
+    const confirm = async () => { if (!confirmStarted && (!catalog.verified || catalog.changed || documentPending)) return; setConfirmStarted(true); await onConfirm(confirmation.current.key); };
+    const saveReview = () => {
+        if (locked || decisionPayload.incomplete || (!documentPending && !catalog.verified)) return;
+        const nextDraft = { ...draft, warnings: warningsReviewed ? [] : draft.warnings };
+        if (decisionPayload.decisions.length) void onSave(nextDraft, decisionPayload.decisions); else void onSave(nextDraft);
+    };
     if (operation) return <section aria-label="Comprobante de compra" className="nx-shell-control space-y-3 rounded-card border p-4">
         <h3 className="nx-tone-positive text-lg font-bold">Compra registrada</h3><p className="nx-shell-text text-sm">{operation.message}</p>
         <dl className="nx-shell-muted break-all text-sm"><dt>Compra</dt><dd>{operation.purchaseId}</dd><dt>Referencia de operación</dt><dd>{operation.id}</dd></dl>
@@ -53,10 +68,13 @@ export const AssistantInvoiceReview: React.FC<Props> = ({ proposal, capabilities
     return <section aria-label={manual ? 'Revisar compra' : 'Revisar factura'} className="space-y-4">
         <div><h3 className="nx-shell-text text-lg font-bold">{manual ? 'Revisá la compra' : 'Revisá la factura'}</h3><p className="nx-shell-muted mt-1 text-sm">{manual ? 'Preparada con los datos que aportaste por conversación, sin un documento adjunto. Verificá el número de factura, los costos y el total reales. Recibir y pagar la mercadería son decisiones separadas.' : 'Todavía no está registrada. Compará cada dato con el documento. Una factura no demuestra que recibiste o pagaste la mercadería.'}</p>{manual && <p className="nx-tone-warning mt-2 text-sm">Todavía no está registrada. Tu mensaje no confirma esta compra.</p>}</div>
         <p className="nx-shell-muted text-xs">Referencia: {proposal.id}<br />Revisión {proposal.version} · Vence {new Date(proposal.expiresAt).toLocaleString('es-NI', { timeZone: 'America/Managua' })}</p>
+        {proposal.documentReview && <AssistantDocumentConflicts review={proposal.documentReview} drafts={documentDecisions} disabled={locked} onChange={(id, decision) => {
+            setDocumentDecisions(current => { const next = { ...current }; if (decision) next[id] = decision; else delete next[id]; return next; }); setDirty(true); setReviewed(false);
+        }} />}
         {draft.warnings.length > 0 && <div className="nx-shell-control rounded-card border p-3"><h4 className="nx-tone-warning font-semibold">Datos por comprobar</h4><ul className="nx-shell-text list-disc space-y-1 pl-5 text-sm">{draft.warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div>}
         <fieldset disabled={locked} className="min-w-0 space-y-4 disabled:opacity-70">
             <legend className="sr-only">{manual ? 'Datos declarados de la compra' : 'Datos del documento'}</legend>
-            <AssistantCatalogSelect label="Proveedor" kind="suppliers" value={draft.supplierId} selectedLabel={draft.supplierName} request={request} disabled={locked} onChange={supplierId => change({ supplierId })} />
+            <AssistantCatalogSelect label="Proveedor" kind="suppliers" value={draft.supplierId} request={catalog.request} disabled={locked} onChange={supplierId => change({ supplierId })} onSelectionResolved={(item, status) => catalog.report('suppliers', draft.supplierId, item, status)} />
             <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">{fieldLabels.map(([key, label, type]) => <label key={key} className="nx-shell-text min-w-0 text-sm font-semibold">{manual ? label.replace('Proveedor escrito en la factura', 'Proveedor declarado').replace('del documento', 'declarado') : label}<input type={type} value={String(draft[key] ?? '')} className={`${assistantInputClass} mt-1`} onChange={event => change({ [key]: event.target.value })} /></label>)}</div>
             <AssistantCatalogSelect label="Bodega" kind="warehouses" value={draft.warehouseId} request={request} disabled={locked} onChange={warehouseId => change({ warehouseId })} />
             <label className="nx-shell-text block text-sm font-semibold">Origen de la mercadería<select className={`${assistantInputClass} mt-1`} value={draft.purchaseOrderId ? 'ORDER' : 'DIRECT'} onChange={event => change({ purchaseOrderId: event.target.value === 'ORDER' ? '__SELECT_ORDER__' : undefined, items: draft.items.map(item => ({ ...item, purchaseOrderItemId: undefined })) })}>
@@ -71,7 +89,7 @@ export const AssistantInvoiceReview: React.FC<Props> = ({ proposal, capabilities
             <div className="space-y-4">{draft.items.map((item, index) => <fieldset key={index} className="nx-shell-control min-w-0 space-y-3 rounded-card border p-3">
                 <legend className="nx-shell-text px-1 font-semibold">Producto {index + 1}</legend>
                 <label className="nx-shell-text block text-sm">Descripción en la factura<input className={`${assistantInputClass} mt-1`} value={item.description} onChange={event => changeLine(index, { description: event.target.value })} /></label>
-                <AssistantCatalogSelect label={`Producto del catálogo ${index + 1}`} kind="products" value={item.productId} selectedLabel={item.description} request={request} disabled={locked} onChange={productId => changeLine(index, { productId, purchaseOrderItemId: undefined })} />
+                <AssistantCatalogSelect label={`Producto del catálogo ${index + 1}`} kind="products" value={item.productId} request={catalog.request} disabled={locked} onChange={productId => changeLine(index, { productId, purchaseOrderItemId: undefined })} onSelectionResolved={(selected, status) => catalog.report('products', item.productId, selected, status)} />
                 <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                     <label className="nx-shell-text text-sm">Cantidad<input aria-label={`Cantidad ${index + 1}`} inputMode="decimal" className={`${assistantInputClass} mt-1`} value={item.quantity} onChange={event => changeLine(index, { quantity: event.target.value })} /></label>
                     <label className="nx-shell-text text-sm">Costo por unidad elegida<input aria-label={`Costo ${index + 1}`} inputMode="decimal" className={`${assistantInputClass} mt-1`} value={item.unitCost} onChange={event => changeLine(index, { unitCost: event.target.value })} /></label>
@@ -90,9 +108,11 @@ export const AssistantInvoiceReview: React.FC<Props> = ({ proposal, capabilities
         </fieldset>
         {draft.warnings.length > 0 && <label className="nx-shell-text flex min-h-tap items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={warningsReviewed} disabled={locked} onChange={event => { setWarningsReviewed(event.target.checked); setDirty(true); setReviewed(false); }} />Revisé y corregí los datos señalados</label>}
         {proposal.issues.length > 0 && <div role="alert" className="nx-tone-warning space-y-2 text-sm"><p className="font-semibold">Antes de registrar, resolvé:</p><ul className="list-disc space-y-1 pl-5">{proposal.issues.map((issue, index) => <li key={index}>{issue}</li>)}</ul></div>}
-        {dirty && <p role="status" className="nx-tone-warning text-sm">Cambiaste {manual ? 'la compra' : 'la factura'}. Guardá la revisión para recalcular sus efectos.</p>}
-        {!confirmStarted && canPrepare && <button type="button" className={`${assistantButtonClass} w-full`} disabled={locked || (!dirty && proposal.status !== 'DRAFT')} onClick={() => void onSave({ ...draft, warnings: warningsReviewed ? [] : draft.warnings })}>{busy ? 'Comprobando…' : 'Guardar revisión y calcular efectos'}</button>}
-        {proposal.preview && !dirty && <section aria-label="Efectos de la compra" className="nx-shell-control space-y-3 rounded-card border p-4">
+        {dirty && <p role="status" className="nx-tone-warning text-sm">{documentPending ? 'Guardá el borrador y las decisiones. Las diferencias pendientes no permiten calcular ni registrar la compra.' : `Cambiaste ${manual ? 'la compra' : 'la factura'}. Guardá la revisión para recalcular sus efectos.`}</p>}
+        {!confirmStarted && canPrepare && catalog.message && <p className="nx-tone-warning text-sm">{catalog.message}</p>}
+        {!confirmStarted && catalog.changed && <p className="nx-tone-warning text-sm">Cambió una ficha seleccionada. Verificá sus datos y guardá la revisión para recalcular los efectos.</p>}
+        {!confirmStarted && canPrepare && <button type="button" className={`${assistantButtonClass} w-full`} disabled={locked || decisionPayload.incomplete || (!documentPending && (!catalog.verified || (!dirty && proposal.status !== 'DRAFT')))} onClick={saveReview}>{busy ? 'Comprobando…' : documentPending ? 'Guardar borrador y decisiones' : 'Guardar revisión y calcular efectos'}</button>}
+        {proposal.preview && !dirty && (confirmStarted || (!catalog.changed && !documentPending)) && <section aria-label="Efectos de la compra" className="nx-shell-control space-y-3 rounded-card border p-4">
             <h4 className="nx-shell-text font-bold">Esto cambiará al confirmar</h4>
             <p className="nx-shell-text text-sm">Proveedor: {proposal.preview.supplierName}{proposal.preview.warehouseName ? ` · Bodega: ${proposal.preview.warehouseName}` : ''}</p>
             {toDecimal(proposal.preview.cashOut).gt(0) && <p className="nx-shell-text break-words text-sm"><strong>Caja que registra el egreso:</strong> {proposal.preview.cashShiftLabel || 'No se pudo identificar la caja'}<br /><span className="nx-shell-muted text-xs">{proposal.preview.cashShiftId}</span></p>}
@@ -102,9 +122,9 @@ export const AssistantInvoiceReview: React.FC<Props> = ({ proposal, capabilities
         </section>}
         {!cashIdentified && <p role="alert" className="nx-tone-warning text-sm">La caja que registra el egreso no está identificada. Revisá la compra antes de confirmar.</p>}
         {ready && (!manual || canPrepare) && capabilities.invoiceConfirm && capabilities.executionEnabled ? <div className="space-y-3">
-            <label className="nx-shell-text flex min-h-tap items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={reviewed} disabled={busy || confirmStarted} onChange={event => setReviewed(event.target.checked)} />{manual ? 'Revisé los datos y los efectos de esta compra exacta.' : 'Revisé el documento, los productos y estos efectos exactos.'}</label>
+            <label className="nx-shell-text flex min-h-tap items-start gap-3 text-sm"><input type="checkbox" className="mt-1" checked={reviewed} disabled={busy || confirmStarted || !catalog.verified} onChange={event => setReviewed(event.target.checked)} />{manual ? 'Revisé los datos y los efectos de esta compra exacta.' : 'Revisé el documento, los productos y estos efectos exactos.'}</label>
             {confirmStarted && <p role="status" className="nx-tone-warning text-sm">Si la respuesta se interrumpió, reintentá con esta misma referencia. No ingresés la factura de nuevo: {confirmation.current.key}</p>}
-            <button type="button" className={`${assistantButtonClass} nx-tone-positive w-full`} disabled={!reviewed || busy || !navigator.onLine} onClick={() => void confirm()}>{busy ? 'Comprobando registro…' : confirmStarted ? 'Reintentar confirmación con la misma referencia' : `Confirmar y registrar compra por ${formatMoney(proposal.preview!.total)}`}</button>
+            <button type="button" className={`${assistantButtonClass} nx-tone-positive w-full`} disabled={!reviewed || busy || !navigator.onLine || (!confirmStarted && !catalog.verified)} onClick={() => void confirm()}>{busy ? 'Comprobando registro…' : confirmStarted ? 'Reintentar confirmación con la misma referencia' : `Confirmar y registrar compra por ${formatMoney(proposal.preview!.total)}`}</button>
         </div> : <p className="nx-shell-muted text-sm">{!capabilities.executionEnabled ? 'El registro desde NortexGPT está desactivado.' : !capabilities.invoiceConfirm || (manual && !canPrepare) ? 'Tu rol permite revisar, pero no registrar compras.' : 'La propuesta requiere revisión antes de registrar.'}</p>}
         <button type="button" className={assistantButtonClass} onClick={onOpenPurchases}>Revisar en Compras</button>
     </section>;

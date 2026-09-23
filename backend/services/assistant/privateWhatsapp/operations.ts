@@ -13,7 +13,7 @@ export function renderPrivateWaReply(reply:AssistantMessageDTO,link:string) {
 
 /** The core claims PENDING once and recovers abandoned RUNNING as interrupted, without replaying tools. */
 export function resolvePrivateWaOperationalRun(principal:AssistantPrincipal,id:string,db:PrismaClient) {
-  return processAssistantRun(principal,id,{db});
+  return processAssistantRun(principal,id,{db,channel:'WHATSAPP_PRIVATE'});
 }
 export function renderPrivateWaOperationalReply(run:AssistantRunDTO,link:string):string {
   if(run.status==='PENDING'||run.status==='RUNNING')throw new Error('An unfinished run cannot produce a final WhatsApp reply.');

@@ -6,10 +6,12 @@ import type { AssistantRunDTO } from '../../../../shared/assistantOperations.js'
 import { assertAssistantAccess } from '../access.js';
 import { runAssistantOrchestrator, MAX_OPERATION_DURATION_MS } from './orchestrator.js';
 import { AssistantRunError, type OperationTool, type RunCheckpoint } from './contracts.js';
+import type { AssistantKnowledgeChannel } from '../../../../shared/assistantKnowledge.js';
+import { presentRunKnowledge, collectRunKnowledgeReferences } from './knowledgeProvenance.js';
 import { readRunCheckpoint, runInputSchema, runResultSchema } from './runValidation.js';
 
 type Database=PrismaClient|Prisma.TransactionClient;
-export interface RunDependencies { db?:PrismaClient; now?:()=>Date; tools?:OperationTool[]; orchestrate?:typeof runAssistantOrchestrator }
+export interface RunDependencies { channel?:AssistantKnowledgeChannel; db?:PrismaClient; now?:()=>Date; tools?:OperationTool[]; orchestrate?:typeof runAssistantOrchestrator }
 const owner=(principal:AssistantPrincipal)=>({tenantId:principal.tenantId,userId:principal.userId,roleAtCreation:principal.role});
 const asJson=(value:unknown)=>JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 async function requireConversation(principal:AssistantPrincipal,conversationId:string,db:Database,now:Date) {
@@ -23,7 +25,17 @@ function toDTO(row:AssistantRun):AssistantRunDTO {
   return {id:row.id,conversationId:row.conversationId,requestId:row.requestId,status:row.status as AssistantRunDTO['status'],version:row.version,iterations:row.iterations,
     steps:checkpoint.steps,...(row.result?{result:runResultSchema.parse(row.result)}:{}),...(row.errorCode?{errorCode:row.errorCode}:{}),createdAt:row.createdAt.toISOString(),updatedAt:row.updatedAt.toISOString()};
 }
-async function readableDTO(principal:AssistantPrincipal,row:AssistantRun,db:Database):Promise<AssistantRunDTO> {
+function storedKnowledgeChannel(value:string|null|undefined):AssistantKnowledgeChannel|undefined {
+  if(value===null||value===undefined)return undefined;
+  if(value!=='WEB_INTERNAL'&&value!=='WHATSAPP_PRIVATE')throw new AssistantRunError(409,'RUN_CHANNEL_INVALID','La procedencia de la consulta necesita revisión.');
+  return value;
+}
+async function resolveKnowledgeChannel(principal:AssistantPrincipal,conversationId:string,db:Database,channel?:AssistantKnowledgeChannel):Promise<AssistantKnowledgeChannel> {
+  if(channel)return channel;
+  const binding=await db.assistantWaBinding.findFirst({where:{tenantId:principal.tenantId,userId:principal.userId,conversationId},select:{id:true}});
+  return binding?'WHATSAPP_PRIVATE':'WEB_INTERNAL';
+}
+async function readableDTO(principal:AssistantPrincipal,row:AssistantRun,db:Database,channel?:AssistantKnowledgeChannel):Promise<AssistantRunDTO> {
   const dto=toDTO(row),checkpoint=readRunCheckpoint(row.checkpoint);
   const {readAssistantRunActionReferences}=await import('../actions/service.js');
   const references=await readAssistantRunActionReferences(principal,row.id,[...new Set([...(dto.result?.actionProposalIds??[]),...checkpoint.actionProposalIds])],db);
@@ -32,6 +44,7 @@ async function readableDTO(principal:AssistantPrincipal,row:AssistantRun,db:Data
     const allowed=new Set(references);
     dto.result={...previous,actionProposalIds:references,evidence:previous.evidence.filter(item=>!item.tool.startsWith('prepare_')||(item.data&&typeof item.data==='object'&&!Array.isArray(item.data)&&typeof item.data.id==='string'&&allowed.has(item.data.id)))};
   }
+  if(dto.result)dto.result=await presentRunKnowledge(principal,dto.result,checkpoint,db,await resolveKnowledgeChannel(principal,row.conversationId,db,channel??storedKnowledgeChannel(row.knowledgeChannel)));
   return dto;
 }
 async function findRun(principal:AssistantPrincipal,id:string,db:PrismaClient,now:Date) {
@@ -42,15 +55,16 @@ async function findRun(principal:AssistantPrincipal,id:string,db:PrismaClient,no
 }
 export async function getAssistantRun(principal:AssistantPrincipal,id:string,deps:RunDependencies={}):Promise<AssistantRunDTO> {
   const db=deps.db??prisma,row=await findRun(principal,id,db,deps.now?.()??new Date());
-  const dto=await readableDTO(principal,row,db);await assertAssistantAccess(principal,'operations',db);return dto;
+  const dto=await readableDTO(principal,row,db,deps.channel);await assertAssistantAccess(principal,'operations',db);return dto;
 }
 export async function listAssistantRuns(principal:AssistantPrincipal,conversationId:string,deps:RunDependencies={}):Promise<AssistantRunDTO[]> {
   const db=deps.db??prisma,now=deps.now?.()??new Date();await requireConversation(principal,conversationId,db,now);
   const rows=await db.assistantRun.findMany({where:{...owner(principal),conversationId,expiresAt:{gt:now}},orderBy:[{createdAt:'desc'},{id:'desc'}],take:10});
-  const results=await Promise.all(rows.map(row=>readableDTO(principal,row,db)));
+  const results=await Promise.all(rows.map(row=>readableDTO(principal,row,db,deps.channel)));
   await assertAssistantAccess(principal,'operations',db);return results;
 }
-export async function createAssistantRunInTransaction(principal:AssistantPrincipal,conversationId:string,raw:unknown,tx:Prisma.TransactionClient,now=new Date()):Promise<AssistantRunDTO> {
+export async function createAssistantRunInTransaction(principal:AssistantPrincipal,conversationId:string,raw:unknown,tx:Prisma.TransactionClient,now=new Date(),channel:AssistantKnowledgeChannel='WEB_INTERNAL'):Promise<AssistantRunDTO> {
+    storedKnowledgeChannel(channel);
     const input=runInputSchema.parse(raw),payloadHash=createHash('sha256').update(input.text).digest('hex');
     const lock=await tx.$queryRaw<Array<{id:string}>>(Prisma.sql`SELECT id FROM AssistantConversation WHERE id=${conversationId} AND tenantId=${principal.tenantId} AND userId=${principal.userId} AND roleAtCreation=${principal.role} AND expiresAt>${now} FOR UPDATE`);
     if(!lock.length)throw new AssistantRunError(404,'RUN_CONVERSATION_NOT_FOUND','La conversación ya no está disponible.');
@@ -59,11 +73,11 @@ export async function createAssistantRunInTransaction(principal:AssistantPrincip
     await assertAssistantAccess(principal,'operations',tx as PrismaClient);
     const previous=await tx.assistantRun.findFirst({where:{conversationId,requestId:input.requestId,...owner(principal)}});
     if(previous){if(previous.payloadHash!==payloadHash)throw new AssistantRunError(409,'RUN_REQUEST_CONFLICT','El identificador ya corresponde a otra consulta.');return toDTO(previous);}
-    return toDTO(await tx.assistantRun.create({data:{...owner(principal),conversationId,requestId:input.requestId,inputText:input.text,payloadHash,status:'PENDING',expiresAt:conversation.expiresAt}}));
+    return toDTO(await tx.assistantRun.create({data:{...owner(principal),conversationId,requestId:input.requestId,inputText:input.text,payloadHash,status:'PENDING',knowledgeChannel:channel,expiresAt:conversation.expiresAt}}));
 }
 export async function createAssistantRun(principal:AssistantPrincipal,conversationId:string,raw:unknown,deps:RunDependencies={}):Promise<AssistantRunDTO> {
   const db=deps.db??prisma,now=deps.now?.()??new Date();await assertAssistantAccess(principal,'operations',db);
-  const result=await db.$transaction(tx=>createAssistantRunInTransaction(principal,conversationId,raw,tx,now));
+  const result=await db.$transaction(tx=>createAssistantRunInTransaction(principal,conversationId,raw,tx,now,deps.channel??'WEB_INTERNAL'));
   await assertAssistantAccess(principal,'operations',db);return result.status==='PENDING'?result:getAssistantRun(principal,result.id,deps);
 }
 
@@ -75,6 +89,12 @@ export async function executeAssistantRun(principal:AssistantPrincipal,conversat
   const claim=await db.assistantRun.updateMany({where:{id:created.id,...owner(principal),status:'PENDING',version:created.version,expiresAt:{gt:now()}},data:{status:'RUNNING',version:{increment:1},leaseToken,startedAt:now(),deadlineAt,leaseUntil:new Date(deadlineAt.getTime()+5000)}});
   if(claim.count!==1)return getAssistantRun(principal,created.id,deps);
   let version=created.version+1;
+  const origin=await db.assistantRun.findFirst({where:{id:created.id,...owner(principal)},select:{knowledgeChannel:true}});
+  if(!origin)throw new AssistantRunError(404,'RUN_NOT_FOUND','La ejecución ya no está disponible.');
+  const storedChannel=storedKnowledgeChannel(origin.knowledgeChannel);
+  const legacyBinding=storedChannel?null:await db.assistantWaBinding.findFirst({where:{tenantId:principal.tenantId,userId:principal.userId,conversationId},select:{id:true}});
+  const channel=storedChannel??(legacyBinding?'WHATSAPP_PRIVATE':undefined);
+  let latestCheckpoint:RunCheckpoint|undefined;
   const guard=()=>({id:created.id,...owner(principal),status:'RUNNING',version,leaseToken,expiresAt:{gt:now()}});
   const assertActive=async()=>{
     await requireConversation(principal,conversationId,db,now());
@@ -83,25 +103,33 @@ export async function executeAssistantRun(principal:AssistantPrincipal,conversat
   };
   const onCheckpoint=async(checkpoint:RunCheckpoint)=>{
     await assertActive();
+    const sanitized=await presentRunKnowledge(principal,{text:'',evidence:checkpoint.evidence,actionProposalIds:checkpoint.actionProposalIds,degraded:true,knowledgeReferences:checkpoint.knowledgeReferences,knowledgeUnavailable:checkpoint.knowledgeUnavailable},checkpoint,db,channel);
+    if(sanitized.knowledgeUnavailable){checkpoint.messages=[];checkpoint.evidence=sanitized.evidence;checkpoint.knowledgeUnavailable=true;}
+    checkpoint.knowledgeReferences=sanitized.knowledgeReferences;latestCheckpoint=structuredClone(checkpoint);
     const changed=await db.assistantRun.updateMany({where:guard(),data:{checkpoint:asJson(checkpoint),iterations:checkpoint.iterations,version:{increment:1}}});
     if(changed.count!==1)throw new AssistantRunError(409,'RUN_INACTIVE','La ejecución cambió.');version++;
   };
   try {
+    if(!channel)throw new AssistantRunError(409,'RUN_CHANNEL_UNKNOWN','La consulta anterior no conserva su canal. Iniciá una nueva consulta desde tu sesión.');
     const rows=await db.assistantMessage.findMany({where:{tenantId:principal.tenantId,userId:principal.userId,conversationId,role:'user'},orderBy:{createdAt:'desc'},take:4});
     const history=rows.reverse().flatMap(row=>row.content&&typeof row.content==='object'&&!Array.isArray(row.content)&&typeof row.content.text==='string'?[row.content.text]:[]);
-    const tools=deps.tools??await (await import('./tools.js')).createOperationTools(principal,{db});
+    const tools=deps.tools??await (await import('./tools.js')).createOperationTools(principal,{db,channel});
     const allowed=new Set(tools.map(tool=>tool.name));
     const previousRows=await db.assistantRun.findMany({where:{...owner(principal),conversationId,status:'SUCCEEDED',id:{not:created.id},expiresAt:{gt:now()}},orderBy:[{createdAt:'desc'},{id:'desc'}],take:2});
-    const previousResults=previousRows.flatMap(row=>{
-      const parsed=runResultSchema.safeParse(row.result);
-      if(!parsed.success||parsed.data.evidence.some(item=>!allowed.has(item.tool))||JSON.stringify(parsed.data).length>24000)return [];
-      return [{runId:row.id,recordedAt:row.updatedAt.toISOString(),stale:true as const,refreshRequiredBeforePreparation:true as const,result:parsed.data}];
-    });
-    const result=await (deps.orchestrate??runAssistantOrchestrator)({principal,conversationId,runId:created.id,text:runInputSchema.parse(raw).text,history,previousResults,deadlineAt},{tools,db,now,assertActive,onCheckpoint});
+    const previousResults=[];
+    for(const row of previousRows) {
+      const previous=await readableDTO(principal,row,db,channel);
+      const result=previous.result;
+      if(!result||result.knowledgeUnavailable||collectRunKnowledgeReferences(result,readRunCheckpoint(row.checkpoint))===null||result.evidence.some(item=>!allowed.has(item.tool))||JSON.stringify(result).length>24000)continue;
+      previousResults.push({runId:row.id,recordedAt:row.updatedAt.toISOString(),stale:true as const,refreshRequiredBeforePreparation:true as const,result});
+    }
+    const rawResult=await (deps.orchestrate??runAssistantOrchestrator)({principal,conversationId,runId:created.id,text:runInputSchema.parse(raw).text,history,previousResults,deadlineAt,channel},{tools,db,now,assertActive,onCheckpoint});
+    const result=await presentRunKnowledge(principal,rawResult,latestCheckpoint,db,channel);
     await assertActive();
     const ended=await db.$transaction(async tx=>{
       await requireConversation(principal,conversationId,tx,now());
-      return tx.assistantRun.updateMany({where:guard(),data:{status:'SUCCEEDED',version:{increment:1},result:asJson(result),leaseToken:null,leaseUntil:null}});
+      const currentResult=await presentRunKnowledge(principal,result,latestCheckpoint,tx,channel);
+      return tx.assistantRun.updateMany({where:guard(),data:{status:'SUCCEEDED',version:{increment:1},result:asJson(currentResult),leaseToken:null,leaseUntil:null}});
     });
     if(ended.count!==1)throw new AssistantRunError(409,'RUN_INACTIVE','La ejecución cambió.');
   } catch(error) {

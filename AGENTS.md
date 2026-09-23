@@ -1,5 +1,22 @@
 # Nortex Agent Instructions
 
+## Dirección de producto y contratos de agentes — 2026-09-19
+
+- Seguir la [meta del equipo administrativo](docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md)
+  y el [roadmap](docs/ROADMAP_AGENTES_NORTEX.md): primer trabajo completo W01 durable;
+  después planilla, planificación de caja y MCP sobre capacidades aceptadas.
+- Leer las [reglas de agentes](docs/REGLAS_AGENTES_NORTEX.md) al cambiar asistente,
+  RAG, encargos o canales. Conservar fuentes/cálculos/propuestas separados; el
+  modelo nunca confirma. Perfiles especialistas no suman permisos del usuario.
+- Completar la [ficha de trabajo](docs/templates/CONTRATO_TRABAJO_AGENTE.md) antes
+  de ampliar una capacidad; registrar resultado, autoridad, archivos por editor,
+  evidencia, límite de gasto y recuperación. El RAG no indexa estos documentos.
+- Verificar [procedencia](docs/ESTADO_ACTUAL_NORTEX.md): el candidato de release
+  reúne incrementos sobre main; el checkout original conserva otros cambios.
+  No atribuir código o QA de uno al otro ni reemplazar guías enteras perdiendo reglas actuales.
+- H01 A/B/C valida conductas con precisiones; no artículo completo/publicación ni
+  implementación. Conservar [criterios](docs/CONTRATO_COMPRAS_CONVERSACIONALES_H01.md).
+
 Nortex es un ERP/POS multi-tenant que maneja dinero e inventario reales. Antes de
 modificar el producto, lee `CLAUDE.md` completo: es la fuente canónica de reglas de
 dominio, seguridad, integridad, escalabilidad y QA para todos los agentes.

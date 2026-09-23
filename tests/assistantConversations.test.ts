@@ -10,6 +10,8 @@ function harness() {
     const conversation = { id: 'conversation-a', ...principal, roleAtCreation: 'OWNER', expiresAt: new Date(Date.now() + 86_400_000),metadata:null as unknown,stateVersion:0 };
     const messages: any[] = [];
     const mocks = {
+        assistantKnowledgeControl: { findUnique: vi.fn().mockResolvedValue(null) },
+        assistantKnowledgeVersion: { findMany: vi.fn().mockResolvedValue([]) },
         user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-a', role: 'OWNER', status: 'ACTIVE' }) },
         assistantTenantConfig: { findUnique: vi.fn().mockResolvedValue({ enabled: true }) },
         assistantProposal:{findFirst:vi.fn().mockResolvedValue(null)},
