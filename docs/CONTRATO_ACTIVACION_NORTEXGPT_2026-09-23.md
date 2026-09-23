@@ -8,7 +8,7 @@ El checkout `codex/caja-nica-retention` y su archivo no rastreado quedan fuera d
 - Resultado inicial: ayuda con fuentes aprobadas, consultas deterministas y conversación con Haiku para un negocio piloto identificado, con rol vigente y límite de US$2 por mes. El asistente conserva el trabajo ante fallos y no confirma dinero ni inventario.
 - Cierre observable: mismo SHA en CI, staging y producción; worker supervisado con estado verificable; presupuesto, rol y contenido aprobados; recorrido autenticado de datos sintéticos y del piloto con respuesta real, fuente y consumo atribuidos; parada y recuperación probadas.
 - Fuera del primer corte: extracción foto/PDF, confirmación de acciones, promociones y WhatsApp privado. Su activación exige almacenamiento privado con backup/restore conjunto, pruebas y aprobación propios.
-- Responsable de producto, negocio y cuenta piloto: pendiente de identificación por el dueño. La aprobación H01 A/B/C no aprueba artículos completos ni expected del modelo.
+- Responsable de producto y cuentas propuestas: el dueño designó su cuenta para el primer piloto y la cuenta de 3M Ferretería para un segundo piloto. Confirmó que el responsable de 3M aceptó el piloto y el uso de un modelo externo con límite inicial de US$2 al mes. Los correos quedaron sólo en la conversación de trabajo, no en este repositorio. Antes de cada activación, comprobar el usuario activo, su `tenantId` y rol desde una sesión autenticada o una consulta administrativa controlada; no inferir el negocio por el correo. La aprobación H01 A/B/C no aprueba artículos completos ni expected del modelo.
 - Canal: web interna autenticada. Tenant, usuario y rol salen del JWT y se revalidan; el modelo no recibe autoridad de confirmación.
 - Efectos: lectura, conversación, estado auxiliar y propuesta. Todo movimiento de dinero/stock sigue en los servicios de dominio con confirmación humana exacta.
 
@@ -40,6 +40,13 @@ No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y fluj
 | CI, staging y producción | SHA idéntico y smoke por ambiente | Pendiente para este candidato |
 
 La evidencia de cada compuerta conserva escenario, SHA, resultado y límites. Un total de tests no sustituye la prueba operativa ni la aceptación humana.
+
+## Secuencia del piloto
+
+1. Ejecutar primero el recorrido sintético completo: fuentes revisadas, respuesta real del modelo, costo atribuido, revocación, error y conservación del trabajo. Mantener ejecución, adjuntos y envíos apagados.
+2. Verificar la identidad y el negocio de la cuenta del dueño; habilitar sólo ayuda, conversación y consultas permitidas con presupuesto inicial de US$2. Comprobar respuesta, cita, período, rol y saldo con esa cuenta; detener la capacidad ante un estado incierto.
+3. Verificar la cuenta, negocio y rol de 3M Ferretería y repetir las mismas pruebas y el límite propio de US$2. No usar datos del primer negocio para validar el segundo.
+4. Registrar por separado para ambos negocios el SHA, permisos, contenido publicado, configuración, consumo, comprobante de la prueba y resultado humano. Desactivar cada piloto individualmente si falla una compuerta.
 
 ## QA local del candidato `2e6b217`
 
