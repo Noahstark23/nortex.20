@@ -605,7 +605,7 @@ const ScaleSettings: React.FC = () => {
                     </p>
                 </div>
                 <button type="button" onClick={() => void loadAll(selectedVersionId ?? undefined)} disabled={loading} className="flex items-center gap-2 rounded-lg border border-slate-700 px-3 py-2 text-sm text-slate-300 hover:bg-white/5 disabled:opacity-50">
-                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Actualizar
+                    <RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Actualizá
                 </button>
             </header>
 

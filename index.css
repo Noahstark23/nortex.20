@@ -13,6 +13,12 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Foco de teclado visible en ambos temas, incluidos formularios y hojas modales. */
+body :is(button, input, select, textarea, a[href], [tabindex]:not([tabindex="-1"])):focus-visible:not(:disabled) {
+  outline: 2px solid var(--nx-positive) !important;
+  outline-offset: 2px;
+}
+
 /* ==========================================
    SISTEMA DE IMPRESIÓN (TICKETS POS)
    ========================================== */
@@ -55,6 +61,25 @@
     color: #000 !important;
     box-shadow: none !important;
   }
+  /* La copia A4 de Ventas convive con la impresión térmica del POS. */
+  body:has(.nx-sale-receipt-print) * {
+    visibility: hidden;
+    height: auto;
+    overflow: visible;
+  }
+  body:has(.nx-sale-receipt-print) .nx-sale-receipt-print,
+  body:has(.nx-sale-receipt-print) .nx-sale-receipt-print * {
+    visibility: visible;
+  }
+  .nx-sale-receipt-print {
+    position: fixed;
+    inset: 0;
+    width: 100%;
+    max-height: none;
+    overflow: visible;
+    box-shadow: none;
+  }
+  .nx-sale-receipt-actions { display: none !important; }
   @page {
     /* Fallback válido. El POS inyecta el alto exacto del ticket antes de
        imprimir; los reportes largos continúan en páginas adicionales. */

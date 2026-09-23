@@ -895,7 +895,7 @@ const Contabilidad: React.FC = () => {
                                                     : 'btn-primary'}`}>
                                                 {marking === o.key ? <Loader2 size={14} className="animate-spin" />
                                                     : o.declarado ? <><CheckCircle2 size={14} /> Declarado</>
-                                                        : <><ListChecks size={14} /> Marcar declarado</>}
+                                                        : <><ListChecks size={14} /> Marcá declarado</>}
                                             </button>
                                         </div>
                                     );
@@ -1183,7 +1183,7 @@ const Contabilidad: React.FC = () => {
                         </div>
 
                         <button type="button" onClick={() => setLines(prev => [...prev, { accountCode: '', debit: '', credit: '' }])}
-                            className="btn-ghost nx-fluid-press nx-canvas-text mt-3 inline-flex min-h-tap items-center gap-1.5 text-xs"><Plus size={14} /> Agregar línea</button>
+                            className="btn-ghost nx-fluid-press nx-canvas-text mt-3 inline-flex min-h-tap items-center gap-1.5 text-xs"><Plus size={14} /> Agregá línea</button>
 
                         <div className="mt-5 flex flex-col gap-4 border-t border-[var(--nx-canvas-border)] pt-4 sm:flex-row sm:items-center sm:justify-between">
                             <div className="flex flex-wrap gap-x-6 gap-y-2 font-mono text-sm tabular-nums">

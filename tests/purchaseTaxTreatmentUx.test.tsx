@@ -78,7 +78,7 @@ const setUnitCost = (productName: string, value: string) => {
 
 const submitPurchase = (invoiceNumber: string) => {
     fireEvent.change(screen.getByLabelText('# Factura Proveedor *'), { target: { value: invoiceNumber } });
-    fireEvent.click(screen.getByRole('button', { name: /Registrar factura|Procesar ingreso/ }));
+    fireEvent.click(screen.getByRole('button', { name: /Registrar factura|Procesá el ingreso/ }));
 };
 
 /**

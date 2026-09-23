@@ -143,7 +143,7 @@ describe('bodega: reposición', () => {
         render(<SmartPurchases />);
         await screen.findByRole('button', { name: 'Generar 2 orden(es)' });
         fireEvent.change(screen.getByLabelText('Cantidad de Producto 1'), { target: { value: '3' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Actualizar' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Actualizá' }));
         await screen.findByRole('button', { name: 'Generar 2 orden(es)' });
         expect((screen.getByLabelText('Cantidad de Producto 1') as HTMLInputElement).value).toBe('3');
         fireEvent.click(screen.getByRole('button', { name: 'Generar 2 orden(es)' }));

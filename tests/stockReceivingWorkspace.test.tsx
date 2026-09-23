@@ -63,7 +63,7 @@ function deferredResponse() {
 const quantityInput = () => screen.getByLabelText(/Cantidad a facturar de Cable por metro/);
 const costInput = () => screen.getByLabelText(/Costo de Cable por metro/);
 const invoiceInput = () => screen.getByLabelText('# Factura Proveedor *');
-const submitButton = () => screen.getByRole('button', { name: /^(Procesar ingreso|Registrar factura)$/ });
+const submitButton = () => screen.getByRole('button', { name: /^(Procesá el ingreso|Registrar factura)$/ });
 const storageSnapshot = () => Object.fromEntries(Object.keys(sessionStorage).sort().map(key => [key, sessionStorage.getItem(key)]));
 
 function setTestRole(role: string, tenantId = 'tenant-receiving-test', userId = 'user-receiving-test') {

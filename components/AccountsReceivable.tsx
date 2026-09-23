@@ -45,8 +45,8 @@ interface ReceiptDraft {
   customer: string;
   amount: number;
   method: string;
-  prevBalance: number;
-  newBalance: number;
+  invoiceBalance: number;
+  customerDebt: number | null;
 }
 
 // El símbolo sale de formatMoney, nunca de una plantilla local: es lo que evita
@@ -408,7 +408,7 @@ const AccountsReceivable: React.FC = () => {
   };
 
   // B3: recibo de abono imprimible (ventana limpia, formato media carta).
-  const printReceipt = (r: { customer: string; amount: number; method: string; prevBalance: number; newBalance: number }) => {
+  const printReceipt = (r: ReceiptDraft) => {
     const esc = (s: any) => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c] as string));
     const methodLbl = r.method === 'CASH' ? 'Efectivo' : r.method === 'TRANSFER' ? 'Transferencia' : r.method === 'CARD' ? 'Tarjeta' : r.method;
     const html = `<!doctype html><html><head><meta charset="utf-8"><title>Recibo de abono</title>
@@ -424,8 +424,8 @@ const AccountsReceivable: React.FC = () => {
         <div class="big">${fmt(r.amount)}</div>
         <div class="row"><span>Cliente</span><b>${esc(r.customer)}</b></div>
         <div class="row"><span>Método</span><span>${esc(methodLbl)}</span></div>
-        <div class="row"><span>Saldo anterior</span><span>${fmt(r.prevBalance)}</span></div>
-        <div class="row"><span>Nuevo saldo</span><b>${fmt(r.newBalance)}</b></div>
+        <div class="row"><span>Saldo de esta factura</span><span>${fmt(r.invoiceBalance)}</span></div>
+        ${r.customerDebt === null ? '' : `<div class="row"><span>Deuda total del cliente</span><b>${fmt(r.customerDebt)}</b></div>`}
         <div class="sig">Firma / Recibí conforme</div>
         <script>window.onload=function(){setTimeout(function(){try{window.print()}catch(e){}},300)}<\/script>
       </body></html>`;
@@ -466,7 +466,14 @@ const AccountsReceivable: React.FC = () => {
         body: JSON.stringify({ saleId: paySale.id, amount: paymentAmount.trim(), method: paymentMethod, clientEventId }),
       });
       if (res.ok) {
-        const receipt: ReceiptDraft = { customer: paySale.customerName, amount, method: paymentMethod, prevBalance: paySale.balance, newBalance: Math.max(0, paySale.balance - amount) };
+        const payment: { balance: number; customerDebt: number | null } = await res.json();
+        const receipt: ReceiptDraft = {
+          customer: paySale.customerName,
+          amount,
+          method: paymentMethod,
+          invoiceBalance: payment.balance,
+          customerDebt: payment.customerDebt,
+        };
         receiptReturnFocusRef.current = paymentReturnFocusRef.current;
         setShowPayModal(false);
         setPaySale(null);
@@ -675,7 +682,7 @@ const AccountsReceivable: React.FC = () => {
               </h1>
               <p className="mt-1 text-sm text-slate-600">Priorizá vencidos y dejá cada cuenta lista.</p>
             </div>
-            <button type="button" onClick={() => void fetchWorklist()} disabled={loading} className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-100 hover:text-slate-950 disabled:cursor-wait disabled:opacity-60" aria-label="Actualizar bandeja de cobranza">
+            <button type="button" onClick={() => void fetchWorklist()} disabled={loading} className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control border border-slate-300 bg-white text-slate-600 shadow-sm hover:bg-slate-100 hover:text-slate-950 disabled:cursor-wait disabled:opacity-60" aria-label="Actualizá bandeja de cobranza">
               <RefreshCw size={17} className={loading ? 'animate-spin' : ''} />
             </button>
           </div>
@@ -947,7 +954,8 @@ const AccountsReceivable: React.FC = () => {
               <div className="flex items-start justify-between gap-4 border-b border-slate-200 px-6 py-5">
                 <div>
                   <h2 id="receivable-payment-title" className="text-xl font-bold text-slate-950">Registrar abono</h2>
-                  <p id="receivable-payment-description" className="mt-1 text-sm text-slate-600">{paySale.customerName} · saldo {fmt(paySale.balance)}</p>
+                  <p id="receivable-payment-description" className="mt-1 text-sm text-slate-600">{paySale.customerName} · saldo de esta factura {fmt(paySale.balance)}</p>
+                  {statement && selected?.customerId === statement.customer.id && <p className="mt-1 text-sm text-slate-600">Deuda total del cliente: {fmt(statement.customer.currentDebt)}</p>}
                 </div>
                 <button type="button" onClick={closePaymentModal} disabled={submitting} className="nx-fluid-press flex h-touch w-touch items-center justify-center rounded-control text-slate-500 hover:bg-slate-100 hover:text-slate-950 disabled:opacity-50" aria-label="Cerrar registro de abono">
                   <X size={18} />
@@ -993,7 +1001,11 @@ const AccountsReceivable: React.FC = () => {
               <div className="p-6 text-center">
                 <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-control bg-emerald-100 text-emerald-700"><ReceiptText size={24} /></div>
                 <h2 id="payment-receipt-title" className="mt-4 text-xl font-bold text-slate-950">Abono registrado</h2>
-                <p id="payment-receipt-description" className="mt-2 text-sm text-slate-600">El nuevo saldo de {receiptToConfirm.customer} es {fmt(receiptToConfirm.newBalance)}. ¿Querés imprimir el recibo?</p>
+                <div id="payment-receipt-description" className="mt-2 space-y-1 text-sm text-slate-600">
+                  <p>Saldo de esta factura: {fmt(receiptToConfirm.invoiceBalance)}</p>
+                  {receiptToConfirm.customerDebt !== null && <p>Deuda total de {receiptToConfirm.customer}: {fmt(receiptToConfirm.customerDebt)}</p>}
+                  <p>¿Querés imprimir el recibo?</p>
+                </div>
                 <div className="nx-num mt-5 rounded-card border border-emerald-200 bg-emerald-50 p-4 text-2xl font-semibold text-emerald-700">{fmt(receiptToConfirm.amount)}</div>
               </div>
               <div className="grid grid-cols-2 gap-3 border-t border-slate-200 p-5">

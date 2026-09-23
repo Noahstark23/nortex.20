@@ -539,7 +539,7 @@ export default function ReceivingWorkspace(p: ReceivingWorkspaceProps) {
                             ? 'Procesando...'
                             : doc.purchaseOrderId
                               ? 'Registrar factura'
-                              : 'Procesar ingreso'}
+                              : 'Procesá el ingreso'}
                     </button>
                 </footer>
             </div>

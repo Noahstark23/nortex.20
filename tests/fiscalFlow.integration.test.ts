@@ -373,6 +373,14 @@ qaDescribe('QA integracion: documentos, DGI y reportes autenticados', () => {
     }
   });
 
+  it('usa el mismo período civil de Managua para ventas y gastos', async () => {
+    for (const endpoint of ['/api/reports/sales', '/api/reports/expenses']) {
+      expectStatus(await jsonRequest(`${endpoint}?startDate=2026-09-01&endDate=2026-09-30`, accountantToken), 200);
+      expectStatus(await jsonRequest(`${endpoint}?startDate=2026-02-30&endDate=2026-03-01`, accountantToken), 400);
+      expectStatus(await jsonRequest(`${endpoint}?startDate=2026-10-02&endDate=2026-10-01`, accountantToken), 400);
+    }
+  });
+
   it('rechaza sin coerción períodos parciales, ausentes o fuera de rango', async () => {
     const invalidGetEndpoints = [
       '/api/tax-report/dmi?month=8foo&year=2026',

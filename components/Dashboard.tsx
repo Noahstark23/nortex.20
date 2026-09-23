@@ -8,6 +8,8 @@ import { useNavigate } from 'react-router-dom';
 import LenderDashboard from './LenderMode/LenderDashboard';
 import MotorizadosPanel from './LenderMode/MotorizadosPanel';
 import { fetchOnboardingStatus } from '../utils/onboardingStatus';
+import PeriodProfitCard from './dashboard/PeriodProfitCard';
+import type { ProfitPeriod } from '../utils/managuaProfitPeriod';
 import {
   FISCAL_REGIME_GENERAL,
   type FiscalRegime,
@@ -100,6 +102,7 @@ const RetailDashboard: React.FC = () => {
     costoVendido?: number;
     lineasSinCosto?: number;
   } | null>(null);
+  const [profitPeriod, setProfitPeriod] = useState<ProfitPeriod>('today');
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
 
   // 🛡️ Survival Data (NIIF PyMES)
@@ -581,7 +584,11 @@ const RetailDashboard: React.FC = () => {
           que "Ventas Hoy" y con la card entera teñida de verde o rojo. Ahora va
           arriba, en tamaño display y en color de texto principal: el color no
           se usa para decorar la cifra, solo para calificar el resultado. */}
-      {todayStats && (
+      <div className="mb-3 flex flex-wrap gap-2" role="group" aria-label="Período de utilidad">
+        {([['today', 'Hoy'], ['week', 'Semana'], ['month', 'Mes']] as const).map(([value, label]) => <button key={value} type="button" onClick={() => setProfitPeriod(value)} aria-pressed={profitPeriod === value} className={`nx-fluid-press min-h-tap rounded-xl px-4 text-sm font-bold ${profitPeriod === value ? 'bg-brand text-brand-on' : 'border border-slate-300 bg-white text-slate-700'}`}>{label}</button>)}
+      </div>
+      {profitPeriod !== 'today' && <PeriodProfitCard period={profitPeriod} />}
+      {profitPeriod === 'today' && todayStats && (
         <section aria-labelledby="profit-heading" className="nx-canvas-card mb-6 overflow-hidden p-5 sm:p-6 lg:p-8">
           <p className="nx-label mb-2 text-slate-500">Resultado de hoy</p>
           <h2 id="profit-heading" className="sr-only">Ganancia de hoy</h2>
@@ -901,7 +908,7 @@ const RetailDashboard: React.FC = () => {
                   disabled={savingFiscal}
                   className="nx-fluid-press h-touch flex-1 rounded-control bg-brand px-4 font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                 >
-                  {savingFiscal ? 'Guardando…' : 'Guardar datos'}
+                  {savingFiscal ? 'Guardando…' : 'Guardá datos'}
                 </button>
               </div>
             </form>

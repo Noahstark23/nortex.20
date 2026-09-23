@@ -126,7 +126,7 @@ export function OperationalNotifications({ local }: { local?: LocalSaleAlerts })
                 <NortexAssistantNotice active={open} onOpen={() => { setOpen(false); window.dispatchEvent(new Event(ASSISTANT_OPEN_EVENT)); }} />
                 <div className="nx-shell-border border-t pt-3">
                     {data && <p className="nx-shell-muted text-xs">Consultado a las {new Date(data.checkedAt).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}. Se comprueba cada minuto mientras la app está visible.</p>}
-                    <button type="button" onClick={refresh} disabled={status === 'loading'} className={`${actionClass} disabled:opacity-50`}>Actualizar avisos<RefreshCw size={17} /></button>
+                    <button type="button" onClick={refresh} disabled={status === 'loading'} className={`${actionClass} disabled:opacity-50`}>Actualizá avisos<RefreshCw size={17} /></button>
                     <p className="nx-shell-muted mt-3 text-xs">Los avisos se retiran cuando cambia su causa. Cerrar este panel conserva los pendientes.</p>
                 </div>
             </div>

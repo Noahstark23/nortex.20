@@ -30,7 +30,7 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(reports).toContain('`/api/tax-report/dmi?month=${month}&year=${year}`');
         expect(reports).toContain('report.dmiReport');
         expect(reports).toContain('new Blob([report.dmiReport]');
-        expect(reports).toContain('Descargar DMI (.txt)');
+        expect(reports).toContain('Descargá DMI (.txt)');
         expect(reports).not.toContain('Esta funcionalidad se conectara a un generador de XLSX');
     });
 
@@ -46,8 +46,8 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(salesPanel).toContain('openAuthenticatedPreview(`/api/reports/sales/document?${reportQuery}`');
         expect(salesPanel).toContain('`/api/reports/sales/export.xlsx?${reportQuery}`');
         expect(salesPanel).toContain('downloadAuthenticatedFile(');
-        expect(salesPanel).toContain('Ver / imprimir documento');
-        expect(salesPanel).toContain('Descargar Excel');
+        expect(salesPanel).toContain('Ver / imprimí documento');
+        expect(salesPanel).toContain('Descargá Excel');
         expect(salesPanel).toContain('seleccioná un período de hasta 31 días');
         expect(salesPanel).toContain('Productos vendidos');
         expect(salesPanel).toContain('Cantidades y rentabilidad netas después de devoluciones');
