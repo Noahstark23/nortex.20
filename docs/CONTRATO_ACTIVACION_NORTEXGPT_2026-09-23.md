@@ -32,11 +32,18 @@ No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y fluj
 
 | Comprobación | Criterio | Estado |
 |---|---|---|
-| Observación de release existente | 31 muestras durante 30 minutos, SHA y base exactos | Nueva corrida iniciada; pendiente de completar |
-| Worker e infraestructura | Misma versión que API, un consumidor, permisos y heartbeat; pausa/reinicio sin duplicar | Pendiente |
+| Observación de release existente | 31 muestras durante 30 minutos, SHA y base exactos | Cumplida para el release anterior `dadc819`: 31/31 entre 14:07:05 y 14:37:05 UTC, HTTP 200, `ok`, base arriba, SHA exacto y `no-store`. Evidencia local: `/private/tmp/nortexgpt-activation.fHY9Xs/observation.json` |
+| Worker e infraestructura | Misma versión que API, un consumidor, permisos y heartbeat; pausa/reinicio sin duplicar | Parcial en Docker local sintético para `2e6b217`: app y base sanas, worker único arrancó y reinició, la app leyó latido del mismo SHA con permiso 0600. Estado `disabled` esperado con flags apagados. No prueba staging, producción, colas activas ni recuperación de originales |
 | Contenido y expected | Versiones completas y casos revisados por persona | Pendiente |
 | Modelo y presupuesto | Llamada sintética real, reserva/settlement y tope comprobados | Pendiente |
 | Piloto web | Rol real, fuentes, cifras, carrito, revocación y recuperación | Pendiente de negocio/cuenta |
 | CI, staging y producción | SHA idéntico y smoke por ambiente | Pendiente para este candidato |
 
 La evidencia de cada compuerta conserva escenario, SHA, resultado y límites. Un total de tests no sustituye la prueba operativa ni la aceptación humana.
+
+## QA local del candidato `2e6b217`
+
+- Compuerta local segura: TypeScript, sistema de diseño y build aprobados; 490 archivos/7082 tests aprobados. Otros 50 archivos/545 tests quedaron omitidos y no cuentan como aprobados. Pruebas dirigidas del worker, latido y estado: 25/25 aprobadas.
+- `docker compose config` validó el perfil; sin él, `assistant-worker` no figura entre servicios activos. La imagen del worker construyó con Node 22.23.2 y dependencias de producción; auditoría de dependencias de producción: cero vulnerabilidades reportadas.
+- Prueba de integración local: proyecto aislado `nortexgpt-activation-qa`, credenciales sintéticas, Anthropic vacío y asistente global apagado. Tras reiniciar el worker, latido observado desde la app a las 16:00:24 UTC con `state=disabled`, SHA exacto y modo 0600. El proyecto y ambos volúmenes sintéticos se eliminaron al terminar.
+- Este QA no realizó una llamada al proveedor, no aceptó artículos de ayuda, no ejecutó una acción de dinero o stock y no habilitó a ningún negocio real.
