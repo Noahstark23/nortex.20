@@ -7,6 +7,19 @@ const STALE_MS = 90_000;
 type WorkerState = 'disabled' | 'idle' | 'working' | 'error';
 const outsideProject = (path: string) => path === '..' || path.startsWith(`..${sep}`) || isAbsolute(path);
 
+/** Mantiene el latido durante una tarea larga, sin solapar escrituras. */
+export async function withAssistantWorkerHeartbeat<T>(
+  work: () => Promise<T>, beat: () => Promise<unknown>,
+  options: { intervalMs?: number; onError?: () => void } = {},
+): Promise<T> {
+  let pending: Promise<unknown> = Promise.resolve();
+  const timer = setInterval(() => {
+    pending = pending.catch(() => undefined).then(beat).catch(() => { options.onError?.(); });
+  }, options.intervalMs ?? 30_000);
+  try { return await work(); }
+  finally { clearInterval(timer); await pending; }
+}
+
 async function privateRoot(configured = process.env.NORTEX_ASSISTANT_STORAGE_DIR, create = false): Promise<string | null> {
   if (!configured || !isAbsolute(configured)) return null;
   const root = resolve(configured);

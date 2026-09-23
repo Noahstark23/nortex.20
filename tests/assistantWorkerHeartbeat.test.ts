@@ -1,8 +1,8 @@
 import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
-import { readAssistantWorkerHeartbeat, recordAssistantWorkerHeartbeat } from '../backend/services/assistant/operations/workerHeartbeat';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readAssistantWorkerHeartbeat, recordAssistantWorkerHeartbeat, withAssistantWorkerHeartbeat } from '../backend/services/assistant/operations/workerHeartbeat';
 
 const roots: string[] = [];
 const sha = 'a'.repeat(40);
@@ -32,5 +32,22 @@ describe('latido privado del worker', () => {
     const path=resolve(process.cwd(),'..latido-privado');
     expect(await recordAssistantWorkerHeartbeat('idle',{root:path,sha})).toBe(false);
     await expect(stat(path)).rejects.toMatchObject({code:'ENOENT'});
+  });
+  it('mantiene un latido durante una tarea larga y lo detiene al terminar', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: (value: number) => void;
+      const beats: number[] = [];
+      const task = withAssistantWorkerHeartbeat(
+        () => new Promise<number>(resolve => { finish = resolve; }),
+        async () => { beats.push(Date.now()); },
+      );
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(beats).toHaveLength(4);
+      finish(7);
+      await expect(task).resolves.toBe(7);
+      await vi.advanceTimersByTimeAsync(90_000);
+      expect(beats).toHaveLength(4);
+    } finally { vi.useRealTimers(); }
   });
 });

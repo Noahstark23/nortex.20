@@ -122,6 +122,12 @@ async function main() {
   assert.equal(await prisma.assistantUsage.count({ where: { tenantId: tenant.id } }), 0);
   assert.deepEqual(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, true),
     { changed: false, enabled: true, budgetUsd: '2' });
+  await prisma.assistantTenantConfig.update({ where: { tenantId: tenant.id },
+    data: { monthlyBudgetUsd: '10' } });
+  assert.match(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false),
+    /PILOT_ALREADY_ENABLED_DIFFERENTLY/);
+  await prisma.assistantTenantConfig.update({ where: { tenantId: tenant.id },
+    data: { monthlyBudgetUsd: '2' } });
   const enableAudits = await prisma.auditLog.findMany({ where: {
     tenantId: tenant.id, action: 'ASSISTANT_PILOT_ENABLED',
   }, take: 10 });

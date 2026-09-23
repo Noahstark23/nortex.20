@@ -6,7 +6,7 @@ import { cleanupAssistantOperations } from '../services/assistant/operations/ret
 import { runPendingAssistantRunOnce } from '../services/assistant/operations/runService.js';
 import { getAssistantFlags } from '../services/assistant/config.js';
 import { runAssistantWorkerCycle } from '../services/assistant/operations/workerCycle.js';
-import { recordAssistantWorkerHeartbeat } from '../services/assistant/operations/workerHeartbeat.js';
+import { recordAssistantWorkerHeartbeat, withAssistantWorkerHeartbeat } from '../services/assistant/operations/workerHeartbeat.js';
 
 let stopping=false;
 process.once('SIGTERM',()=>{stopping=true;});
@@ -17,12 +17,13 @@ async function main() {
   while(!stopping) {
     try {
       const flags=getAssistantFlags();
-      const cycle=await runAssistantWorkerCycle({
+      const cycle=await withAssistantWorkerHeartbeat(()=>runAssistantWorkerCycle({
         enabled:flags.enabled,extractionEnabled:flags.extractionEnabled,operationsEnabled:flags.operationsEnabled,
         nowMs:Date.now(),nextCleanupAt:nextCleanup,
         cleanup:async()=>{await cleanupExpiredAttachments();await cleanupAssistantWorkItems();await cleanupAssistantHistory();await cleanupAssistantOperations();},
         extract:()=>runAssistantWorkerOnce(),operate:()=>runPendingAssistantRunOnce(),
-      });
+      }),()=>recordAssistantWorkerHeartbeat(flags.enabled?'working':'disabled'),
+      {onError:()=>console.error('NortexGPT: no pudo actualizar el latido del worker.')});
       nextCleanup=cycle.nextCleanupAt;
       if(Date.now()>=nextHeartbeat) {
         await recordAssistantWorkerHeartbeat(!flags.enabled?'disabled':cycle.worked?'working':'idle');

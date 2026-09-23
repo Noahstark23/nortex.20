@@ -112,7 +112,8 @@ async function change() {
     const before = await tx.assistantTenantConfig.findUnique({ where: { tenantId: targetTenantId! } });
     if (mode === 'enable') {
       if (before && guardedFlags.some(flag => before[flag])) throw new Error('PILOT_EXISTING_CAPABILITIES');
-      if (before?.enabled && new Decimal(effectiveAssistantBudget(before)).eq(2))
+      if (before?.enabled && new Decimal(before.monthlyBudgetUsd).eq(2)
+        && new Decimal(before.approvedMonthlyBudgetUsd).eq(2))
         return { changed: false, enabled: true, budgetUsd: '2' };
       if (before?.enabled) throw new Error('PILOT_ALREADY_ENABLED_DIFFERENTLY');
       await tx.assistantTenantConfig.upsert({ where: { tenantId: targetTenantId! },
