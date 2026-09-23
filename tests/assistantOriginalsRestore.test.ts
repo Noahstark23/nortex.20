@@ -3,7 +3,8 @@ import { chmod, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { disposableRestoreUrl, verifyRestoredAssistantOriginals, type RestoredOriginal } from '../scripts/qa/verify-assistant-originals-restore.js';
+import { checkCommittedProposalReferences, disposableRestoreUrl, verifyRestoredAssistantOriginals,
+  type RestoredOriginal } from '../scripts/qa/verify-assistant-originals-restore.js';
 
 describe('restauración de originales permanentes del asistente', () => {
   let root: string;
@@ -53,5 +54,16 @@ describe('restauración de originales permanentes del asistente', () => {
     expect(disposableRestoreUrl('mysql://qa:qa@127.0.0.1:3306/nortex_restore_test')).toContain('nortex_restore_test');
     expect(() => disposableRestoreUrl('mysql://qa:qa@127.0.0.1:3306/nortex_db')).toThrow('ASSISTANT_RESTORE_DATABASE_UNSAFE');
     expect(() => disposableRestoreUrl('postgres://qa:qa@127.0.0.1:5432/nortex_restore_test')).toThrow('ASSISTANT_RESTORE_DATABASE_UNSAFE');
+  });
+
+  it('reconcilia cada referencia de propuesta confirmada con compra, tenant y usuario', () => {
+    const proposal = { tenantId: 'qa-ferreteria', userId: 'owner', attachmentIds: ['adjunto-1'], result: { purchaseId: 'compra-1' } };
+    const good = new Map([['adjunto-1', { tenantId: 'qa-ferreteria', userId: 'owner', purchaseId: 'compra-1', status: 'ATTACHED' }]]);
+    expect(checkCommittedProposalReferences(proposal, good)).toEqual({ checked: 1, broken: 0 });
+    expect(checkCommittedProposalReferences(proposal, new Map())).toEqual({ checked: 1, broken: 1 });
+    expect(checkCommittedProposalReferences(proposal, new Map([['adjunto-1', { ...good.get('adjunto-1')!, tenantId: 'otro' }]])))
+      .toEqual({ checked: 1, broken: 1 });
+    expect(checkCommittedProposalReferences({ ...proposal, attachmentIds: ['adjunto-1', 'adjunto-1'] }, good))
+      .toEqual({ checked: 2, broken: 1 });
   });
 });

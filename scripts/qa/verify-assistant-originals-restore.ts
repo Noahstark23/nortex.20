@@ -24,6 +24,8 @@ export interface OriginalsRestoreResult {
   invalidMetadata: number;
   invalidPurchase: number;
   duplicateKeys: number;
+  proposalReferencesChecked: number;
+  brokenProposalReferences: number;
 }
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -49,6 +51,7 @@ export async function verifyRestoredAssistantOriginals(
   const result: OriginalsRestoreResult = {
     status: 'empty', checked: 0, missing: 0, altered: 0, unsafePermissions: 0,
     invalidMetadata: 0, invalidPurchase: 0, duplicateKeys: 0,
+    proposalReferencesChecked: 0, brokenProposalReferences: 0,
   };
   const keys = new Set<string>();
   for await (const row of rows) {
@@ -89,6 +92,67 @@ export async function verifyRestoredAssistantOriginals(
   return result;
 }
 
+interface CommittedProposal {
+  tenantId: string;
+  userId: string;
+  attachmentIds: unknown;
+  result: unknown;
+}
+interface LinkedAttachment { tenantId: string; userId: string; purchaseId: string | null; status: string }
+
+export function checkCommittedProposalReferences(
+  proposal: CommittedProposal, attachments: ReadonlyMap<string, LinkedAttachment>,
+): { checked: number; broken: number } {
+  if (!Array.isArray(proposal.attachmentIds)) return { checked: 0, broken: 1 };
+  const ids = proposal.attachmentIds;
+  if (!ids.every((id): id is string => typeof id === 'string' && id.length > 0))
+    return { checked: ids.length, broken: Math.max(ids.length, 1) };
+  if (!ids.length) return { checked: 0, broken: 0 };
+  const result = proposal.result;
+  const purchaseId = result && typeof result === 'object' && !Array.isArray(result)
+    && 'purchaseId' in result && typeof result.purchaseId === 'string' ? result.purchaseId : null;
+  let broken = 0;
+  const within = new Set<string>();
+  for (const id of ids) {
+    const row = attachments.get(id);
+    if (within.has(id) || !purchaseId || !row || row.tenantId !== proposal.tenantId
+      || row.userId !== proposal.userId || row.purchaseId !== purchaseId || row.status !== 'ATTACHED') broken++;
+    within.add(id);
+  }
+  return { checked: ids.length, broken };
+}
+
+async function verifyCommittedProposalReferences(db: PrismaClient): Promise<{ checked: number; broken: number }> {
+  let cursor: string | undefined, checked = 0, broken = 0;
+  const seen = new Set<string>();
+  for (;;) {
+    const proposals = await db.assistantProposal.findMany({
+      where: { status: 'COMMITTED' }, orderBy: { id: 'asc' }, take: 100,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+      select: { id: true, tenantId: true, userId: true, attachmentIds: true, result: true },
+    });
+    if (!proposals.length) return { checked, broken };
+    const ids = proposals.flatMap(row => Array.isArray(row.attachmentIds)
+      ? row.attachmentIds.filter((id): id is string => typeof id === 'string') : []);
+    const rows = ids.length ? await db.assistantAttachment.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, tenantId: true, userId: true, purchaseId: true, status: true },
+    }) : [];
+    const attachments = new Map(rows.map(row => [row.id, row]));
+    for (const proposal of proposals) {
+      const result = checkCommittedProposalReferences(proposal, attachments);
+      checked += result.checked;
+      broken += result.broken;
+      if (Array.isArray(proposal.attachmentIds)) for (const id of proposal.attachmentIds) {
+        if (typeof id !== 'string') continue;
+        if (seen.has(id)) broken++;
+        seen.add(id);
+      }
+    }
+    cursor = proposals.at(-1)?.id;
+  }
+}
+
 export function disposableRestoreUrl(input: string | undefined): string {
   if (!input) throw new Error('ASSISTANT_RESTORE_DATABASE_REQUIRED');
   const url = new URL(input);
@@ -102,7 +166,8 @@ async function* restoredRows(db: PrismaClient): AsyncGenerator<RestoredOriginal>
   let cursor: string | undefined;
   for (;;) {
     const rows = await db.assistantAttachment.findMany({
-      where: { purchaseId: { not: null } }, orderBy: { id: 'asc' }, take: 100,
+      where: { OR: [{ purchaseId: { not: null } }, { status: 'ATTACHED' }] },
+      orderBy: { id: 'asc' }, take: 100,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
       select: { id: true, tenantId: true, purchaseId: true, storageKey: true, sha256: true,
         bytes: true, status: true, expiresAt: true },
@@ -129,6 +194,10 @@ async function main() {
   const db = new PrismaClient({ datasources: { db: { url } } });
   try {
     const result = await verifyRestoredAssistantOriginals(restoredRows(db), root);
+    const proposals = await verifyCommittedProposalReferences(db);
+    result.proposalReferencesChecked = proposals.checked;
+    result.brokenProposalReferences = proposals.broken;
+    if (proposals.broken) result.status = 'failed';
     console.log(JSON.stringify(result));
     if (result.status !== 'ok') process.exitCode = 2;
   } finally { await db.$disconnect(); }
