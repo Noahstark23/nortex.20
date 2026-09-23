@@ -13,6 +13,7 @@ import { Prisma } from '@prisma/client';
 import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
 import prisma from '../lib/prisma';
 import { settledPaymentAccount } from '../lib/paymentAccounts';
+import { buildInitialInventoryJournalLines } from './initialInventoryJournal';
 import {
     FISCAL_REGIME_GENERAL,
     resolveSaleFiscalAmounts,
@@ -69,6 +70,9 @@ const CHART_OF_ACCOUNTS = [
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
     { code: '3.1.3', name: 'Utilidad del Ejercicio', type: 'EQUITY', subtype: null },
+    // Existencias declaradas al comenzar a usar Nortex: su origen (aporte,
+    // compra previa o deuda) todavía requiere conciliación humana.
+    { code: '3.1.4', name: 'Inventario inicial por conciliar', type: 'EQUITY', subtype: null },
     // INGRESOS (4.x.x)
     { code: '4.1.1', name: 'Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.2', name: 'Devoluciones sobre Ventas', type: 'REVENUE', subtype: null },
@@ -414,6 +418,27 @@ export async function recordSale(
         journal.lines,
         journal.entryOptions,
     );
+}
+
+/**
+ * El alta con existencias crea un activo antes de la primera venta. Su origen
+ * financiero no se infiere: queda en una cuenta de apertura identificable para
+ * conciliación posterior, sin fingir que fue un aporte de capital confirmado.
+ * El caller ejecuta esto en la misma transacción que Product, stock y Kardex.
+ */
+export async function recordInitialInventory(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    referenceId: string,
+    quantity: Decimal.Value,
+    unitCost: Decimal.Value,
+    referenceType = 'INITIAL_INVENTORY',
+): Promise<void> {
+    const lines = buildInitialInventoryJournalLines(quantity, unitCost);
+    if (lines.length === 0) return;
+    await createJournalEntry(tx, tenantId, `Inventario inicial #${referenceId.slice(0, 8)}`,
+        referenceId, referenceType, userId, lines);
 }
 
 export type CustomerPaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'QR';

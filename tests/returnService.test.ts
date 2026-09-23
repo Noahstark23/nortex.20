@@ -397,14 +397,21 @@ describe('opciones permitidas de reembolso', () => {
     });
 
     it.each(['CASH', 'CARD', 'QR', 'TRANSFER'] as const)(
-        'una venta no crédito %s no necesita opciones explícitas',
+        'una venta no crédito %s ofrece solo su canal original',
         (salePaymentMethod) => {
             expect(allowedReturnRefundMethods({
                 salePaymentMethod,
                 payments: [{ method: salePaymentMethod }],
-            })).toEqual([]);
+            })).toEqual([salePaymentMethod]);
         },
     );
+
+    it('una venta legacy con método desconocido exige conciliación en vez de inventar un canal', () => {
+        expect(allowedReturnRefundMethods({
+            salePaymentMethod: 'CRYPTO',
+            payments: [],
+        })).toEqual([]);
+    });
 });
 
 describe('historial y límites de devolución', () => {

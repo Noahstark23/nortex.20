@@ -129,7 +129,9 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         // El hook captura el timeout y resuelve el callback, conservando operation=null.
         props.onConfirm.mockImplementationOnce(() => new Promise<void>(resolve => { finishAttempt = resolve; }));
         const { rerender } = render(<AssistantInvoiceReview {...props} />);
+        await waitFor(() => expect(reviewCheckbox()).toBeEnabled());
         await user.click(reviewCheckbox());
+        await waitFor(() => expect(screen.getByRole('button', { name: /Confirmar y registrar compra/ })).toBeEnabled());
         await user.click(screen.getByRole('button', { name: /Confirmar y registrar compra/ }));
         expect(props.onConfirm.mock.calls).toEqual([[confirmationKey]]);
         rerender(<AssistantInvoiceReview {...props} busy />);
@@ -178,7 +180,9 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         vi.mocked(crypto.randomUUID).mockReturnValueOnce(confirmationKey)
             .mockReturnValue('ef79c872-4f89-49ee-a834-7f672eae9801');
         const { rerender } = render(<PersistentReview {...props} visible />);
+        await waitFor(() => expect(reviewCheckbox()).toBeEnabled());
         await user.click(reviewCheckbox());
+        await waitFor(() => expect(screen.getByRole('button', { name: /Confirmar y registrar compra/ })).toBeEnabled());
         await user.click(screen.getByRole('button', { name: /Confirmar y registrar compra/ }));
         expect(props.onConfirm.mock.calls).toEqual([[confirmationKey]]);
         rerender(<PersistentReview {...props} visible={false} />);
@@ -248,7 +252,7 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         detail = 'SKU ALC-70 · Unidad frasco · Empaque caja de 12';
         await user.type(screen.getByRole('searchbox', { name: 'Buscar producto del catálogo 1' }), 'Alcohol');
         await waitFor(() => expect(screen.getByText(/No se pudo verificar la selección guardada/)).toBeVisible());
-        expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument();
+        await waitFor(() => expect(screen.queryByRole('button', { name: /Confirmar y registrar compra/ })).not.toBeInTheDocument());
         expect(screen.queryByRole('region', { name: 'Efectos de la compra' })).not.toBeInTheDocument();
         await user.click(screen.getByRole('button', { name: 'Volver a verificar selección' }));
         await waitFor(() => expect(saveButton()).toBeEnabled());
@@ -389,7 +393,9 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         expect(within(effects).getByText('shift-A')).toBeInTheDocument();
         const confirm = screen.getByRole('button', { name: 'Confirmar y registrar compra por C$ 115.00' });
         expect(confirm).toBeDisabled();
+        await waitFor(() => expect(reviewCheckbox()).toBeEnabled());
         await user.click(reviewCheckbox());
+        await waitFor(() => expect(confirm).toBeEnabled());
         await user.click(confirm);
         expect(props.onConfirm.mock.calls).toEqual([[confirmationKey]]);
     });
@@ -523,7 +529,9 @@ describe('revisión y confirmación de facturas de NortexGPT', () => {
         expect(review).not.toBeChecked();
         expect(confirm).toBeDisabled();
         expect(screen.queryByRole('checkbox', { name: /Revisé el documento/ })).not.toBeInTheDocument();
+        await waitFor(() => expect(review).toBeEnabled());
         await user.click(review);
+        await waitFor(() => expect(confirm).toBeEnabled());
         await user.click(confirm);
         expect(props.onConfirm.mock.calls).toEqual([[confirmationKey]]);
         expect(vi.mocked(props.request).mock.calls.every(([path]) => path.startsWith('/catalog?'))).toBe(true);

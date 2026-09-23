@@ -1689,7 +1689,7 @@ export default function Purchases({ embedded = false, entryContext, onClose, onC
                                 disabled={matchesLoading}
                                 className="nx-fluid-press inline-flex min-h-11 items-center justify-center gap-2 rounded-control border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 disabled:opacity-60"
                             >
-                                <RotateCcw size={15} className={matchesLoading ? 'animate-spin' : ''} /> Actualizar
+                                <RotateCcw size={15} className={matchesLoading ? 'animate-spin' : ''} /> Actualizá
                             </button>
                         </div>
 

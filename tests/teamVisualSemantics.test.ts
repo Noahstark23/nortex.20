@@ -35,7 +35,7 @@ describe('semántica visual de Mi Equipo', () => {
 
     it('protege controles tocados con presión fluida y objetivos de 44 px', () => {
         for (const marker of [
-            'Invitar Miembro',
+            'Invitá miembro',
             'Copiar Link',
             'Crear Invitación',
             'Guardar catálogo',

@@ -236,7 +236,7 @@ const OnboardingHub: React.FC = () => {
                 </ul>
                 <div className="px-3 pb-3 flex items-center justify-between">
                   <button onClick={() => void fetchStatus(true)} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
-                    Actualizar
+                    Actualizá
                   </button>
                   <button onClick={dismissChecklist} className="text-xs text-slate-400 hover:text-slate-300 font-medium px-2 py-1">
                     No mostrar más

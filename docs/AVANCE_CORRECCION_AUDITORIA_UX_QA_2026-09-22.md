@@ -1,0 +1,33 @@
+# Avance de corrección — auditoría UX + QA 2026-09-22
+
+**Candidato local:** worktree aislado `uxqa-audit-20260922`, base `096e25118f8a90855632ab12616c52e33263ce2f`. El checkout original y la cuenta demo no se modificaron. Este documento describe pruebas locales con datos sintéticos; no acredita CI del SHA, staging ni producción.
+
+| Hallazgo | Estado local | Evidencia y límite |
+| --- | --- | --- |
+| #11 Inventario contable negativo | Reparación de alta futura demostrada; historia por conciliar | La creación de producto, la importación y el catálogo inicial registran existencia, Kardex y asiento de apertura atómicos. Pruebas de venta posterior y apertura de 1.1.4 por HTTP/MySQL; `buildInitialInventoryJournalLines` tiene pruebas de partida doble y Decimal. La cuenta 3.1.4 identifica origen por conciliar; no se modificó ningún saldo histórico ni se determinó el primer asiento negativo de la cuenta demo. |
+| #12 Fondo C$ 200 | Contrato actual demostrado; observación histórica sin causa | Abrir turno con fondo persiste `initialCash`, auditoría y lectura en caja/monitor en la misma prueba de integración. No hay solicitud, respuesta ni `shiftId` de la observación en producción para concluir por qué se vieron cero córdobas. |
+| #3 y U-03 Cobranza | Reparación local demostrada | La respuesta transaccional del abono y su reintento entregan por separado saldo de factura y deuda total del cliente. Modal y comprobante los etiquetan. Prueba con dos facturas y reintento. |
+| #2 Devolución | Reparación local demostrada | Un pago contado ofrece su canal original como elegible; los flujos de crédito y sus montos mantienen las restricciones. Pruebas de servicio e integración. La aprobación y el reembolso real no se ejecutaron en producción. |
+| U-01 Efectivo | Reparación local con pruebas de interfaz | Monto exacto precargado y botón válido; los tests cubren monto insuficiente y Enter, además de los casos existentes del POS. Falta recorrido visual en dispositivos. |
+| U-02 Catálogo | Reparación local con pruebas de interfaz | El lector se nombra «Escanear código» y la tarjeta de escritorio muestra `+` dentro de su único botón. El `+` no crea una segunda acción. Falta captura visual de 1280 px y móvil. |
+| #1 Fechas | Reparación local en las vistas auditadas; QA visual pendiente | Ventas, Aprobaciones, Caja y Reportes formatean instantes en `America/Managua` mediante util común y prueba de cruce de medianoche. No se cambió la fecha civil de filtros ni el backend. Falta cotejo visual entre navegadores en distintas zonas. |
+| #5 Precio y SKU | Reparación local con pruebas de interfaz | Precio no positivo y SKU ya registrado se muestran inline antes de POST. El backend conserva validación autoritativa. Falta QA visual manual. |
+| #14 y U-04 Compra y ejemplos | Presente en este checkout; producción por verificar | Recepción ya etiqueta «Bodega de destino» y el alta rápida usa placeholders, no valores iniciales. No se atribuye este estado a la versión auditada. |
+| U-05 Comprobante | Reparación local con HTTP/MySQL | Ventas ofrece «Ver comprobante» y «Corregir venta» como acciones distintas. La copia muestra total, artículos y datos fiscales guardados; marca anulaciones y omite RUC interno de demo. Lectura autenticada por tenant y sin segunda venta ni cambios de dinero/stock probada en MySQL. Falta cotejo visual de impresión A4 en navegador e impresora. |
+| U-06 Utilidad por período | Reparación local con pruebas; QA visual pendiente | Mi Plata ofrece Hoy / Semana / Mes. Semana y Mes usan los mismos endpoints de ventas y gastos que Reportes y muestran utilidad bruta separada del resultado después de gastos; un fallo no se presenta como cero. El rango se deriva del día civil de Managua y los endpoints comparten inicio/fin exclusivo. La nueva compuerta MySQL aprobó. Falta cotejo visual de cifras con Reportes. |
+| U-07 Encontrar funciones | Reparación local con pruebas de rutas | El buscador de funciones usa `buildNavigation` para mostrar solo destinos permitidos, también los de «Más opciones»; prueba sinónimos fiado, ganancia y bodega, acentos y rol cajero. Falta recorrido visual y de teclado en desktop/móvil. |
+| U-09 Foco | CSS local; QA visual pendiente | `:focus-visible` aplica contorno de 2 px en controles. Falta medir contraste y probar foco real en ambos temas, hojas y dispositivos. |
+| #4, U-10 y L1–L26 | Barrido local parcial | Se tradujeron estados/roles visibles y acciones detectadas en POS, Reportes, Caja, RRHH, Equipo y otras vistas. L26 no apareció en este candidato. La búsqueda estática no equivale a recorrido visual completo de las 26 capturas. |
+
+## Compuertas ejecutadas
+
+- `npm run test:integration:required`: **387 casos aprobados** en MySQL 8 local descartable `nortex_qa`, con `NORTEX_QA_DATABASE_ACK=disposable-database`. La suite POS incluye lectura del comprobante, acceso cruzado 404 y ausencia de efectos; la suite fiscal comprueba el período civil de ventas y gastos.
+- `npm test`: **5,266 aprobados; 373 omitidos** por la configuración de la suite general (las pruebas HTTP nuevas se ejecutaron en la compuerta obligatoria). Los tests de revisión de facturas se sincronizaron con la verificación asíncrona de catálogo que ya existe en el producto.
+- Prisma generate, `tsc --noEmit`, sistema de diseño, build y `git diff --check`: aprobados en el candidato.
+- `npm run test:mutation`: **99.88 %** frente al mínimo **99.85 %** en la primera versión del candidato; alcance de 5,218 mutantes en 56 módulos. El cálculo de inventario inicial obtuvo 18/18 y la huella de cierre de caja 8/8. La repetición posterior sobre el candidato ampliado se interrumpió por tiempo estimado de horas para mutantes estáticos; los módulos monetarios incluidos en ese alcance no cambiaron después de la corrida aprobada. El rango de Reportes nuevo se verificó con Vitest e integración MySQL, no con mutación.
+
+## Siguiente trabajo y bloqueos
+
+1. Conciliar historia contable de la cuenta demo mediante copia segura y eventos originales; la reparación local no reconstruye automáticamente asientos anteriores.
+2. Obtener trazas originales de la apertura de C$ 200 para identificar `shiftId`, solicitud, respuesta y transición. No inferir pérdida de fondo a partir de la pantalla.
+3. Completar archivo de clientes/productos con política de relaciones activas y recorrido visual/accesible de utilidad por período, comprobante, buscador, foco y glosario. El alta operativa sin correo requiere contrato de identidad y seguridad antes de codificarse.

@@ -165,7 +165,7 @@ describe('Cobranza Customer 360', () => {
                 paymentBodies.push(JSON.parse(String(init.body)));
                 return paymentBodies.length === 1
                     ? jsonResponse({ error: 'El servidor no confirmó el abono.' }, 503)
-                    : jsonResponse({ id: 'payment-new' }, 201);
+                    : jsonResponse({ id: 'payment-new', balance: 1099.5, customerDebt: 1099.5 }, 201);
             }
             throw new Error(`URL no esperada: ${url}`);
         });
@@ -203,6 +203,41 @@ describe('Cobranza Customer 360', () => {
         expect(screen.getByRole('button', { name: /Imprimir recibo/i })).toBeTruthy();
         fireEvent.click(screen.getByRole('button', { name: 'Ahora no' }));
         expect(screen.queryByRole('dialog', { name: /Abono registrado/i })).toBeNull();
+    });
+
+    it('distingue saldo de factura y deuda total en confirmación y recibo', async () => {
+        const multiStatement = {
+            ...statementPayload,
+            customer: { ...statementPayload.customer, currentDebt: 46 },
+            invoices: [
+                { ...statementPayload.invoices[0], total: 6, paid: 0, balance: 6 },
+                { ...statementPayload.invoices[0], id: 'sale-2', invoiceNumber: 'F-101', total: 40, paid: 0, balance: 40, payments: [] },
+            ],
+            totals: { billed: 46, paid: 0, balance: 46, overdue: 46 },
+        };
+        let printed = '';
+        vi.spyOn(window, 'open').mockReturnValue({ document: {
+            write: vi.fn((html: string) => { printed = html; }), close: vi.fn(),
+        } } as unknown as Window);
+        mockedAuthFetch.mockImplementation(async (url: string, init?: RequestInit) => {
+            if (url === '/api/collections/worklist?dueSoonDays=7') return jsonResponse(worklistPayload);
+            if (url === '/api/customers/customer-1/statement') return jsonResponse(multiStatement);
+            if (url === '/api/credits/payment' && init?.method === 'POST') return jsonResponse({ balance: 3, customerDebt: 43 });
+            throw new Error(`URL no esperada: ${url}`);
+        });
+        renderModule();
+        fireEvent.click(await screen.findByRole('button', { name: 'Abrir estado de cuenta de Pulpería San José' }));
+        fireEvent.click(await screen.findByRole('button', { name: 'Abonar factura F-100' }));
+        expect(screen.getByText(/saldo de esta factura/i)).toBeTruthy();
+        fireEvent.change(screen.getByLabelText('Monto a cobrar (C$)'), { target: { value: '3.00' } });
+        fireEvent.click(screen.getByRole('button', { name: /Confirmar abono/i }));
+        const dialog = await screen.findByRole('dialog', { name: /Abono registrado/i });
+        expect(dialog.textContent).toContain('Saldo de esta factura: C$ 3.00');
+        expect(dialog.textContent).toContain('Deuda total de Pulpería San José: C$ 43.00');
+        fireEvent.click(screen.getByRole('button', { name: /Imprimir recibo/i }));
+        expect(printed).toContain('Saldo de esta factura');
+        expect(printed).toContain('Deuda total del cliente');
+        expect(printed).toContain('C$ 43.00');
     });
 
     it('valida la justificación dentro del modal antes de castigar una cuenta', async () => {
@@ -284,7 +319,7 @@ describe('Cobranza Customer 360', () => {
         mockedAuthFetch.mockImplementation(async (url: string, init?: RequestInit) => {
             if (url === '/api/collections/worklist?dueSoonDays=7') return jsonResponse(worklistPayload);
             if (url === '/api/customers/customer-1/statement') return jsonResponse(statementPayload);
-            if (url === '/api/credits/payment' && init?.method === 'POST') return jsonResponse({ id: 'payment-new' }, 201);
+            if (url === '/api/credits/payment' && init?.method === 'POST') return jsonResponse({ id: 'payment-new', balance: 1175, customerDebt: 1175 }, 201);
             throw new Error(`URL no esperada: ${url}`);
         });
 
@@ -349,7 +384,7 @@ describe('Cobranza Customer 360', () => {
                 statementCalls += 1;
                 return jsonResponse(statementCalls === 1 ? statementPayload : settledStatement);
             }
-            if (url === '/api/credits/payment' && init?.method === 'POST') return jsonResponse({ id: 'payment-final' }, 201);
+            if (url === '/api/credits/payment' && init?.method === 'POST') return jsonResponse({ id: 'payment-final', balance: 0, customerDebt: 0 }, 201);
             throw new Error(`URL no esperada: ${url}`);
         });
 

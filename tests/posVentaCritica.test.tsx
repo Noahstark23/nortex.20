@@ -179,7 +179,7 @@ describe('POS · escanear y armar la venta', () => {
         vi.stubGlobal('fetch', vi.fn((url: any, init?: any) => String(url) === '/api/scale-labels/preview'
             ? new Promise(resolve => { release = resolve; }) : originalFetch(url, init)));
         montarPOS(); await buscador(); await asentar(80);
-        fireEvent.click(screen.getByRole('button', { name: 'Escanear con cámara' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Escanear código' }));
         fireEvent.change(screen.getByRole('textbox', { name: 'Código de barras manual' }), { target: { value: PRODUCTO.sku } });
         fireEvent.click(screen.getByRole('button', { name: 'Usar código' }));
         await waitFor(() => expect(release).toBeTypeOf('function'));
@@ -189,7 +189,7 @@ describe('POS · escanear y armar la venta', () => {
     });
     it('cámara usa el lector del POS una vez y bloquea el lector de atrás mientras está abierta', async () => {
         montarPOS(); await buscador(); await asentar(80);
-        fireEvent.click(screen.getByRole('button', { name: 'Escanear con cámara' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Escanear código' }));
         for (const key of PRODUCTO.sku) fireEvent.keyDown(window, { key });
         fireEvent.keyDown(window, { key: 'Enter' });
         expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
@@ -338,6 +338,7 @@ describe('POS · efectivo clásico seguro', () => {
 
         const dialog = await screen.findByRole('dialog', { name: 'Efectivo' });
         const amountInput = within(dialog).getByRole('textbox', { name: 'Efectivo recibido en córdobas' });
+        await user.clear(amountInput);
         await user.type(amountInput, '10{Enter}');
         await asentar(100);
 

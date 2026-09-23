@@ -6,6 +6,7 @@ import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Sear
 import { formatMoney, formatUSD } from '../utils/money';
 import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
+import { roleLabelEs } from '../utils/roleLabels';
 import { maybeAutostartTour } from '../utils/tours';
 import { trackEvent } from '../utils/analytics';
 import { useUiMode } from '../hooks/useUiMode';
@@ -5476,17 +5477,16 @@ const POS: React.FC = () => {
                             </div>
                             <div className="flex-1 min-w-0">
                                 <p className="text-sm font-bold text-emerald-300 truncate">{currentShift.employee.firstName} {currentShift.employee.lastName}</p>
-                                <p className="text-[10px] text-emerald-400 uppercase">{currentShift.employee.role} - Vendedor asignado</p>
+                                <p className="text-[10px] text-emerald-400 uppercase">{roleLabelEs(currentShift.employee.role)} · Vendedor asignado</p>
                             </div>
                         </div>
                     </div>
                 )}
-
-                {/* 👑 SMART CUSTOMER SEARCH - GOD-TIER SELECTOR */}
+                {/* Búsqueda de cliente para la venta actual. */}
                 {guidedSimpleMode && !showCustomerPicker && !selectedCustomer ? null : (
                 <div className="px-4 pt-4 relative">
                     <label className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                        <User size={12} /> {guidedSimpleMode ? 'CLIENTE' : 'CLIENTE PARA SCORING'}
+                        <User size={12} /> {guidedSimpleMode ? 'CLIENTE' : 'CLIENTE DE ESTA VENTA'}
                     </label>
                     <div className="relative">
                         <div className="absolute left-4 top-1/2 -translate-y-1/2 w-9 h-9 bg-indigo-500/15 rounded-full flex items-center justify-center">

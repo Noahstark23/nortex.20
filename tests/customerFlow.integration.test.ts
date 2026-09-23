@@ -401,6 +401,15 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         expect(sale.body.status).toBe('CREDIT_PENDING');
         const saleId = sale.body.id;
 
+        const otherSale = await post('/api/sales', {
+            items: [{ id: product.body.id, quantity: 1 }],
+            paymentMethod: 'CREDIT',
+            customerId: creditCustomerId,
+            offlineId: crypto.randomUUID(),
+        }, owner.token);
+        expectStatus(otherSale, 200);
+        expect(Number(otherSale.body.balance)).toBe(100);
+
         for (const endpoint of ['/api/credits/payment', '/api/payments']) {
             const paymentWithoutIdempotencyKey = await post(endpoint, {
                 saleId,
@@ -431,6 +440,7 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         expectStatus(firstPayment, 200);
         expect(firstPayment.body.idempotentReplay).toBe(false);
         expect(firstPayment.body.balance).toBe(74.5);
+        expect(firstPayment.body.customerDebt).toBe(174.5);
         expect(firstPayment.body.payments).toHaveLength(1);
         expect(firstPayment.body.payments[0].method).toBe('TRANSFER');
 
@@ -439,6 +449,7 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         expect(aliasReplay.body.idempotentReplay).toBe(true);
         expect(aliasReplay.body.paymentId).toBe(firstPayment.body.paymentId);
         expect(aliasReplay.body.balance).toBe(74.5);
+        expect(aliasReplay.body.customerDebt).toBe(174.5);
         expect(aliasReplay.body.payments).toHaveLength(1);
 
         const conflictingReplay = await post('/api/payments', {
@@ -460,9 +471,10 @@ qaDescribe('QA integración: clientes, cartera y cobranza', () => {
         const statement = await get(`/api/customers/${creditCustomerId}/statement`, seller.token);
         expectStatus(statement, 200);
         expect(statement.body.totals.paid).toBe(25.5);
-        expect(statement.body.totals.balance).toBe(74.5);
-        expect(statement.body.invoices).toHaveLength(1);
-        expect(statement.body.invoices[0].payments).toHaveLength(1);
-        expect(statement.body.invoices[0].payments[0].method).toBe('TRANSFER');
+        expect(statement.body.totals.balance).toBe(174.5);
+        expect(statement.body.invoices).toHaveLength(2);
+        const paidInvoice = statement.body.invoices.find((invoice: { id: string }) => invoice.id === saleId);
+        expect(paidInvoice.payments).toHaveLength(1);
+        expect(paidInvoice.payments[0].method).toBe('TRANSFER');
     }, 120_000);
 });

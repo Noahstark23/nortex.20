@@ -82,7 +82,7 @@ describe('avisos operativos accionables', () => {
         mount(); await open();
         expect(await screen.findByText(/No pudimos comprobar los pendientes del negocio/)).toBeVisible();
         fetcher.mockImplementation(async () => ok(response([])));
-        fireEvent.click(screen.getByRole('button', { name: 'Actualizar avisos' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Actualizá avisos' }));
         expect(await screen.findByText(/Sin pendientes detectados/)).toBeVisible();
     });
 

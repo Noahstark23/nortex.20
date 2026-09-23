@@ -213,6 +213,8 @@ const PISO_MUTANTES = {
     // en 5.1.3, incluidos bordes CUOTA_FIJA.
     // 2026-09-04: rangos realineados y clasificación de cobros; medidos 189/189.
     'backend/services/accounting.ts': 189,
+    // Existencias iniciales: validación Decimal, activo y contrapartida por conciliar.
+    'backend/services/initialInventoryJournal.ts': 18,
     'backend/lib/paymentAccounts.ts': 11,
     // NortexGPT: costo estricto de entrada/salida y rechazo de consumo inválido.
     'backend/services/assistant/budget.ts': 15,

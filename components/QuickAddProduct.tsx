@@ -5,6 +5,8 @@ import { formatMoney } from '../utils/money';
 import { trackEvent } from '../utils/analytics';
 import { productFamilyPreset, type ProductFamily } from '../utils/productFamilyPresets';
 import { buildCreateProductPayload, productValidationMessage } from '../utils/productForm';
+import { normalizeProductMoneyInput } from '../utils/productForm';
+import Decimal from 'decimal.js';
 
 interface Product {
     id: string;
@@ -54,12 +56,15 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [showSuccess, setShowSuccess] = useState(false);
     const [error, setError] = useState('');
+    const [skuCheck, setSkuCheck] = useState<{ sku: string; duplicate: boolean } | null>(null);
 
     // Refs
     const skuInputRef = useRef<HTMLInputElement>(null);
     const nameInputRef = useRef<HTMLInputElement>(null);
     const formRef = useRef<HTMLFormElement>(null);
     const submittingRef = useRef(false);
+    const currentSku = useRef(formData.sku);
+    currentSku.current = formData.sku;
     const requestClose = () => { if (!submittingRef.current) onClose(); };
 
     // Auto-focus SKU on mount
@@ -102,19 +107,53 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
     };
 
     // Handle form submission
+    const priceError = (() => {
+        if (!formData.price.trim()) return '';
+        try {
+            return new Decimal(normalizeProductMoneyInput(formData.price)).gt(0)
+                ? '' : 'El precio de venta debe ser mayor que cero.';
+        } catch {
+            return 'Ingresá un precio de venta válido.';
+        }
+    })();
+    const checkSku = async (sku: string): Promise<boolean> => {
+        const normalized = sku.trim().toUpperCase();
+        if (!normalized) return false;
+        if (skuCheck?.sku === normalized) return skuCheck.duplicate;
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const response = await fetch(`/api/products/by-barcode/${encodeURIComponent(normalized)}`, {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            const duplicate = response.ok;
+            if (currentSku.current.trim().toUpperCase() === normalized && (duplicate || response.status === 404)) {
+                setSkuCheck({ sku: normalized, duplicate });
+            }
+            return duplicate;
+        } catch {
+            // El POST conserva la validación autoritativa si falla esta consulta previa.
+            return false;
+        }
+    };
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (submittingRef.current) return;
+        if (priceError) return;
+        submittingRef.current = true;
         const payload = buildCreateProductPayload(formData);
         if (formData.requiresBatchTracking && Number(payload.stock) > 0) {
             setError('Creá este producto sin existencias. Después registrá la entrada con lote, vencimiento y bodega desde Compras o Lotes.');
+            submittingRef.current = false;
             return;
         }
-        submittingRef.current = true;
         setError('');
         setIsSubmitting(true);
 
         try {
+            if (await checkSku(payload.sku)) {
+                setError('SKU ya existe en tu inventario');
+                return;
+            }
             const token = localStorage.getItem('nortex_token');
             const res = await fetch('/api/products', {
                 method: 'POST',
@@ -241,11 +280,13 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label htmlFor="quick-sku" className={labelClass}>Código o código de barras *</label>
-                                    <input id="quick-sku" ref={skuInputRef} required maxLength={100} value={formData.sku} onChange={event => setFormData({ ...formData, sku: event.target.value.toUpperCase() })} className={fieldClass} placeholder="7501234567890" />
+                                    <input id="quick-sku" ref={skuInputRef} required maxLength={100} value={formData.sku} onChange={event => { setSkuCheck(null); setFormData({ ...formData, sku: event.target.value.toUpperCase() }); }} onBlur={() => { void checkSku(formData.sku); }} aria-invalid={skuCheck?.sku === formData.sku.trim().toUpperCase() && skuCheck.duplicate} aria-describedby={skuCheck?.duplicate ? 'quick-sku-error' : undefined} className={fieldClass} placeholder="7501234567890" />
+                                    {skuCheck?.sku === formData.sku.trim().toUpperCase() && skuCheck.duplicate && <p id="quick-sku-error" role="alert" className="mt-1 text-sm text-red-300">Este código ya existe en tu inventario.</p>}
                                 </div>
                                 <div>
                                     <label htmlFor="quick-price" className={labelClass}>Precio de venta (C$) *</label>
-                                    <input id="quick-price" required type="text" inputMode="decimal" value={formData.price} onChange={event => setFormData({ ...formData, price: event.target.value })} className={fieldClass} placeholder="150.00" />
+                                    <input id="quick-price" required type="text" inputMode="decimal" value={formData.price} onChange={event => setFormData({ ...formData, price: event.target.value })} aria-invalid={Boolean(priceError)} aria-describedby={priceError ? 'quick-price-error' : undefined} className={fieldClass} placeholder="150.00" />
+                                    {priceError && <p id="quick-price-error" role="alert" className="mt-1 text-sm text-red-300">{priceError}</p>}
                                 </div>
                             </div>
                             <div className="grid grid-cols-2 gap-3">

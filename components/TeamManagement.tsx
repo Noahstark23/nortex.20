@@ -58,7 +58,7 @@ const ROLE_CONFIG: Record<string, RoleVisualConfig> = {
         icon: <UserCog size={14} />,
         color: 'nx-tone-info',
         bg: 'nx-tone-info-bg',
-        description: 'Dashboard, POS, inventario, clientes, reportes, compras'
+        description: 'Tablero, POS, inventario, clientes, reportes, compras'
     },
     CASHIER: {
         label: 'Cajero',
@@ -72,7 +72,7 @@ const ROLE_CONFIG: Record<string, RoleVisualConfig> = {
         icon: <Eye size={14} />,
         color: 'nx-tone-neutral',
         bg: 'nx-tone-neutral-bg',
-        description: 'Solo lectura: dashboard, reportes, clientes'
+        description: 'Solo lectura: tablero, reportes, clientes'
     },
     EMPLOYEE: {
         label: 'Empleado',
@@ -304,7 +304,7 @@ const TeamManagement: React.FC = () => {
                         <Users className="text-brand" aria-hidden="true" /> Mi Equipo
                     </h1>
                     <p className="nx-canvas-muted mt-1 text-sm">
-                        Gestiona quién tiene acceso a tu sistema — {users.length} miembro{users.length !== 1 && 's'}
+                        Gestioná quién tiene acceso a tu sistema — {users.length} miembro{users.length !== 1 && 's'}
                     </p>
                 </div>
                 <button
@@ -318,7 +318,7 @@ const TeamManagement: React.FC = () => {
                     }}
                     className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 rounded-control bg-brand px-5 py-2.5 font-bold text-brand-on shadow-sm transition-colors hover:bg-brand-hover"
                 >
-                    <UserPlus size={18} aria-hidden="true" /> Invitar Miembro
+                    <UserPlus size={18} aria-hidden="true" /> Invitá miembro
                 </button>
             </div>
 
@@ -491,7 +491,7 @@ const TeamManagement: React.FC = () => {
                     <div role="dialog" aria-modal="true" aria-labelledby="invite-member-title" className="nx-canvas-card max-h-[calc(100dvh-2rem)] w-full max-w-md overflow-y-auto shadow-2xl">
                         <div className="p-6">
                             <h2 id="invite-member-title" className="nx-canvas-text mb-1 flex items-center gap-2 text-xl font-bold">
-                                <UserPlus className="text-brand" size={22} aria-hidden="true" /> Invitar Miembro
+                                <UserPlus className="text-brand" size={22} aria-hidden="true" /> Invitá miembro
                             </h2>
                             <p className="nx-canvas-muted mb-6 text-sm">El invitado recibirá un link para crear su cuenta.</p>
 

@@ -7,6 +7,7 @@ import { resolveBatchWarehouseLedgerMode } from './productBatchWarehouseLedgerSe
 import { assertBaseUnitChangeAllowed, QuantityValidationError } from '../../utils/quantity.js';
 import { applyStockDelta, asegurarBodegaPorDefecto, resolveOperationalWarehouse, StockError } from './stockService.js';
 import { withPromotionPriceVersion } from './promotions/productVersion.js';
+import { recordInitialInventory } from './accounting.js';
 
 type Principal = {tenantId: string; userId: string; role: string};
 type ImportResult = {created: number; updated: number; errors: string[]; total: number; message: string};
@@ -147,6 +148,7 @@ async function importRow(tx: Prisma.TransactionClient, principal: Principal, ite
     await tx.kardexMovement.create({data: {tenantId, productId: product.id, type: 'IN', quantity: targetStock,
       stockBefore: stockResult.stockBefore, stockAfter: stockResult.stockAfter, referenceType: 'BULK_IMPORT',
       reason: 'Carga masiva - producto nuevo', userId, warehouseId: stockResult.warehouseId}});
+    await recordInitialInventory(tx, tenantId, userId, product.id, targetStock, data.cost);
   }
   await tx.auditLog.create({data: {tenantId, userId, action: 'PRODUCT_CREATED', details: JSON.stringify({
     productId: product.id, source: 'BULK_IMPORT', warehouseId: warehouse?.id ?? null,

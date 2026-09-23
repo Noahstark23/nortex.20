@@ -57,7 +57,8 @@ import {
     ShiftCloseError,
     type ShiftCloseDatabase,
 } from './services/shiftCloseService';
-import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, recordInitialInventory, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { replayCreditPaymentSnapshot, newCreditPaymentSnapshot, creditPaymentResponseBalances } from './services/creditPaymentSnapshot';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
@@ -128,6 +129,7 @@ import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
 import { daysSinceManaguaCivilDate, managuaBusinessDate, parseManaguaCivilDateInput } from './lib/managuaBusinessDate';
+import { resolveReportPeriod } from './lib/reportPeriod';
 import { buildAllowedOrigins, isAllowedOrigin } from './lib/allowedOrigins';
 import {
     QuotationItemError,
@@ -1361,6 +1363,7 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
                             warehouseId: stock.warehouseId,
                         },
                     });
+                    await recordInitialInventory(tx, tenantId, authReq.userId!, product.id, sample.stock, sample.cost, 'SEED_CATALOG_OPENING');
 
                     if (sample.requiresBatchTracking) {
                         const shelfLifeDays = sample.productFamily === 'MEAT' || sample.productFamily === 'POULTRY'
@@ -5977,6 +5980,7 @@ app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), validate(
                         warehouseId: stockResult.warehouseId,
                     },
                 });
+                await recordInitialInventory(tx, authReq.tenantId!, authReq.userId!, created.id, initialStock, created.cost);
             }
 
             await tx.auditLog.create({
@@ -7451,16 +7455,14 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
     const { startDate, endDate } = req.query;
 
     try {
-        const start = startDate ? new Date(String(startDate)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const end = endDate ? new Date(String(endDate)) : new Date();
-        // Set end to end of day
-        end.setHours(23, 59, 59, 999);
+        const period = resolveReportPeriod(startDate, endDate);
+        if (!period) return res.status(400).json({ error: 'Elegí un período válido de hasta 366 días.' });
 
         // 1. Fetch all sales in the period with their items
         const sales = await prisma.sale.findMany({
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end },
+                createdAt: { gte: period.start, lt: period.endExclusive },
                 status: { not: ESTADO_ANULADA },
             },
             include: { items: true },
@@ -7515,7 +7517,7 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         const dailyMap: Record<string, { ventas: number; gastos: number }> = {};
 
         sales.forEach((sale: { createdAt: unknown; total: unknown }) => {
-            const dateKey = new Date(sale.createdAt as string).toISOString().split('T')[0];
+            const dateKey = claveDelDiaManagua(new Date(sale.createdAt as string));
             if (!dailyMap[dateKey]) dailyMap[dateKey] = { ventas: 0, gastos: 0 };
             dailyMap[dateKey].ventas = new Decimal(dailyMap[dateKey].ventas).plus(sale.total?.toString() ?? '0').toNumber();
         });
@@ -7524,12 +7526,12 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         const expenses = await prisma.expense.findMany({
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end }
+                createdAt: { gte: period.start, lt: period.endExclusive }
             }
         });
 
         expenses.forEach((exp: { createdAt: unknown; amount: unknown }) => {
-            const dateKey = new Date(exp.createdAt as string).toISOString().split('T')[0];
+            const dateKey = claveDelDiaManagua(new Date(exp.createdAt as string));
             if (!dailyMap[dateKey]) dailyMap[dateKey] = { ventas: 0, gastos: 0 };
             dailyMap[dateKey].gastos = new Decimal(dailyMap[dateKey].gastos).plus(exp.amount?.toString() ?? '0').toNumber();
         });
@@ -7538,8 +7540,8 @@ app.get('/api/reports/sales', authenticate, async (req: any, res: any) => {
         const chartData = Object.entries(dailyMap)
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([date, data]) => {
-                const d = new Date(date + 'T12:00:00');
-                const label = d.toLocaleDateString('es-NI', { day: '2-digit', month: 'short' });
+                const d = new Date(date + 'T12:00:00Z');
+                const label = d.toLocaleDateString('es-NI', { timeZone: 'America/Managua', day: '2-digit', month: 'short' });
                 return {
                     name: label,
                     ventas: Math.round(data.ventas * 100) / 100,
@@ -7721,14 +7723,13 @@ app.get('/api/reports/expenses', authenticate, async (req: any, res: any) => {
     const { startDate, endDate } = req.query;
 
     try {
-        const start = startDate ? new Date(String(startDate)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const end = endDate ? new Date(String(endDate)) : new Date();
-        end.setHours(23, 59, 59, 999);
+        const period = resolveReportPeriod(startDate, endDate);
+        if (!period) return res.status(400).json({ error: 'Elegí un período válido de hasta 366 días.' });
 
         const expenses = await prisma.expense.findMany({
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end }
+                createdAt: { gte: period.start, lt: period.endExclusive }
             },
             orderBy: { createdAt: 'desc' }
         });
@@ -9936,10 +9937,9 @@ async function registerCreditPayment(req: any, res: any) {
                     if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
                         throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
                     }
-                    return { replayed: true, paymentId: replay.id };
+                    return replayCreditPaymentSnapshot(tx, lockedSale, authReq.tenantId!, replay.id);
                 }
             }
-
             if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('PAYMENT_NOT_CREDIT');
             const balanceBefore = new Decimal(lockedSale.balance.toString());
             if (!balanceBefore.greaterThan(0)) throw new Error('PAYMENT_ALREADY_SETTLED');
@@ -10010,8 +10010,7 @@ async function registerCreditPayment(req: any, res: any) {
                     }),
                 },
             });
-
-            return { replayed: false, paymentId: payment.id };
+            return newCreditPaymentSnapshot(payment.id, balanceAfter, debtAfter);
         });
 
         const updatedSale = await prisma.sale.findFirst({
@@ -10029,8 +10028,7 @@ async function registerCreditPayment(req: any, res: any) {
             date: updatedSale.createdAt,
             dueDate: updatedSale.dueDate,
             total: Number(updatedSale.total),
-            balance: Number(updatedSale.balance),
-            status: Number(updatedSale.balance) > 0 ? 'CREDIT_PENDING' : 'PAID',
+            ...creditPaymentResponseBalances(result),
             payments: updatedSale.payments.map((payment: any) => ({
                 id: payment.id,
                 amount: Number(payment.amount),

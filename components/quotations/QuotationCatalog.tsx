@@ -39,7 +39,7 @@ export function QuotationCatalog({ products, cart, loading, error, onRetry, onAd
         {hint && <p role="status" className="nx-quote-hint">{hint}</p>}
         {loading ? <p role="status" className="nx-quote-empty">Cargando productos…</p>
             : error ? <div role="alert" className="nx-quote-empty"><h2>No pudimos cargar los productos</h2><p>Reintentá para seguir armando la proforma.</p><button onClick={onRetry}>Reintentar</button></div>
-            : !products.length ? <div className="nx-quote-empty"><h2>Tu catálogo está vacío</h2><p>Agregá productos en Bodega y volvé para cotizarlos.</p><button onClick={onRetry}>Actualizar catálogo</button></div>
+            : !products.length ? <div className="nx-quote-empty"><h2>Tu catálogo está vacío</h2><p>Agregá productos en Bodega y volvé para cotizarlos.</p><button onClick={onRetry}>Actualizá catálogo</button></div>
             : !result.total ? <div className="nx-quote-empty"><h2>No encontramos ese producto</h2><p>Probá otro nombre, código o marca.</p><button onClick={() => { setSearch(''); setCategory('Todos'); }}>Ver todos los productos</button></div>
             : <CajaNicaCatalog products={result.visibles} totalProducts={result.total} categories={search.trim() ? [] : categories}
                 selectedCategory={category} searchTerm={search} blockedProductIds={new Set()} quantitiesByProduct={quantities} selectionLabel="En la proforma"

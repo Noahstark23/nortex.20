@@ -125,7 +125,7 @@ describe('Inicio orienta una venta real y el regreso', () => {
         onboarding = async () => response(progress(1, true, true));
         mount();
         await screen.findByRole('button', { name: 'Registrar otra venta' });
-        await userEvent.click(screen.getByRole('button', { name: 'Practicar sin guardar datos' }));
+        await userEvent.click(screen.getByRole('button', { name: 'Practicá sin guardar datos' }));
         expect(screen.getByTestId('route')).toHaveTextContent('/demo?source=onboarding');
         await userEvent.click(screen.getByRole('button', { name: 'Necesito ayuda' }));
         expect(screen.getByTestId('route').textContent).toBe('/app/ayuda');

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { UserCircle, CalendarDays, FileText, Loader2, Printer, Briefcase, Wallet, AlertTriangle } from 'lucide-react';
 import { formatMoney } from '../utils/money';
+import { roleLabelEs } from '../utils/roleLabels';
 import ModuleHeader from './ui/ModuleHeader';
 
 interface MeProfile {
@@ -209,7 +210,7 @@ const MiEspacio: React.FC = () => {
                 <section aria-label="Resumen laboral" className="mb-6 grid gap-4 sm:grid-cols-3">
                     <div className="nx-canvas-card p-5 sm:col-span-2">
                         <p className="nx-canvas-text text-lg font-bold">{profile.name}</p>
-                        <p className="nx-canvas-muted mt-0.5 flex items-center gap-1.5 text-sm"><Briefcase size={13} aria-hidden="true" /> {profile.role} · {JORNADA[profile.jornada] || profile.jornada}</p>
+                        <p className="nx-canvas-muted mt-0.5 flex items-center gap-1.5 text-sm"><Briefcase size={13} aria-hidden="true" /> {roleLabelEs(profile.role)} · {JORNADA[profile.jornada] || profile.jornada}</p>
                         <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
                             <div><p className="nx-canvas-faint text-[11px] uppercase tracking-wider">Cédula</p><p className="nx-canvas-text font-mono">{profile.cedula || 'N/A'}</p></div>
                             <div><p className="nx-canvas-faint text-[11px] uppercase tracking-wider">N° INSS</p><p className="nx-canvas-text font-mono">{profile.inss || 'N/A'}</p></div>
@@ -325,7 +326,7 @@ const MiEspacio: React.FC = () => {
                             </div>
                             <label htmlFor="leave-reason" className="nx-canvas-muted block text-xs font-medium">Motivo <span className="nx-canvas-faint font-normal">(opcional)</span></label>
                             <input id="leave-reason" value={leaveForm.reason} onChange={e => setLeaveForm({ ...leaveForm, reason: e.target.value })} placeholder="Contanos brevemente" className={inputCls} />
-                            <button type="submit" disabled={submitting} className="btn-primary nx-fluid-press min-h-tap w-full disabled:opacity-50">Enviar solicitud</button>
+                            <button type="submit" disabled={submitting} className="btn-primary nx-fluid-press min-h-tap w-full disabled:opacity-50">Enviá solicitud</button>
                         </div>
                     </form>
 
@@ -334,7 +335,7 @@ const MiEspacio: React.FC = () => {
                         <p id="advance-help" className="nx-canvas-muted mb-4 mt-2 text-xs">Hasta el 30% de tu salario. Se descuenta de tu próxima nómina (5% de comisión).</p>
                         <label htmlFor="advance-amount" className="nx-canvas-muted mb-2 block text-xs font-medium">Monto solicitado (C$)</label>
                         <input id="advance-amount" inputMode="decimal" aria-describedby="advance-help" value={advAmount} onChange={e => setAdvAmount(sanitizeAdvanceAmount(e.target.value))} placeholder="0.00" className={`${inputCls} font-mono`} />
-                        <button type="submit" disabled={submitting} className="btn-primary nx-fluid-press mt-3 min-h-tap w-full disabled:opacity-50">Solicitar adelanto</button>
+                        <button type="submit" disabled={submitting} className="btn-primary nx-fluid-press mt-3 min-h-tap w-full disabled:opacity-50">Solicitá adelanto</button>
                     </form>
                 </section>
 

@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { formatMoney } from '../utils/money';
+import { formatManaguaDateTime } from '../utils/managuaDateTime';
+import { managuaCivilDay } from '../utils/managuaProfitPeriod';
 import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
 import { currentSessionRole } from '../utils/roleCapabilities';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
@@ -27,12 +29,12 @@ const IVA_RATE = 0.15;
 const formatC = (n: number) => formatMoney(n);
 
 const getDefaultDates = () => {
-    const end = new Date();
-    const start = new Date();
-    start.setDate(start.getDate() - 30);
+    const endDate = managuaCivilDay();
+    const start = new Date(`${endDate}T00:00:00Z`);
+    start.setUTCDate(start.getUTCDate() - 30);
     return {
         startDate: start.toISOString().split('T')[0],
-        endDate: end.toISOString().split('T')[0],
+        endDate,
     };
 };
 
@@ -280,7 +282,7 @@ const Reports: React.FC = () => {
     };
 
     const handleReprintZ = (shift: any) => {
-        const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+        const formatDate = (d: string) => formatManaguaDateTime(d, { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
         setZReportData({
             businessName: getTenantName(),
             cashierName: shift.employee ? `${shift.employee.firstName} ${shift.employee.lastName}` : 'Sin asignar',
@@ -402,7 +404,7 @@ const Reports: React.FC = () => {
                         onClick={() => setActiveTab('DASHBOARD')}
                         className={`px-4 py-2 text-sm font-bold transition-colors ${activeTab === 'DASHBOARD' ? 'bg-nortex-900 text-white' : 'text-slate-500 hover:bg-surface-800/40'}`}
                     >
-                        Dashboard
+                        Tablero
                     </button>
                     {canAccessFiscalDocuments && (
                         <button
@@ -458,7 +460,7 @@ const Reports: React.FC = () => {
                             onClick={() => fetchReports(true)}
                             disabled={refreshing}
                             className="p-2 bg-surface-900 border border-white/[0.06] rounded-lg hover:bg-surface-800/40 shadow-sm text-slate-300 transition-colors"
-                            title="Actualizar"
+                            title="Actualizá"
                         >
                             <RefreshCw size={18} className={refreshing ? 'animate-spin' : ''} />
                         </button>
@@ -468,7 +470,7 @@ const Reports: React.FC = () => {
                             disabled={!salesData?.quantityBreakdown.length}
                             className="flex items-center gap-2 px-4 py-2 bg-nortex-900 text-white font-bold rounded-lg hover:bg-nortex-800 shadow-lg transition-colors text-sm disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <FileSpreadsheet size={16} /> Descargar cantidades (.xlsx)
+                            <FileSpreadsheet size={16} /> Descargá cantidades (.xlsx)
                         </button>
                         <p className="text-xs text-slate-500">
                             Conserva producto, unidad histórica, modo, presentación y cantidad decimal exacta.
@@ -485,7 +487,7 @@ const Reports: React.FC = () => {
                                     : <FileSpreadsheet size={16} />}
                                 {fiscalDownloading?.startsWith('/api/tax-report/dmi')
                                     ? 'Generando DMI…'
-                                    : `Descargar DMI · ${monthNames[dashboardDmiPeriod.month - 1]} ${dashboardDmiPeriod.year}`}
+                                    : `Descargá DMI · ${monthNames[dashboardDmiPeriod.month - 1]} ${dashboardDmiPeriod.year}`}
                             </button>
                         )}
                     </div>
@@ -869,7 +871,7 @@ const Reports: React.FC = () => {
                                     : <Download size={18} />}
                                 {fiscalDownloading === `/api/tax-report/dmi?month=${taxMonth}&year=${taxYear}`
                                     ? 'Generando DMI…'
-                                    : 'Descargar DMI (.txt)'}
+                                    : 'Descargá DMI (.txt)'}
                             </button>
                         </div>
                     </div>
@@ -1049,7 +1051,7 @@ const Reports: React.FC = () => {
                             onClick={fetchShiftHistory}
                             disabled={shiftHistoryLoading}
                             className="p-2 bg-surface-900 border border-white/[0.06] rounded-lg hover:bg-surface-800/40 shadow-sm text-slate-300"
-                            title="Actualizar"
+                            title="Actualizá"
                         >
                             <RefreshCw size={18} className={shiftHistoryLoading ? 'animate-spin' : ''} />
                         </button>
@@ -1093,10 +1095,10 @@ const Reports: React.FC = () => {
                                                 <tr key={s.id} className="hover:bg-surface-800/40 transition-colors">
                                                     <td className="px-4 py-3">
                                                         <div className="font-mono text-slate-100">
-                                                            {new Date(s.endTime).toLocaleDateString('es-NI', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                                                            {formatManaguaDateTime(s.endTime, { day: '2-digit', month: '2-digit', year: 'numeric' })}
                                                         </div>
                                                         <div className="text-xs text-slate-400">
-                                                            {new Date(s.endTime).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' })}
+                                                            {formatManaguaDateTime(s.endTime, { hour: '2-digit', minute: '2-digit' })}
                                                         </div>
                                                     </td>
                                                     <td className="px-4 py-3">
@@ -1382,7 +1384,7 @@ const Reports: React.FC = () => {
                                                         }`}>{entry.referenceType || 'MANUAL'}</span>
                                                     <span className="text-sm font-medium text-slate-200">{entry.description}</span>
                                                 </div>
-                                                <span className="text-xs text-slate-400 font-mono">{new Date(entry.date).toLocaleDateString('es-NI')}</span>
+                                                <span className="text-xs text-slate-400 font-mono">{formatManaguaDateTime(entry.date, { day: '2-digit', month: '2-digit', year: 'numeric' })}</span>
                                             </div>
                                             <div className="overflow-x-auto">
                                             <table className="w-full text-xs">

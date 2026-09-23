@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Monitor, RefreshCw, Clock, ShoppingCart, ArrowDownCircle, ArrowUpCircle, DollarSign, AlertTriangle, CheckCircle, X, Printer, User, TrendingUp, Banknote, Lock, Calculator, Loader2, Landmark, Undo2 } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
+import { formatManaguaDateTime } from '../utils/managuaDateTime';
 
 interface LiveShift {
     id: string;
@@ -316,11 +317,11 @@ const CashRegisters: React.FC = () => {
     };
 
     const formatTime = (dateStr: string) => {
-        return new Date(dateStr).toLocaleTimeString('es-NI', { hour: '2-digit', minute: '2-digit' });
+        return formatManaguaDateTime(dateStr, { hour: '2-digit', minute: '2-digit' });
     };
 
     const formatDate = (dateStr: string) => {
-        return new Date(dateStr).toLocaleDateString('es-NI', { day: '2-digit', month: 'short', year: 'numeric' });
+        return formatManaguaDateTime(dateStr, { day: '2-digit', month: 'short', year: 'numeric' });
     };
 
     if (loading) {
@@ -357,14 +358,14 @@ const CashRegisters: React.FC = () => {
                         </div>
                         <div>
                             <h1 className="nx-module-header text-2xl font-semibold text-slate-950">Cajas y Arqueos</h1>
-                            <p className="text-xs text-slate-500">Última actualización: {formatTime(lastRefresh.toISOString())} · Auto-refresh 15s</p>
+                            <p className="text-xs text-slate-500">Última actualización: {formatTime(lastRefresh.toISOString())} · Actualización automática cada 15 s</p>
                         </div>
                     </div>
                     <button
                         onClick={fetchMonitor}
                         className="nx-fluid-press flex min-h-tap items-center justify-center gap-2 self-stretch rounded-control border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm transition-colors hover:bg-emerald-100 sm:self-auto"
                     >
-                        <RefreshCw size={16} /> Actualizar
+                        <RefreshCw size={16} /> Actualizá
                     </button>
                 </div>
             </div>
@@ -670,7 +671,7 @@ const CashRegisters: React.FC = () => {
                                         <tbody>
                                             {agentTxs.map((t: any) => (
                                                 <tr key={t.id} className="border-t border-slate-200">
-                                                    <td className="px-4 py-2 text-slate-500 text-xs">{new Date(t.createdAt).toLocaleString('es-NI', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
+                                                    <td className="px-4 py-2 text-slate-500 text-xs">{formatManaguaDateTime(t.createdAt, { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</td>
                                                     <td className="px-4 py-2 text-slate-800">{t.agreement?.name}</td>
                                                     <td className="px-4 py-2">
                                                         <span className={`text-xs font-bold ${t.direction === 'IN' ? 'text-emerald-700' : 'text-amber-700'}`}>

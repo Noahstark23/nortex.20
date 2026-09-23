@@ -864,7 +864,7 @@ const PurchaseOrders: React.FC = () => {
                     {isBodeguero && <p className="mt-1 text-sm text-slate-400">Revisá lo pendiente y registrá únicamente lo que llegó físicamente.</p>}
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={() => void load()} className="p-2 text-slate-400 hover:text-white" aria-label="Actualizar órdenes">
+                    <button onClick={() => void load()} className="p-2 text-slate-400 hover:text-white" aria-label="Actualizá órdenes">
                         <RefreshCw size={16} />
                     </button>
                     {canManagePurchaseOrders && (

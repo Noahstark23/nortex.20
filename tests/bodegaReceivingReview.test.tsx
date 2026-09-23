@@ -142,7 +142,7 @@ describe('reposición: nuevos cálculos y ediciones humanas', () => {
                 suggestedQty: refresh ? '4' : '10', reason: 'REORDER_POINT', daysRemaining: null })) }) : json([supplier]));
         const view = render(<SmartPurchases />); await screen.findByLabelText('Cantidad de Producto a');
         fireEvent.change(screen.getByLabelText('Cantidad de Producto b'), { target: { value: '7' } });
-        refresh = true; fireEvent.click(screen.getByRole('button', { name: 'Actualizar' }));
+        refresh = true; fireEvent.click(screen.getByRole('button', { name: 'Actualizá' }));
         expect((await screen.findByLabelText('Cantidad de Producto a') as HTMLInputElement).value).toBe('4');
         expect((screen.getByLabelText('Cantidad de Producto b') as HTMLInputElement).value).toBe('7');
         expect((screen.getByLabelText('Costo de Producto b') as HTMLInputElement).value).toBe('3');

@@ -1,14 +1,22 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { Ban, ChevronRight, Clock3, Loader2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
+import { Ban, Clock3, FileText, Loader2, RefreshCw, Search, ShieldCheck } from 'lucide-react';
 import SaleCorrectionPanel from './sales/SaleCorrectionPanel';
+import SaleReceiptPanel, { type SaleReceiptSnapshot } from './sales/SaleReceiptPanel';
 import PendingCorrections from './sales/PendingCorrections';
 import type { CorrectionRequest, ReturnableSale, SalesLedgerItem } from './sales/types';
 import { formatMoney } from '../utils/money';
+import { formatManaguaDateTime } from '../utils/managuaDateTime';
 
 const headers = (): HeadersInit => ({ Authorization: `Bearer ${localStorage.getItem('nortex_token') ?? ''}` });
 const invoiceLabel = (sale: Pick<SalesLedgerItem, 'id' | 'invoiceNumber' | 'invoiceSeries'>) => sale.invoiceNumber
     ? `${sale.invoiceSeries ?? 'A'}-${String(sale.invoiceNumber).padStart(6, '0')}`
     : sale.id.slice(0, 12);
+const correctionStatusLabel: Record<string, string> = {
+    PENDING_APPROVAL: 'Pendiente de aprobación',
+    APPROVED: 'Aprobada',
+    REJECTED: 'Rechazada',
+    COMPLETED: 'Completada',
+};
 
 export default function Sales() {
     const [canManagePending] = useState(() => {
@@ -22,6 +30,7 @@ export default function Sales() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
     const [selectedSale, setSelectedSale] = useState<ReturnableSale | null>(null);
+    const [receipt, setReceipt] = useState<SaleReceiptSnapshot | null>(null);
     const [approverEmail, setApproverEmail] = useState('');
     const [approverPassword, setApproverPassword] = useState('');
     const [workingRequestId, setWorkingRequestId] = useState<string | null>(null);
@@ -58,6 +67,16 @@ export default function Sales() {
             if (!response.ok) throw new Error(body.error || 'No pudimos abrir la venta');
             setSelectedSale(body);
         } catch (caught) { setError(caught instanceof Error ? caught.message : 'No pudimos abrir la venta'); }
+    };
+
+    const openReceipt = async (saleId: string) => {
+        setError('');
+        try {
+            const response = await fetch(`/api/sales/${encodeURIComponent(saleId)}/receipt`, { headers: headers() });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) throw new Error(body.error || 'No pudimos recuperar el comprobante');
+            setReceipt(body);
+        } catch (caught) { setError(caught instanceof Error ? caught.message : 'No pudimos recuperar el comprobante'); }
     };
 
     const approveRequest = async (request: CorrectionRequest) => {
@@ -115,7 +134,7 @@ export default function Sales() {
         <div className="mx-auto max-w-6xl">
             <header className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
                 <div><p className="nx-tone-positive text-xs font-black uppercase tracking-[0.18em]">Operación</p><h1 className="mt-1 text-3xl font-black tracking-tight text-white">Ventas</h1><p className="mt-1 text-sm text-slate-400">Buscá comprobantes, devolvé productos o anulá errores sin borrar el historial.</p></div>
-                <button type="button" onClick={() => void (tab === 'history' ? loadSales() : loadRequests())} className="nx-fluid-press inline-flex min-h-tap items-center justify-center gap-2 rounded-xl border border-white/10 px-4 text-sm font-bold hover:bg-white/5"><RefreshCw size={16} />Actualizar</button>
+                <button type="button" onClick={() => void (tab === 'history' ? loadSales() : loadRequests())} className="nx-fluid-press inline-flex min-h-tap items-center justify-center gap-2 rounded-xl border border-white/10 px-4 text-sm font-bold hover:bg-white/5"><RefreshCw size={16} />Actualizá</button>
             </header>
 
             <div className={`mb-5 grid ${canManagePending ? 'grid-cols-3' : 'grid-cols-2'} gap-2 rounded-2xl border border-white/10 bg-surface-900 p-1.5`}>
@@ -130,13 +149,16 @@ export default function Sales() {
                     <button className="nx-fluid-press min-h-tap rounded-xl bg-brand px-5 font-black text-brand-on">Buscar</button>
                 </form>
                 <div className="overflow-hidden rounded-2xl border border-white/10 bg-surface-900">
-                    {loading ? <div className="p-12 text-center text-slate-400"><Loader2 className="mr-2 inline animate-spin" />Cargando ventas…</div> : sales.length === 0 ? <div className="p-12 text-center text-slate-400">No encontramos ventas con ese criterio.</div> : sales.map((sale) => <button key={sale.id} type="button" onClick={() => void openSale(sale.id)} className="nx-fluid-press min-h-tap grid w-full grid-cols-[1fr_auto] items-center gap-4 border-b border-white/[0.06] px-4 py-4 text-left last:border-0 hover:bg-white/[0.03] sm:grid-cols-[140px_1fr_130px_120px_auto]">
-                        <div><p className="font-mono text-sm font-black text-white">{invoiceLabel(sale)}</p><p className="mt-0.5 text-[11px] text-slate-500">{new Date(sale.createdAt).toLocaleString('es-NI')}</p></div>
+                    {loading ? <div className="p-12 text-center text-slate-400"><Loader2 className="mr-2 inline animate-spin" />Cargando ventas…</div> : sales.length === 0 ? <div className="p-12 text-center text-slate-400">No encontramos ventas con ese criterio.</div> : sales.map((sale) => <div key={sale.id} className="grid w-full grid-cols-[1fr_auto] items-center gap-4 border-b border-white/[0.06] px-4 py-4 last:border-0 sm:grid-cols-[140px_1fr_130px_120px_auto]">
+                        <div><p className="font-mono text-sm font-black text-white">{invoiceLabel(sale)}</p><p className="mt-0.5 text-[11px] text-slate-500">{formatManaguaDateTime(sale.createdAt)}</p></div>
                         <div className="hidden min-w-0 sm:block"><p className="truncate text-sm font-bold">{sale.customerName || 'Cliente de mostrador'}</p><p className="text-xs text-slate-500">{sale._count.items} producto(s) · {sale.paymentMethod}</p></div>
                         <p className="hidden text-right font-mono font-black sm:block">{formatMoney(sale.total)}</p>
                         <div className="hidden text-right sm:block"><span className={`rounded-full px-2 py-1 text-[10px] font-black ${sale.status === 'VOIDED' ? 'bg-danger-soft text-danger' : sale._count.productReturns > 0 ? 'bg-amber-500/10 text-amber-300' : 'bg-emerald-500/10 text-emerald-300'}`}>{sale.status === 'VOIDED' ? 'ANULADA' : sale._count.productReturns > 0 ? 'CON DEVOLUCIÓN' : 'VIGENTE'}</span></div>
-                        <ChevronRight className="text-slate-600" size={18} />
-                    </button>)}
+                        <div className="flex flex-wrap justify-end gap-2">
+                            <button type="button" onClick={() => void openReceipt(sale.id)} className="nx-fluid-press min-h-tap rounded-lg border border-white/15 px-3 text-xs font-bold text-slate-200 hover:bg-white/5" aria-label={`Ver comprobante ${invoiceLabel(sale)}`}><FileText className="mr-1 inline" size={15} />Ver comprobante</button>
+                            <button type="button" onClick={() => void openSale(sale.id)} className="nx-fluid-press min-h-tap rounded-lg border border-white/15 px-3 text-xs font-bold text-slate-200 hover:bg-white/5" aria-label={`Corregir venta ${invoiceLabel(sale)}`}>Corregir venta</button>
+                        </div>
+                    </div>)}
                 </div>
             </>}
 
@@ -146,8 +168,8 @@ export default function Sales() {
                     <input type="password" autoComplete="current-password" value={approverPassword} onChange={(event) => setApproverPassword(event.target.value)} placeholder="Contraseña para aprobar" className="rounded-xl border border-white/10 bg-surface-950 px-3 py-3 text-white" />
                 </div>
                 {loading ? <div className="p-12 text-center text-slate-400"><Loader2 className="mr-2 inline animate-spin" />Cargando solicitudes…</div> : requests.length === 0 ? <div className="rounded-2xl border border-white/10 bg-surface-900 p-12 text-center text-slate-400">No hay solicitudes.</div> : requests.map((request) => <div key={request.id} className="rounded-2xl border border-white/10 bg-surface-900 p-4 sm:flex sm:items-center sm:justify-between sm:gap-4">
-                    <div><p className="font-bold text-white">{request.kind === 'VOID' ? <Ban className="mr-2 inline text-danger" size={16} /> : <RefreshCw className="mr-2 inline text-amber-400" size={16} />}{request.kind === 'VOID' ? 'Anulación completa' : request.resolution === 'EXCHANGE' ? 'Cambio de productos' : 'Devolución'}</p><p className="mt-1 text-sm text-slate-400">{request.sale?.customerName || 'Cliente de mostrador'} · {request.reason}</p><p className="mt-1 text-xs text-slate-600"><Clock3 className="mr-1 inline" size={12} />{new Date(request.createdAt).toLocaleString('es-NI')}</p></div>
-                    <div className="mt-3 flex flex-wrap items-center gap-2 sm:mt-0"><span className={`rounded-full px-3 py-1 text-[11px] font-black ${request.status === 'PENDING_APPROVAL' ? 'bg-amber-500/10 text-amber-300' : request.status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>{request.status}</span>{request.status === 'PENDING_APPROVAL' && <button type="button" disabled={workingRequestId === request.id || !approverEmail || !approverPassword} onClick={() => void approveRequest(request)} className="nx-fluid-press min-h-tap rounded-lg bg-brand px-3 py-2 text-xs font-black text-brand-on disabled:opacity-40">{workingRequestId === request.id ? <Loader2 className="animate-spin" size={14} /> : 'Aprobar'}</button>}{request.status === 'APPROVED' && <button type="button" disabled={workingRequestId === request.id} onClick={() => void executeRequest(request)} className="nx-fluid-press min-h-tap rounded-lg bg-brand px-3 py-2 text-xs font-black text-brand-on hover:bg-brand-hover disabled:opacity-40">{workingRequestId === request.id ? <Loader2 className="animate-spin" size={14} /> : 'Ejecutar'}</button>}</div>
+                    <div><p className="font-bold text-white">{request.kind === 'VOID' ? <Ban className="mr-2 inline text-danger" size={16} /> : <RefreshCw className="mr-2 inline text-amber-400" size={16} />}{request.kind === 'VOID' ? 'Anulación completa' : request.resolution === 'EXCHANGE' ? 'Cambio de productos' : 'Devolución'}</p><p className="mt-1 text-sm text-slate-400">{request.sale?.customerName || 'Cliente de mostrador'} · {request.reason}</p><p className="mt-1 text-xs text-slate-600"><Clock3 className="mr-1 inline" size={12} />{formatManaguaDateTime(request.createdAt)}</p></div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2 sm:mt-0"><span className={`rounded-full px-3 py-1 text-[11px] font-black ${request.status === 'PENDING_APPROVAL' ? 'bg-amber-500/10 text-amber-300' : request.status === 'COMPLETED' ? 'bg-emerald-500/10 text-emerald-300' : 'bg-slate-500/10 text-slate-300'}`}>{correctionStatusLabel[request.status] ?? 'Estado por revisar'}</span>{request.status === 'PENDING_APPROVAL' && <button type="button" disabled={workingRequestId === request.id || !approverEmail || !approverPassword} onClick={() => void approveRequest(request)} className="nx-fluid-press min-h-tap rounded-lg bg-brand px-3 py-2 text-xs font-black text-brand-on disabled:opacity-40">{workingRequestId === request.id ? <Loader2 className="animate-spin" size={14} /> : 'Aprobar'}</button>}{request.status === 'APPROVED' && <button type="button" disabled={workingRequestId === request.id} onClick={() => void executeRequest(request)} className="nx-fluid-press min-h-tap rounded-lg bg-brand px-3 py-2 text-xs font-black text-brand-on hover:bg-brand-hover disabled:opacity-40">{workingRequestId === request.id ? <Loader2 className="animate-spin" size={14} /> : 'Ejecutar'}</button>}</div>
                 </div>)}
             </div>}
             {tab === 'pending' && canManagePending && <PendingCorrections />}
@@ -155,5 +177,6 @@ export default function Sales() {
             {error && <p role="alert" className="mt-4 rounded-xl border border-danger/30 bg-danger-soft px-4 py-3 text-sm text-danger">{error}</p>}
         </div>
         {selectedSale && <SaleCorrectionPanel sale={selectedSale} onClose={() => setSelectedSale(null)} onCompleted={async () => { await loadSales(); await loadRequests(); }} />}
+        {receipt && <SaleReceiptPanel sale={receipt} onClose={() => setReceipt(null)} />}
     </div>;
 }

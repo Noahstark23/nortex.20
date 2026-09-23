@@ -30,7 +30,7 @@ function status(response: Response, expected: number) {
     expect(response.status, diagnostic).toBe(expected);
 }
 
-async function fixture(label: string): Promise<Fixture> {
+async function fixture(label: string, initialCash = 500): Promise<Fixture> {
     const id = randomUUID();
     const email = `qa-pos-${id}@example.invalid`;
     const password = `Qa-${randomUUID()}-Seguro!`;
@@ -40,7 +40,7 @@ async function fixture(label: string): Promise<Fixture> {
     status(registration, 200);
     const f = { tenantId: registration.body.tenant.id, userId: registration.body.user.id,
         token: registration.body.token, email, password, shiftId: '' };
-    const opened = await api(f.token, '/api/shifts/open', { initialCash: 500 });
+    const opened = await api(f.token, '/api/shifts/open', { initialCash });
     status(opened, 200);
     f.shiftId = opened.body.id;
     return f;
@@ -121,19 +121,93 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
     });
     afterAll(async () => { await prisma.$disconnect(); });
 
+    it('la apertura C$ 200 queda en el turno, la auditoría y el monitor', async () => {
+        const f = await fixture('fondo-apertura', 200);
+        const current = await api(f.token, '/api/shifts/current');
+        status(current, 200);
+        expect(current.body.id).toBe(f.shiftId);
+        expect(fixed(current.body.initialCash)).toBe('200.0000');
+        const monitor = await api(f.token, '/api/shifts/monitor');
+        status(monitor, 200);
+        expect(monitor.body.activeShifts.find((shift: { id: string }) => shift.id === f.shiftId)).toMatchObject({ initialCash: 200 });
+        const audit = await prisma.auditLog.findFirstOrThrow({ where: { tenantId: f.tenantId, action: 'SHIFT_OPENED' } });
+        expect(JSON.parse(audit.details!).after).toMatchObject({ shiftId: f.shiftId, initialCash: '200' });
+        expect((await api(f.token, '/api/shifts/open', { initialCash: 0 })).status).toBe(400);
+        expect(await prisma.shift.count({ where: { tenantId: f.tenantId, status: 'OPEN' } })).toBe(1);
+    });
+
+    it('el stock inicial ingresa al libro antes de vender y no deja inventario negativo', async () => {
+        const f = await fixture('apertura-inventario');
+        const productId = await product(f, 5);
+        const before = await balances(f);
+        expect(before['1.1.4']).toBe('150.0000');
+        expect(before['3.1.4']).toBe('150.0000');
+        const opening = await prisma.journalEntry.findFirst({
+            where: { tenantId: f.tenantId, referenceId: productId, referenceType: 'INITIAL_INVENTORY' },
+            include: { lines: { include: { account: true } } },
+        });
+        expect(opening?.lines.map(line => [line.account.code, fixed(line.debit), fixed(line.credit)])).toEqual([
+            ['1.1.4', '150.0000', '0.0000'],
+            ['3.1.4', '0.0000', '150.0000'],
+        ]);
+        status(await api(f.token, '/api/sales', salePayload(productId, 'CASH', 1)), 200);
+        expect(await stock(f, productId)).toBe(4);
+        expect((await balances(f))['1.1.4']).toBe('120.0000');
+        await assertBalanced(f);
+    });
+
+    it('recupera una copia fiel del comprobante por tenant sin segunda venta ni efectos', async () => {
+        const owner = await fixture('copia-comprobante');
+        const other = await fixture('copia-otro-tenant');
+        const productId = await product(owner, 5);
+        const sold = await api(owner.token, '/api/sales', salePayload(productId, 'CASH', 2));
+        status(sold, 200);
+        const before = await snapshot(owner);
+        const receipt = await api(owner.token, `/api/sales/${sold.body.id}/receipt`);
+        status(receipt, 200);
+        expect(receipt.body).toMatchObject({ id: sold.body.id, paymentMethod: 'CASH' });
+        expect(fixed(receipt.body.total)).toBe(fixed(sold.body.total));
+        expect(receipt.body.items).toHaveLength(1);
+        expect(receipt.body.items[0]).toMatchObject({ quantity: 2 });
+        expect(receipt.body.items[0]).not.toHaveProperty('productId');
+        expect(receipt.body.tenant.businessName).toContain('copia-comprobante');
+        status(await api(other.token, `/api/sales/${sold.body.id}/receipt`), 404);
+        expect(await snapshot(owner)).toBe(before);
+    });
+
+    it('el catálogo de ejemplo ingresa existencias y apertura por conciliar una sola vez', async () => {
+        const f = await fixture('catalogo-ejemplo');
+        const loaded = await api(f.token, '/api/onboarding/seed-catalog', {});
+        status(loaded, 200);
+        const products = await prisma.product.findMany({ where: { tenantId: f.tenantId }, take: 100 });
+        expect(products.length).toBe(loaded.body.count);
+        const value = products.reduce((sum, product) => sum.plus(new Decimal(product.stock.toString()).mul(product.cost.toString())), new Decimal(0)).toFixed(4);
+        const account = await balances(f);
+        expect(account['1.1.4']).toBe(value);
+        expect(account['3.1.4']).toBe(value);
+        expect(await prisma.journalEntry.count({ where: { tenantId: f.tenantId, referenceType: 'SEED_CATALOG_OPENING' } })).toBe(products.length);
+        expect((await api(f.token, '/api/onboarding/seed-catalog', {})).status).toBe(409);
+        expect((await balances(f))['1.1.4']).toBe(value);
+        await assertBalanced(f);
+    });
+
     it.each<Method>(['CASH', 'CARD', 'TRANSFER', 'QR'])('%s: venta → aprobación → devolución → reembolso conserva saldos y stock', async method => {
         const f = await fixture(method);
         const productId = await product(f);
         const sale = await api(f.token, '/api/sales', salePayload(productId, method, 2));
         status(sale, 200);
         expect(fixed(sale.body.total)).toBe('100.0000');
+        const returnable = await api(f.token, `/api/sales/search?q=${sale.body.id}`);
+        status(returnable, 200);
+        expect(returnable.body.allowedRefundMethods).toEqual([method]);
         expect(await stock(f, productId)).toBe(3);
         const afterSale = await balances(f);
         const tender = method === 'CASH' ? '1.1.1' : '1.1.2';
         const other = method === 'CASH' ? '1.1.2' : '1.1.1';
         expect(afterSale[tender]).toBe('100.0000');
         expect(afterSale[other]).toBe('0.0000');
-        expect(afterSale['1.1.4']).toBe('-60.0000');
+        expect(afterSale['1.1.4']).toBe('90.0000');
+        expect(afterSale['3.1.4']).toBe('150.0000');
         expect(afterSale['5.1.1']).toBe('60.0000');
         const saleLine = await prisma.saleItem.findFirstOrThrow({ where: { saleId: sale.body.id, sale: { tenantId: f.tenantId } } });
         const payload = await approvedReturn(f, sale.body.id, saleLine.id, method);
@@ -156,7 +230,9 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
             expect(settled.body.status).toBe('COMPLETED');
         }
         const final = await balances(f);
-        for (const account of ['1.1.1', '1.1.2', '1.1.4', '2.1.2', '2.1.13', '5.1.1']) expect(final[account], account).toBe('0.0000');
+        for (const account of ['1.1.1', '1.1.2', '2.1.2', '2.1.13', '5.1.1']) expect(final[account], account).toBe('0.0000');
+        expect(final['1.1.4']).toBe('150.0000');
+        expect(final['3.1.4']).toBe('150.0000');
         expect(new Decimal(final['4.1.1']).plus(final['4.1.2']).toFixed(4)).toBe('0.0000');
         expect(await prisma.cashMovement.count({ where: { tenantId: f.tenantId, category: 'DEVOLUCION' } })).toBe(method === 'CASH' ? 1 : 0);
         const saved = await snapshot(f);

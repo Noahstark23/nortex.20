@@ -59,6 +59,6 @@ function Scanner({ onCode, onClose, onCreateProduct }: Props & { onClose: () => 
 }
 export function CameraScanButton({ onCode, onCreateProduct, disabled = false, label = 'Escanear con cámara' }: Props) {
     const [open, setOpen] = useState(false);
-    return <><button type="button" className="nx-camera-trigger nx-fluid-press" aria-label={label} title={label} disabled={disabled} onClick={() => setOpen(true)}><Camera size={21}/><span>Cámara</span></button>
+    return <><button type="button" className="nx-camera-trigger nx-fluid-press" aria-label={label} title={label} disabled={disabled} onClick={() => setOpen(true)}><Camera size={21}/><span>{label}</span></button>
         {open && <Scanner onCode={onCode} onCreateProduct={onCreateProduct} onClose={() => setOpen(false)}/>}</>;
 }

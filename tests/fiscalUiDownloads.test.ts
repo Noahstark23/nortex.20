@@ -29,7 +29,7 @@ describe('contrato UI de documentos fiscales protegidos', () => {
         expect(reports).toContain('`/api/tax-report/dmi?month=${month}&year=${year}`');
         expect(reports).toContain('report.dmiReport');
         expect(reports).toContain('new Blob([report.dmiReport]');
-        expect(reports).toContain('Descargar DMI (.txt)');
+        expect(reports).toContain('Descargá DMI (.txt)');
         expect(reports).not.toContain('Esta funcionalidad se conectara a un generador de XLSX');
     });
 
@@ -44,7 +44,7 @@ describe('contrato UI de documentos fiscales protegidos', () => {
     it('conserva el Excel de cantidades medidas junto a las descargas DGI', () => {
         expect(reports).toContain("buildMeasuredReportExportRows(salesData.quantityBreakdown)");
         expect(reports).toContain("XLSX.writeFile(workbook, `Cantidades_vendidas_${dates.startDate}_${dates.endDate}.xlsx`)");
-        expect(reports).toContain('Descargar cantidades (.xlsx)');
+        expect(reports).toContain('Descargá cantidades (.xlsx)');
         expect(reports).toContain('Cantidad exacta');
     });
 

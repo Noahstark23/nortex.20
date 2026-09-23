@@ -83,7 +83,7 @@ export const HomeSalesJourney: React.FC<{ session: ActivationSession }> = ({ ses
                     }}
                     className="nx-fluid-press nx-canvas-muted min-h-tap inline-flex items-center gap-2 rounded-control text-sm font-semibold"
                 >
-                    <PlayCircle size={17} aria-hidden="true" /> Practicar sin guardar datos
+                    <PlayCircle size={17} aria-hidden="true" /> Practicá sin guardar datos
                 </button>
                 <button type="button" onClick={() => navigate('/app/ayuda')} className="nx-fluid-press nx-canvas-muted min-h-tap inline-flex items-center gap-2 rounded-control text-sm font-semibold">
                     <CircleHelp size={17} aria-hidden="true" /> Necesito ayuda

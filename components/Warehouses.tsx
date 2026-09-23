@@ -625,7 +625,7 @@ const Warehouses: React.FC = () => {
 
                         <div className="flex items-center justify-between gap-3">
                             <label className="text-xs text-slate-400">Ordenar <select aria-label="Ordenar existencias" value={orden} onChange={event => setOrden(event.target.value as 'nombre' | 'stock')} className="ml-2 rounded-control border px-3 py-2 bg-surface-900 nx-form-field"><option value="nombre">Nombre</option><option value="stock">Mayor existencia</option></select></label>
-                            <button type="button" onClick={() => selected && loadStock(selected)} disabled={!selected || loading || topologyLocked} aria-label={selected ? `Actualizar existencias de ${selected.name}` : 'Actualizar existencias'} className="stock-workspace-quiet nx-fluid-press"><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Actualizar</button>
+                            <button type="button" onClick={() => selected && loadStock(selected)} disabled={!selected || loading || topologyLocked} aria-label={selected ? `Actualizá existencias de ${selected.name}` : 'Actualizá existencias'} className="stock-workspace-quiet nx-fluid-press"><RefreshCw size={16} className={loading ? 'animate-spin' : ''} /> Actualizá</button>
                         </div>
                     </div>
                     {/* En móvil cada existencia es una tarjeta: nombre, SKU, stock y
@@ -807,7 +807,7 @@ const Warehouses: React.FC = () => {
             <section className="mt-6 rounded-xl border border-white/10 p-4" aria-label="Historial de traslados">
                 <div className="flex items-center justify-between gap-3">
                     <h2 className="font-semibold">Traslados registrados</h2>
-                    <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} className="text-sm font-semibold text-brand underline disabled:opacity-50">{showHistory ? 'Actualizar historial' : 'Ver historial de traslados'}</button>
+                    <button type="button" onClick={() => void loadHistory()} disabled={historyLoading} className="text-sm font-semibold text-brand underline disabled:opacity-50">{showHistory ? 'Actualizá historial' : 'Ver historial de traslados'}</button>
                 </div>
                 {showHistory && <p className="mt-2 text-xs text-slate-400">Últimos 100 traslados. Cada registro confirma el movimiento inmediato entre las dos bodegas.</p>}
                 {historyLoading && <p role="status" className="mt-3 text-sm text-slate-400">Cargando traslados…</p>}
