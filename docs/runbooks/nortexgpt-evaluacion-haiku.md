@@ -97,9 +97,11 @@ el lanzador del backend. Una capacidad queda activa sólo si ambos coinciden.
 | Promociones (`promotionsEnabled`) | **deshabilitada** |
 | WhatsApp privado / comercial | **deshabilitados** |
 
-Presupuestos: las constantes del servidor no se tocan — **US$20 globales** y
-**US$10 por negocio**. La configuración por negocio de QA se fija en **US$5**,
-más conservadora, para quedar dentro del tope del workspace `Nortex-QA`.
+Presupuestos: las constantes del servidor no se tocan — **US$20 globales**,
+**US$2 iniciales por negocio** y ampliación aprobada hasta **US$10**. La
+configuración por negocio de QA fija tanto el presupuesto como el aprobado en
+**US$2**, según `nortexgpt-enable-synthetic.ts`. Una receta anterior de US$5
+no concede ese cupo al piloto ni al workspace `Nortex-QA`.
 
 ## 4. Arrancar y detener el backend de QA
 

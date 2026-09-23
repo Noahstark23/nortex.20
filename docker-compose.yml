@@ -70,11 +70,46 @@ services:
       # Destino del aviso "entró un pago por revisar" (la activación es manual).
       - BILLING_ALERT_EMAIL=${BILLING_ALERT_EMAIL:-}
       - SUPPORT_WHATSAPP=${SUPPORT_WHATSAPP:-}
+      # Almacenamiento privado compartido; la extracción sigue apagada hasta
+      # acreditar respaldo y restore conjunto de SQL y originales.
+      - NORTEX_ASSISTANT_STORAGE_DIR=/var/lib/nortex/assistant/originals
+    volumes:
+      - 'assistant_private:/var/lib/nortex/assistant'
     # Espera a que MySQL pase el healthcheck antes de arrancar (belt-and-suspenders
     # junto al wait del entrypoint, por si Coolify no honra la condición).
     depends_on:
       db:
         condition: service_healthy
+
+  # Activación explícita después de verificar schema, SHA, volumen y colas.
+  # El perfil evita que un deploy normal arranque un consumidor de documentos.
+  assistant-worker:
+    profiles: ["assistant-worker"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ['npm', 'run', 'assistant:worker']
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 180s
+    environment:
+      - NODE_ENV=production
+      - SOURCE_COMMIT=${SOURCE_COMMIT:-}
+      - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD}@db:3306/nortex_db
+      - NORTEX_ASSISTANT_STORAGE_DIR=/var/lib/nortex/assistant/originals
+      - NORTEX_ASSISTANT_ENABLED=${NORTEX_ASSISTANT_ENABLED:-false}
+      - NORTEX_ASSISTANT_EXTRACTION_ENABLED=${NORTEX_ASSISTANT_EXTRACTION_ENABLED:-false}
+      - NORTEX_ASSISTANT_OPERATIONS_ENABLED=${NORTEX_ASSISTANT_OPERATIONS_ENABLED:-false}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+    volumes:
+      - 'assistant_private:/var/lib/nortex/assistant'
+    depends_on:
+      app:
+        condition: service_healthy
+    # El Dockerfile comprueba HTTP de la API. Este proceso no expone HTTP;
+    # /api/assistant/status verifica un latido privado de su misma versión.
+    healthcheck:
+      disable: true
 
   # ── Backup diario off-site (DGI-4 · Capa 6 del Security & Integrity Loop) ────
   # Vive ACÁ y no en un cron del host por dos razones concretas:
@@ -116,3 +151,6 @@ volumes:
   # Dumps locales + el latido `last-backup.json` (evidencia del último respaldo
   # bueno). La copia que importa es la del bucket; esta es la de mano.
   backup_data:
+  # Solo datos privados del asistente. No habilitar extracción hasta añadir
+  # respaldo off-site y restore de originales con consistencia respecto a MySQL.
+  assistant_private:
