@@ -28,6 +28,10 @@ import { applyProviderCredential } from './provider-credential.mjs';
 const argument = name => { const at = process.argv.indexOf(name); return at < 0 ? undefined : process.argv[at + 1]; };
 const allowProvider = process.argv.includes('--allow-provider');
 const pilotFirstCut = process.argv.includes('--pilot-first-cut');
+const workerQa = process.argv.includes('--worker-qa');
+const requestedSourceCommit = argument('--source-commit');
+if (workerQa && (!pilotFirstCut || allowProvider || !/^[0-9a-f]{40}$/i.test(requestedSourceCommit ?? '')))
+  throw new Error('La prueba del worker exige --pilot-first-cut, SHA completo y proveedor apagado.');
 const stateDir = path.join(homedir(), '.nortex-qa');
 const secretPath = path.join(stateDir, 'eval-jwt-secret');
 
@@ -56,7 +60,8 @@ async function freePort(requested) {
 
 const port = await freePort(Number(argument('--port') ?? 3211));
 const baseUrl = `http://127.0.0.1:${port}`;
-const commit = 'nortexgpt-eval-' + randomBytes(8).toString('hex');
+const commit = workerQa ? requestedSourceCommit : 'nortexgpt-eval-' + randomBytes(8).toString('hex');
+const assistantStorageDir = path.join(tmpdir(), 'nortex-eval-assistant-' + randomBytes(8).toString('hex'));
 const env = {
   PATH: process.env.PATH, HOME: process.env.HOME, NODE_ENV: 'test',
   DATABASE_URL: process.env.DATABASE_URL,
@@ -66,7 +71,7 @@ const env = {
   NORTEX_DATA_KEYS: 'qa:' + randomBytes(32).toString('base64'),
   NORTEX_LEDGER_KEYS: 'qa:' + randomBytes(32).toString('base64'),
   NORTEX_INDEX_KEY: randomBytes(32).toString('base64'),
-  NORTEX_ASSISTANT_STORAGE_DIR: path.join(tmpdir(), 'nortex-eval-assistant-' + randomBytes(8).toString('hex')),
+  NORTEX_ASSISTANT_STORAGE_DIR: assistantStorageDir,
   SOURCE_COMMIT: commit,
   // Modo de evaluación operativa histórico o primer corte real del piloto.
   NORTEX_ASSISTANT_ENABLED: 'true',
@@ -117,6 +122,7 @@ if (!healthy) { console.error('El backend de QA o MySQL no respondieron.'); awai
 
 console.log(JSON.stringify({
   baseUrl, pid: server.pid, database: new URL(env.DATABASE_URL).pathname.slice(1),
+  ...(workerQa ? { sourceCommit: commit, assistantStorageDir } : {}),
   provider: credential.propagated
     ? { propagated: true, envVar: 'ANTHROPIC_API_KEY', fingerprint: credential.fingerprint, length: credential.length }
     : { propagated: false, reason: credential.reason, effect: 'las consultas devolverán el respaldo determinista' },

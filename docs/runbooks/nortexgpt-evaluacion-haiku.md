@@ -129,6 +129,22 @@ Imprime la URL base, la huella de la credencial propagada (nunca el valor) y las
 capacidades activas. **Detener:** `Ctrl+C` en esa terminal, o `SIGTERM` al proceso;
 el lanzador cierra el backend hijo y libera el puerto.
 
+### Latido de un worker en el primer corte, sin proveedor
+
+Para comprobar el worker activo contra la misma base descartable, iniciá el
+backend con `--pilot-first-cut --worker-qa --source-commit <SHA_COMPLETO>` y sin
+`--allow-provider`. Este modo exige un SHA de 40 caracteres e imprime un
+`assistantStorageDir` temporal. El worker debe usar **ese directorio**, el mismo
+SHA y la misma `DATABASE_URL` descartable, con `NORTEX_ASSISTANT_ENABLED=true`,
+`NORTEX_ASSISTANT_LANGUAGE_ENABLED=true` y operaciones, extracción, ejecución,
+acciones, promociones y canal privado en `false`. Iniciá un solo proceso
+`mise exec -- node --import tsx backend/workers/assistant.ts` y consultá
+`GET /api/assistant/status` con una sesión OWNER sintética. Exigí
+`worker.status=ok`, edad menor de 90 segundos y SHA exacto; el estado global
+puede ser `partial` antes de que exista un presupuesto materializado. Detené el
+worker y el backend al terminar; un latido anterior no demuestra que el proceso
+siga vivo.
+
 La receta de la sección 6 usa `operations-model.mjs` y exige **operations=true**.
 No se debe ejecutar contra `--pilot-first-cut`: ese CLI no evalúa el recorrido
 que recibirán las cuentas piloto. En ese recorrido el modelo sólo interpreta
