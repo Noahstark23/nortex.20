@@ -133,12 +133,17 @@ sesión autenticada de Nortex, nunca la clave del proveedor.**
 
 ```sh
 mise exec -- node --import tsx scripts/qa/nortexgpt-prepare-review.ts \
-  --out docs/evidence/nortexgpt/evaluation-20260908
+  --out docs/evidence/nortexgpt/evaluation-20260923
 ```
 
 Deja los dos formularios con datos del montaje y resultados esperados calculados
 con consultas ORM propias — **no** con `checkInventoryBurnRate`, para que sirvan de
 contraste y no de eco. Quedan con `expectedOutcomesReviewed: false` y `reviewer: null`.
+
+Los formularios generados el 23 de septiembre de 2026 están en esa carpeta,
+con una lectura resumida en su `README.md`. Si la consulta se ejecuta otro día
+civil de Managua, usar una carpeta fechada nueva, regenerar y volver a revisar
+las expectativas: cambian la ventana de salidas y los vencimientos.
 
 **Paso humano obligatorio:** revisar montaje, productos, lotes, fechas, período,
 existencias vendibles, salidas BASE y OC pendientes contra evidencia independiente;
@@ -152,7 +157,7 @@ falsa. Nadie más puede marcarla.
 mise exec -- node --import tsx scripts/assistant-evaluation/operations-model.mjs \
   --allow-paid-model --synthetic-tenant --base-url http://127.0.0.1:PUERTO \
   --vertical ferreteria --role OWNER --limit 1 --max-reserved-usd 2 \
-  --review-file docs/evidence/nortexgpt/evaluation-20260908/model-review-ferreteria.json \
+  --review-file docs/evidence/nortexgpt/evaluation-20260923/model-review-ferreteria.json \
   --session-token-file ~/.nortex-qa/sesion-ferreteria \
   --report reports/assistant-evaluation/ferreteria-lote-01.json
 ```
