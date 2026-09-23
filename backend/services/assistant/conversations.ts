@@ -177,7 +177,8 @@ function replayMessage(messages: StoredMessage[], text: string): StoredMessage |
 
 export async function sendAssistantMessage(
     principal: AssistantPrincipal, conversationId: string, input: unknown, db: PrismaClient = prisma,
-    dependencies:{channel?:AssistantKnowledgeChannel;startRun?:(principal:AssistantPrincipal,id:string,db:PrismaClient)=>Promise<unknown>}={},
+    dependencies:{channel?:AssistantKnowledgeChannel;startRun?:(principal:AssistantPrincipal,id:string,db:PrismaClient)=>Promise<unknown>;
+      interpret?:(principal:AssistantPrincipal,text:string,history:string[])=>Promise<AssistantReadPlan|null>}={},
 ): Promise<AssistantMessageDTO> {
     const { requestId, text } = assistantMessageInputSchema.parse(input);
     const channel = dependencies.channel ?? 'WEB_INTERNAL';
@@ -201,7 +202,7 @@ export async function sendAssistantMessage(
     const historyRows = !useOperational&&process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED === 'true'
       ? await db.assistantMessage.findMany({where:{tenantId:principal.tenantId,userId:principal.userId,conversationId,role:'user'},orderBy:{createdAt:'desc'},take:4}) : [];
     const history = historyRows.reverse().map(row => storedContentSchema.parse(row.content).text);
-    const plan=useOperational||fixedIntent==='restricted'?null:await createAssistantLanguage({db})(principal,text,history);
+    const plan=useOperational||fixedIntent==='restricted'?null:await (dependencies.interpret??createAssistantLanguage({db}))(principal,text,history);
     let snapshotMetadata:unknown=conversation.metadata;
     const existingIntake=readPurchaseIntake(snapshotMetadata);
     let proposalSnapshot:AssistantProposalDTO|undefined;

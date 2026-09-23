@@ -26,6 +26,8 @@ describe('isBodegueroRouteAllowed', () => {
         expect(isBodegueroRouteAllowed('GET', '/api/kardex/prod_1?from=2026-08-01&to=2026-08-22')).toBe(true);
         expect(isBodegueroRouteAllowed('GET', '/api/inventory/batches/prod_1')).toBe(true);
         expect(isBodegueroRouteAllowed('GET', '/api/tenant/info')).toBe(true);
+        expect(isBodegueroRouteAllowed('GET', '/api/assistant/knowledge/revision')).toBe(true);
+        expect(isBodegueroRouteAllowed('GET', '/api/assistant/knowledge/documents/lotes/versions/2026-09-23.web2/sections/main?contentHash=abc')).toBe(true);
     });
 
     it('bloquea superficies financieras y administrativas aunque tengan authenticate', () => {
@@ -46,6 +48,9 @@ describe('isBodegueroRouteAllowed', () => {
         expect(isBodegueroRouteAllowed('GET', '/api/me/profile')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/accounting/balance-general')).toBe(false);
         expect(isBodegueroRouteAllowed('POST', '/api/payments')).toBe(false);
+        expect(isBodegueroRouteAllowed('POST', '/api/assistant/knowledge/revision')).toBe(false);
+        expect(isBodegueroRouteAllowed('GET', '/api/assistant/knowledge/documents/lotes/versions/1/sections/main/extra')).toBe(false);
+        expect(isBodegueroRouteAllowed('GET', '/api/assistant/knowledge/admin')).toBe(false);
         expect(isBodegueroRouteAllowed('GET', '/api/team')).toBe(false);
         expect(isBodegueroRouteAllowed('POST', '/api/hr/clock-in')).toBe(false);
         expect(isBodegueroRouteAllowed('POST', '/api/hr/clock-out')).toBe(false);

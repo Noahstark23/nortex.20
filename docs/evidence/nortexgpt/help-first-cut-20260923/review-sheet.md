@@ -1,19 +1,19 @@
 # NortexGPT · hoja de revisión del primer corte web
 
 **Borrador sin aprobación ni publicación.** Revisar el texto completo y los roles de cada versión.
-Hash del manifiesto exacto: `3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126`.
-Cada artículo permite sólo `WEB_INTERNAL`; promociones y canal privado están excluidos.
+Hash del manifiesto exacto: `debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c`.
+Cada artículo permite sólo `WEB_INTERNAL`; promociones y canal privado están excluidos de consultas nuevas. Las citas históricas siguen sujetas a su propio contrato de acceso.
 Si se corrige un texto, generar otra versión y otro hash antes de aprobar.
 
 ## asistente · Ayuda de Nortex
 
-- Versión: `2026-09-23.web1`
-- Hash del artículo: `2066ff38b1b9c0a2b9fff4c2ec887f30cb082f06f1ce8a70491ba0fd28a2fb41`
+- Versión: `2026-09-23.web2`
+- Hash del artículo: `d19f5d5e04bcbd7aca9ec95a3038c207acd13d1a0b80c4815b72c82c33e57b9d`
 - Roles: ACCOUNTANT, ADMIN, BODEGUERO, CASHIER, DRIVER, EMPLOYEE, LENDER, MANAGER, OWNER, SUPER_ADMIN, VENDEDOR, VIEWER
 - Canal: WEB_INTERNAL
-- Atención: Confirmar que la mención de propuestas de compra no sugiera confirmación desde el chat inicial.
+- Atención: Comprobar que la compra se confirma sólo en la vista autorizada, nunca en el chat.
 
-Podés consultar información permitida para tu rol y pedir ayuda para usar Nortex. Las consultas muestran su período y procedencia. Una propuesta de compra no cambia inventario ni dinero: primero tenés que revisarla y confirmarla.
+Podés consultar información permitida para tu rol y pedir ayuda para usar Nortex. Las consultas muestran su período y procedencia. Una propuesta de compra no cambia inventario ni dinero. Para registrarla, una persona con permiso debe revisar los datos en la vista correspondiente de Nortex y confirmarla allí; el chat no confirma la compra.
 
 ## ventas · Ayuda de Nortex
 
@@ -47,13 +47,13 @@ Revisá proveedor, número de factura, fecha, productos, cantidades, unidades, c
 
 ## lotes · Ayuda de Nortex
 
-- Versión: `2026-09-23.web1`
-- Hash del artículo: `f045df3faa7b9d1fe5b006b7c6c74464dd3f1bba69479133c264f7bc7c4644ec`
+- Versión: `2026-09-23.web2`
+- Hash del artículo: `dae01f007502ca3732e29bbc18dba71035082d7d8c7a224028b02cb270d2561e`
 - Roles: ACCOUNTANT, ADMIN, BODEGUERO, MANAGER, OWNER, SUPER_ADMIN, VIEWER
 - Canal: WEB_INTERNAL
-- Atención: Comprobar texto, permisos y recorrido real en Nortex.
+- Atención: Comprobar el día civil de Managua y la separación de stock físico y vendible.
 
-Para productos con seguimiento por lote, comprobá el número de lote y el vencimiento antes de recibir. Los vencimientos se interpretan como días del catálogo tomando el día vigente en Managua. El stock físico puede incluir unidades retenidas o vencidas: no lo confundás con disponibilidad para vender.
+Para productos con seguimiento por lote, comprobá el número de lote y la fecha de vencimiento antes de recibir. El vencimiento se evalúa por día civil, tomando como referencia la fecha vigente en Managua. El stock físico puede incluir unidades retenidas o vencidas: no lo confundás con disponibilidad para vender.
 
 ## contabilidad · Ayuda de Nortex
 
@@ -67,33 +67,33 @@ Las ventas registradas no equivalen a utilidad ni a dinero recibido. Revisá por
 
 ## reposicion · Ayuda de Nortex
 
-- Versión: `2026-09-23.web2`
-- Hash del artículo: `a8844017076ff48ef6ce417a8e48657a7ec9a2fbfcba58882946706d2e2a58fe`
+- Versión: `2026-09-23.web3`
+- Hash del artículo: `ffdec72beef292a69ca8da89887e5841b15b634ac062c361bbe707773cdd71ee`
 - Roles: ACCOUNTANT, ADMIN, BODEGUERO, MANAGER, OWNER, SUPER_ADMIN, VIEWER
 - Canal: WEB_INTERNAL
-- Atención: Verificar la ruta manual en Inventario o Compras; la consulta operativa del asistente sigue apagada.
+- Atención: Comprobar permisos de Compras Inteligentes y cobertura deshabilitada.
 
-Para planificar una reposición en Inventario o Compras, revisá existencias vendibles, unidades, mínimos y entradas pendientes. Una orden de compra preparada queda en borrador hasta su aprobación y envío; no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT aún no está habilitada en este piloto.
+Para planificar una reposición, consultá las existencias según los permisos de tu rol y revisá unidades, mínimos y recepciones pendientes. Comprobá aparte los lotes vencidos o retenidos antes de tratar esas unidades como disponibles para vender. La pantalla Compras Inteligentes requiere permisos de administración. Una orden preparada queda en borrador hasta su aprobación; el envío al proveedor se gestiona por separado. Prepararla no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT sigue deshabilitada en este piloto.
 
 ## salida-proveedor · Ayuda de Nortex
 
-- Versión: `2026-09-23.web1`
-- Hash del artículo: `994f0af89dd6f88704ba599659594068f20bd0e6f257b9318e5753be61db58d4`
+- Versión: `2026-09-23.web2`
+- Hash del artículo: `e51b475431d14f5560b9939e9083ee5c66403177642cce7d7f5ab9804f05de3a`
 - Roles: ADMIN, BODEGUERO, MANAGER, OWNER, SUPER_ADMIN
 - Canal: WEB_INTERNAL
-- Atención: Confirmar que la salida física y la nota de crédito permanezcan fuera del chat inicial.
+- Atención: Comprobar la entrega física antes de confirmar; la nota de crédito es separada.
 
-Seleccioná el proveedor y la línea de compra o recepción original, revisá producto, lote, bodega y cantidad. Confirmá expresamente que corresponde registrar la salida física. El comprobante de devolución no reduce por sí solo la cuenta por pagar; una nota de crédito del proveedor se concilia por separado.
+Seleccioná el proveedor y la línea de compra o recepción original; revisá producto, lote, bodega y cantidad. Cuando la mercadería ya haya sido entregada físicamente al proveedor, confirmá ese hecho en el formulario autorizado de Nortex. El chat inicial no registra la salida. El comprobante de devolución no reduce por sí solo la cuenta por pagar; una nota de crédito del proveedor se concilia por separado.
 
 ## merma · Ayuda de Nortex
 
-- Versión: `2026-09-23.web1`
-- Hash del artículo: `bdd2367603f52bb6edd68f0bc37c62186d9cf8ad515ade85251016af17349280`
+- Versión: `2026-09-23.web2`
+- Hash del artículo: `f34186b9053339787c1e01de0bc9c94a0a17bb1e84174d0c48a3323bc1e94d7e`
 - Roles: ADMIN, OWNER, SUPER_ADMIN
 - Canal: WEB_INTERNAL
-- Atención: Confirmar que la baja se ejecuta sólo en el flujo autorizado, no por una respuesta del modelo.
+- Atención: Comprobar la condición de valor positivo del asiento y la confirmación fuera del chat.
 
-Una fecha vencida no demuestra que las unidades fueron retiradas físicamente. Revisá lote, bodega, cantidad y motivo; la vista de confirmación muestra la salida y su valor. Confirmar registra inventario, asiento, auditoría y comprobante juntos. Si cambian los datos después de revisar, actualizá la propuesta.
+Una fecha vencida no demuestra que las unidades fueron retiradas físicamente. Revisá lote, bodega, cantidad y motivo; la vista de confirmación muestra la salida y su valor. Al confirmar la baja en el flujo autorizado, Nortex registra la salida de inventario, el movimiento de Kardex y la auditoría; si la pérdida tiene valor positivo, también genera el asiento. El chat no ejecuta la baja. Si cambian los datos después de revisar, actualizá la propuesta y volvé a revisarla.
 
 ## comparacion · Ayuda de Nortex
 

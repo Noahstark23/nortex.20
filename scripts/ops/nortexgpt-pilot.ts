@@ -25,7 +25,7 @@ const guardedFlags = ['extractionEnabled', 'executionEnabled', 'operationsEnable
 // El primer piloto no debe abrir el corpus LEGACY ni una edición distinta.
 const firstCutHelp = {
   releaseId: 'nortexgpt-primer-corte-20260923',
-  manifestHash: '3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126',
+  manifestHash: 'debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c',
 } as const;
 const budgetOf = (config: NonNullable<Awaited<ReturnType<typeof prisma.assistantTenantConfig.findUnique>>>) =>
   new Decimal(effectiveAssistantBudget(config)).toString();

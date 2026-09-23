@@ -5,25 +5,26 @@ Fecha: 2026-09-23. **Borrador sin revisión humana ni publicación.**
 [`release-draft.json`](release-draft.json) tiene la forma exacta que acepta
 `POST /api/admin/assistant-knowledge/releases`; [`manifest-draft.json`](manifest-draft.json)
 fija las referencias de las mismas diez versiones. Hash del manifiesto:
-`3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126`.
-Ocho cuerpos provienen del corpus `LEGACY` del candidato; `reposicion` y
-`comparacion` se corrigieron para no prometer consultas operativas apagadas en
-este piloto. Ocho artículos usan `2026-09-23.web1` y esos dos usan
-`2026-09-23.web2`. Todos permiten sólo `WEB_INTERNAL`; ninguna de las diez versiones
+`debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c`.
+Los cinco cuerpos de `asistente`, `lotes`, `reposicion`, `salida-proveedor` y
+`merma` fueron sustituidos por la redacción solicitada para otra revisión.
+`comparacion` conserva su redacción `web2`; `ventas`, `offline`, `compras` y
+`contabilidad` conservan sus cuerpos `web1`. Hay cuatro versiones `web1`, cinco
+`web2` y una `web3` (`reposicion`). Todos permiten sólo `WEB_INTERNAL`; ninguna de las diez versiones
 autoriza `WHATSAPP_PRIVATE`. No se hizo POST, revisión ni publicación.
 
 | Propuestos para revisión | Motivo de atención |
 |---|---|
-| asistente, ventas, offline, compras, lotes, contabilidad | Ayuda y lectura pertinentes al primer corte; comprobar texto, roles y recorrido real |
-| reposicion, comparacion | Textos corregidos: explicar que las consultas operativas del asistente siguen apagadas en este piloto |
-| salida-proveedor, merma | Describen confirmaciones fuera del asistente inicial; revisar que el texto no sugiera que el chat puede ejecutarlas |
+| asistente, lotes, reposicion, salida-proveedor, merma | Cinco cuerpos nuevos; revisar texto completo, roles y recorrido real |
+| ventas, offline, compras, contabilidad, comparacion | Cuerpos sin cambios editoriales en esta revisión |
 
 `promociones` y `canal-privado` quedan **fuera de este borrador** porque el
 primer corte mantiene esas capacidades apagadas. El corpus `LEGACY` actual
 puede mostrarlos hasta que se publique un manifiesto revisado; preparar este
 archivo no cambia la ayuda que ven los usuarios. Tras publicar, las consultas
-nuevas usan sólo las referencias activas, pero las referencias históricas
-tienen su propio contrato de acceso y retirada.
+nuevas usan sólo las referencias activas. Las citas `LEGACY` en conversaciones
+anteriores pueden seguir abriendo el pasaje histórico mientras sus permisos
+continúen vigentes; esta revisión no retira versiones históricas.
 
 Para verificar que los archivos aún coinciden con el código fuente:
 
@@ -53,15 +54,25 @@ La simulación acredita la mecánica editorial, **no** la revisión de los texto
 por una persona. El mismo ensayo quedó añadido al job MySQL de CI. Se repitió
 para el hash actual en una base sintética independiente y aprobó; la base se
 retiró al terminar.
-Otra base sintética confirmó que «¿Cómo comparar ventas?» y «¿Cómo reponer
-productos?» citan los dos textos corregidos, explican que esas consultas aún
-no están habilitadas y no crean `AssistantRun`.
+El ensayo actualizado en MySQL 8 descartable comprobó que «¿Cómo comparar
+ventas?» y «¿Cómo reponer productos?» citaron ayuda publicada y no crearon
+`AssistantRun` con `operations=false` y `language=true` cuando la interpretación
+se sustituyó por un doble local; eso no mide el proveedor real. El ensayo
+también verificó cita y apertura de `asistente`, `lotes`, `reposicion` y
+`salida-proveedor` para BODEGUERO, rechazo de
+`contabilidad` para ese rol y ausencia de `AssistantUsage` por el doble.
+`comparacion` mantiene `web2` sin cambios. La allowlist HTTP de BODEGUERO ahora
+admite sólo revisión y pasaje de ayuda, y continúa bloqueando rutas financieras.
+En una conversación sintética anterior a la publicación simulada, las citas
+`LEGACY` de promociones y canal privado siguieron comprobables como históricas
+después de activar el manifiesto nuevo; no se retiraron esas versiones.
 En una segunda base descartable se reprodujo el orden anterior de CI: ensayo
 de dos pilotos primero y ensayo editorial después; ambos aprobaron. El guard
 nuevo del piloto exige publicación previa, así que CI ahora usa una base
 descartable para cada ensayo. Ambos volvieron a pasar por separado. No se
 usaron negocios ni cuentas reales.
-La compuerta local segura posterior del hash actual pasó con Prisma,
-TypeScript, 491 archivos/7091 pruebas, sistema de diseño y build; 50 archivos
-y 545 pruebas omitidos se cuentan aparte. CI remoto del nuevo SHA sigue
-pendiente.
+El hash nuevo pasó `--verify`, TypeScript y 36 pruebas dirigidas. La compuerta
+local segura pasó con 491 archivos/7091 pruebas, diseño y build; 50 archivos y
+545 pruebas omitidos se informan aparte. Los ensayos editoriales y del guard
+de piloto pasaron en dos bases MySQL 8 descartables independientes. CI remoto
+del nuevo commit queda pendiente hasta subirlo al PR borrador.

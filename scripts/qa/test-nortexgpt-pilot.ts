@@ -88,7 +88,7 @@ async function main() {
   const principal = { tenantId: adminTenant.id, userId: actor.id, role: 'SUPER_ADMIN' };
   const staged = await stageAssistantKnowledgeRelease(principal, draft, prisma);
   const decision = { releaseId: staged.id, manifestHash: staged.manifestHash };
-  assert.equal(staged.manifestHash, '3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126');
+  assert.equal(staged.manifestHash, 'debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c');
   assert.match(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false),
     /PILOT_HELP_RELEASE_REQUIRED/);
   await reviewAssistantKnowledgeRelease(principal, decision, prisma);
