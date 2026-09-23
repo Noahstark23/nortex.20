@@ -51,7 +51,7 @@ describe('bodega: coma decimal no multiplica cantidades ni dinero', () => {
         const bodies = install(); await openPurchase();
         fireEvent.change(screen.getByLabelText(/Cantidad a facturar de Producto medido/), { target: { value: '0,125' } });
         fireEvent.change(screen.getByLabelText(/Costo de Producto medido/), { target: { value: '1,234567' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Procesar ingreso' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Procesá el ingreso' }));
         await waitFor(() => expect(bodies).toHaveLength(1));
         expect(bodies[0].items[0]).toMatchObject({ quantity: '0.125', unitCost: '1.234567' });
     });
@@ -107,7 +107,7 @@ describe('bodega: coma decimal no multiplica cantidades ni dinero', () => {
         }
         fireEvent.change(amount, { target: { value: '1.234,56' } });
         expect(amount.value).toBe('1.234,56');
-        fireEvent.click(screen.getByRole('button', { name: 'Procesar ingreso' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Procesá el ingreso' }));
         expect(bodies).toHaveLength(0);
         expect(amount.getAttribute('aria-invalid')).toBe('true');
     });
@@ -117,7 +117,7 @@ describe('bodega: coma decimal no multiplica cantidades ni dinero', () => {
         const cost = screen.getByLabelText(/Costo de Producto medido/) as HTMLInputElement;
         fireEvent.change(cost, { target: { value: raw } });
         expect(cost.value).toBe(raw);
-        fireEvent.click(screen.getByRole('button', { name: 'Procesar ingreso' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Procesá el ingreso' }));
         expect(bodies).toHaveLength(0);
         expect(cost.getAttribute('aria-invalid')).toBe('true');
     });
@@ -127,7 +127,7 @@ describe('bodega: coma decimal no multiplica cantidades ni dinero', () => {
         const amount = screen.getByLabelText(/Cantidad a facturar de Producto medido/) as HTMLInputElement;
         fireEvent.change(amount, { target: { value: '0,12345' } });
         expect(amount.value).toBe('0.12345');
-        fireEvent.click(screen.getByRole('button', { name: 'Procesar ingreso' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Procesá el ingreso' }));
         expect(bodies).toHaveLength(0);
     });
 

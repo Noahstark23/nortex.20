@@ -10,6 +10,7 @@ import OnboardingHub from './OnboardingHub';
 import TaskGuide from './learning/TaskGuide';
 import InstallPrompt from './InstallPrompt';
 import FluidSheet from './ui/FluidSheet';
+import ActionSearch from './navigation/ActionSearch';
 import { buildNavigation, groupBySection, navPathForRoute, esRutaDe, type NavEntry, type NavSection } from '../utils/navigation';
 import { useUiMode } from '../hooks/useUiMode';
 import { nextWorkspaceTheme, persistWorkspaceTheme, readWorkspaceTheme, type WorkspaceTheme } from '../utils/workspaceTheme';
@@ -369,7 +370,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               className="nx-shell-control nx-tone-positive nx-fluid-press flex min-h-tap w-full items-center justify-start gap-2.5 rounded-control border border-brand/20 bg-brand-soft px-2.5 py-2 text-left"
             >
               <Clock size={16} className="shrink-0" aria-hidden="true" />
-              <span className="text-[11px] font-semibold leading-tight">Marcar entrada / salida</span>
+              <span className="text-[11px] font-semibold leading-tight">Marcá entrada / salida</span>
             </button>
           )}
           <button
@@ -459,6 +460,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
 
           <div className="custom-scrollbar min-h-0 flex-1 overflow-y-auto p-4 pb-24">
+            <div className="mb-5"><ActionSearch entries={allItems} onSelect={(event, path) => { setShowMobileMenu(false); if (guardarSalida(event, path)) navigate(path); }} /></div>
             {/* Agrupar items por grupo y renderizar con headers (primary ∪ more: nada se pierde) */}
             {(() => {
               const groups = allItems.reduce<Record<string, NavItem[]>>((acc, item) => {
@@ -558,6 +560,8 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
               </button>
             )}
           </div>
+
+          <div className="hidden w-full max-w-xs lg:block xl:max-w-sm"><ActionSearch entries={allItems} onSelect={(event, path) => { if (guardarSalida(event, path)) navigate(path); }} /></div>
 
           <div className="flex shrink-0 items-center gap-3">
             <ThemeToggle theme={workspaceTheme} onToggle={toggleWorkspaceTheme} />

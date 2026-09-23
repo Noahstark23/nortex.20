@@ -254,7 +254,7 @@ const Billing: React.FC = () => {
                         {!isActive ? (
                             <button onClick={handleCheckout} disabled={checkoutLoading || !billing?.stripeConfigured}
                                 className="w-full bg-nortex-900 text-white py-4 rounded-xl font-bold text-lg flex items-center justify-center gap-3 hover:bg-nortex-800 shadow-lg disabled:opacity-50">
-                                {checkoutLoading ? <Loader2 className="animate-spin" size={22} /> : <><Zap size={22} /> PAGAR CON TARJETA <ArrowRight size={18} /></>}
+                                {checkoutLoading ? <Loader2 className="animate-spin" size={22} /> : <><Zap size={22} /> PAGÁ CON TARJETA <ArrowRight size={18} /></>}
                             </button>
                         ) : (
                             <div className="bg-emerald-500/10 p-4 rounded-xl text-center">

@@ -74,7 +74,7 @@ describe('integridad de abonos de clientes', () => {
         const shiftLock = handler.indexOf('FROM \\`Shift\\`', cashBranch);
         const paymentCreate = handler.indexOf('const payment = await tx.payment.create');
         const movementCreate = handler.indexOf('const cashMovement = await appendSignedCashMovement');
-        const replayReturn = handler.indexOf('return { replayed: true, paymentId: replay.id }');
+        const replayReturn = handler.indexOf('return replayCreditPaymentSnapshot(tx, lockedSale, authReq.tenantId!, replay.id)');
 
         expect(saleLock).toBeGreaterThan(-1);
         expect(replayGuard).toBeGreaterThan(saleLock);

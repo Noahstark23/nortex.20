@@ -31,6 +31,6 @@ describe('consulta de traslados registrados', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Ver historial de traslados' }));
         expect((await screen.findByRole('alert')).textContent).toContain('No pudimos verificar');
         expect(screen.queryByText('Todavía no hay traslados registrados.')).toBeNull();
-        expect(screen.getByRole('button', { name: 'Actualizar historial' })).toBeTruthy();
+        expect(screen.getByRole('button', { name: 'Actualizá historial' })).toBeTruthy();
     });
 });

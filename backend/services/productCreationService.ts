@@ -5,6 +5,7 @@ import { CreateProductSchema } from '../validation/schemas.js';
 import { applyStockDelta, asegurarBodegaPorDefecto } from './stockService.js';
 import { assertAggregateBatchMutationAllowed } from '../lib/manualBatchMovements.js';
 import { resolveBatchWarehouseLedgerMode } from './productBatchWarehouseLedgerService.js';
+import { recordInitialInventory } from './accounting.js';
 
 export type ProductCreationPrincipal = { tenantId: string; userId: string };
 export type ProductCreationInput = z.infer<typeof CreateProductSchema>;
@@ -107,6 +108,7 @@ export async function createProductInTransaction(tx: Prisma.TransactionClient, p
                 warehouseId: stockResult.warehouseId,
             },
         });
+        await recordInitialInventory(tx, principal.tenantId, principal.userId, created.id, initialStock, created.cost);
     }
 
     await tx.auditLog.create({

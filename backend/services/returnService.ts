@@ -562,7 +562,10 @@ export const allowedReturnRefundMethods = (params: {
     salePaymentMethod: string;
     payments: readonly ReturnPaymentMethodSnapshot[];
 }): ReturnRefundMethod[] => {
-    if (params.salePaymentMethod !== 'CREDIT') return [];
+    if (params.salePaymentMethod !== 'CREDIT') {
+        const original = normalizedRefundMethod(params.salePaymentMethod);
+        return original ? [original] : [];
+    }
     const observed = new Set(
         params.payments
             .map((payment) => normalizedRefundMethod(payment.method))

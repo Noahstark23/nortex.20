@@ -54,6 +54,7 @@ export const PosCashSheet: React.FC<PosCashSheetProps> = ({
     const scrollRef = React.useRef<HTMLDivElement | null>(null);
     const feedbackRef = React.useRef<HTMLDivElement | null>(null);
     const currencyFocusReadyRef = React.useRef(false);
+    const exactAmountPrefilledRef = React.useRef(false);
     const usesOnScreenKeypad = typeof window !== 'undefined'
         && typeof window.matchMedia === 'function'
         && window.matchMedia('(pointer: coarse)').matches;
@@ -74,6 +75,18 @@ export const PosCashSheet: React.FC<PosCashSheetProps> = ({
 
     const isChipActive = (amount: Decimal): boolean =>
         cashReceived !== '' && validation.ok && validation.received.equals(amount);
+
+    React.useEffect(() => {
+        if (!open) {
+            exactAmountPrefilledRef.current = false;
+            return;
+        }
+        if (exactAmountPrefilledRef.current) return;
+        exactAmountPrefilledRef.current = true;
+        if (!processing && !payingInUSD && cashReceived === '' && amountDue.greaterThan(0)) {
+            onCashReceivedChange(amountDue.toFixed(2));
+        }
+    }, [open, processing, payingInUSD, cashReceived, amountDue, onCashReceivedChange]);
 
     const setKeypadValue = (key: string) => {
         if (processing) return;

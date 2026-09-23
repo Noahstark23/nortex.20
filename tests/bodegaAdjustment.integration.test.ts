@@ -109,6 +109,8 @@ qaDescribe('QA bodega: ajuste físico auditable e idempotente', () => {
 
   it('revierte stock, Kardex, asiento y claim si falla la auditoría final; reintento posterior funciona', async () => {
     const f = await fixture(); const body = input(f); const before = await effects(f);
+    const openingEntries = await prisma.journalEntry.count({ where: { tenantId: f.tenantId, referenceType: 'INITIAL_INVENTORY' } });
+    expect(openingEntries).toBe(1);
     const trigger = `qa_adjust_${randomUUID().replaceAll('-', '')}`;
     await ddl(`CREATE TRIGGER \`${trigger}\` BEFORE INSERT ON \`AuditLog\` FOR EACH ROW BEGIN IF NEW.tenantId = '${f.tenantId}' AND NEW.action = 'INVENTORY_ADJUSTMENT' THEN SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'QA adjustment audit failure'; END IF; END`);
     try {
@@ -116,7 +118,7 @@ qaDescribe('QA bodega: ajuste físico auditable e idempotente', () => {
       expect(failed.status).toBe(500); expect(failed.body.rejection).toBeUndefined();
       expect(await effects(f)).toEqual(before);
       expect(await prisma.auditLog.count({ where: { tenantId: f.tenantId, action: 'INVENTORY_ADJUSTMENT_COMMAND' } })).toBe(0);
-      expect(await prisma.journalEntry.count({ where: { tenantId: f.tenantId } })).toBe(0);
+      expect(await prisma.journalEntry.count({ where: { tenantId: f.tenantId } })).toBe(openingEntries);
     } finally { await ddl(`DROP TRIGGER \`${trigger}\``); }
     expect((await call(f, body)).status).toBe(200);
     expect(await effects(f)).toEqual({ stock: 15, local: 15, movements: 1, audits: 1, journals: 1 });

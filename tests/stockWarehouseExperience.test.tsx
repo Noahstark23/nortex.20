@@ -58,7 +58,7 @@ describe('trabajar desde el producto y su bodega', () => {
   expect((within(dialog).getByLabelText('Cantidad') as HTMLInputElement).value).toBe('');
   expect(fetch.mock.calls.every(([, init]) => !init?.method || init.method === 'GET')).toBe(true);
   fireEvent.click(within(dialog).getByRole('button', { name: 'Cerrar transferencia' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Actualizar existencias de Reserva' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Actualizá existencias de Reserva' }));
   await waitFor(() => expect(fetch.mock.calls.filter(([url]) => String(url) === '/api/warehouses/w2/stock')).toHaveLength(2));
   await act(async () => {}); expect(screen.queryByRole('dialog')).toBeNull();
   expect(screen.queryByText('Brocha')).toBeNull();

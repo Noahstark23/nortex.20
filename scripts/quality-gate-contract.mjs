@@ -4,6 +4,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/whatsappIdentity.mysql.test.ts',
   'tests/cashCloseJournal.mysql.test.ts',
   'tests/posIntegrity.integration.test.ts',
+  'tests/uxQaAudit.integration.test.ts',
   'tests/manualCashMovementVoid.integration.test.ts',
   'tests/customerFlow.integration.test.ts',
   'tests/hrAccess.integration.test.ts',

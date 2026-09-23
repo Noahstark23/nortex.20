@@ -263,6 +263,8 @@ const PISO_MUTANTES = {
     // El piso agregado SUBE y los pisos AST de cada función impiden que la
     // ampliación oculte otra función perdida. Evidencia en el runbook de release.
     'backend/services/accounting.ts': 232,
+    // La valuación de la existencia inicial también alimenta el libro.
+    'backend/services/initialInventoryJournal.ts': 18,
     'backend/lib/paymentAccounts.ts': 11,
     // Reglas cruzadas RETURN/VOID: 50/50 sobre el superRefine autoritativo.
     'backend/validation/saleCorrectionSchemas.ts': 50,

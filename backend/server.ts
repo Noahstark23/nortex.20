@@ -61,7 +61,8 @@ import {
 import { decidirIdentidadCajero, pinNormalizado, explicarModo } from './services/shiftIdentity';
 import { closeShiftWithReport, ShiftCloseError } from './services/shiftCloseService';
 import { voidManualCashMovement, ManualCashMovementVoidError } from './services/manualCashMovementVoidService';
-import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovement, recordFixedAssetAcquisition, recordReturn, recordPayroll, recordLaborProvision, recordAguinaldoPayment, recordSettlement, recordStockCountAdjustment, recordBadDebt, recordInitialInventory, seedChartOfAccounts, getBalanceGeneral, getEstadoResultados, createJournalEntry, buildSaleJournalLines, assertPeriodOpen, PeriodLockedError } from './services/accounting';
+import { replayCreditPaymentSnapshot, newCreditPaymentSnapshot, creditPaymentResponseBalances } from './services/creditPaymentSnapshot';
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
@@ -156,6 +157,7 @@ import {
 import Decimal from 'decimal.js';
 import { z } from 'zod';
 import { normalizeCalendarDateInput } from './lib/calendarDate';
+import { resolveReportPeriod } from './lib/reportPeriod';
 import {
     daysSinceManaguaCivilDate,
     managuaBusinessDate,
@@ -1426,6 +1428,7 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
                             warehouseId: stock.warehouseId,
                         },
                     });
+                    await recordInitialInventory(tx, tenantId, authReq.userId!, product.id, sample.stock, sample.cost, 'SEED_CATALOG_OPENING');
 
                     if (sample.requiresBatchTracking) {
                         const shelfLifeDays = sample.productFamily === 'MEAT' || sample.productFamily === 'POULTRY'
@@ -7673,15 +7676,14 @@ app.get('/api/reports/expenses', authenticate, async (req: any, res: any) => {
     const { startDate, endDate } = req.query;
 
     try {
-        const start = startDate ? new Date(String(startDate)) : new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-        const end = endDate ? new Date(String(endDate)) : new Date();
-        end.setHours(23, 59, 59, 999);
+        const period = resolveReportPeriod(startDate, endDate);
+        if (!period) return res.status(400).json({ error: 'Elegí un período válido de hasta 366 días.' });
 
         const expenses = await prisma.expense.groupBy({
             by: ['category'],
             where: {
                 tenantId: authReq.tenantId,
-                createdAt: { gte: start, lte: end },
+                createdAt: { gte: period.start, lt: period.endExclusive },
                 category: { not: CATEGORIA_PAGO_PROVEEDOR },
             },
             _sum: { amount: true },
@@ -9985,10 +9987,9 @@ async function registerCreditPayment(req: any, res: any) {
                     if (!replay.payloadHash || replay.payloadHash !== payloadHash) {
                         throw new Error('PAYMENT_IDEMPOTENCY_CONFLICT');
                     }
-                    return { replayed: true, paymentId: replay.id };
+                    return replayCreditPaymentSnapshot(tx, lockedSale, authReq.tenantId!, replay.id);
                 }
             }
-
             if (lockedSale.paymentMethod !== 'CREDIT') throw new Error('PAYMENT_NOT_CREDIT');
             const balanceBefore = new Decimal(lockedSale.balance.toString());
             if (!balanceBefore.greaterThan(0)) throw new Error('PAYMENT_ALREADY_SETTLED');
@@ -10124,8 +10125,7 @@ async function registerCreditPayment(req: any, res: any) {
                     }),
                 },
             });
-
-            return { replayed: false, paymentId: payment.id };
+            return newCreditPaymentSnapshot(payment.id, balanceAfter, debtAfter);
         });
 
         const updatedSale = await prisma.sale.findFirst({
@@ -10143,8 +10143,7 @@ async function registerCreditPayment(req: any, res: any) {
             date: updatedSale.createdAt,
             dueDate: updatedSale.dueDate,
             total: Number(updatedSale.total),
-            balance: Number(updatedSale.balance),
-            status: Number(updatedSale.balance) > 0 ? 'CREDIT_PENDING' : 'PAID',
+            ...creditPaymentResponseBalances(result),
             payments: updatedSale.payments.map((payment: any) => ({
                 id: payment.id,
                 amount: Number(payment.amount),

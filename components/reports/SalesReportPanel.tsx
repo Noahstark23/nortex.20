@@ -282,7 +282,7 @@ const SalesReportPanel: React.FC<SalesReportPanelProps> = ({
                             {documentAction === 'preview'
                                 ? <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                                 : <Printer size={16} aria-hidden="true" />}
-                            {documentAction === 'preview' ? 'Abriendo…' : 'Ver / imprimir documento'}
+                            {documentAction === 'preview' ? 'Abriendo…' : 'Ver / imprimí documento'}
                         </button>
                         <button
                             type="button"
@@ -294,7 +294,7 @@ const SalesReportPanel: React.FC<SalesReportPanelProps> = ({
                             {documentAction === 'excel'
                                 ? <Loader2 size={16} className="animate-spin" aria-hidden="true" />
                                 : <FileSpreadsheet size={16} aria-hidden="true" />}
-                            {documentAction === 'excel' ? 'Generando…' : 'Descargar Excel'}
+                            {documentAction === 'excel' ? 'Generando…' : 'Descargá Excel'}
                         </button>
                     </div>
                     {!documentsAvailable && (

@@ -91,6 +91,7 @@ const TarjetaProducto = React.memo<{
         </div>
         <div className="flex justify-between items-end gap-1">
             <span className="text-[15px] sm:text-[17px] font-bold text-brand nx-num whitespace-nowrap">{formatMoney(product.price)}</span>
+            {!bloqueada && <span aria-hidden="true" className="hidden lg:inline-flex h-7 w-7 items-center justify-center rounded-full bg-brand text-brand-on"><Plus size={17} strokeWidth={2.5} /></span>}
             {/* El stock negativo se muestra tal cual (−3), no disfrazado de
                 AGOTADO: es la señal de que el inventario ya se descuadró.
                 A 12px y no 11px — a 11px fallaba el contraste AA (P2-1). */}
@@ -242,6 +243,7 @@ export function PosCatalogPane({
                     </div>
                     <ProductEnrollmentEntry onSaved={() => fetchProducts()}/>
                     {onCameraCode && <CameraScanButton onCode={onCameraCode}/>}
+                    {onCameraCode && <CameraScanButton onCode={onCameraCode} label="Escanear código"/>}
                     {guidedSimpleMode && <button type="button" onClick={openQuickCreate} className="nx-pos-create nx-fluid-press"><Plus size={17} /> Nuevo producto</button>}
                     {/* Quick Create */}
                     {!guidedSimpleMode && <button type="button"

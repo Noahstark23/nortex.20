@@ -251,6 +251,32 @@ router.get('/sales', authenticate, checkRole([...REQUEST_ROLES, 'VIEWER']), asyn
     }
 });
 
+// Copia de comprobante: solo fotos guardadas al vender y datos del tenant del JWT.
+// No consulta el precio/producto actual ni modifica la venta o sus pagos.
+router.get('/sales/:id/receipt', authenticate, checkRole([...REQUEST_ROLES, 'VIEWER']), async (req: any, res: any) => {
+    const authReq = req as AuthRequest;
+    try {
+        const sale = await prisma.sale.findFirst({
+            where: { id: req.params.id, tenantId: authReq.tenantId },
+            select: {
+                id: true, invoiceNumber: true, invoiceSeries: true, createdAt: true,
+                total: true, status: true, paymentMethod: true, customerName: true,
+                cancelledAt: true, cancelReason: true, vatAmountAtSale: true,
+                tenant: { select: { businessName: true, taxId: true, address: true, phone: true, dgiAuthCode: true } },
+                items: { select: {
+                    id: true, productNameAtSale: true, quantity: true, unitAtSale: true,
+                    priceAtSale: true, unitPriceExactAtSale: true,
+                    presentationAtSale: true, presentationQuantityAtSale: true,
+                } },
+            },
+        });
+        if (!sale) return res.status(404).json({ error: 'Comprobante no encontrado' });
+        return res.json(sale);
+    } catch (error) {
+        return sendError(res, error, 'No pudimos recuperar el comprobante');
+    }
+});
+
 router.get('/sales/:id/corrections', authenticate, checkRole([...REQUEST_ROLES, 'VIEWER']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {

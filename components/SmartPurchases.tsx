@@ -306,7 +306,7 @@ export default function SmartPurchases() {
                     <p className="text-sm text-slate-400 mt-1">¿Qué reponer? Combina tu punto de reorden con la velocidad de venta y arma la orden de compra por proveedor.</p>
                 </div>
                 <button onClick={fetchReorder} disabled={loading || generating} className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600">
-                    <RefreshCw size={15} /> Actualizar
+                    <RefreshCw size={15} /> Actualizá
                 </button>
             </div>
 
@@ -423,7 +423,7 @@ export default function SmartPurchases() {
                             disabled={generating || validRows.length === 0 || invalidCount > 0}
                             className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                         >
-                            <ShoppingCart size={16} /> {invalidCount > 0 ? `Revisa ${invalidCount} fila(s)` : `Generar ${groups.length} orden(es)`}
+                            <ShoppingCart size={16} /> {invalidCount > 0 ? `Revisá ${invalidCount} ${invalidCount === 1 ? 'fila' : 'filas'}` : `Generar ${groups.length} orden(es)`}
                         </button>
                     </div>
                 </>

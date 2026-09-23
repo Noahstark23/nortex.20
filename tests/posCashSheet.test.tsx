@@ -138,6 +138,17 @@ afterEach(() => {
 });
 
 describe('PosCashSheet', () => {
+    it('habilita cobrar el monto exacto al abrir y conserva la confirmación explícita', () => {
+        const onConfirm = vi.fn();
+        render(<CashSheetHarness onConfirm={onConfirm} />);
+        fireEvent.click(screen.getByRole('button', { name: 'Abrir efectivo' }));
+        expect(screen.getByRole('textbox', { name: 'Efectivo recibido en córdobas' })).toHaveValue('85.00');
+        const confirm = screen.getByRole('button', { name: 'Cobrar C$ 85.00' });
+        expect(confirm).toBeEnabled();
+        expect(onConfirm).not.toHaveBeenCalled();
+        fireEvent.click(confirm);
+        expect(onConfirm).toHaveBeenCalledTimes(1);
+    });
     it('abre un diálogo accesible, bloquea el scroll y enfoca primero el monto NIO', () => {
         render(<CashSheetHarness />);
 
@@ -219,6 +230,7 @@ describe('PosCashSheet', () => {
         vi.spyOn(scroller, 'getBoundingClientRect').mockReturnValue(domRect(80, 400));
         vi.spyOn(feedback, 'getBoundingClientRect').mockReturnValue(domRect(430, 520));
 
+        fireEvent.click(screen.getByRole('button', { name: 'Limpiar' }));
         fireEvent.click(screen.getByRole('button', { name: '8' }));
 
         expect(feedback).toHaveTextContent(/Falta\s*C\$ 77\.00/);

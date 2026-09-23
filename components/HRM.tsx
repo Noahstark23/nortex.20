@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { roleLabelEs } from '../utils/roleLabels';
 import { Users, Briefcase, DollarSign, Plus, UserPlus, CheckCircle, Clock, KeyRound, FileText, AlertTriangle, Calculator, CreditCard, Printer, X, Shield, Calendar, TrendingDown, Wallet, FileSpreadsheet, Gift, BarChart3 } from 'lucide-react';
 // xlsx (~430 KB) se importa dinámicamente en exportPlanillaINSS — fuera del bundle inicial.
 import { formatMoney } from '../utils/money';
@@ -966,7 +967,7 @@ const HRM: React.FC = () => {
                         onClick={() => setActiveTab('ADVANCES')}
                         className={`nx-fluid-press flex min-h-11 w-auto shrink-0 items-center gap-3 rounded-control px-4 py-3 text-left font-medium transition-colors lg:w-full ${activeTab === 'ADVANCES' ? 'bg-brand-soft text-brand-800' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-950'}`}
                     >
-                        <DollarSign size={18} /> Adelantos (Lending)
+                        <DollarSign size={18} /> Adelantos
                     </button>
                     <button
                         onClick={() => setActiveTab('LEAVES')}
@@ -1087,7 +1088,7 @@ const HRM: React.FC = () => {
                                             : 'La caja se abre sin PIN — el sistema sabe quién sos por tu usuario. Si varios cajeros comparten una misma cuenta, prendelo: sin PIN, un faltante del arqueo queda sin dueño.'}
                                     </p>
                                     <p className="text-xs text-slate-500 mt-2">
-                                        El PIN se sigue usando para marcar entrada y salida, prendas esto o no.
+                                        El PIN se sigue usando para marcar entrada y salida, activés esta opción o no.
                                     </p>
                                 </div>
                                 <button
@@ -1111,7 +1112,7 @@ const HRM: React.FC = () => {
                                         <div className="w-12 h-12 bg-slate-100 rounded-full flex items-center justify-center text-slate-500 font-bold text-xl">
                                             {emp.firstName[0]}{emp.lastName[0]}
                                         </div>
-                                        <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold uppercase text-slate-700">{emp.role}</span>
+                                        <span className="rounded bg-slate-100 px-2 py-1 text-xs font-bold uppercase text-slate-700">{roleLabelEs(emp.role)}</span>
                                     </div>
                                     <h4 className="text-lg font-bold text-slate-950">{emp.firstName} {emp.lastName}</h4>
                                     <div className="mt-4 space-y-2 text-sm text-slate-700">
@@ -1144,7 +1145,7 @@ const HRM: React.FC = () => {
                                             <span className="tabular-nums font-bold">{formatC(emp.baseSalary)}</span>
                                         </div>
                                         <div className="flex justify-between">
-                                            <span>Comision:</span>
+                                            <span>Comisión:</span>
                                             <span className="tabular-nums font-bold">{(emp.commissionRate * 100).toFixed(1)}%</span>
                                         </div>
                                         <div className="flex justify-between border-t border-slate-100 pt-2">
@@ -1211,7 +1212,7 @@ const HRM: React.FC = () => {
                                     disabled={calculatingPayroll}
                                     className="nx-fluid-press flex min-h-11 items-center gap-2 rounded-control bg-brand px-4 py-2 font-bold text-brand-on transition-colors hover:bg-brand-hover disabled:opacity-50"
                                 >
-                                    <Calculator size={18} /> {calculatingPayroll ? 'Calculando...' : 'Calcular Nómina'}
+                                    <Calculator size={18} /> {calculatingPayroll ? 'Calculando...' : 'Calculá nómina'}
                                 </button>
                             </div>
                         </div>
@@ -1256,7 +1257,7 @@ const HRM: React.FC = () => {
                                 <tbody className="divide-y divide-slate-100">
                                     {payrolls.length === 0 ? (
                                         <tr><td colSpan={7} className="p-8 text-center text-slate-600">
-                                            Selecciona mes/año y dale "Calcular Nómina" para generar los cálculos.
+                                            Seleccioná mes y año, y tocá «Calculá nómina» para generar los cálculos.
                                         </td></tr>
                                     ) : payrolls.map(p => {
                                         const name = p.employee ? `${p.employee.firstName} ${p.employee.lastName}` : (p.employeeName || '');
@@ -1321,7 +1322,7 @@ const HRM: React.FC = () => {
                                 <p className="text-slate-500 text-sm">Reserva para Aguinaldo, Vacaciones e Indemnización (Ley 185)</p>
                             </div>
                             <button onClick={fetchLiabilities} className="nx-fluid-press min-h-11 rounded-control px-3 text-sm font-bold text-brand-700 transition-colors hover:bg-brand-soft hover:text-brand-800">
-                                Actualizar
+                                Actualizá
                             </button>
                         </div>
 
@@ -1499,7 +1500,7 @@ const HRM: React.FC = () => {
                                 <div>
                                     <h4 className="text-lg font-bold text-slate-950">Financiamiento de Nómina Inteligente</h4>
                                     <p className="mt-1 text-sm text-slate-700">
-                                        Nortex te presta liquidez instantánea para que apruebes los adelantos de tus empleados sin descapitalizar el negocio. Las cuotas se deducen automáticamente en la quincena.
+                                        Nortex te presta liquidez instantánea para que aprobés los adelantos de tus empleados sin descapitalizar el negocio. Las cuotas se deducen automáticamente en la quincena.
                                     </p>
                                 </div>
                             </div>
@@ -2164,7 +2165,7 @@ const HRM: React.FC = () => {
                                     <div className="flex flex-wrap items-center gap-2">
                                         <select value={linkUserId} onChange={e => setLinkUserId(e.target.value)} className="min-h-11 min-w-[180px] flex-1 rounded-control border border-slate-300 bg-white p-2 text-sm text-slate-950">
                                             <option value="">Seleccionar cuenta de usuario…</option>
-                                            {linkableUsers.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ` (${u.email})` : ''} · {u.role}</option>)}
+                                            {linkableUsers.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ` (${u.email})` : ''} · {roleLabelEs(u.role)}</option>)}
                                         </select>
                                         <button onClick={linkUser} disabled={savingLink || !linkUserId} className="nx-fluid-press min-h-11 rounded-control bg-brand px-4 py-2 text-sm font-bold text-brand-on transition-colors hover:bg-brand-hover disabled:opacity-50">Vincular</button>
                                         {linkableUsers.length === 0 && <p className="w-full text-xs text-slate-600">No hay cuentas libres. Creá un usuario en "Mi Equipo" y vinculalo aquí.</p>}

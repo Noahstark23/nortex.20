@@ -170,7 +170,7 @@ describe('MiEspacio', () => {
         expect(alert).toHaveTextContent('No pudimos abrir tu expediente');
         expect(alert).toHaveTextContent(message);
         expect(fetchMock).toHaveBeenCalledTimes(1);
-        expect(screen.queryByRole('button', { name: 'Enviar solicitud' })).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: 'Enviá solicitud' })).not.toBeInTheDocument();
     });
 
     it('envía la ausencia exacta, refresca solicitudes y restablece el formulario', async () => {
@@ -193,7 +193,7 @@ describe('MiEspacio', () => {
         fireEvent.change(screen.getByLabelText('Desde'), { target: { value: '2026-09-10' } });
         fireEvent.change(screen.getByLabelText('Hasta'), { target: { value: '2026-09-12' } });
         fireEvent.change(screen.getByLabelText(/Motivo/), { target: { value: 'Trámite familiar' } });
-        fireEvent.click(screen.getByRole('button', { name: 'Enviar solicitud' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Enviá solicitud' }));
 
         await waitFor(() => expect(alertMock).toHaveBeenCalledWith('Solicitud de ausencia enviada.'));
 
@@ -216,7 +216,7 @@ describe('MiEspacio', () => {
         expect(screen.getByLabelText('Desde')).toHaveValue('');
         expect(screen.getByLabelText('Hasta')).toHaveValue('');
         expect(screen.getByLabelText(/Motivo/)).toHaveValue('');
-        expect(screen.getByRole('button', { name: 'Enviar solicitud' })).toBeEnabled();
+        expect(screen.getByRole('button', { name: 'Enviá solicitud' })).toBeEnabled();
     });
 
     it('sanea el monto, envía el adelanto exacto, refresca y limpia el campo', async () => {
@@ -238,7 +238,7 @@ describe('MiEspacio', () => {
         expect(amount).toHaveValue('1.23');
         fireEvent.change(amount, { target: { value: 'C$ 1,250.50x' } });
         expect(amount).toHaveValue('1250.50');
-        fireEvent.click(screen.getByRole('button', { name: 'Solicitar adelanto' }));
+        fireEvent.click(screen.getByRole('button', { name: 'Solicitá adelanto' }));
 
         await waitFor(() => expect(alertMock).toHaveBeenCalledWith('Adelanto solicitado.'));
 
@@ -253,7 +253,7 @@ describe('MiEspacio', () => {
         });
         expect(requestReads).toHaveBeenCalledTimes(2);
         expect(amount).toHaveValue('');
-        expect(screen.getByRole('button', { name: 'Solicitar adelanto' })).toBeEnabled();
+        expect(screen.getByRole('button', { name: 'Solicitá adelanto' })).toBeEnabled();
     });
 
     it('genera la colilla y espera antes de abrir el diálogo de impresión', async () => {

@@ -31,7 +31,7 @@ function status(response: Response, expected: number) {
     expect(response.status, diagnostic).toBe(expected);
 }
 
-async function fixture(label: string, initialCashUsd?: string): Promise<Fixture> {
+async function fixture(label: string, options: { initialCash?: number; initialCashUsd?: string } = {}): Promise<Fixture> {
     const id = randomUUID();
     const email = `qa-pos-${id}@example.invalid`;
     const password = `Qa-${randomUUID()}-Seguro!`;
@@ -41,7 +41,7 @@ async function fixture(label: string, initialCashUsd?: string): Promise<Fixture>
     status(registration, 200);
     const f = { tenantId: registration.body.tenant.id, userId: registration.body.user.id,
         token: registration.body.token, email, password, shiftId: '' };
-    const opened = await api(f.token, '/api/shifts/open', { initialCash: 500, initialCashUsd });
+    const opened = await api(f.token, '/api/shifts/open', { initialCash: options.initialCash ?? 500, initialCashUsd: options.initialCashUsd });
     status(opened, 200);
     f.shiftId = opened.body.id;
     return f;
@@ -168,7 +168,7 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
     }, 60_000);
 
     it('movimiento manual rechaza USD y moneda inválida sin efectos en gaveta o contabilidad', async () => {
-        const f = await fixture('moneda manual', '20.00');
+        const f = await fixture('moneda manual', { initialCashUsd: '20.00' });
         const state = async () => JSON.stringify({
             snapshot: await snapshot(f),
             expenses: await prisma.expense.findMany({ where: { tenantId: f.tenantId }, orderBy: { id: 'asc' }, take: 20 }),
@@ -254,20 +254,23 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
         expect(await prisma.expense.count({ where: { tenantId: f.tenantId } })).toBe(expenseCount);
         await assertBalanced(f);
     }, 60_000);
-
     it.each<Method>(['CASH', 'CARD', 'TRANSFER', 'QR'])('%s: venta → aprobación → devolución → reembolso conserva saldos y stock', async method => {
         const f = await fixture(method);
         const productId = await product(f);
         const sale = await api(f.token, '/api/sales', salePayload(productId, method, 2));
         status(sale, 200);
         expect(fixed(sale.body.total)).toBe('100.0000');
+        const returnable = await api(f.token, `/api/sales/search?q=${sale.body.id}`);
+        status(returnable, 200);
+        expect(returnable.body.allowedRefundMethods).toEqual([method]);
         expect(await stock(f, productId)).toBe(3);
         const afterSale = await balances(f);
         const tender = method === 'CASH' ? '1.1.1' : '1.1.2';
         const other = method === 'CASH' ? '1.1.2' : '1.1.1';
         expect(afterSale[tender]).toBe('100.0000');
         expect(afterSale[other]).toBe('0.0000');
-        expect(afterSale['1.1.4']).toBe('-60.0000');
+        expect(afterSale['1.1.4']).toBe('90.0000');
+        expect(afterSale['3.1.4']).toBe('150.0000');
         expect(afterSale['5.1.1']).toBe('60.0000');
         const saleLine = await prisma.saleItem.findFirstOrThrow({ where: { saleId: sale.body.id, sale: { tenantId: f.tenantId } } });
         const payload = await approvedReturn(f, sale.body.id, saleLine.id, method);
@@ -290,7 +293,9 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
             expect(settled.body.status).toBe('COMPLETED');
         }
         const final = await balances(f);
-        for (const account of ['1.1.1', '1.1.2', '1.1.4', '2.1.2', '2.1.13', '5.1.1']) expect(final[account], account).toBe('0.0000');
+        for (const account of ['1.1.1', '1.1.2', '2.1.2', '2.1.13', '5.1.1']) expect(final[account], account).toBe('0.0000');
+        expect(final['1.1.4']).toBe('150.0000');
+        expect(final['3.1.4']).toBe('150.0000');
         expect(new Decimal(final['4.1.1']).plus(final['4.1.2']).toFixed(4)).toBe('0.0000');
         expect(await prisma.cashMovement.count({ where: { tenantId: f.tenantId, category: 'DEVOLUCION' } })).toBe(method === 'CASH' ? 1 : 0);
         const saved = await snapshot(f);
@@ -394,7 +399,7 @@ qa('Integridad POS: HTTP, stock y contabilidad en MySQL real', () => {
     }, 60_000);
 
     it('cierre con reporte conserva USD4 y repite solo la identidad y el contenido originales', async () => {
-        const f = await fixture('reporte idempotente USD', '20.1234');
+        const f = await fixture('reporte idempotente USD', { initialCashUsd: '20.1234' });
         const productId = await product(f);
         status(await api(f.token, '/api/sales', salePayload(productId)), 200);
         const payload = {

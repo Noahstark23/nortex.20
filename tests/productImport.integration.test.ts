@@ -64,10 +64,16 @@ qa('importación de productos: HTTP real y MySQL 8', () => {
     expect(product.stock).toBe(5);
     expect(await prisma.productStock.findFirst({where: {tenantId: principal.tenantId, productId: product.id}})).toMatchObject({stock: 5});
     expect(await prisma.kardexMovement.findFirst({where: {tenantId: principal.tenantId, productId: product.id}})).toMatchObject({stockBefore: 0, stockAfter: 5, quantity: 5, referenceType: 'BULK_IMPORT'});
+    const inventory = await prisma.account.findUniqueOrThrow({where: {tenantId_code: {tenantId: principal.tenantId, code: '1.1.4'}}});
+    const capital = await prisma.account.findUniqueOrThrow({where: {tenantId_code: {tenantId: principal.tenantId, code: '3.1.4'}}});
+    expect(inventory.balance.toString()).toBe('35');
+    expect(capital.balance.toString()).toBe('35');
+    expect(await prisma.journalEntry.count({where: {tenantId: principal.tenantId, referenceId: product.id, referenceType: 'INITIAL_INVENTORY'}})).toBe(1);
     const {stock, ...catalog} = input;
     expect((await post(principal, [catalog])).body).toMatchObject({created: 0, updated: 1, errors: []});
     expect((await current(product.id)).stock).toBe(5);
     expect(await prisma.kardexMovement.count({where: {tenantId: principal.tenantId, productId: product.id}})).toBe(1);
+    expect(await prisma.journalEntry.count({where: {tenantId: principal.tenantId, referenceId: product.id, referenceType: 'INITIAL_INVENTORY'}})).toBe(1);
   });
 
   it('caracterización: tenant y roles salen de sesión autenticada', async () => {
