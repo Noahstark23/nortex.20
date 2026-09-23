@@ -104,6 +104,19 @@ jobs:
           LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
           NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
 
+      # db push no ejecuta los SQL versionados. Verificar también su equivalencia
+      # completa y la recuperación desde estados parciales en otra BD efímera.
+      - name: Presupuesto y espejo SQL del asistente con MySQL 8
+        run: node scripts/qa/test-assistant-budget-upgrade.mjs
+
+      - name: Evidencia del upgrade del asistente
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-budget-upgrade
+          path: reports/assistant-budget-upgrade/
+          retention-days: 7
+
   # ── DGI-4 · El backup se PRUEBA, no se supone ────────────────────────────────
   # "Un backup no probado no existe": este job genera un dump real contra MySQL 8,
   # lo restaura en una base desechable y exige que tablas, conteos y acentos

@@ -3,26 +3,54 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const BASELINE_COMMIT = 'ead043c2aa27e25e6522e97b3cdc2c3a4e585783';
-const MIGRATION_PATHS = [
+export const BASELINE_COMMIT = '20fda8dc196b808b0508e53d1253510cacd7096b';
+export const MIGRATION_PATHS = [
   'backend/prisma/migrations/20260909010000_assistant_budget_approval/migration.sql',
   'backend/prisma/migrations/20260909020000_weekly_cash_review_index/migration.sql',
   'backend/prisma/migrations/20260912010000_cash_close_investigation_index/migration.sql',
   'backend/prisma/migrations/20260912020000_assistant_budget_owner_authority/migration.sql',
+  'backend/prisma/migrations/20260919010000_assistant_knowledge_publication/migration.sql',
+  'backend/prisma/migrations/20260919020000_assistant_knowledge_editorial/migration.sql',
+  'backend/prisma/migrations/20260919030000_assistant_work_items/migration.sql',
 ];
+
+// `git diff --name-status --no-renames -z` incluye cambios sin commit; los SQL
+// nuevos sin seguimiento se inspeccionan aparte. No aceptar un espejo parcial.
+export function assertMigrationManifest(delta, untracked = '', expected = MIGRATION_PATHS) {
+  const fields = delta.split('\0');
+  assert.equal(fields.pop(), '', 'El delta de migraciones debe terminar en NUL');
+  assert.equal(fields.length % 2, 0, 'Delta de migraciones incompleto');
+  const added = [];
+  for (let i = 0; i < fields.length; i += 2) {
+    const [status, path] = fields.slice(i, i + 2);
+    if (!path.endsWith('/migration.sql')) continue;
+    assert.equal(status, 'A', `No modificar ni eliminar SQL anterior al baseline: ${path}`);
+    added.push(path);
+  }
+  assert.ok(!untracked.split('\0').some(path => path.endsWith('/migration.sql')), 'Hay SQL sin seguimiento: agregarlo al candidato y al manifiesto');
+  assert.equal(new Set(added).size, added.length, 'El delta contiene SQL duplicado');
+  assert.equal(new Set(expected).size, expected.length, 'El manifiesto contiene SQL duplicado');
+  assert.deepEqual([...added].sort(), [...expected].sort(), 'El espejo debe incluir TODOS los SQL añadidos desde el baseline');
+  return added.sort();
+}
+
+async function main() {
 const stamp = new Date().toISOString().replace(/[:.]/g, '-');
 const evidence = join(repo, 'reports/assistant-budget-upgrade', stamp);
 const work = mkdtempSync(join(tmpdir(), 'nortex-budget-upgrade-'));
 const name = `nortex-budget-upgrade-${randomBytes(6).toString('hex')}`;
 const password = randomBytes(24).toString('hex');
-const env = Object.fromEntries(['PATH', 'HOME', 'TMPDIR'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
-Object.assign(env, { CI: 'true', CHECKPOINT_DISABLE: '1', PRISMA_HIDE_UPDATE_MESSAGE: '1' });
+const env = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'DOCKER_CONTEXT'].filter(k => process.env[k]).map(k => [k, process.env[k]]));
+const npmUserConfig = join(work, 'npm-user-empty'), npmGlobalConfig = join(work, 'npm-global-empty');
+writeFileSync(npmUserConfig, '', { mode: 0o600 });
+writeFileSync(npmGlobalConfig, '', { mode: 0o600 });
+Object.assign(env, { CI: 'true', CHECKPOINT_DISABLE: '1', PRISMA_HIDE_UPDATE_MESSAGE: '1', npm_config_userconfig: npmUserConfig, npm_config_globalconfig: npmGlobalConfig, npm_config_audit: 'false', npm_config_fund: 'false' });
 const hash = s => createHash('sha256').update(s).digest('hex');
 let attemptedContainer = false;
 let port;
@@ -78,14 +106,21 @@ INSERT INTO AssistantUsage(id,tenantId,userId,month,reservedUsd,actualUsd,status
 const request = (id, tenant = 'qa-a', key = 'qa-key') => `INSERT INTO AssistantBudgetRequest(id,tenantId,requestedBy,requestKey,requestedUsd,reason) VALUES ('${id}','${tenant}','qa-user','${key}',5.123456,'Solicitud sintética');`;
 try {
   assert.equal(process.version, 'v22.23.2', 'Usar mise exec -- node');
+  for (const directory of [repo, join(repo, 'backend'), join(repo, 'backend/prisma'), join(repo, 'prisma'), work]) {
+    assert.ok(!existsSync(join(directory, '.env')), 'El candidato de QA no puede contener archivos .env');
+  }
+  result.baseCommit = BASELINE_COMMIT;
+  result.headCommit = command('git', ['rev-parse', 'HEAD'], { cwd: repo }).stdout.trim();
+  result.migrationManifest = assertMigrationManifest(
+    command('git', ['diff', '--name-status', '--no-renames', '-z', BASELINE_COMMIT, '--', 'backend/prisma/migrations'], { cwd: repo }).stdout,
+    command('git', ['ls-files', '--others', '--exclude-standard', '-z', '--', 'backend/prisma/migrations'], { cwd: repo }).stdout,
+  );
   const context = docker(['context', 'show']).stdout.trim();
   const endpoint = docker(['context', 'inspect', context, '--format', '{{.Endpoints.docker.Host}}']).stdout.trim();
   assert.ok(endpoint.startsWith('unix://'), 'Solo Docker local por socket Unix');
   assert.equal(docker(['info', '--format', '{{.OSType}}']).stdout.trim(), 'linux');
   result.mysqlImageId = docker(['image', 'inspect', 'mysql:8.0', '--format', '{{.Id}}']).stdout.trim();
   assert.equal(JSON.parse(readFileSync(join(repo, 'node_modules/prisma/package.json'), 'utf8')).version, '6.4.1');
-  result.baseCommit = BASELINE_COMMIT;
-  result.headCommit = command('git', ['rev-parse', 'HEAD'], { cwd: repo }).stdout.trim();
   const old = command('git', ['show', `${BASELINE_COMMIT}:backend/prisma/schema.prisma`], { cwd: repo }).stdout;
   assert.ok(!old.includes('approvedMonthlyBudgetUsd') && !old.includes('model AssistantBudgetRequest ') && !old.includes('assistantBudgetOwner'), 'El baseline fijo debe ser anterior a presupuesto y autoridad');
   const current = readFileSync(join(repo, 'backend/prisma/schema.prisma'), 'utf8');
@@ -192,3 +227,7 @@ try {
   writeFileSync(join(evidence, 'summary.json'), JSON.stringify(result, null, 2) + '\n');
   console.log(JSON.stringify({ status: result.status, scenarios: result.scenarios.length, cleanup: result.cleanup, evidence: join(evidence, 'summary.json'), aiCalls: 0 }));
 }
+}
+
+// Importar los contratos para Vitest no crea archivos, contenedores ni conexiones.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main();

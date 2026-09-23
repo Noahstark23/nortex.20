@@ -18,7 +18,7 @@ CREATE TABLE `AssistantWorkItem` (
   `updatedAt` DATETIME(3) NOT NULL,
   `expiresAt` DATETIME(3) NOT NULL,
   UNIQUE INDEX `AssistantWorkItem_tenantId_userId_runId_key` (`tenantId`, `userId`, `runId`),
-  INDEX `AssistantWorkItem_tenantId_userId_roleAtCreation_createdAt_id_idx` (`tenantId`, `userId`, `roleAtCreation`, `createdAt`, `id`),
+  INDEX `AssistantWorkItem_tenantId_userId_roleAtCreation_createdAt_i_idx` (`tenantId`, `userId`, `roleAtCreation`, `createdAt`, `id`),
   INDEX `AssistantWorkItem_expiresAt_id_idx` (`expiresAt`, `id`),
   PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
