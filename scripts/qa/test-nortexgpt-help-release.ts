@@ -10,6 +10,7 @@ import { stageAssistantKnowledgeRelease, reviewAssistantKnowledgeRelease,
   publishAssistantKnowledgeRelease } from '../../backend/services/assistant/knowledge/lifecycle.js';
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
 import { LEGACY_KNOWLEDGE } from '../../backend/services/assistant/knowledge/model.js';
+import { assistantMessageUsageKey } from '../../backend/services/assistant/language.js';
 
 validateQualityDatabase(process.env.DATABASE_URL, process.env.NORTEX_QA_DATABASE_ACK);
 const expectedHash = 'debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c';
@@ -85,14 +86,19 @@ async function main() {
   }
   const conversation = await createAssistantConversation(readerPrincipal, prisma);
   process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED = 'true';
-  const interpret = async (_actor: unknown, text: string) => ({ intent: 'help' as const, query: text });
+  const comparisonRequestId = randomUUID(), replenishmentRequestId = randomUUID();
+  const interpret = async (_actor: unknown, text: string, _history: string[], usageKey: string) => {
+    const requestId = text.includes('comparar') ? comparisonRequestId : replenishmentRequestId;
+    assert.equal(usageKey, assistantMessageUsageKey(conversation.id, requestId));
+    return { intent: 'help' as const, query: text };
+  };
   const comparison = await sendAssistantMessage(readerPrincipal, conversation.id,
-    { requestId: randomUUID(), text: '¿Cómo comparar ventas?' }, prisma, { interpret });
+    { requestId: comparisonRequestId, text: '¿Cómo comparar ventas?' }, prisma, { interpret });
   assert.equal(comparison.citations?.some(citation => citation.id === 'comparacion'), true);
   assert.match(comparison.text, /no realiza la comparación automática/);
   assert.equal(comparison.operationalRunId, undefined);
   const replenishment = await sendAssistantMessage(readerPrincipal, conversation.id,
-    { requestId: randomUUID(), text: '¿Cómo reponer productos?' }, prisma, { interpret });
+    { requestId: replenishmentRequestId, text: '¿Cómo reponer productos?' }, prisma, { interpret });
   assert.equal(replenishment.citations?.some(citation => citation.id === 'reposicion'), true);
   assert.match(replenishment.text, /sigue deshabilitada en este piloto/);
   assert.equal(replenishment.operationalRunId, undefined);

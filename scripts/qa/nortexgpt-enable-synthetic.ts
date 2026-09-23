@@ -5,7 +5,9 @@
  *   DATABASE_URL=... NORTEX_QA_DATABASE_ACK=disposable-database \
  *     node --import tsx scripts/qa/nortexgpt-enable-synthetic.ts [--dry-run]
  *
- * Habilita conversación y consultas operativas. Deja apagadas la ejecución de
+ * Por defecto habilita conversación y consultas operativas. Con
+ * `--pilot-first-cut` reproduce ayuda con lenguaje y operaciones apagadas.
+ * Deja apagadas la ejecución de
  * dinero/inventario, la preparación de acciones, la extracción de documentos,
  * las promociones y el WhatsApp privado. Los interruptores globales viven en el
  * lanzador; ambos deben coincidir para que una capacidad quede activa.
@@ -21,10 +23,11 @@ const TENANTS = [`${MARKER}-ferreteria`, `${MARKER}-farmacia`];
 /** Tope por negocio para esta evaluación: más conservador que el límite del servidor, que no se toca. */
 const QA_TENANT_BUDGET_USD = '2';
 const dryRun = process.argv.includes('--dry-run');
+const pilotFirstCut = process.argv.includes('--pilot-first-cut');
 
 const initialStep = {
   enabled: true,
-  operationsEnabled: true,
+  operationsEnabled: !pilotFirstCut,
   // Ninguna de estas se habilita por tener clave: son autorizaciones separadas.
   extractionEnabled: false,
   executionEnabled: false,
@@ -39,8 +42,9 @@ async function main() {
   validateQualityDatabase(process.env.DATABASE_URL, process.env.NORTEX_QA_DATABASE_ACK);
   // Los interruptores globales del proceso deben reflejar el mismo paso inicial.
   process.env.NORTEX_ASSISTANT_ENABLED = 'true';
-  process.env.NORTEX_ASSISTANT_OPERATIONS_ENABLED = 'true';
-  for (const flag of ['NORTEX_ASSISTANT_EXTRACTION_ENABLED', 'NORTEX_ASSISTANT_EXECUTION_ENABLED', 'NORTEX_ASSISTANT_ACTIONS_ENABLED', 'NORTEX_PROMOTIONS_ENABLED', 'NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED', 'NORTEX_ASSISTANT_LANGUAGE_ENABLED']) process.env[flag] = 'false';
+  process.env.NORTEX_ASSISTANT_OPERATIONS_ENABLED = pilotFirstCut ? 'false' : 'true';
+  process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED = pilotFirstCut ? 'true' : 'false';
+  for (const flag of ['NORTEX_ASSISTANT_EXTRACTION_ENABLED', 'NORTEX_ASSISTANT_EXECUTION_ENABLED', 'NORTEX_ASSISTANT_ACTIONS_ENABLED', 'NORTEX_PROMOTIONS_ENABLED', 'NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED']) process.env[flag] = 'false';
 
   const applied = [];
   for (const tenantId of TENANTS) {
@@ -61,7 +65,7 @@ async function main() {
     });
   }
   console.log(JSON.stringify({
-    dryRun, marker: MARKER,
+    dryRun, pilotFirstCut, marker: MARKER,
     serverLimits: { globalUsd: GLOBAL_BUDGET_USD, defaultTenantUsd: DEFAULT_TENANT_BUDGET_USD, maximumApprovedTenantUsd: MAX_APPROVED_TENANT_BUDGET_USD },
     qaTenantBudgetUsd: QA_TENANT_BUDGET_USD,
     businesses: applied,

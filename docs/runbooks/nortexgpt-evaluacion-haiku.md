@@ -130,6 +130,12 @@ del corpus de ayuda, su publicación controlada en QA, una evaluación específi
 de mensajes, y evidencia atribuible del consumo. El éxito de la sección 6 no
 acredita esas cuatro condiciones.
 
+Para preparar la configuración del negocio sintético en ese modo, tras sembrar
+la fixture de la sección 2 ejecutá `nortexgpt-enable-synthetic.ts --pilot-first-cut`
+contra la base descartable. El backend debe arrancarse con
+`nortexgpt-eval-server.mjs --pilot-first-cut --allow-provider` mediante el
+lanzador privado. Preparar el backend no envía una consulta al proveedor.
+
 El secreto JWT de QA se conserva en `~/.nortex-qa/eval-jwt-secret` (0600) para que
 un reinicio no invalide la sesión del evaluador. No es la clave del proveedor.
 
@@ -221,6 +227,39 @@ Responde **dos preguntas separadas, con evidencias distintas**:
 
 Con `--require-cost-attribution` la falta de acreditación devuelve código distinto de
 cero, para usarlo donde el gasto por consulta sea un requisito y no un dato ausente.
+
+### Ensayo separado del primer corte web
+
+[`first-cut-help-review.json`](../evidence/nortexgpt/evaluation-20260923/first-cut-help-review.json)
+contiene una sola pregunta sintética y la cita `reposicion` `web3` esperada.
+Está en `expectedOutcomesReviewed: false`: el CLI rechaza `--allow-paid-model`
+antes de leer la sesión o hacer una llamada. Una persona debe revisar el texto,
+la fuente, el hash del manifiesto y los criterios y completar revisor y fecha.
+La publicación del corpus en QA requiere una decisión editorial separada;
+este evaluador no cambia `DRAFT`, `REVIEWED` ni `PUBLISHED`.
+
+Una vez revisado el formulario, con la ayuda del hash exacto publicada **sólo
+en la base sintética autorizada**, el servidor local en modo `--pilot-first-cut`
+y el negocio configurado con `--pilot-first-cut`, el comando es:
+
+```sh
+DATABASE_URL='mysql://.../nortex_quality_first_cut_model' \
+NORTEX_QA_DATABASE_ACK=disposable-database \
+mise exec -- node --import tsx scripts/assistant-evaluation/first-cut-model.mjs \
+  --allow-paid-model --synthetic-tenant --base-url http://127.0.0.1:PUERTO \
+  --review-file docs/evidence/nortexgpt/evaluation-20260923/first-cut-help-review.json \
+  --session-token-file ~/.nortex-qa/sesion-ferreteria \
+  --max-reserved-usd 2 --report reports/assistant-evaluation/first-cut-ferreteria-01.json
+```
+
+El servidor reserva como máximo US$0,281920 para este mensaje; el costo real
+se consulta por `AssistantUsage.runId = message:<conversationId>:<requestId>`.
+El informe se guarda antes del único POST. Si se corta la respuesta, repetir
+**los mismos argumentos** con `--resume`: sólo hace GET y lecturas de la base.
+Una reserva `UNKNOWN` o sin vínculo no acredita costo ni calidad del modelo.
+Un `providerRequestId` liquidado acredita contacto y gasto; por sí solo no
+demuestra que el plan interpretado se aplicó. La respuesta, cita y ausencia de
+`AssistantRun` se registran aparte y requieren juicio humano posterior.
 
 ## 7. Retirar la credencial al terminar
 

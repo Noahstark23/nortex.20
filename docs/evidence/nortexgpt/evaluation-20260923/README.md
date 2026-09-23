@@ -38,6 +38,15 @@ El recorrido inicial necesita su propia prueba de ayuda, conversación y
 consultas deterministas con los flags efectivos. Habilitar operaciones después
 requiere evaluación y aprobación separadas, con gasto medido.
 
+[`first-cut-help-review.json`](first-cut-help-review.json) prepara precisamente
+una pregunta de ayuda del primer corte con `operations=false` y
+`language=true`. Exige la cita `reposicion` `web3` del manifiesto
+`debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c`.
+También permanece en `expectedOutcomesReviewed: false`; no es aprobación de
+la fuente, del resultado ni de una llamada pagada. El evaluador enlaza el
+consumo al mensaje y nunca reenvía un POST al recuperar, pero contacto y costo
+no prueban por sí solos que el plan del modelo se aplicó.
+
 Antes de una llamada pagada, una persona debe contrastar los formularios con
 las filas de la fixture, completar revisor, fecha y juicio en cada JSON, y sólo
 entonces marcar `expectedOutcomesReviewed: true`. Si se repite la evaluación
