@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import jwt from 'jsonwebtoken';
 import prisma from '../../backend/lib/prisma.js';
+import { createAssistantConversation, sendAssistantMessage } from '../../backend/services/assistant/conversations.js';
 import { stageAssistantKnowledgeRelease, reviewAssistantKnowledgeRelease,
   publishAssistantKnowledgeRelease } from '../../backend/services/assistant/knowledge/lifecycle.js';
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
@@ -87,7 +88,7 @@ async function main() {
   const principal = { tenantId: adminTenant.id, userId: actor.id, role: 'SUPER_ADMIN' };
   const staged = await stageAssistantKnowledgeRelease(principal, draft, prisma);
   const decision = { releaseId: staged.id, manifestHash: staged.manifestHash };
-  assert.equal(staged.manifestHash, '3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404');
+  assert.equal(staged.manifestHash, 'f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb');
   assert.match(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false),
     /PILOT_HELP_RELEASE_REQUIRED/);
   await reviewAssistantKnowledgeRelease(principal, decision, prisma);
@@ -104,6 +105,21 @@ async function main() {
   assert.equal(enabled.approvedMonthlyBudgetUsd.toString(), '2');
   for (const flag of ['operationsEnabled', 'actionsEnabled', 'extractionEnabled', 'executionEnabled',
     'promotionsEnabled', 'privateWhatsappEnabled'] as const) assert.equal(enabled[flag], false);
+  process.env.NORTEX_ASSISTANT_ENABLED = 'true';
+  process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED = 'false';
+  process.env.NORTEX_ASSISTANT_OPERATIONS_ENABLED = 'false';
+  const ownerPrincipal = { tenantId: tenant.id, userId: target.id, role: 'OWNER' };
+  const ownerConversation = await createAssistantConversation(ownerPrincipal, prisma);
+  const helpAnswer = await sendAssistantMessage(ownerPrincipal, ownerConversation.id,
+    { requestId: randomUUID(), text: '¿Cómo vender y cobrar?' }, prisma);
+  assert.equal(helpAnswer.citations?.some(citation => citation.id === 'ventas'), true);
+  const inventoryAnswer = await sendAssistantMessage(ownerPrincipal, ownerConversation.id,
+    { requestId: randomUUID(), text: 'Inventario' }, prisma);
+  assert.equal(typeof inventoryAnswer.overview?.scope, 'string');
+  assert.equal((inventoryAnswer.overview?.metrics.length ?? 0) > 0, true);
+  assert.equal(inventoryAnswer.operationalRunId, undefined);
+  assert.equal(await prisma.assistantRun.count({ where: { tenantId: tenant.id } }), 0);
+  assert.equal(await prisma.assistantUsage.count({ where: { tenantId: tenant.id } }), 0);
   assert.deepEqual(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, true),
     { changed: false, enabled: true, budgetUsd: '2' });
   const enableAudits = await prisma.auditLog.findMany({ where: {
@@ -119,11 +135,23 @@ async function main() {
   assert.deepEqual(run('enable', { ...customerBase, NORTEX_PILOT_CONFIRM: customerConfirm('enable') }, true),
     { changed: true, enabled: true, budgetUsd: '2' });
   assert.equal((await prisma.assistantTenantConfig.findUniqueOrThrow({ where: { tenantId: customerTenant.id } })).enabled, true);
+  const customerPrincipal = { tenantId: customerTenant.id, userId: customer.id, role: 'OWNER' };
+  const customerConversation = await createAssistantConversation(customerPrincipal, prisma);
+  assert.notEqual(customerConversation.id, ownerConversation.id);
+  assert.equal((await sendAssistantMessage(customerPrincipal, customerConversation.id,
+    { requestId: randomUUID(), text: '¿Cómo vender y cobrar?' }, prisma)).citations?.some(citation => citation.id === 'ventas'), true);
+  assert.equal(await prisma.assistantMessage.count({ where: { tenantId: customerTenant.id } }), 2);
+  assert.equal(await prisma.assistantMessage.count({ where: { tenantId: tenant.id } }), 4);
 
   assert.deepEqual(run('disable', { ...base, NORTEX_PILOT_CONFIRM: confirm('disable') }, true),
     { changed: true, enabled: false, budgetUsd: '2' });
   assert.equal((await prisma.assistantTenantConfig.findUniqueOrThrow({ where: { tenantId: tenant.id } })).enabled, false);
   assert.equal((await prisma.assistantTenantConfig.findUniqueOrThrow({ where: { tenantId: customerTenant.id } })).enabled, true);
+  await assert.rejects(createAssistantConversation(ownerPrincipal, prisma), { code: 'ASSISTANT_DISABLED' });
+  await assert.rejects(sendAssistantMessage(ownerPrincipal, ownerConversation.id,
+    { requestId: randomUUID(), text: 'Inventario' }, prisma), { code: 'ASSISTANT_DISABLED' });
+  assert.equal((await sendAssistantMessage(customerPrincipal, customerConversation.id,
+    { requestId: randomUUID(), text: '¿Cómo vender y cobrar?' }, prisma)).citations?.some(citation => citation.id === 'ventas'), true);
   assert.deepEqual(run('disable', { ...base, NORTEX_PILOT_CONFIRM: confirm('disable') }, true),
     { changed: false, enabled: false, budgetUsd: '2' });
   assert.equal(await prisma.auditLog.count({ where: { tenantId: tenant.id, action: 'ASSISTANT_PILOT_DISABLED' } }), 1);
@@ -132,7 +160,7 @@ async function main() {
   assert.equal((await prisma.assistantTenantConfig.findUniqueOrThrow({ where: { tenantId: tenant.id } })).enabled, false);
   assert.deepEqual(run('disable', { ...customerBase, NORTEX_PILOT_CONFIRM: customerConfirm('disable') }, true),
     { changed: true, enabled: false, budgetUsd: '2' });
-  console.log('QA piloto: dos negocios aislados, identidad, rechazo, límite, auditoría, idempotencia y revocación OK.');
+  console.log('QA piloto: dos negocios aislados, ayuda web, consulta determinista, cero runs/costo, identidad, límite, auditoría y revocación OK.');
 }
 
 main().catch(error => { console.error(error instanceof Error ? error.message : 'Falló el ensayo sintético del piloto.'); process.exitCode = 1; })

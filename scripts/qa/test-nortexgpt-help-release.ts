@@ -10,7 +10,7 @@ import { stageAssistantKnowledgeRelease, reviewAssistantKnowledgeRelease,
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
 
 validateQualityDatabase(process.env.DATABASE_URL, process.env.NORTEX_QA_DATABASE_ACK);
-const expectedHash = '3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404';
+const expectedHash = 'f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb';
 const expectedIds = ['asistente', 'ventas', 'offline', 'compras', 'lotes', 'contabilidad',
   'reposicion', 'salida-proveedor', 'merma', 'comparacion'];
 
@@ -55,6 +55,8 @@ async function main() {
   assert.equal((await publishAssistantKnowledgeRelease(principal, decision, prisma)).status, 'PUBLISHED');
   const active = await readKnowledgeSnapshot(prisma);
   assert.equal(active.documents.length, 10);
+  assert.equal(active.documents.every(doc => doc.payload.channels.length === 1
+    && doc.payload.channels[0] === 'WEB_INTERNAL'), true);
   assert.deepEqual(active.documents.map(doc => doc.reference.documentId).sort(), expectedIds.sort());
   assert.equal(active.documents.every(doc => doc.publication === 'PUBLISHED'), true);
   assert.equal(active.documents.some(doc => ['promociones', 'canal-privado'].includes(doc.reference.documentId)), false);
@@ -63,6 +65,11 @@ async function main() {
   assert.equal(help.citations.some(citation => citation.id === 'ventas'), true);
   assert.equal((await getAssistantKnowledgePassage(readerPrincipal, help.knowledgeReferences[0], prisma)).publication, 'PUBLISHED');
   assert.deepEqual((await retrievePublishedAssistantHelp(readerPrincipal, 'whatsapp privado', prisma)).citations, []);
+  await prisma.assistantTenantConfig.update({ where: { tenantId: tenant.id },
+    data: { privateWhatsappEnabled: true } });
+  process.env.NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED = 'true';
+  assert.deepEqual((await retrievePublishedAssistantHelp(readerPrincipal, 'ventas', prisma, 'WHATSAPP_PRIVATE')).citations, []);
+  delete process.env.NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED;
 
   assert.equal((await stageAssistantKnowledgeRelease(principal, draft, prisma)).status, 'PUBLISHED');
   assert.equal((await publishAssistantKnowledgeRelease(principal, decision, prisma)).status, 'PUBLISHED');
@@ -73,7 +80,7 @@ async function main() {
     action: { startsWith: 'ASSISTANT_KNOWLEDGE_' } }, take: 10 });
   assert.deepEqual(actions.map(row => row.action).sort(),
     ['ASSISTANT_KNOWLEDGE_STAGED', 'ASSISTANT_KNOWLEDGE_REVIEWED', 'ASSISTANT_KNOWLEDGE_PUBLISHED'].sort());
-  console.log('QA ayuda: borrador exacto, revisión exigida, 10 fuentes visibles, 2 excluidas e idempotencia OK.');
+  console.log('QA ayuda: borrador exacto, revisión exigida, 10 fuentes web, canal privado vacío, 2 excluidas e idempotencia OK.');
 }
 
 main().catch(error => { console.error(error instanceof Error ? error.message : 'Falló QA editorial.'); process.exitCode = 1; })

@@ -2,6 +2,11 @@
 
 Fuente: `backend/services/assistant/knowledge.ts` en el candidato local del 23 de septiembre de 2026. Estos doce textos están etiquetados `LEGACY`; este documento no los aprueba ni publica. El hash identifica el contenido exacto que debe revisar una persona.
 
+El primer corte web usa [diez versiones editoriales nuevas](help-first-cut-20260923/review-sheet.md)
+con los mismos cuerpos propuestos, canal `WEB_INTERNAL` exclusivo y hashes
+distintos. Revisar y aprobar esa hoja para la publicación; esta lista heredada
+sirve para comparar el origen y los dos artículos excluidos.
+
 Para cada artículo: comprobar el recorrido real en Nortex, el rol, la precisión del texto y si debe estar disponible sólo en web interna. Registrar correcciones antes de crear una versión editorial y publicar mediante el flujo administrativo; no cambiar `LEGACY` por una aprobación implícita.
 
 Para el primer corte propuesto, WhatsApp privado, promociones y confirmación de

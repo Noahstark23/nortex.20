@@ -4,7 +4,7 @@
   "documents": [
     {
       "documentId": "asistente",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -28,15 +28,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "nortexgpt asistente ayuda funciones permisos empezar hola"
       }
     },
     {
       "documentId": "ventas",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -55,15 +54,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "vender venta ventas cobrar cobro caja carrito lector pago vuelto"
       }
     },
     {
       "documentId": "offline",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -82,15 +80,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "offline internet conexion pendiente sincronizar sincronizacion avisos cola"
       }
     },
     {
       "documentId": "compras",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -108,15 +105,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "compra compras factura proveedor recibida recepcion mercaderia credito contado impuestos"
       }
     },
     {
       "documentId": "lotes",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -135,15 +131,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "lote lotes vencimiento vencimientos farmacia fecha vencida vencido inventario existencias stock"
       }
     },
     {
       "documentId": "contabilidad",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -159,15 +154,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "utilidad ganancia ganancias balance contabilidad ingresos egresos gastos deuda cuentas"
       }
     },
     {
       "documentId": "reposicion",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -186,15 +180,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "reposicion reponer consumo cobertura faltante agotamiento orden pendiente"
       }
     },
     {
       "documentId": "salida-proveedor",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -211,15 +204,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "devolver devolucion proveedor salida fisica remitir retiro"
       }
     },
     {
       "documentId": "merma",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -234,15 +226,14 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "merma baja perdida deterioro destruccion retiro vencido"
       }
     },
     {
       "documentId": "comparacion",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
@@ -262,8 +253,7 @@
           "help"
         ],
         "channels": [
-          "WEB_INTERNAL",
-          "WHATSAPP_PRIVATE"
+          "WEB_INTERNAL"
         ],
         "keywords": "comparar comparacion variacion disminucion aumento causa hipotesis corte periodo"
       }

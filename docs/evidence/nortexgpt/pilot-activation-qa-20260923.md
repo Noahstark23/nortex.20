@@ -23,9 +23,10 @@ ejecutó el CLI real con dos negocios, dos usuarios OWNER y un revisor sintétic
 | Revisión faltante, token inválido, dueño como revisor, usuario o revisor inactivo, identidad distinta | Rechazados sin crear configuración |
 | Ayuda `LEGACY`, borrador y versión sólo revisada | `PILOT_HELP_RELEASE_REQUIRED`; no se creó configuración |
 | Primera activación | Límite efectivo US$2, seis capacidades sensibles apagadas y AuditLog del revisor en la misma transacción |
+| Recorrido con flags del primer corte | Ayuda web publicada con cita `ventas`, consulta de inventario determinista, cero `AssistantRun` y cero `AssistantUsage` |
 | Repetición | `changed=false` y sin segundo AuditLog |
-| Segundo negocio | Configuración propia de US$2; revocar el primero no cambió el segundo |
-| Revocación y repetición | `enabled=false`, un AuditLog de revocación y sin duplicarlo al repetir |
+| Segundo negocio | Configuración propia de US$2 y conversación propia; revocar el primero no cambió el segundo |
+| Revocación y repetición | `enabled=false`, un AuditLog de revocación, se rechazan conversación nueva y mensaje en la abierta, sin duplicar auditoría al repetir |
 | Capacidad previa encendida | Nueva activación rechazada sin sobrescribirla |
 
 TypeScript aprobó. Los pasos del job `backup-restore-smoke` están cableados en CI,
@@ -44,6 +45,14 @@ y 7090 pruebas; 50 archivos y 545 pruebas quedaron omitidos. Diseño y build
 pasaron. Tras añadir `helpReleaseReady` a `inspect`, se repitió el CLI contra
 una tercera base MySQL 8 descartable y pasó; TypeScript y `git diff --check`
 también aprobaron. Ninguna de estas pruebas equivale a CI remoto.
+
+Un ensayo posterior en otra base descartable ejercitó el recorrido exacto del
+primer corte con `LANGUAGE=false` y `OPERATIONS=false`: la cuenta OWNER obtuvo
+una cita de ayuda web publicada y una consulta de inventario determinista.
+No se creó `AssistantRun` ni `AssistantUsage`. El segundo negocio mantuvo su
+conversación y citas propias tras revocar el primero; la cuenta revocada no pudo
+crear ni continuar conversación. No se llamó al proveedor ni se tocaron cuentas
+reales, dinero o inventario de usuarios.
 
 Tras integrar los pasos en el job MySQL existente, la compuerta local completa
 pasó: 491 archivos y 7090 pruebas aprobadas; 50 archivos y 545 pruebas

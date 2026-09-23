@@ -41,7 +41,8 @@ Usar el SHA candidato de la entrega, nunca copiar el de este documento como dest
 ## Activación del piloto
 
 1. Identificar negocio, cuenta, rol y revisor humano; revisar artículos completos
-   y sus hashes. Los textos `LEGACY` no equivalen a publicación aprobada. Registrar
+   y sus hashes en la [hoja del primer corte](../evidence/nortexgpt/help-first-cut-20260923/review-sheet.md).
+   Los textos `LEGACY` no equivalen a publicación aprobada. Registrar
    la política de US$2 iniciales y techo conjunto US$20 antes de una llamada.
    `scripts/ops/nortexgpt-pilot.ts inspect` consulta por
    `NORTEX_PILOT_EMAIL` sin modificar datos y devuelve `userId`, `tenantId`,
@@ -65,7 +66,7 @@ Usar el SHA candidato de la entrega, nunca copiar el de este documento como dest
    ejecución, promociones y WhatsApp. Audita el cambio en la misma transacción.
    El mismo cambio exige que `nortexgpt-primer-corte-20260923` esté publicado,
    con revisión humana registrada y el hash exacto
-   `3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404`.
+   `f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb`.
    Rechaza el corpus `LEGACY`, un borrador o una versión sólo revisada. Si una
    corrección editorial cambia el hash, actualizar el guard y repetir su QA antes
    de activar; no reutilizar una confirmación sobre contenido distinto.

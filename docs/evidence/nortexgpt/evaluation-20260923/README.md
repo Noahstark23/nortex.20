@@ -30,6 +30,14 @@ presentarla como fecha cierta de agotamiento. Debe distinguir stock físico de
 vendible y no recomendar vender lotes vencidos. No hay órdenes de compra
 pendientes ni compras nuevas ejecutadas por la pregunta.
 
+Estos formularios ensayan el orquestador con `operations=true` y acciones,
+ejecución y extracción apagadas. El CLI del primer piloto deja
+`operationsEnabled=false`; por tanto, una buena respuesta en esta evaluación
+no acredita que el mismo pedido de reposición funcione en los dos pilotos.
+El recorrido inicial necesita su propia prueba de ayuda, conversación y
+consultas deterministas con los flags efectivos. Habilitar operaciones después
+requiere evaluación y aprobación separadas, con gasto medido.
+
 Antes de una llamada pagada, una persona debe contrastar los formularios con
 las filas de la fixture, completar revisor, fecha y juicio en cada JSON, y sólo
 entonces marcar `expectedOutcomesReviewed: true`. Si se repite la evaluación

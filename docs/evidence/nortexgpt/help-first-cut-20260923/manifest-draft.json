@@ -3,63 +3,63 @@
   "references": [
     {
       "documentId": "asistente",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "6873763822f40af06d1082878f968dd15a3de3a9372a8d86e667e5cc2a2df5e6"
+      "contentHash": "2066ff38b1b9c0a2b9fff4c2ec887f30cb082f06f1ce8a70491ba0fd28a2fb41"
     },
     {
       "documentId": "comparacion",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "cbb614b0b2a2e4e94f21daa139ea8469dfb2696dc2b21fbee590f253b5754845"
+      "contentHash": "8355f089a73eae1bf6a2e0ee7d944eaed65f3f00173375b3f0073247fc7b34e7"
     },
     {
       "documentId": "compras",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "cd485d3c49b0e5ff002f201c8df4236dc7f59121bcca9f9aa55ac351576093b3"
+      "contentHash": "577981bead300186c1427cf1f38a1170bd0e4bb4d0edf4e0b894f34bfee4d2e2"
     },
     {
       "documentId": "contabilidad",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "5a623b593676e4a0983248eec7e855b42e20c2ce7fda5a0512d2a73e9b7c48a6"
+      "contentHash": "ccbb8274c9aa0454fec9423aa61d64a65671812f4a942c181ffbef24dfd06c67"
     },
     {
       "documentId": "lotes",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "babaac6683049b858e8041c884646a547bc3d3fcda64d030180cc567a3093736"
+      "contentHash": "f045df3faa7b9d1fe5b006b7c6c74464dd3f1bba69479133c264f7bc7c4644ec"
     },
     {
       "documentId": "merma",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "df8c1fb22f81aa3174c3e097d88e8efe96a4734f6281422a6663b7ed3a5848d7"
+      "contentHash": "bdd2367603f52bb6edd68f0bc37c62186d9cf8ad515ade85251016af17349280"
     },
     {
       "documentId": "offline",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "7c9f4c2240f54b1d73f182e303e189e3b110a1a36ed4c43c09cbdfb5360b2cc7"
+      "contentHash": "2a48b08976af8dae2a8c3d4dbbb3edc70613220e8aa49551ffd31c123c0e5631"
     },
     {
       "documentId": "reposicion",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "6767f7445bb9d9b4f9cc5b26e1aea70633a8dcf59eabf1840023424fb849fa2e"
+      "contentHash": "bc50f80ae206bce124e656506d52a8a916955129cb78bdff89c6ce86bbbf1069"
     },
     {
       "documentId": "salida-proveedor",
-      "version": "2026-09-05.2",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "7fdcbd03556a3c7facd02cf54038da7e92664e0c278d2b344236386b8cb3bd39"
+      "contentHash": "994f0af89dd6f88704ba599659594068f20bd0e6f257b9318e5753be61db58d4"
     },
     {
       "documentId": "ventas",
-      "version": "2026-09-05.1",
+      "version": "2026-09-23.web1",
       "sectionId": "main",
-      "contentHash": "fdd47f962bf3bc75c5419d048adfe39dc8f47871f60210123591854261465216"
+      "contentHash": "69621f8c8845c9b52de5adb6de84b3f0028bf16ff288d3c98e3f3fe7740a4b38"
     }
   ]
 }

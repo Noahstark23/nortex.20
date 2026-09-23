@@ -5,9 +5,11 @@ Fecha: 2026-09-23. **Borrador sin revisión humana ni publicación.**
 [`release-draft.json`](release-draft.json) tiene la forma exacta que acepta
 `POST /api/admin/assistant-knowledge/releases`; [`manifest-draft.json`](manifest-draft.json)
 fija las referencias de las mismas diez versiones. Hash del manifiesto:
-`3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404`.
-Los cuerpos son copias exactas del corpus `LEGACY` del candidato, sin declarar
-que su contenido sea correcto. No se hizo POST, revisión ni publicación.
+`f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb`.
+Los cuerpos provienen del corpus `LEGACY` del candidato, sin declarar que su
+contenido sea correcto. Cada artículo usa una versión editorial nueva
+`2026-09-23.web1` y sólo el canal `WEB_INTERNAL`; ninguna de las diez versiones
+autoriza `WHATSAPP_PRIVATE`. No se hizo POST, revisión ni publicación.
 
 | Propuestos para revisión | Motivo de atención |
 |---|---|
@@ -28,10 +30,12 @@ mise exec -- node --import tsx scripts/qa/nortexgpt-help-first-cut.ts --verify
 ```
 
 Antes de solicitar revisión o publicación, una persona debe revisar **cada
-texto completo** en [`help-review-20260923.md`](../help-review-20260923.md),
+versión propuesta y su hash** en [`review-sheet.md`](review-sheet.md),
 comprobar roles/canales y corregir los que no describan el producto vigente.
-Una corrección requiere versión nueva y nuevo hash: la versión `LEGACY` es
-inmutable. El revisor y su aprobación no están registrados aquí.
+[`help-review-20260923.md`](../help-review-20260923.md) conserva las doce fuentes
+`LEGACY` de origen para comparación; no es el manifiesto por aprobar.
+Una corrección requiere otra versión y otro hash. El revisor y su aprobación
+no están registrados aquí.
 
 ## Ensayo técnico del archivo exacto
 
@@ -41,6 +45,8 @@ LEGACY; `publish` sin `review` fue rechazado. Tras **simular** la transición de
 revisión con usuarios sintéticos, la publicación dejó diez fuentes activas,
 excluyó promociones y canal privado de consultas nuevas, sirvió una cita
 `PUBLISHED`, conservó una sola generación al repetir y dejó tres AuditLog.
+También se comprobó que, aun encendiendo la capacidad privada en la base QA,
+la consulta de los artículos nuevos por `WHATSAPP_PRIVATE` no devuelve citas.
 La simulación acredita la mecánica editorial, **no** la revisión de los textos
 por una persona. El mismo ensayo quedó añadido al job MySQL de CI, aún sin
 corrida remota para este candidato. La base sintética se retiró al terminar.
