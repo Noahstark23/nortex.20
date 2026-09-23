@@ -1595,6 +1595,12 @@ const POS: React.FC = () => {
             if (!res.ok) throw new Error(data.error);
             setCurrentShift(data);
             setShowOpenShift(false);
+            showToast({
+                tone: 'success',
+                title: 'Caja abierta',
+                message: `Fondo registrado: ${formatMoney(data.initialCash)} · Turno ${data.id}`,
+                durationMs: 10_000,
+            });
             if (heldCartToRestore) setShowHeldCarts(true);
             setEmployeePin('');
             setErrorApertura({});
