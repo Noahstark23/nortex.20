@@ -12,13 +12,14 @@
  */
 import prisma from '../../backend/lib/prisma.js';
 import { getAssistantCapabilities } from '../../backend/services/assistant/access.js';
-import { GLOBAL_BUDGET_USD, TENANT_BUDGET_USD } from '../../backend/services/assistant/budget.js';
+import { GLOBAL_BUDGET_USD } from '../../backend/services/assistant/budget.js';
+import { DEFAULT_TENANT_BUDGET_USD, MAX_APPROVED_TENANT_BUDGET_USD } from '../../backend/services/assistant/budgetPolicy.js';
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
 
 const MARKER = 'operativo-demo-20260905';
 const TENANTS = [`${MARKER}-ferreteria`, `${MARKER}-farmacia`];
 /** Tope por negocio para esta evaluación: más conservador que el límite del servidor, que no se toca. */
-const QA_TENANT_BUDGET_USD = '5';
+const QA_TENANT_BUDGET_USD = '2';
 const dryRun = process.argv.includes('--dry-run');
 
 const initialStep = {
@@ -31,6 +32,7 @@ const initialStep = {
   promotionsEnabled: false,
   privateWhatsappEnabled: false,
   monthlyBudgetUsd: QA_TENANT_BUDGET_USD,
+  approvedMonthlyBudgetUsd: QA_TENANT_BUDGET_USD,
 } as const;
 
 async function main() {
@@ -60,7 +62,7 @@ async function main() {
   }
   console.log(JSON.stringify({
     dryRun, marker: MARKER,
-    serverLimits: { globalUsd: GLOBAL_BUDGET_USD, perTenantUsd: TENANT_BUDGET_USD, note: 'Constantes del servidor sin cambios.' },
+    serverLimits: { globalUsd: GLOBAL_BUDGET_USD, defaultTenantUsd: DEFAULT_TENANT_BUDGET_USD, maximumApprovedTenantUsd: MAX_APPROVED_TENANT_BUDGET_USD },
     qaTenantBudgetUsd: QA_TENANT_BUDGET_USD,
     businesses: applied,
   }, null, 2));

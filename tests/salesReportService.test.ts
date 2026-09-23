@@ -230,6 +230,30 @@ describe('lectura íntegra del snapshot de cierre', () => {
         });
     });
 
+    it('conserva campos adicionales firmados y acepta el JSON serializado de MySQL', async () => {
+        const payload = { ...validShiftPayload(), closeMeta: { manualINs: 12, theftAlert: false } };
+        const row = { ...rowFor(payload), report: JSON.stringify(payload) };
+        const service = createSalesReportService({ $queryRaw: vi.fn().mockResolvedValue([row]) } as any);
+        const result = await service.getShiftSnapshot({ tenantId: 'tenant-auth', userId: 'owner-auth', role: 'OWNER' }, 'shift-1');
+        expect(result.report).toEqual(payload);
+        expect(result.contentHash).toBe(hashShiftCloseReport(payload));
+    });
+
+    it.each([
+        { folio: 'otro-folio' }, { businessDate: '2026-08-29' }, { version: 2 },
+        { report: '{json inválido' }, { contentHash: 'x'.repeat(64) },
+    ])('rechaza metadata o contenido incompatible %j', async patch => {
+        const service = createSalesReportService({ $queryRaw: vi.fn().mockResolvedValue([{ ...rowFor(), ...patch }]) } as any);
+        await expect(service.getShiftSnapshot({ tenantId: 'tenant-auth', userId: 'owner-auth', role: 'OWNER' }, 'shift-1'))
+            .rejects.toMatchObject({ code: 'SHIFT_REPORT_INTEGRITY_FAILED', httpStatus: 409 });
+    });
+
+    it('conserva el error de conteo inválido antes de comprobar el contenido', async () => {
+        const service = createSalesReportService({ $queryRaw: vi.fn().mockResolvedValue([{ ...rowFor(), version: '1.5' }]) } as any);
+        await expect(service.getShiftSnapshot({ tenantId: 'tenant-auth', userId: 'owner-auth', role: 'OWNER' }, 'shift-1'))
+            .rejects.toMatchObject({ code: 'REPORT_DATA_INVALID', httpStatus: 409 });
+    });
+
     it('no revela si un shift pertenece a otro tenant o a otro cajero', async () => {
         const service = createSalesReportService({
             $queryRaw: vi.fn().mockResolvedValue([]),

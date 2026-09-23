@@ -12,6 +12,9 @@ import { authenticatedReviewLink,privateWhatsappConfig,PrivateWhatsappError } fr
 import { createPrivateWaMediaDownloader } from './transport.js';
 import type { PrivateWaDependencies,WaMessagePayload,WaDatabase } from './types.js';
 import { resolvePrivateWaOperationalRun,renderPrivateWaOperationalReply,renderPrivateWaReply } from './operations.js';
+import type { AssistantKnowledgeReference } from '../../../../shared/assistantKnowledge.js';
+import { referencesFromCitations, validateAssistantKnowledgeReferences, KNOWLEDGE_UNAVAILABLE_TEXT } from '../knowledge/service.js';
+import { collectRunKnowledgeReferences } from '../operations/knowledgeProvenance.js';
 export { renderPrivateWaReply } from './operations.js';
 
 const expiry=(payload:WaMessagePayload)=>new Date(Number(payload.timestamp)*1000+23*60*60_000);
@@ -32,11 +35,12 @@ async function ensureConversation(binding:{id:string;version:number;conversation
   });
 }
 
-async function finishInbox(row:AssistantWaInbox,text:string,db:WaDatabase,now:Date,binding:{id:string;version:number;tenantId:string;userId:string;roleAtBinding:string;phoneNumberId:string;waId:string}) {
-  await requirePrivateWaBinding(binding.id,binding.version,db);
+async function finishInbox(row:AssistantWaInbox,text:string,db:WaDatabase,now:Date,binding:{id:string;version:number;tenantId:string;userId:string;roleAtBinding:string;phoneNumberId:string;waId:string},knowledgeReferences:AssistantKnowledgeReference[]|null=[]) {
+  const {principal}=await requirePrivateWaBinding(binding.id,binding.version,db);
+  if(knowledgeReferences!==null&&!await validateAssistantKnowledgeReferences(principal,knowledgeReferences,db as PrismaClient,'WHATSAPP_PRIVATE')){text=KNOWLEDGE_UNAVAILABLE_TEXT;knowledgeReferences=[];}
   const done=await db.assistantWaInbox.updateMany({where:activeLease(row,now),data:{status:'DONE',leaseToken:null,leaseUntil:null,errorCode:null,bindingId:binding.id,bindingVersion:binding.version,tenantId:binding.tenantId,userId:binding.userId,roleAtReceipt:binding.roleAtBinding}});
   if(done.count!==1)throw new PrivateWhatsappError('PRIVATE_WA_LEASE_LOST','Otro intento retomó el mensaje.',409);
-  await db.assistantWaOutbox.create({data:{id:randomUUID(),inboxId:row.id,bindingId:binding.id,bindingVersion:binding.version,tenantId:binding.tenantId,userId:binding.userId,roleAtCreation:binding.roleAtBinding,phoneNumberId:binding.phoneNumberId,waId:binding.waId,text,status:'PENDING',expiresAt:expiry(row.payload as unknown as WaMessagePayload)}});
+  await db.assistantWaOutbox.create({data:{id:randomUUID(),inboxId:row.id,bindingId:binding.id,bindingVersion:binding.version,tenantId:binding.tenantId,userId:binding.userId,roleAtCreation:binding.roleAtBinding,phoneNumberId:binding.phoneNumberId,waId:binding.waId,text,knowledgeReferences:knowledgeReferences===null?Prisma.DbNull:JSON.parse(JSON.stringify(knowledgeReferences)) as Prisma.InputJsonValue,status:'PENDING',expiresAt:expiry(row.payload as unknown as WaMessagePayload)}});
 }
 
 export async function processPrivateWaInboxOnce(deps:PrivateWaDependencies={}) {
@@ -59,8 +63,9 @@ export async function processPrivateWaInboxOnce(deps:PrivateWaDependencies={}) {
       const {binding,principal}=await requirePrivateWaBinding(row.bindingId,row.bindingVersion,db);checkSource(row,binding);
       const conversationId=await ensureConversation(binding,principal,db,now,row.kind==='TEXT'&&(row.attempts>1||row.errorCode==='PRIVATE_WA_WAITING_RUN'));
       let text:string;
+      let knowledgeReferences:AssistantKnowledgeReference[]|null=[];
       if(row.kind==='TEXT') {
-        const reply=await (deps.answer??sendAssistantMessage)(principal,conversationId,{text:payload.text!,requestId:row.id},db);
+        const reply=await (deps.answer??sendAssistantMessage)(principal,conversationId,{text:payload.text!,requestId:row.id},db,{channel:'WHATSAPP_PRIVATE'});
         if(reply.operationalRunId) {
           await requirePrivateWaBinding(binding.id,binding.version,db);
           const run=await (deps.resolveRun??resolvePrivateWaOperationalRun)(principal,reply.operationalRunId,db);
@@ -73,8 +78,12 @@ export async function processPrivateWaInboxOnce(deps:PrivateWaDependencies={}) {
             });
             return true;
           }
+          knowledgeReferences=run.result?.knowledgeUnavailable?[]:run.result?collectRunKnowledgeReferences(run.result):[];
           text=renderPrivateWaOperationalReply(run,authenticatedReviewLink(config,conversationId));
-        } else text=renderPrivateWaReply(reply,authenticatedReviewLink(config,conversationId));
+        } else {
+          knowledgeReferences=reply.knowledgeUnavailable?[]:reply.knowledgeReferences??referencesFromCitations(reply.citations??[]);
+          text=renderPrivateWaReply(reply,authenticatedReviewLink(config,conversationId));
+        }
       } else if(row.kind==='MEDIA') {
         await assertAssistantAccess(principal,'invoicePrepare',db);
         let attachmentId=row.attachmentId;
@@ -95,7 +104,7 @@ export async function processPrivateWaInboxOnce(deps:PrivateWaDependencies={}) {
         const url=new URL(authenticatedReviewLink(config,conversationId));url.searchParams.set('assistantExtraction',job.id);
         text=`Recibí el documento y preparé su lectura. Esto todavía no registra la compra, recepción ni pago. Revisá el resultado y los datos pendientes desde tu sesión: ${url.toString()}`;
       } else throw new PrivateWhatsappError('PRIVATE_WA_UNSUPPORTED','Ese tipo de mensaje no está disponible.',422);
-      await db.$transaction(async tx=>{const current=await requirePrivateWaBinding(binding.id,binding.version,tx);checkSource(row,current.binding);await finishInbox(row,text,tx,deps.now?.()??new Date(),current.binding);});
+      await db.$transaction(async tx=>{const current=await requirePrivateWaBinding(binding.id,binding.version,tx);checkSource(row,current.binding);await finishInbox(row,text,tx,deps.now?.()??new Date(),current.binding,knowledgeReferences);});
     }
   } catch(error) {
     const code=error&&typeof error==='object'&&'code'in error?String(error.code):'PRIVATE_WA_PROCESSING_FAILED';

@@ -2,6 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient } from '@prisma/client';
 import prisma from '../../lib/prisma.js';
 import type { AssistantPrincipal, AssistantMessageDTO, InvoiceDraft } from '../../../shared/assistant.js';
+import type { AssistantCatalogIdentity } from '../../../shared/assistantCatalog.js';
+import { markCatalogIdentityCollisions, matchesCurrentCatalogIdentity, productCatalogIdentitySelect, supplierCatalogIdentitySelect,
+  projectProductCatalogIdentity, projectSupplierCatalogIdentity, readProductCatalogIdentity, readSupplierCatalogIdentity } from './catalogIdentity.js';
 import { assertAssistantAccess, AssistantAccessError } from './access.js';
 import { normalizeAssistantText } from './knowledge.js';
 import { readPurchaseIntake, purchaseIntakeSchema, type PurchaseIntake, type PurchaseIntakeFact } from './purchaseIntakeTypes.js';
@@ -33,7 +36,7 @@ export function intakeToDraft(state:PurchaseIntake):InvoiceDraft {
     currency:f.currency??'',supplierId:f.supplierId,supplierName:f.supplierName,invoiceNumber:f.invoiceNumber??'',date:f.date??'',
     dueDate:f.dueDate,warehouseId:f.warehouseId,paymentMethod:f.paymentMethod,
     receivedConfirmed:f.receivedConfirmed??false,paymentConfirmed:f.paymentConfirmed??false,documentTotal:f.documentTotal??'',
-    items:f.items.map(line=>({productId:line.productId,description:line.productName??line.description,quantity:line.quantity??'',unitCost:line.unitCost??'',
+    items:f.items.map(line=>({productId:line.productId,description:line.description,quantity:line.quantity??'',unitCost:line.unitCost??'',
       purchaseUnit:line.purchaseUnit??'BASE',batchNumber:line.batchNumber,expiryDate:line.expiryDate})),
     warnings:missingPurchaseFacts(state).map(field=>`Dato pendiente declarado por conversación: ${field}`),
   };
@@ -68,32 +71,39 @@ export function purchaseIntakePresentation(metadata:unknown): Omit<Content,'text
   };
 }
 
-const candidateChoice=(text:string,candidates:Array<{id:string;label:string}>)=>{
-  const value=normalizeAssistantText(text.trim());
-  const index=/^(?:opcion\s+)?[1-6]$/.test(value)?Number(value.replace('opcion ',''))-1:-1;
-  return candidates[index]??candidates.find(item=>normalizeAssistantText(item.label)===value);
+const choiceText = (text:string) => normalizeAssistantText(text).replace(/\s+/g,' ').trim();
+const candidateChoice=(text:string,candidates:AssistantCatalogIdentity[])=>{
+  candidates=markCatalogIdentityCollisions(candidates);
+  const value=choiceText(text), numbered=/^(?:opcion\s+)?([1-6])$/.exec(value);
+  const numberedChoice=numbered?candidates[Number(numbered[1])-1]:undefined;
+  if(numberedChoice)return {selected:numberedChoice.selectionIssue?undefined:numberedChoice,recognized:true};
+  const matches=candidates.filter(item=>[item.label,item.sku,item.ruc,item.detail?`${item.label} · ${item.detail}`:undefined]
+    .some(label=>label&&choiceText(label)===value));
+  return {selected:matches.length===1&&!matches[0].selectionIssue?matches[0]:undefined,
+    recognized:matches.length>0||/^(?:opcion\b|\d+(?:\.\d+)?$)/.test(value)};
 };
-const listChoices=(rows:Array<{id:string;label:string}>)=>rows.map((row,index)=>`${index+1}. ${row.label}`).join('\n');
+const listChoices=(rows:AssistantCatalogIdentity[])=>rows.map((row,index)=>`${index+1}. ${row.label}${row.detail?` · ${row.detail}`:''}${row.selectionIssue?` — ${row.selectionIssue}`:''}`).join('\n');
 
 async function askNext(state:PurchaseIntake,db:Database,tenantId:string):Promise<string> {
   const field=missingPurchaseFacts(state)[0];
   if(!field)return 'Ya tengo los datos declarados. Preparé un borrador para que revisés sus efectos antes de confirmar.';
   const match=field.match(/^items\.(\d+)\.(.+)$/),index=match?Number(match[1]):undefined,key=match?.[2]??field;
-  state.pendingQuestion={id:randomUUID(),field,...(index===undefined?{}:{lineIndex:index})};
+  const searchQuery=state.pendingQuestion?.field===field?state.pendingQuestion.searchQuery:undefined;
+  state.pendingQuestion={id:randomUUID(),field,...(searchQuery===undefined?{}:{searchQuery}),...(index===undefined?{}:{lineIndex:index})};
   const line=index===undefined?undefined:state.facts.items[index];
   if(key==='productId') {
-    const query=line!.description.trim();
-    const rows=query.length>=2?await db.product.findMany({where:{tenantId,OR:[{name:{contains:query}},{sku:{contains:query}}]},select:{id:true,name:true,sku:true},orderBy:[{name:'asc'},{id:'asc'}],take:6}):[];
-    state.pendingQuestion.candidates=rows.map(row=>({id:row.id,label:`${row.name} (${row.sku})`}));
+    const query=(searchQuery??line!.description).trim();
+    const rows=query.length>=2?await db.product.findMany({where:{tenantId,OR:[{name:{contains:query}},{sku:{contains:query}}]},select:productCatalogIdentitySelect,orderBy:[{name:'asc'},{id:'asc'}],take:6}):[];
+    state.pendingQuestion.candidates=markCatalogIdentityCollisions(rows.map(projectProductCatalogIdentity));
     return rows.length?`Para ${line!.quantity??'la cantidad indicada'} de ${line!.description}, elegí el producto del catálogo:\n${listChoices(state.pendingQuestion.candidates)}\nRespondé con su número.`:'¿Cuál es el nombre o código exacto del producto en tu catálogo? Si todavía no existe, crealo en Inventario y después seguimos.';
   }
   if(key==='quantity')return `¿Cuántas unidades compraste de ${line!.productName??line!.description}? Escribí la cantidad exacta.`;
   if(key==='purchaseUnit')return `¿Cómo se cuentan las ${line!.quantity} de ${line!.productName}?\n1. Unidad del catálogo (${line!.baseUnit})${line!.packUnit&&line!.packSize?`\n2. Paquete ${line!.packUnit} de ${line!.packSize} unidades. Respondé 1 o 2.`:'\nRespondé 1 si corresponde; si la presentación es distinta, revisá el producto en Inventario antes de continuar.'}`;
   if(key==='unitCost')return `¿Cuánto costó cada ${line!.purchaseUnit==='PACK'?line!.packUnit:line!.baseUnit} de ${line!.productName}, antes de impuestos? Escribí el costo exacto, por ejemplo C$ 230.`;
   if(key==='supplierId') {
-    const query=state.facts.supplierName;
-    const rows=query?await db.supplier.findMany({where:{tenantId,status:'ACTIVE',deletedAt:null,name:{contains:query}},select:{id:true,name:true},orderBy:[{name:'asc'},{id:'asc'}],take:6}):[];
-    state.pendingQuestion.candidates=rows.map(row=>({id:row.id,label:row.name}));
+    const query=searchQuery??state.facts.supplierName;
+    const rows=query?await db.supplier.findMany({where:{tenantId,status:'ACTIVE',deletedAt:null,name:{contains:query}},select:supplierCatalogIdentitySelect,orderBy:[{name:'asc'},{id:'asc'}],take:6}):[];
+    state.pendingQuestion.candidates=markCatalogIdentityCollisions(rows.map(projectSupplierCatalogIdentity));
     return rows.length?`Elegí el proveedor registrado:\n${listChoices(state.pendingQuestion.candidates)}`:'¿A qué proveedor le compraste? Decime su nombre registrado en Nortex.';
   }
   if(key==='warehouseId') {
@@ -117,19 +127,22 @@ async function askNext(state:PurchaseIntake,db:Database,tenantId:string):Promise
 async function applyAnswer(state:PurchaseIntake,text:string,db:Database,tenantId:string):Promise<string|undefined> {
   const question=state.pendingQuestion;if(!question)return;
   const key=question.field.split('.').at(-1)!,line=question.lineIndex===undefined?undefined:state.facts.items[question.lineIndex];
-  const selected=candidateChoice(text,question.candidates??[]),value=normalizeAssistantText(text.trim());
+  const choice=candidateChoice(text,question.candidates??[]),selected=choice.selected,value=normalizeAssistantText(text.trim());
   if(!['receivedConfirmed','paymentConfirmed'].includes(key)&&/^(si|no|ok|dale|listo|confirma|confirmar)$/.test(value))return;
   if(key==='productId') {
-    if(!selected){line!.description=text.trim().slice(0,500);return question.field;}
-    const product=await db.product.findFirst({where:{id:selected.id,tenantId},select:{id:true,name:true,unit:true,packUnit:true,packSize:true,requiresBatchTracking:true}});
-    if(!product)return;
-    Object.assign(line,{productId:product.id,productName:product.name,baseUnit:product.unit,packUnit:product.packUnit??undefined,packSize:product.packSize??undefined,requiresBatchTracking:product.requiresBatchTracking});
+    if(!selected){if(choice.recognized)return;question.searchQuery=text.trim().slice(0,500);return;}
+    const current=await readProductCatalogIdentity(db,tenantId,selected.id);
+    if(!current||!matchesCurrentCatalogIdentity(selected,current.identity))return;
+    const product=current.row;
+    Object.assign(line,{productId:product.id,productName:product.name,productBrand:current.identity.brand,baseUnit:product.unit,packUnit:product.packUnit??undefined,packSize:product.packSize??undefined,requiresBatchTracking:product.requiresBatchTracking});
     return question.field;
   }
   if(key==='supplierId') {
-    if(!selected){state.facts.supplierName=text.trim().slice(0,500);return 'supplierName';}
-    const supplier=await db.supplier.findFirst({where:{id:selected.id,tenantId,status:'ACTIVE',deletedAt:null},select:{id:true,name:true}});
-    if(supplier){state.facts.supplierId=supplier.id;state.facts.supplierName=supplier.name;return question.field;}return;
+    if(!selected){if(choice.recognized)return;question.searchQuery=text.trim().slice(0,500);
+      if(!state.facts.supplierName){state.facts.supplierName=question.searchQuery;return 'supplierName';}return;}
+    const current=await readSupplierCatalogIdentity(db,tenantId,selected.id);
+    if(!current||!matchesCurrentCatalogIdentity(selected,current.identity))return;
+    const supplier=current.row;state.facts.supplierId=supplier.id;state.facts.supplierCatalogName=supplier.name;return question.field;
   }
   if(key==='warehouseId') {
     if(!selected)return;
@@ -201,6 +214,7 @@ export async function advancePurchaseIntake(input:{principal:AssistantPrincipal;
   if(state.evidence.length>150)throw new AssistantAccessError(409,'INTAKE_LIMIT','Esta captura alcanzó su límite. Revisá los datos actuales antes de abrir otra.');
   const complete=missingPurchaseFacts(state).length===0;
   const text=await askNext(state,db,input.principal.tenantId);
+  await assertAssistantAccess(input.principal,'purchasePrepare',db as PrismaClient);
   if(complete){state.phase='REVIEW';delete state.pendingQuestion;}
   state=purchaseIntakeSchema.parse(state);
   return {state,metadata:metadataFor(state),content:{text,...purchaseIntakePresentation(metadataFor(state))},

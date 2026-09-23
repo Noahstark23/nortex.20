@@ -11,8 +11,9 @@ const id = z.string().trim().min(1).max(191);
 export const assistantCatalogOptionsSchema = z.object({
   kind: z.enum(['products','suppliers','warehouses','purchaseOrders','batches','returnSuppliers','supplierReturnSources']),
   query: z.string().trim().max(100).default(''), limit: z.coerce.number().int().min(1).max(20).default(20),
-  productId: id.optional(), supplierId: id.optional(), purchaseOrderId: id.optional(),
+  selectedId: id.optional(), productId: id.optional(), supplierId: id.optional(), purchaseOrderId: id.optional(),
 }).strict().superRefine((query, ctx) => {
+  if (query.selectedId && !['products','suppliers'].includes(query.kind)) ctx.addIssue({code:'custom',path:['selectedId'],message:'La recuperación por identidad sólo admite productos o proveedores.'});
   if (['batches','returnSuppliers'].includes(query.kind) && !query.productId) ctx.addIssue({code:'custom',path:['productId'],message:'Seleccioná el producto.'});
   if (query.kind === 'supplierReturnSources' && !query.supplierId) ctx.addIssue({code:'custom',path:['supplierId'],message:'Seleccioná el proveedor.'});
 });
@@ -31,8 +32,8 @@ async function authorize(principal:AssistantPrincipal, kind:CatalogOptionsQuery[
 export async function getAssistantCatalogOptions(principal:AssistantPrincipal, raw:unknown, deps:CatalogOptionsDependencies={}):Promise<CatalogOptions> {
   const query=assistantCatalogOptionsSchema.parse(raw), db=deps.db ?? prisma;
   if (query.kind === 'products' || query.kind === 'suppliers') {
-    const result=await searchAssistantCatalog(principal,{kind:query.kind,query:query.query,limit:query.limit},deps);
-    return {items:result.rows,warnings:result.warnings};
+    const result=await searchAssistantCatalog(principal,{kind:query.kind,query:query.query,limit:query.limit,...(query.selectedId?{selectedId:query.selectedId}:{})},deps);
+    return {items:result.rows.map(row=>({...row})),warnings:result.warnings};
   }
   await authorize(principal,query.kind,db);
   if (query.productId && !await db.product.findFirst({where:{id:query.productId,tenantId:principal.tenantId},select:{id:true}})) {

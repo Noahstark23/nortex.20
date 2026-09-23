@@ -3,7 +3,9 @@ import { z } from 'zod';
 import prisma from '../../lib/prisma.js';
 import type { AssistantConversationDTO, AssistantMessageDTO, AssistantPrincipal,AssistantProposalDTO,InvoiceDraft } from '../../../shared/assistant.js';
 import { assertAssistantAccess, AssistantAccessError,getAssistantCapabilities } from './access.js';
-import { normalizeAssistantText, retrieveAssistantHelp } from './knowledge.js';
+import { normalizeAssistantText } from './knowledge.js';
+import type { AssistantKnowledgeChannel } from '../../../shared/assistantKnowledge.js';
+import { retrievePublishedAssistantHelp, validateAssistantKnowledgeReferences, referencesFromCitations, KNOWLEDGE_UNAVAILABLE_TEXT } from './knowledge/service.js';
 import { getAssistantOverview, getAssistantPeriod, type AssistantOverviewTopic } from './overview.js';
 import { createAssistantLanguage, type AssistantReadPlan } from './language.js';
 import { advancePurchaseIntake, applyIntakeDraftCorrection, purchaseIntakePresentation, type PurchaseIntakeTurn } from './purchaseIntake.js';
@@ -20,7 +22,9 @@ export const assistantMessageInputSchema = z.object({
 
 const storedContentSchema = z.object({
     text: z.string(),
-    citations: z.array(z.object({ id: z.string(), title: z.string(), section: z.string(), version: z.string(), path: z.string() })).optional(),
+    citations: z.array(z.object({ id: z.string(), title: z.string(), section: z.string(), version: z.string(), path: z.string(), sectionId: z.string().optional(), contentHash: z.string().optional() })).optional(),
+    knowledgeReferences: z.array(z.object({ documentId:z.string(),version:z.string(),sectionId:z.string(),contentHash:z.string() }).strict()).max(64).optional(),
+    knowledgeUnavailable: z.boolean().optional(),
     actions:z.array(z.object({type:z.enum(['UPLOAD_INVOICE','CONTINUE_PURCHASE','REVIEW_PURCHASE']),label:z.string(),proposalId:z.string().optional()})).optional(),
     proposalId:z.string().optional(),
     operationalRunId:z.string().optional(),
@@ -40,13 +44,26 @@ function messageDTO(message: StoredMessage): AssistantMessageDTO {
     if (message.role !== 'user' && message.role !== 'assistant') throw new Error('Invalid stored assistant message role');
     const content = storedContentSchema.parse(message.content);
     return {
-        id: message.id, role: message.role, text: content.text, citations: content.citations,
+        id: message.id, role: message.role, text: content.text, citations: content.citations, knowledgeReferences: content.knowledgeReferences, knowledgeUnavailable: content.knowledgeUnavailable,
         ...(content.actions?{actions:content.actions}:{}),...(content.proposalId?{proposalId:content.proposalId}:{}),
         ...(content.operationalRunId?{operationalRunId:content.operationalRunId}:{}),
         ...(content.purchaseIntake!==undefined?{purchaseIntake:content.purchaseIntake}:{}),
         ...(content.overview ? { overview: { ...content.overview, metrics: content.overview.metrics.map(metric => ({ ...metric, value: metric.value ?? null })) } } : {}),
         createdAt: message.createdAt.toISOString(),
     };
+}
+
+/** La evidencia original se conserva; cada entrega vuelve a resolver sus fuentes vigentes. */
+async function readableMessage(principal: AssistantPrincipal, message: StoredMessage, db: PrismaClient, channel: AssistantKnowledgeChannel): Promise<AssistantMessageDTO> {
+    const dto = messageDTO(message);
+    if (dto.role !== 'assistant') return dto;
+    const cited = referencesFromCitations(dto.citations ?? []);
+    const references = cited === null ? null : [...new Map([...(dto.knowledgeReferences ?? []), ...cited]
+        .map(ref => [JSON.stringify([ref.documentId, ref.version, ref.sectionId, ref.contentHash]), ref])).values()];
+    if (references === null || (references.length > 0 && !(await validateAssistantKnowledgeReferences(principal, references, db, channel)))) {
+        return { ...dto, text: KNOWLEDGE_UNAVAILABLE_TEXT, citations: [], knowledgeReferences: [], knowledgeUnavailable: true };
+    }
+    return { ...dto, knowledgeReferences: references };
 }
 
 async function requireConversation(principal: AssistantPrincipal, id: string, db: PrismaClient) {
@@ -78,7 +95,7 @@ function hydrateManualIntake(state:PurchaseIntake,draft:InvoiceDraft,version:num
     return {schemaVersion:1,purchaseIntake:state};
 }
 
-export async function getAssistantConversation(principal: AssistantPrincipal, id: string, db: PrismaClient = prisma): Promise<AssistantConversationDTO> {
+export async function getAssistantConversation(principal: AssistantPrincipal, id: string, db: PrismaClient = prisma, channel: AssistantKnowledgeChannel = 'WEB_INTERNAL'): Promise<AssistantConversationDTO> {
     const conversation=await requireConversation(principal, id, db);
     const messages = await db.assistantMessage.findMany({
         where: { tenantId: principal.tenantId, userId: principal.userId, conversationId: id },
@@ -91,7 +108,9 @@ export async function getAssistantConversation(principal: AssistantPrincipal, id
     const consumed=intake?.proposalId&&(!proposal||!['DRAFT','READY'].includes(proposal.status)||proposal.expiresAt<=new Date());
     const presentationMetadata=!consumed&&intake&&proposal&&readManualPurchaseSource(proposal.source)
         ?hydrateManualIntake(intake,invoiceDraftSchema.parse(proposal.draft),proposal.version):conversation.metadata;
-    return { id, messages: messages.reverse().map(messageDTO),...purchaseIntakePresentation(consumed?null:presentationMetadata) };
+    const readable = await Promise.all(messages.reverse().map(message => readableMessage(principal, message, db, channel)));
+    await assertAssistantAccess(principal, 'help', db);
+    return { id, messages: readable,...purchaseIntakePresentation(consumed?null:presentationMetadata) };
 }
 
 /** Solo intenciones cerradas. El texto nunca decide identidad, SQL ni ejecución. */
@@ -127,13 +146,13 @@ export function getAssistantMessagePeriod(text: string, now = new Date()): { sta
     return {};
 }
 
-async function answerMessage(principal: AssistantPrincipal, text: string, db: PrismaClient, plan:AssistantReadPlan|null): Promise<z.infer<typeof storedContentSchema>> {
+async function answerMessage(principal: AssistantPrincipal, text: string, db: PrismaClient, plan:AssistantReadPlan|null, channel:AssistantKnowledgeChannel): Promise<z.infer<typeof storedContentSchema>> {
     const fixedIntent = getAssistantIntent(text);
     // El modelo interpreta lenguaje; los servicios mantienen permisos, datos y efectos.
     const intent = plan?.intent ?? fixedIntent;
     if (intent === 'restricted') return { text: 'Solo puedo consultar información de tu negocio autorizada para tu rol. No puedo cambiar permisos ni acceder a otras personas o negocios.' };
     if (intent === 'prepare'||intent==='purchase_intake') return { text: 'Contame qué compraste para preparar un borrador, o adjuntá la factura. Un mensaje de chat no registra compras ni ejecuta pagos o cambios.' };
-    if (intent === 'help') return retrieveAssistantHelp(plan?.query ?? text, principal.role);
+    if (intent === 'help') return retrievePublishedAssistantHelp(principal, plan?.query ?? text, db, channel);
     const period = plan?.startDate && plan?.endDate ? {startDate:plan.startDate,endDate:plan.endDate} : getAssistantMessagePeriod(text);
     if (period === null) return { text: 'Indicá el período con fechas AAAA-MM-DD, por ejemplo: ventas desde 2026-09-01 hasta 2026-09-05. También podés consultar hoy, ayer o el mes actual.' };
     const overview = await getAssistantOverview(principal, period, db, intent);
@@ -146,28 +165,31 @@ async function answerMessage(principal: AssistantPrincipal, text: string, db: Pr
     };
 }
 
-function replayMessage(messages: StoredMessage[], text: string): AssistantMessageDTO | null {
+function replayMessage(messages: StoredMessage[], text: string): StoredMessage | null {
     const user = messages.find(message => message.role === 'user');
     const answer = messages.find(message => message.role === 'assistant');
     if (user && storedContentSchema.parse(user.content).text !== text) {
         throw new AssistantAccessError(409, 'ASSISTANT_REQUEST_CONFLICT', 'Este identificador ya corresponde a otro mensaje.');
     }
     if (answer && !user) throw new Error('Missing paired assistant input');
-    return answer ? messageDTO(answer) : null;
+    return answer ?? null;
 }
 
 export async function sendAssistantMessage(
     principal: AssistantPrincipal, conversationId: string, input: unknown, db: PrismaClient = prisma,
-    dependencies:{startRun?:(principal:AssistantPrincipal,id:string,db:PrismaClient)=>Promise<unknown>}={},
+    dependencies:{channel?:AssistantKnowledgeChannel;startRun?:(principal:AssistantPrincipal,id:string,db:PrismaClient)=>Promise<unknown>}={},
 ): Promise<AssistantMessageDTO> {
     const { requestId, text } = assistantMessageInputSchema.parse(input);
+    const channel = dependencies.channel ?? 'WEB_INTERNAL';
     const conversation=await requireConversation(principal, conversationId, db);
     const where = { tenantId: principal.tenantId, userId: principal.userId, conversationId, requestId };
     const existing = await db.assistantMessage.findMany({ where, take: 2 });
     const replay = replayMessage(existing, text);
     if (replay) {
         await assertAssistantAccess(principal, 'help', db);
-        return replay;
+        const readable = await readableMessage(principal, replay, db, channel);
+        await assertAssistantAccess(principal, 'help', db);
+        return readable;
     }
     const fixedIntent=getAssistantIntent(text);
     const activeIntake=readPurchaseIntake(conversation.metadata);
@@ -206,7 +228,7 @@ export async function sendAssistantMessage(
     const useIntake=!useOperational&&!committedReply&&fixedIntent!=='restricted'&&(continueIntake||fixedIntent==='purchase_intake'||plan?.intent==='purchase_intake'||isManualChoice(text)||(!!existingIntake&&isCancelIntake(text)));
     let intakeTurn:PurchaseIntakeTurn|undefined=useIntake?await advancePurchaseIntake({principal,text,requestId,metadata:snapshotMetadata,languageFacts:plan?.purchaseFacts},db):undefined;
     if(intakeTurn?.reviseProposalId&&proposalSnapshot?.source==='MANUAL')intakeTurn.draft=applyIntakeDraftCorrection(proposalSnapshot.draft,intakeTurn);
-    let content:z.infer<typeof storedContentSchema>=useOperational?{text:'Estoy consultando las fuentes autorizadas de tu negocio. Podés revisar el avance aquí.'}:committedReply??(intakeTurn?intakeTurn.content:await answerMessage(principal,text,db,plan));
+    let content:z.infer<typeof storedContentSchema>=useOperational?{text:'Estoy consultando las fuentes autorizadas de tu negocio. Podés revisar el avance aquí.'}:committedReply??(intakeTurn?intakeTurn.content:await answerMessage(principal,text,db,plan,channel));
     await assertAssistantAccess(principal, 'help', db);
     const result = await db.$transaction(async tx => {
         // Serializa duplicados por conversación. Nunca mantiene una llamada IA dentro de la transacción.
@@ -224,7 +246,7 @@ export async function sendAssistantMessage(
         });
         if (!currentUser) throw new AssistantAccessError(403, 'SESSION_REVOKED', 'Tu sesión cambió. Volvé a ingresar.');
         if(useOperational) {
-            const run=await createAssistantRunInTransaction(principal,conversationId,{requestId,text},tx);
+            const run=await createAssistantRunInTransaction(principal,conversationId,{requestId,text},tx,new Date(),channel);
             content={...content,operationalRunId:run.id};
         }
         if(intakeTurn) {
@@ -255,9 +277,11 @@ export async function sendAssistantMessage(
         const answer = await tx.assistantMessage.create({ data: {
             ...where, role: 'assistant', content: JSON.parse(JSON.stringify(content)) as Prisma.InputJsonValue, createdAt: new Date(now.getTime() + 1),
         } });
-        return messageDTO(answer);
+        return answer;
     });
     await assertAssistantAccess(principal, 'help', db);
-    if(result.operationalRunId)void (dependencies.startRun??((actor,id,client)=>processAssistantRun(actor,id,{db:client})))(principal,result.operationalRunId,db).catch(()=>undefined);
-    return result;
+    const readable = await readableMessage(principal, result, db, channel);
+    await assertAssistantAccess(principal, 'help', db);
+    if(readable.operationalRunId)void (dependencies.startRun??((actor,id,client)=>processAssistantRun(actor,id,{db:client,channel})))(principal,readable.operationalRunId,db).catch(()=>undefined);
+    return readable;
 }

@@ -4,9 +4,13 @@ import prisma from '../../../lib/prisma.js';
 import { SUPPLIER_READ_ROLES } from '../../../middleware/accessPolicies.js';
 import { AssistantAccessError, assertAssistantAccess, getAssistantCapabilities } from '../access.js';
 import type { AssistantPrincipal } from '../../../../shared/assistant.js';
+import { markCatalogIdentityCollisions, productCatalogIdentityColumns, supplierCatalogIdentityColumns,
+  projectProductCatalogIdentity, projectSupplierCatalogIdentity, readProductCatalogIdentity, readSupplierCatalogIdentity,
+  type ProductCatalogIdentityRow, type SupplierCatalogIdentityRow } from '../catalogIdentity.js';
 
 export const assistantCatalogQuerySchema = z.object({
-  kind: z.enum(['products', 'suppliers']), query: z.string().trim().max(100),
+  kind: z.enum(['products', 'suppliers']), query: z.string().trim().max(100).default(''),
+  selectedId: z.string().trim().min(1).max(191).optional(),
   limit: z.number().int().min(1).max(20).default(20),
 }).strict();
 export function normalizeCatalogQuery(value: string): string {
@@ -27,30 +31,33 @@ export function approximateCatalogPatterns(token: string): string[] {
   }
   return [...patterns];
 }
-interface CatalogRow {
-  id: string; name: string; sku?: string; unit?: string; saleMode?: string | null;
-  quantityStep?: Prisma.Decimal | null; packUnit?: string | null; packSize?: number | null;
-  requiresBatchTracking?: boolean | number;
-}
 interface CatalogDependencies { db?: PrismaClient; now?: () => Date }
 
-export async function searchAssistantCatalog(principal: AssistantPrincipal, raw: unknown, deps: CatalogDependencies = {}) {
-  const { kind, query, limit } = assistantCatalogQuerySchema.parse(raw);
-  const db = deps.db ?? prisma;
+async function authorizeCatalog(principal: AssistantPrincipal, kind: 'products' | 'suppliers', db: PrismaClient) {
   const caps = await getAssistantCapabilities(principal, db);
   if (!caps.enabled || !(kind === 'suppliers' ? SUPPLIER_READ_ROLES.includes(principal.role) : caps.inventory || caps.purchasePrepare)) {
     throw new AssistantAccessError(403, 'ASSISTANT_FORBIDDEN', 'Tu rol no tiene acceso a este catálogo.');
   }
+}
+
+export async function searchAssistantCatalog(principal: AssistantPrincipal, raw: unknown, deps: CatalogDependencies = {}) {
+  const { kind, query, limit, selectedId } = assistantCatalogQuerySchema.parse(raw);
+  const db = deps.db ?? prisma;
+  await authorizeCatalog(principal, kind, db);
+  if (selectedId) {
+    const selected = kind === 'products' ? await readProductCatalogIdentity(db, principal.tenantId, selectedId)
+      : await readSupplierCatalogIdentity(db, principal.tenantId, selectedId);
+    await authorizeCatalog(principal, kind, db);
+    return { kind, checkedAt: (deps.now?.() ?? new Date()).toISOString(), rows: selected ? [selected.identity] : [], warnings: [] };
+  }
   const normalized = normalizeCatalogQuery(query);
   const tokens = normalized.split(' ').filter(Boolean);
   if (query && !tokens.length) {
-    await assertAssistantAccess(principal, 'help', db);
+    await authorizeCatalog(principal, kind, db);
     return { kind, checkedAt: (deps.now?.() ?? new Date()).toISOString(), rows: [], warnings: [] };
   }
   const table = kind === 'products' ? Prisma.sql`Product p` : Prisma.sql`Supplier p`;
-  const columns = kind === 'products'
-    ? Prisma.sql`p.id,p.name,p.sku,p.unit,p.saleMode,p.quantityStep,p.packUnit,p.packSize,p.requiresBatchTracking`
-    : Prisma.sql`p.id,p.name`;
+  const columns = kind === 'products' ? productCatalogIdentityColumns : supplierCatalogIdentityColumns;
   const active = kind === 'suppliers' ? Prisma.sql`AND p.status = 'ACTIVE' AND p.deletedAt IS NULL` : Prisma.empty;
   const alias = kind === 'products' && normalized
     ? Prisma.sql`EXISTS (SELECT 1 FROM AssistantCatalogAlias a WHERE a.tenantId = ${principal.tenantId} AND a.productId=p.id AND a.active=true AND a.normalizedAlias=${normalized})`
@@ -61,7 +68,7 @@ export async function searchAssistantCatalog(principal: AssistantPrincipal, raw:
       ? Prisma.sql`(p.name LIKE ${pattern} ESCAPE '=' OR p.sku LIKE ${pattern} ESCAPE '=')`
       : Prisma.sql`(p.name LIKE ${pattern} ESCAPE '=')`;
   }), ' AND ') : Prisma.sql`TRUE`;
-  const select = async (predicate: Prisma.Sql) => db.$queryRaw<CatalogRow[]>(Prisma.sql`
+  const select = async (predicate: Prisma.Sql) => db.$queryRaw<Array<ProductCatalogIdentityRow & SupplierCatalogIdentityRow>>(Prisma.sql`
     SELECT ${columns} FROM ${table} WHERE p.tenantId=${principal.tenantId} ${active}
     AND (${predicate}) ORDER BY CASE WHEN p.name=${normalized} THEN 0 WHEN ${alias} THEN 1
       WHEN p.name LIKE ${`${escapeLike(normalized)}%`} ESCAPE '=' THEN 2 ELSE 3 END,p.name,p.id LIMIT ${limit}`);
@@ -77,14 +84,10 @@ export async function searchAssistantCatalog(principal: AssistantPrincipal, raw:
       approximate = rows.length > 0;
     }
   }
-  await assertAssistantAccess(principal, kind === 'products' && !caps.purchasePrepare ? 'inventory' : 'help', db);
-  return { kind, checkedAt: (deps.now?.() ?? new Date()).toISOString(), rows: rows.map(row => ({
-    id: row.id, label: row.name, ...(kind === 'products' ? {
-      sku: row.sku, detail: row.sku ?? row.unit, unit: row.unit, saleMode: row.saleMode ?? null, quantityStep: row.quantityStep?.toString() ?? null,
-      packUnit: row.packUnit ?? null, packSize: row.packSize === null || row.packSize === undefined ? null : String(row.packSize),
-      requiresBatchTracking: Boolean(row.requiresBatchTracking),
-    } : {}),
-  })), warnings: approximate ? ['Son coincidencias aproximadas. Elegí el producto y verificá concentración, presentación y unidad.'] : [] };
+  await authorizeCatalog(principal, kind, db);
+  const identities = markCatalogIdentityCollisions(rows.map(row => kind === 'products' ? projectProductCatalogIdentity(row) : projectSupplierCatalogIdentity(row)));
+  return { kind, checkedAt: (deps.now?.() ?? new Date()).toISOString(), rows: identities,
+    warnings: approximate ? ['Son coincidencias aproximadas. Elegí el producto y verificá concentración, presentación y unidad.'] : [] };
 }
 
 export const catalogAliasSchema = z.object({ productId: z.string().min(1).max(191), alias: z.string().trim().min(2).max(100) }).strict();

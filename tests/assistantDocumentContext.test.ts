@@ -20,7 +20,7 @@ describe('hechos declarados frente al documento de compra', () => {
   it('50 declarados frente a 40 impresos conserva ambos valores y bloquea revisión automática', () => {
     const source=context(), document=draft({items:[{description:'Cemento',quantity:'40',unitCost:'200',purchaseUnit:'BASE'}]});
     const result=mergePurchaseDocumentContext(document,source);
-    expect(result.items[0].quantity).toBe('40');
+    expect(result.items[0].quantity).toBe('50');
     expect(result.warnings).toContain('Diferencia en cantidad de Cemento: conversación «50»; documento «40». Revisá ambos valores.');
     expect(draftIssues(result)).toContain(result.warnings[0]);
     expect(result.notes).toContain('compré 50 bolsas de cemento');

@@ -1,3 +1,4 @@
+import { cleanupAssistantWorkItems } from '../services/assistant/workItems/cleanup.js';
 import prisma from '../lib/prisma.js';
 import { runAssistantWorkerOnce } from '../services/assistant/worker.js';
 import { cleanupExpiredAttachments,cleanupAssistantHistory } from '../services/assistant/attachments.js';
@@ -12,7 +13,7 @@ let nextCleanup=0;
 async function main() {
   while(!stopping) {
     try {
-      if(Date.now()>=nextCleanup) { await cleanupExpiredAttachments(); await cleanupAssistantHistory(); await cleanupAssistantOperations(); nextCleanup=Date.now()+3600_000; }
+      if(Date.now()>=nextCleanup) { await cleanupExpiredAttachments(); await cleanupAssistantWorkItems(); await cleanupAssistantHistory(); await cleanupAssistantOperations(); nextCleanup=Date.now()+3600_000; }
       const worked=await runAssistantWorkerOnce();
       const answered=getAssistantFlags().operationsEnabled ? await runPendingAssistantRunOnce() : false;
       if(!worked&&!answered) await new Promise(resolve=>setTimeout(resolve,2000));
