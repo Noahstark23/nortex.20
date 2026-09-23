@@ -2,9 +2,12 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import jwt from 'jsonwebtoken';
 import prisma from '../../backend/lib/prisma.js';
+import { stageAssistantKnowledgeRelease, reviewAssistantKnowledgeRelease,
+  publishAssistantKnowledgeRelease } from '../../backend/services/assistant/knowledge/lifecycle.js';
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
 
 validateQualityDatabase(process.env.DATABASE_URL, process.env.NORTEX_QA_DATABASE_ACK);
@@ -20,7 +23,7 @@ function run(mode: 'inspect' | 'enable' | 'disable', variables: Record<string, s
   });
   assert.equal(child.error, undefined);
   assert.equal(child.status === 0, success, 'resultado de operación piloto inesperado');
-  return success ? JSON.parse(child.stdout).result : null;
+  return success ? JSON.parse(child.stdout).result : child.stderr;
 }
 
 async function main() {
@@ -59,6 +62,7 @@ async function main() {
   assert.equal(inspect.userId, target.id);
   assert.equal(inspect.tenantId, tenant.id);
   assert.equal(inspect.roleEligible, true);
+  assert.equal(inspect.helpReleaseReady, false);
   assert.equal(inspect.config, null);
 
   const confirm = (mode: 'enable' | 'disable') => `${mode}:${tenant.id}:${target.id}:OWNER:USD2`;
@@ -75,6 +79,22 @@ async function main() {
   await prisma.user.update({ where: { id: actor.id }, data: { status: 'DISABLED' } });
   run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false);
   await prisma.user.update({ where: { id: actor.id }, data: { status: 'ACTIVE' } });
+
+  assert.match(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false),
+    /PILOT_HELP_RELEASE_REQUIRED/);
+  assert.equal(await prisma.assistantTenantConfig.findUnique({ where: { tenantId: tenant.id } }), null);
+  const draft = JSON.parse(await readFile('docs/evidence/nortexgpt/help-first-cut-20260923/release-draft.json', 'utf8'));
+  const principal = { tenantId: adminTenant.id, userId: actor.id, role: 'SUPER_ADMIN' };
+  const staged = await stageAssistantKnowledgeRelease(principal, draft, prisma);
+  const decision = { releaseId: staged.id, manifestHash: staged.manifestHash };
+  assert.equal(staged.manifestHash, '3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404');
+  assert.match(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false),
+    /PILOT_HELP_RELEASE_REQUIRED/);
+  await reviewAssistantKnowledgeRelease(principal, decision, prisma);
+  assert.match(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, false),
+    /PILOT_HELP_RELEASE_REQUIRED/);
+  await publishAssistantKnowledgeRelease(principal, decision, prisma);
+  assert.equal(run('inspect', { NORTEX_PILOT_EMAIL: email }, true).helpReleaseReady, true);
 
   assert.deepEqual(run('enable', { ...base, NORTEX_PILOT_CONFIRM: confirm('enable') }, true),
     { changed: true, enabled: true, budgetUsd: '2' });

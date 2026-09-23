@@ -7,10 +7,12 @@ El procedimiento `scripts/ops/nortexgpt-pilot.ts` separa `inspect` (lectura)
 de `enable` y `disable` (cambio auditado). Para cambiar exige usuario,
 negocio, correo y rol coincidentes; revisor de otro negocio derivado de un
 JWT firmado y revalidado como `SUPER_ADMIN` activo; motivo; revisión declarada
-del contenido; y confirmación tipada. La configuración inicial fija ambos
+del contenido; y confirmación tipada. `enable` también verifica que la versión
+exacta del primer corte ya esté publicada con revisión registrada; no acepta
+`LEGACY`, `DRAFT` ni `REVIEWED`. La configuración inicial fija ambos
 campos de presupuesto en US$2 y mantiene apagadas operaciones, extracción,
 ejecución, acciones, promociones y WhatsApp privado. El estado global de
-Coolify y el contenido publicado son compuertas separadas.
+Coolify sigue siendo una compuerta separada que este script no verifica.
 
 El ensayo `scripts/qa/test-nortexgpt-pilot.ts` aplicó el schema actual y
 ejecutó el CLI real con dos negocios, dos usuarios OWNER y un revisor sintético.
@@ -19,6 +21,7 @@ ejecutó el CLI real con dos negocios, dos usuarios OWNER y un revisor sintétic
 |---|---|
 | Vista previa | Identidad, negocio, rol, estado y configuración sin escritura |
 | Revisión faltante, token inválido, dueño como revisor, usuario o revisor inactivo, identidad distinta | Rechazados sin crear configuración |
+| Ayuda `LEGACY`, borrador y versión sólo revisada | `PILOT_HELP_RELEASE_REQUIRED`; no se creó configuración |
 | Primera activación | Límite efectivo US$2, seis capacidades sensibles apagadas y AuditLog del revisor en la misma transacción |
 | Repetición | `changed=false` y sin segundo AuditLog |
 | Segundo negocio | Configuración propia de US$2; revocar el primero no cambió el segundo |
@@ -30,6 +33,17 @@ pero aún no se ha ejecutado en GitHub Actions para este candidato. El ensayo
 no demuestra la identidad ni el rol de las dos cuentas reales, revisión
 humana, proveedor, costo real, staging ni producción. Esas compuertas siguen
 pendientes antes de ejecutar `enable` para el dueño y luego para 3M.
+
+Después se repitió el ensayo contra MySQL 8 descartable con el guard editorial:
+el CLI rechazó tres estados previos a publicación y aceptó el hash exacto tras
+una revisión **simulada**. Dos negocios conservaron presupuesto y revocación
+independientes. La prueba editorial pasó en otra base descartable. CI remoto
+para este cambio sigue pendiente; la revisión simulada no aprueba textos reales.
+La compuerta local posterior pasó con Prisma generate, TypeScript, 491 archivos
+y 7090 pruebas; 50 archivos y 545 pruebas quedaron omitidos. Diseño y build
+pasaron. Tras añadir `helpReleaseReady` a `inspect`, se repitió el CLI contra
+una tercera base MySQL 8 descartable y pasó; TypeScript y `git diff --check`
+también aprobaron. Ninguna de estas pruebas equivale a CI remoto.
 
 Tras integrar los pasos en el job MySQL existente, la compuerta local completa
 pasó: 491 archivos y 7090 pruebas aprobadas; 50 archivos y 545 pruebas

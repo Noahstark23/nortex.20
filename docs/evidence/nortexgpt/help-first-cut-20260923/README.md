@@ -44,8 +44,10 @@ excluyó promociones y canal privado de consultas nuevas, sirvió una cita
 La simulación acredita la mecánica editorial, **no** la revisión de los textos
 por una persona. El mismo ensayo quedó añadido al job MySQL de CI, aún sin
 corrida remota para este candidato. La base sintética se retiró al terminar.
-En una segunda base descartable se reprodujo además el orden exacto de esos
-pasos de CI: ensayo de dos pilotos primero y ensayo editorial después; ambos
-aprobaron en la misma base. No se usaron negocios ni cuentas reales.
+En una segunda base descartable se reprodujo el orden anterior de CI: ensayo
+de dos pilotos primero y ensayo editorial después; ambos aprobaron. El guard
+nuevo del piloto exige publicación previa, así que CI ahora usa una base
+descartable para cada ensayo. Ambos volvieron a pasar por separado. No se
+usaron negocios ni cuentas reales.
 La compuerta local segura posterior pasó con Prisma, TypeScript, Vitest,
 sistema de diseño y build. GitHub Actions sigue pendiente para este SHA.

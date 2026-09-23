@@ -311,10 +311,17 @@ jobs:
         env:
           DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
           NORTEX_QA_DATABASE_ACK: disposable-database
+      - name: Schema editorial descartable e independiente
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \
+            'CREATE DATABASE nortex_quality_help CHARACTER SET utf8mb4;'
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_help
       - name: Borrador editorial exacto y visibilidad de fuentes en MySQL QA
         run: node --import tsx scripts/qa/test-nortexgpt-help-release.ts
         env:
-          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_help
           NORTEX_QA_DATABASE_ACK: disposable-database
 
   # Esta compuerta arranca su propia base MySQL 8 efímera y backend loopback.

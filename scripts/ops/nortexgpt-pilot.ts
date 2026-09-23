@@ -4,6 +4,7 @@ import Decimal from 'decimal.js';
 import prisma from '../../backend/lib/prisma.js';
 import { ASSISTANT_KNOWN_ROLES } from '../../backend/services/assistant/access.js';
 import { effectiveAssistantBudget } from '../../backend/services/assistant/budgetPolicy.js';
+import { KNOWLEDGE_CONTROL_ID } from '../../backend/services/assistant/knowledge/model.js';
 
 type Mode = 'inspect' | 'enable' | 'disable';
 const mode = process.argv[2] as Mode;
@@ -21,6 +22,11 @@ const firstCut = {
 } as const;
 const guardedFlags = ['extractionEnabled', 'executionEnabled', 'operationsEnabled',
   'actionsEnabled', 'promotionsEnabled', 'privateWhatsappEnabled'] as const;
+// El primer piloto no debe abrir el corpus LEGACY ni una edición distinta.
+const firstCutHelp = {
+  releaseId: 'nortexgpt-primer-corte-20260923',
+  manifestHash: '3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404',
+} as const;
 const budgetOf = (config: NonNullable<Awaited<ReturnType<typeof prisma.assistantTenantConfig.findUnique>>>) =>
   new Decimal(effectiveAssistantBudget(config)).toString();
 
@@ -29,14 +35,20 @@ async function inspect() {
     id: true, tenantId: true, email: true, role: true, status: true,
   } });
   if (!user || user.email?.toLowerCase() !== email) throw new Error('PILOT_IDENTITY_NOT_FOUND');
-  const [tenant, config] = await Promise.all([
+  const [tenant, config, helpControl] = await Promise.all([
     prisma.tenant.findUnique({ where: { id: user.tenantId }, select: { id: true, businessName: true, type: true } }),
     prisma.assistantTenantConfig.findUnique({ where: { tenantId: user.tenantId } }),
+    prisma.assistantKnowledgeControl.findUnique({ where: { id: KNOWLEDGE_CONTROL_ID } }),
   ]);
   if (!tenant) throw new Error('PILOT_TENANT_NOT_FOUND');
+  const helpRelease = helpControl?.activeReleaseId === firstCutHelp.releaseId
+    ? await prisma.assistantKnowledgeRelease.findUnique({ where: { id: firstCutHelp.releaseId } }) : null;
   return { userId: user.id, tenantId: tenant.id, businessName: tenant.businessName,
     vertical: tenant.type, role: user.role, userStatus: user.status,
     roleEligible: ASSISTANT_KNOWN_ROLES.includes(user.role),
+    helpReleaseReady: Boolean(helpRelease?.status === 'PUBLISHED'
+      && helpRelease.manifestHash === firstCutHelp.manifestHash
+      && helpRelease.reviewedById && helpRelease.reviewedAt && helpRelease.publishedAt),
     config: config && { enabled: config.enabled,
       effectiveBudgetUsd: budgetOf(config),
       extractionEnabled: config.extractionEnabled, executionEnabled: config.executionEnabled,
@@ -85,6 +97,16 @@ async function change() {
       throw new Error('PILOT_IDENTITY_CHANGED');
     const tenant = await tx.tenant.findUnique({ where: { id: targetTenantId }, select: { id: true } });
     if (!tenant) throw new Error('PILOT_TENANT_NOT_FOUND');
+    if (mode === 'enable') {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT id FROM AssistantKnowledgeControl WHERE id = ${KNOWLEDGE_CONTROL_ID} FOR UPDATE`);
+      const control = await tx.assistantKnowledgeControl.findUnique({ where: { id: KNOWLEDGE_CONTROL_ID } });
+      const release = control?.activeReleaseId === firstCutHelp.releaseId
+        ? await tx.assistantKnowledgeRelease.findUnique({ where: { id: firstCutHelp.releaseId } }) : null;
+      if (!release || release.status !== 'PUBLISHED' || release.manifestHash !== firstCutHelp.manifestHash
+        || !release.reviewedById || !release.reviewedAt || !release.publishedAt)
+        throw new Error('PILOT_HELP_RELEASE_REQUIRED');
+    }
     await tx.$queryRaw(Prisma.sql`
       SELECT tenantId FROM AssistantTenantConfig WHERE tenantId = ${targetTenantId} FOR UPDATE`);
     const before = await tx.assistantTenantConfig.findUnique({ where: { tenantId: targetTenantId! } });

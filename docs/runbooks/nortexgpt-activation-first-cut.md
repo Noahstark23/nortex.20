@@ -45,7 +45,8 @@ Usar el SHA candidato de la entrega, nunca copiar el de este documento como dest
    la política de US$2 iniciales y techo conjunto US$20 antes de una llamada.
    `scripts/ops/nortexgpt-pilot.ts inspect` consulta por
    `NORTEX_PILOT_EMAIL` sin modificar datos y devuelve `userId`, `tenantId`,
-   negocio, rol, estado y configuración efectiva. Ejecutarlo por separado para
+   negocio, rol, estado, configuración efectiva y `helpReleaseReady`. Exigir
+   `helpReleaseReady=true` antes de habilitar. Ejecutarlo por separado para
    la cuenta del dueño y la de 3M; comprobar la correspondencia con el
    responsable antes de continuar. No guardar correos ni credenciales en Git.
 2. Promover el nuevo SHA por staging y producción manuales, con sus smokes. Arrancar
@@ -62,6 +63,12 @@ Usar el SHA candidato de la entrega, nunca copiar el de este documento como dest
    transacción; no se acepta un ID de revisor proporcionado por el operador. Fija el
    límite efectivo en US$2 y deja apagadas operaciones, acciones, extracción,
    ejecución, promociones y WhatsApp. Audita el cambio en la misma transacción.
+   El mismo cambio exige que `nortexgpt-primer-corte-20260923` esté publicado,
+   con revisión humana registrada y el hash exacto
+   `3fd9d35629941def01964763fedf55981bac7075f4f4bcb17ccb8d9137ce6404`.
+   Rechaza el corpus `LEGACY`, un borrador o una versión sólo revisada. Si una
+   corrección editorial cambia el hash, actualizar el guard y repetir su QA antes
+   de activar; no reutilizar una confirmación sobre contenido distinto.
    No ejecutar `enable` hasta que CI, staging, producción y revisión estén
    aprobados; este script no despliega ni valida flags de Coolify.
    Para `enable` se exigen `NORTEX_PILOT_EMAIL`, `NORTEX_PILOT_TENANT_ID`,
