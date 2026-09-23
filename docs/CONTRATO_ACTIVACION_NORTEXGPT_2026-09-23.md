@@ -24,7 +24,7 @@ El checkout `codex/caja-nica-retention` y su archivo no rastreado quedan fuera d
 
 | Responsable | Archivos permitidos | Contrato |
 |---|---|---|
-| Codex principal | `docker-compose.yml`, `backend/workers/assistant.ts`, `backend/services/assistant/operations/{workerCycle,workerHeartbeat,healthStatus}.ts`, pruebas correspondientes, `scripts/assistant-operations-demo.ts`, `docs/evidence/nortexgpt/{evaluation-20260923/,help-review-20260923.md}`, `docs/runbooks/{nortexgpt-evaluacion-haiku,nortexgpt-activation-first-cut}.md` y este contrato | Arranque explícito, estado del worker, QA y procedimiento del primer corte |
+| Codex principal | `docker-compose.yml`, `backend/workers/assistant.ts`, `backend/services/assistant/operations/{workerCycle,workerHeartbeat,healthStatus}.ts`, pruebas correspondientes, `scripts/assistant-operations-demo.ts`, `scripts/qa/verify-assistant-originals-restore.ts`, `docs/evidence/nortexgpt/{evaluation-20260923/,help-review-20260923.md,originals-joint-restore-20260923.md}`, `docs/runbooks/{nortexgpt-evaluacion-haiku,nortexgpt-activation-first-cut}.md` y este contrato | Arranque explícito, estado del worker, QA y procedimiento del primer corte |
 
 No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y flujos monetarios quedan fuera de este lote. Si otro trabajo modifica los archivos anteriores, se reconcilia antes de integrar.
 
@@ -34,6 +34,7 @@ No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y fluj
 |---|---|---|
 | Observación de release existente | 31 muestras durante 30 minutos, SHA y base exactos | Cumplida para el release anterior `dadc819`: 31/31 entre 14:07:05 y 14:37:05 UTC, HTTP 200, `ok`, base arriba, SHA exacto y `no-store`. Evidencia local: `/private/tmp/nortexgpt-activation.fHY9Xs/observation.json` |
 | Worker e infraestructura | Misma versión que API, un consumidor, permisos y heartbeat; pausa/reinicio sin duplicar | Parcial en Docker local sintético para `2e6b217`: app y base sanas, worker único arrancó y reinició, la app leyó latido del mismo SHA con permiso 0600. Estado `disabled` esperado con flags apagados. No prueba staging, producción, colas activas ni recuperación de originales |
+| SQL y originales | Copia remota coherente y restore aislado con referencias, hashes, permisos y compra reconciliados | Parcial: ensayo local sintético de 143 tablas, 228 filas y un original comprado aprobado; alteración detectada. No existe prueba de copia remota conjunta ni restore de producción; extracción sigue apagada |
 | Contenido y expected | Versiones completas y casos revisados por persona | Pendiente |
 | Modelo y presupuesto | Llamada sintética real, reserva/settlement y tope comprobados | Pendiente |
 | Piloto web | Rol real, fuentes, cifras, carrito, revocación y recuperación | Pendiente de negocio/cuenta |
@@ -57,3 +58,4 @@ La evidencia de cada compuerta conserva escenario, SHA, resultado y límites. Un
 - El 23 de septiembre se sembró otra base MySQL 8 descartable, se aplicó el primer paso sintético con US$2 por negocio y se generaron los formularios de ferretería y farmacia. La fixture falló al escribir su informe porque `reports/` faltaba en el checkout limpio; se corrigió esa creación y la reejecución idempotente completó los dos negocios. Los formularios permanecen pendientes de revisión humana. Esta fixture sí ejercita servicios de dominio con datos sintéticos antes de deshabilitar acciones para la evaluación.
 - Una revisión de la fixture detectó productos creados hoy con ventas fechadas dos semanas atrás. Se corrigió la fecha de alta sintética a 35 días antes, se rehízo una base descartable desde cero y se verificaron 30 días de historial en los seis resultados esperados. Dos ejecuciones de la fixture devolvieron los mismos identificadores de conversación, sin duplicar el montaje.
 - Se extrajeron los doce artículos `LEGACY` con su texto, rol y hash en `help-review-20260923.md` para revisión humana. No están aprobados como versiones publicadas; el primer corte propuesto excluye WhatsApp privado y promociones.
+- Se añadió un verificador de originales comprados en una base restaurada, con 6 pruebas dirigidas y un ensayo conjunto SQL + archivo sintético. La evidencia y los límites están en `originals-joint-restore-20260923.md`.

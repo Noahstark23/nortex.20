@@ -60,3 +60,10 @@ Foto/PDF exige copia y restauración conjunta de MySQL y originales privados,
 permisos y hashes conciliados, un ensayo de reinicio con lease, evaluación por
 vertical y confirmación humana exacta. WhatsApp privado exige su propio worker,
 canal vinculado y pruebas de UNKNOWN; esta configuración no lo inicia.
+
+Después de restaurar una copia conjunta en un MySQL 8 descartable y un directorio
+privado, ejecutar `scripts/qa/verify-assistant-originals-restore.ts` con
+`RESTORE_DATABASE_URL` y `NORTEX_ASSISTANT_STORAGE_DIR` apuntando sólo a esos
+destinos. Exigir `status=ok`, comprobados positivos y cero diferencias. El
+[ensayo sintético local](../evidence/nortexgpt/originals-joint-restore-20260923.md)
+prueba el verificador, pero no sustituye la copia off-site de producción.
