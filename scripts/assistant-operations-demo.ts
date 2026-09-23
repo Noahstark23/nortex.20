@@ -1,6 +1,6 @@
 /** Fixture reproducible exclusivamente en nortex_quality_operativo; jamás usa un modelo. */
 import { randomUUID } from 'node:crypto';
-import { writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import bcrypt from 'bcryptjs';
 import Decimal from 'decimal.js';
 import { Prisma } from '@prisma/client';
@@ -105,6 +105,7 @@ async function main() {
   for(const flag of flags)process.env[flag]='true';
   process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED='false';process.env.WHATSAPP_ENABLED='false';process.env.NORTEX_PRIVATE_WA_SENDING_ENABLED='false';
   const businesses=[];for(const vertical of ['FERRETERIA','FARMACIA'] as const)businesses.push(await seedVertical(vertical));
+  await mkdir('reports',{recursive:true});
   await writeFile('reports/assistant-operations-demo.json',JSON.stringify({fixture:marker,modelUsed:false,createdAt:new Date().toISOString(),businesses},null,2));
   console.log(JSON.stringify({fixture:marker,businesses:businesses.map(({businessName,conversationId})=>({businessName,conversationId}))}));
 }

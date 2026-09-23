@@ -24,7 +24,7 @@ El checkout `codex/caja-nica-retention` y su archivo no rastreado quedan fuera d
 
 | Responsable | Archivos permitidos | Contrato |
 |---|---|---|
-| Codex principal | `docker-compose.yml`, `backend/workers/assistant.ts`, `backend/services/assistant/operations/{workerCycle,workerHeartbeat,healthStatus}.ts`, pruebas correspondientes, `docs/runbooks/{nortexgpt-evaluacion-haiku,nortexgpt-activation-first-cut}.md` y este contrato | Arranque explícito, estado del worker, QA y procedimiento del primer corte |
+| Codex principal | `docker-compose.yml`, `backend/workers/assistant.ts`, `backend/services/assistant/operations/{workerCycle,workerHeartbeat,healthStatus}.ts`, pruebas correspondientes, `scripts/assistant-operations-demo.ts`, `docs/evidence/nortexgpt/evaluation-20260923/`, `docs/runbooks/{nortexgpt-evaluacion-haiku,nortexgpt-activation-first-cut}.md` y este contrato | Arranque explícito, estado del worker, QA y procedimiento del primer corte |
 
 No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y flujos monetarios quedan fuera de este lote. Si otro trabajo modifica los archivos anteriores, se reconcilia antes de integrar.
 
@@ -54,3 +54,4 @@ La evidencia de cada compuerta conserva escenario, SHA, resultado y límites. Un
 - `docker compose config` validó el perfil; sin él, `assistant-worker` no figura entre servicios activos. La imagen del worker construyó con Node 22.23.2 y dependencias de producción; auditoría de dependencias de producción: cero vulnerabilidades reportadas.
 - Prueba de integración local: proyecto aislado `nortexgpt-activation-qa`, credenciales sintéticas, Anthropic vacío y asistente global apagado. Tras reiniciar el worker, latido observado desde la app a las 16:00:24 UTC con `state=disabled`, SHA exacto y modo 0600. El proyecto y ambos volúmenes sintéticos se eliminaron al terminar.
 - Este QA no realizó una llamada al proveedor, no aceptó artículos de ayuda, no ejecutó una acción de dinero o stock y no habilitó a ningún negocio real.
+- El 23 de septiembre se sembró otra base MySQL 8 descartable, se aplicó el primer paso sintético con US$2 por negocio y se generaron los formularios de ferretería y farmacia. La fixture falló al escribir su informe porque `reports/` faltaba en el checkout limpio; se corrigió esa creación y la reejecución idempotente completó los dos negocios. Los formularios permanecen pendientes de revisión humana. Esta fixture sí ejercita servicios de dominio con datos sintéticos antes de deshabilitar acciones para la evaluación.
