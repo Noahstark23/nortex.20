@@ -1,6 +1,6 @@
 # Plan de corrección — auditoría UX + QA de somosnortex.com
 
-**Fuente:** auditoría entregada por el usuario, fechada 2026-09-22, cuenta demo «Pulpería La Demo». **Estado de este documento:** plan local; ninguna corrección, prueba o promoción queda acreditada por su redacción. La auditoría observó producción con navegador; este checkout es `codex/caja-nica-retention` y puede diferir. Comparar versión/SHA servido, API y datos antes de atribuir un defecto a este código.
+**Fuente:** auditoría entregada por el usuario, fechada 2026-09-22, cuenta demo «Pulpería La Demo». **Estado de este documento:** plan redactado inicialmente en `codex/caja-nica-retention` y trasladado al candidato sobre `main`; la evidencia ejecutada de este último vive en `AVANCE_CORRECCION_AUDITORIA_UX_QA_2026-09-22.md`. La auditoría observó producción con navegador; comparar versión/SHA servido, API y datos antes de atribuir un defecto a este código.
 
 ## Regla de ejecución
 
@@ -11,7 +11,7 @@
 
 ## Prioridad 0 — integridad y confianza financiera
 
-| Lote | Hallazgos y trabajo | Criterio de cierre | Anclas verificadas en este checkout |
+| Lote | Hallazgos y trabajo | Criterio de cierre | Anclas verificadas al redactar el plan |
 | --- | --- | --- | --- |
 | P0.1 Valuación | **#11.** Conciliar la cuenta 1.1.4 del libro con compras, ventas, devoluciones, ajustes, stock inicial y costos/Kardex valorizados. Identificar el primer asiento que deja el saldo negativo y su origen. Reparar la contabilización o hacer una corrección histórica explícita, aprobable y auditable si los datos antiguos lo requieren. | En un tenant sintético y en una copia segura del caso demo, cada evento deja inventario físico y libro reconciliables; la cuenta no resulta negativa por una secuencia válida; balance y contrapartidas cuadran. Registrar el tratamiento de saldos históricos. **Nunca resolverlo con `max(0, saldo)` ni alterar el balance solo en UI.** | `backend/services/accounting.ts` (cuenta 1.1.4 y asientos), `backend/server.ts` (`/api/financial-health`), `components/FinancialHealth.tsx`. |
 | P0.2 Fondo de caja | **#12.** Reconstruir línea de tiempo de solicitud/respuesta de apertura, `Shift.initialCash`, `SHIFT_OPENED`, usuario/cajero, cierre o traspaso. Comprobar si los C$ 200 fueron enviados, rechazados, reemplazados por otra apertura o si la observación corresponde a otro turno. Mejorar comprobante de apertura e historial con identificador de turno, monto y resultado. Registrar explícitamente toda transición que descarte/reemplace una apertura, solo si existe tal transición. | Abrir con C$ X devuelve el mismo `shiftId` y fondo X, persiste X y `SHIFT_OPENED` en una transacción, y las vistas activa/histórica lo muestran. Un rechazo muestra causa y no aparenta apertura exitosa. Reiniciar backend no cambia el fondo. No hacer un cierre real para investigar. | `backend/server.ts` (`/api/shifts/open` ya persiste `initialCash` y audita; causa no determinada), `components/POS.tsx`, `components/CashRegisters.tsx` (ya muestra fondo activo e histórico), `backend/prisma/schema.prisma`. |

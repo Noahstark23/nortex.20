@@ -22,9 +22,9 @@
 ## Compuertas ejecutadas
 
 - `npm run test:integration:required`: **426 casos aprobados en 48 suites** sobre MySQL 8 local efímero; sin omitidos. La suite nueva `uxQaAudit` comprueba apertura de C$ 200, alta y asiento de inventario, lectura del comprobante por tenant y catálogo de ejemplo. El runner retiró el contenedor al terminar.
-- `npm test`: **6,356 aprobados; 412 omitidos** por la configuración general. Los casos HTTP nuevos se ejecutaron en la compuerta obligatoria. Los dos casos antiguos del asistente que no corresponden al código de `main` no se trasladaron; las pruebas existentes de esa función sí pasaron.
+- `npm test`: **6,359 aprobados; 412 omitidos** por la configuración general. Los casos HTTP nuevos se ejecutaron en la compuerta obligatoria. Los dos casos antiguos del asistente que no corresponden al código de `main` no se trasladaron; las pruebas existentes de esa función sí pasaron.
 - Prisma generate, `tsc --noEmit`, sistema de diseño, build y `git diff --check`: aprobados en el candidato.
-- `npm run test:mutation`: en ejecución sobre este candidato. El resultado anterior de **99.88 %** pertenece a la rama anterior y no se atribuye a este SHA. Los rangos de `accounting.ts` se realinearon con el código de `main` y el cálculo de inventario inicial se incorporó al alcance.
+- Mutación dirigida: **266/266 detectados** en tres módulos: `accounting.ts` 232/232, `initialInventoryJournal.ts` 18/18 y `creditPaymentSnapshot.ts` 16/16. El guardián AST confirmó los ocho cuerpos contables y las dos funciones puras nuevas de cobranza. La corrida global instrumentó 5,896 mutantes en 68 archivos, pero se interrumpió por la duración estimada de los mutantes estáticos; no se declara aprobado el umbral global para este SHA. El 99.88 % anterior pertenece a la rama reemplazada.
 
 ## Siguiente trabajo y bloqueos
 

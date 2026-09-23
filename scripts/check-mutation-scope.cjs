@@ -265,6 +265,8 @@ const PISO_MUTANTES = {
     'backend/services/accounting.ts': 232,
     // La valuación de la existencia inicial también alimenta el libro.
     'backend/services/initialInventoryJournal.ts': 18,
+    // Saldo de la factura y deuda global viajan separados en la respuesta.
+    'backend/services/creditPaymentSnapshot.ts': 16,
     'backend/lib/paymentAccounts.ts': 11,
     // Reglas cruzadas RETURN/VOID: 50/50 sobre el superRefine autoritativo.
     'backend/validation/saleCorrectionSchemas.ts': 50,
@@ -289,6 +291,10 @@ const PISO_MUTANTES = {
 // La reducción 212 → 199 anterior a ampliar caja se explica función por función
 // en docs/releases/2026-09-04-production-gate.md; no fue un rango truncado.
 const FUNCTION_FLOORS = {
+    'backend/services/creditPaymentSnapshot.ts': {
+        newCreditPaymentSnapshot: 5,
+        creditPaymentResponseBalances: 11,
+    },
     'backend/services/accounting.ts': {
         canonicalJournalAccountLockOrder: 7,
         buildSaleJournalLines: 40,
