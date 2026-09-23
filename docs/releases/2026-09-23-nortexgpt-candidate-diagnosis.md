@@ -1,5 +1,9 @@
 # Diagnóstico del candidato NortexGPT integrado — 2026-09-23
 
+> **Superado a las 13:31 UTC.** Lo que sigue es el corte de las 09:03 UTC y se
+> conserva como registro histórico. El estado posterior está en
+> [Actualización 14:15 UTC](#actualización-1415-utc).
+
 Expediente documental. No ejecuta pruebas, no promueve ni autoriza despliegue,
 no repite la tarea de QA rechazada y no modifica controles. Corte de la
 consulta: 2026-09-23, contra `origin` de GitHub y el API de Actions.
@@ -125,3 +129,36 @@ acreditadas. No es promovible a producción.
 `codex/nortexgpt-integrated-20260923` para que CI corra sobre `c0ec6e9` y
 ejecutar localmente `npm run test:integration:required` y `npm run
 test:mutation` sobre ese árbol. Guardar cada resultado junto con su SHA.
+
+## Actualización 14:15 UTC
+
+Contrastado con git y el API de GitHub Actions. Registra lo que hizo el
+integrador después del corte anterior; este expediente no ejecutó nada.
+
+| Hora UTC | Evento | SHA | Resultado |
+|---|---|---|---|
+| 09:08 | CI del PR #224 | `c0ec6e9` | success (run 35841213694) |
+| 09:41 | CI del PR #224 tras reparar espejo SQL y cobertura | `d9abca8` | success (run 35844441736) |
+| 13:10 | Merge de #224 a `main` | `dadc81975811850226a6bd7b560a3522068b995a` | merge commit (padres `8776be7`, `d9abca8`) |
+| 13:10 | CI `push` de `main` | `dadc819` | success (run 35865270441) |
+| 13:10 | Android (APK/AAB) | `dadc819` | **failure** (run 35865270416), igual que en los push anteriores |
+| 13:22 | Promote staging candidate | `dadc819` | success (run 35866557630) |
+| 13:31 | Promote production | `dadc819` | success (run 35867609699) |
+
+Qué cambia respecto del diagnóstico:
+
+- Las comprobaciones de la sección 2 se ejecutaron, pero sobre `d9abca8`, no
+  sobre `c0ec6e9`. El PR #224 y `docs/releases/2026-09-23-nortexgpt-qa-repairs.md`
+  declaran: Vitest 7.076/0 fallidas/545 omitidas, integración MySQL 51 suites y
+  559 casos, mutación 100 % (6.000 evaluados) y 5/5 escenarios de presupuesto
+  con upgrade, reintento y restore sintéticos. La mutación consta como
+  **local**; el CI la omitió. Esos resultados locales no se reprodujeron aquí.
+- El candidato se fusionó a `main` y, como se anticipó en la sección 3, el
+  SHA resultante es distinto (`dadc819`). Para ese SHA constan CI, staging y
+  producción exitosos.
+- La promoción de `20fda8d` sigue sin cierre propio, pero producción ya fue
+  reemplazada por `dadc819`, que sí completó la verificación del workflow.
+- Sigue pendiente: Android en rojo en `main`; calidad del modelo, piloto,
+  operación de workers y respaldo real vigente, que el propio PR #224 declara
+  sin evidencia. El rechazo del 2026-09-12 sigue sin causa conocida y no
+  impidió la promoción.
