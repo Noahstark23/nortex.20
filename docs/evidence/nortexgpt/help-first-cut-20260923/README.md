@@ -32,3 +32,20 @@ texto completo** en [`help-review-20260923.md`](../help-review-20260923.md),
 comprobar roles/canales y corregir los que no describan el producto vigente.
 Una corrección requiere versión nueva y nuevo hash: la versión `LEGACY` es
 inmutable. El revisor y su aprobación no están registrados aquí.
+
+## Ensayo técnico del archivo exacto
+
+En un MySQL 8 local descartable, `test-nortexgpt-help-release.ts` cargó este
+`release-draft.json` y comprobó el hash indicado. `stage` dejó activa la ayuda
+LEGACY; `publish` sin `review` fue rechazado. Tras **simular** la transición de
+revisión con usuarios sintéticos, la publicación dejó diez fuentes activas,
+excluyó promociones y canal privado de consultas nuevas, sirvió una cita
+`PUBLISHED`, conservó una sola generación al repetir y dejó tres AuditLog.
+La simulación acredita la mecánica editorial, **no** la revisión de los textos
+por una persona. El mismo ensayo quedó añadido al job MySQL de CI, aún sin
+corrida remota para este candidato. La base sintética se retiró al terminar.
+En una segunda base descartable se reprodujo además el orden exacto de esos
+pasos de CI: ensayo de dos pilotos primero y ensayo editorial después; ambos
+aprobaron en la misma base. No se usaron negocios ni cuentas reales.
+La compuerta local segura posterior pasó con Prisma, TypeScript, Vitest,
+sistema de diseño y build. GitHub Actions sigue pendiente para este SHA.
