@@ -47,9 +47,10 @@ async function seedVertical(vertical:'FERRETERIA'|'FARMACIA') {
     {name:'Sales de rehidratación QA',unit:'sobre',price:25,cost:12,quantity:80,packSize:10,packUnit:'caja',tracked:true,exempt:true},
     {name:'Alcohol antiséptico QA',unit:'frasco',price:45,cost:30,quantity:12,packSize:6,packUnit:'caja',tracked:true,expired:true},
   ];
+  const productCreatedAt=new Date(`${shiftCivilDay(today,-35)}T06:00:00.000Z`);
   const items:Item[]=[];
   for(const [index,item]of definitions.entries()) {
-    const product=await prisma.product.create({data:{tenantId,createdBy:user.id,name:item.name,sku:`DEMO-${slug}-${index}`,price:item.price,cost:item.cost,unit:item.unit,saleMode:'COUNTED',quantityStep:'1',packSize:item.packSize,packUnit:item.packUnit,packPrice:item.price*item.packSize,stock:0,minStock:10,reorderPoint:10,maxStock:60,defaultSupplierId:supplier.id,requiresBatchTracking:item.tracked,ivaExento:item.exempt??false}});
+    const product=await prisma.product.create({data:{tenantId,createdBy:user.id,createdAt:productCreatedAt,name:item.name,sku:`DEMO-${slug}-${index}`,price:item.price,cost:item.cost,unit:item.unit,saleMode:'COUNTED',quantityStep:'1',packSize:item.packSize,packUnit:item.packUnit,packPrice:item.price*item.packSize,stock:0,minStock:10,reorderPoint:10,maxStock:60,defaultSupplierId:supplier.id,requiresBatchTracking:item.tracked,ivaExento:item.exempt??false}});
     items.push({...item,id:product.id});
     await registerPurchase({principal,idempotencyKey:`${marker}:${slug}:stock:${index}`,input:{supplierId:supplier.id,warehouseId:warehouse.id,invoiceNumber:`QA-INICIAL-${slug}-${index}`,date:shiftCivilDay(today,-35),postingDate:shiftCivilDay(today,-35),dueDate:shiftCivilDay(today,30),paymentMethod:'CREDIT',notes:'Datos sintéticos de QA. Compra inicial para demostración.',items:[{productId:product.id,quantity:String(item.quantity),unitCost:String(item.cost),purchaseUnit:'BASE',...(item.tracked?{batchNumber:`QA-${slug}-${index}`,expiryDate:shiftCivilDay(today,item.expired?-1:180)}:{})}]}},prisma);
   }

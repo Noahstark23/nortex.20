@@ -43,10 +43,10 @@
     "days": 30,
     "note": "Días civiles completos de Managua, igual criterio que el modo inventario del producto."
   },
-  "expectedCheckedAt": "2026-09-23T16:08:03.476Z",
+  "expectedCheckedAt": "2026-09-23T16:13:30.615Z",
   "expectedInventoryRows": [
     {
-      "productId": "cmueapjl60005il2z634dzsxp",
+      "productId": "cmueay15k0005ilxm1dxp757y",
       "name": "Cemento Holcim 42.5",
       "unit": "bolsa",
       "tracked": false,
@@ -61,12 +61,12 @@
       "minStock": "10",
       "reorderPoint": "10",
       "maxStock": "60",
-      "historyDaysAvailable": 0,
+      "historyDaysAvailable": 30,
       "hasSupplier": true,
       "batches": []
     },
     {
-      "productId": "cmueapjp3002cil2zy82bg2bm",
+      "productId": "cmueay195002cilxmhxlkccac",
       "name": "Pintura látex blanca QA",
       "unit": "litro",
       "tracked": true,
@@ -81,7 +81,7 @@
       "minStock": "10",
       "reorderPoint": "10",
       "maxStock": "60",
-      "historyDaysAvailable": 0,
+      "historyDaysAvailable": 30,
       "hasSupplier": true,
       "batches": [
         {
@@ -92,7 +92,7 @@
       ]
     },
     {
-      "productId": "cmueapjny001til2ztkq52y2f",
+      "productId": "cmueay17z001tilxmlbgd9200",
       "name": "Tornillos galvanizados",
       "unit": "unidad",
       "tracked": false,
@@ -107,7 +107,7 @@
       "minStock": "10",
       "reorderPoint": "10",
       "maxStock": "60",
-      "historyDaysAvailable": 0,
+      "historyDaysAvailable": 30,
       "hasSupplier": true,
       "batches": []
     }

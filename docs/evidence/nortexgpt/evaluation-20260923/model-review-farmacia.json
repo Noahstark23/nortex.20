@@ -43,10 +43,10 @@
     "days": 30,
     "note": "Días civiles completos de Managua, igual criterio que el modo inventario del producto."
   },
-  "expectedCheckedAt": "2026-09-23T16:08:03.476Z",
+  "expectedCheckedAt": "2026-09-23T16:13:30.615Z",
   "expectedInventoryRows": [
     {
-      "productId": "cmueapjz6003yil2zojubff24",
+      "productId": "cmueay1jl003yilxm0eu5vujl",
       "name": "Acetaminofén 500 mg QA",
       "unit": "tableta",
       "tracked": true,
@@ -61,7 +61,7 @@
       "minStock": "10",
       "reorderPoint": "10",
       "maxStock": "60",
-      "historyDaysAvailable": 0,
+      "historyDaysAvailable": 30,
       "hasSupplier": true,
       "batches": [
         {
@@ -72,7 +72,7 @@
       ]
     },
     {
-      "productId": "cmueapk3a006fil2z90tev8fh",
+      "productId": "cmueay1n6006filxmv6ezumig",
       "name": "Alcohol antiséptico QA",
       "unit": "frasco",
       "tracked": true,
@@ -87,7 +87,7 @@
       "minStock": "10",
       "reorderPoint": "10",
       "maxStock": "60",
-      "historyDaysAvailable": 0,
+      "historyDaysAvailable": 30,
       "hasSupplier": true,
       "batches": [
         {
@@ -98,7 +98,7 @@
       ]
     },
     {
-      "productId": "cmueapk20005ril2zubtghm1f",
+      "productId": "cmueay1lt005rilxmgsqnfymj",
       "name": "Sales de rehidratación QA",
       "unit": "sobre",
       "tracked": true,
@@ -113,7 +113,7 @@
       "minStock": "10",
       "reorderPoint": "10",
       "maxStock": "60",
-      "historyDaysAvailable": 0,
+      "historyDaysAvailable": 30,
       "hasSupplier": true,
       "batches": [
         {

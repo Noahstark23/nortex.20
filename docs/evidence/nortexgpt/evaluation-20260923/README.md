@@ -1,6 +1,6 @@
 # NortexGPT · resultados esperados sintéticos para revisión
 
-Generado el 2026-09-23 a las 16:08 UTC con MySQL 8 descartable y la fixture
+Generado el 2026-09-23 a las 16:13 UTC con MySQL 8 descartable y la fixture
 `operativo-demo-20260905`. Los formularios completos son
 [`model-review-ferreteria.json`](model-review-ferreteria.json) y
 [`model-review-farmacia.json`](model-review-farmacia.json). Ambos conservan
@@ -22,12 +22,13 @@ extracción, promociones y WhatsApp privado están apagados.
 | Farmacia | Alcohol antiséptico QA, frasco | 12 | 0 | 12 | 0 | 0 |
 | Farmacia | Sales de rehidratación QA, sobre | 80 | 80 | 0 | 0 | 0 |
 
-Los seis productos se crearon el día de la fixture; por tanto tienen cero días
-de historial disponible dentro del período aunque haya ventas históricas
-sintéticas. Una respuesta no debe convertir esas salidas en una fecha cierta de
-agotamiento. Debe distinguir stock físico de vendible y no recomendar vender
-lotes vencidos. No hay órdenes de compra pendientes ni compras nuevas ejecutadas
-por la pregunta.
+Los seis productos se fechan 35 días antes de la ejecución y tienen 30 días
+de historial disponible en el período. Sólo dos ventas históricas de cemento
+y acetaminofén caen dentro de esa ventana; la tercera se hizo el día vigente
+y queda excluida. Una respuesta puede calcular una tasa observada, pero no
+presentarla como fecha cierta de agotamiento. Debe distinguir stock físico de
+vendible y no recomendar vender lotes vencidos. No hay órdenes de compra
+pendientes ni compras nuevas ejecutadas por la pregunta.
 
 Antes de una llamada pagada, una persona debe contrastar los formularios con
 las filas de la fixture, completar revisor, fecha y juicio en cada JSON, y sólo
