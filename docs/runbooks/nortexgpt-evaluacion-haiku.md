@@ -1,9 +1,10 @@
 # Runbook — evaluación local de NortexGPT con Haiku
 
 Entorno privado de QA para medir NortexGPT contra `claude-haiku-4-5-20251001`.
-Todo corre en `127.0.0.1` contra una base MySQL descartable y los negocios
-sintéticos de la demostración. **No conecta bases reales, no toca el POS, no
-inicia servicios de producción y no envía mensajes externos.**
+El backend y la base MySQL descartable corren en `127.0.0.1` con negocios
+sintéticos. **No conecta bases reales, no toca el POS ni inicia servicios de
+producción.** Una consulta con `--allow-paid-model`, tras sus compuertas, sí
+envía una solicitud al proveedor y consume presupuesto sintético.
 
 ## 0. Lo que este runbook no hace
 
@@ -78,24 +79,31 @@ mise exec -- node --import tsx scripts/assistant-operations-demo.ts
 La fixture siembra ferretería y farmacia sintéticas. Es idempotente: si ya existe
 un montaje parcial se detiene en vez de duplicar efectos.
 
-## 3. Habilitación del primer paso
+## 3. Configurar el modo de evaluación
 
 ```sh
 mise exec -- node --import tsx scripts/qa/nortexgpt-enable-synthetic.ts
+
+# Primer corte web del piloto, con operaciones apagadas:
+mise exec -- node --import tsx scripts/qa/nortexgpt-enable-synthetic.ts --pilot-first-cut
 ```
 
-Aplica la configuración **por negocio**; los interruptores **globales** los pone
-el lanzador del backend. Una capacidad queda activa sólo si ambos coinciden.
+El comando sin opción reproduce la evaluación operativa anterior de la sección 6.
+Para el primer corte web se usa `--pilot-first-cut`: habilita ayuda e
+interpretación y deja operaciones apagadas. Aplica la configuración **por
+negocio**; los interruptores **globales** los pone el lanzador del backend. Una
+capacidad queda activa sólo si ambos coinciden.
 
-| Capacidad | Primer paso |
-|---|---|
-| Conversación (`enabled`) | habilitada |
-| Consultas operativas (`operationsEnabled`) | habilitada |
-| Ejecución de dinero/inventario (`executionEnabled`) | **deshabilitada** |
-| Preparación de acciones (`actionsEnabled`) | **deshabilitada** |
-| Extracción de documentos (`extractionEnabled`) | **deshabilitada** |
-| Promociones (`promotionsEnabled`) | **deshabilitada** |
-| WhatsApp privado / comercial | **deshabilitados** |
+| Capacidad | Evaluación operativa anterior | Primer corte web |
+|---|---|---|
+| Conversación (`enabled`) | habilitada | habilitada |
+| Interpretación de lenguaje | apagada | habilitada |
+| Consultas operativas (`operationsEnabled`) | habilitadas | **deshabilitadas** |
+| Ejecución de dinero/inventario (`executionEnabled`) | **deshabilitada** | **deshabilitada** |
+| Preparación de acciones (`actionsEnabled`) | **deshabilitada** | **deshabilitada** |
+| Extracción de documentos (`extractionEnabled`) | **deshabilitada** | **deshabilitada** |
+| Promociones (`promotionsEnabled`) | **deshabilitadas** | **deshabilitadas** |
+| WhatsApp privado / comercial | **deshabilitados** | **deshabilitados** |
 
 Presupuestos: las constantes del servidor no se tocan — **US$20 globales**,
 **US$2 iniciales por negocio** y ampliación aprobada hasta **US$10**. La
