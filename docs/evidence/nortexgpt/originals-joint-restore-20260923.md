@@ -36,9 +36,43 @@ directamente a una compra; el segundo probó además la propuesta confirmada.
 Ambas filas de QA fueron sembradas para probar recuperación, no resultaron de
 un flujo real de foto/PDF y confirmación.
 
-Este ensayo **no** acredita la copia off-site de los originales ni una
-restauración de datos de producción. `backup-db.sh` sigue copiando sólo SQL;
-el tar de este ensayo se creó manualmente. Antes de habilitar foto/PDF se
-necesita un mecanismo programado que copie SQL y originales al destino privado,
-un manifiesto coherente y un restore drill de esa copia remota. Extracción y
-ejecución permanecen apagadas.
+Esos dos primeros ensayos **no** acreditaron la copia off-site de los
+originales ni una restauración de datos de producción: el tar se creó
+manualmente y `backup-db.sh` aún copiaba sólo SQL. El mecanismo opcional
+añadido después se ensayó por separado a continuación. Extracción y ejecución
+permanecen apagadas.
+
+## Ensayo del mecanismo programable opcional
+
+El mismo día se añadió `backup-assistant-originals.sh`, llamado por
+`backup-db.sh` sólo con `BACKUP_ASSISTANT_ORIGINALS_ENABLED=true`. La imagen
+de backup del candidato compiló y el Compose validó. Contra otro MySQL 8
+descartable se observaron estos casos:
+
+| Caso | Resultado |
+|---|---|
+| Opción apagada | Backup SQL de 143 tablas aprobado; sin tar ni campo `assistantOriginals` en el latido |
+| Opción encendida, `BACKUP_LOCAL_ONLY=1` | SQL de 143 tablas/44.232 bytes y tar privado de 10.240 bytes con un original; ambos hashes coincidieron con el latido y el tar quedó 0600 |
+| Restore de esos artefactos | SQL de 143 tablas/229 filas con conteos iguales al origen; original, compra y propuesta `COMMITTED` conciliados, sin diferencias |
+| Original sintético truncado | Backup falló, sin tar ni latido nuevo |
+| Original sintético de igual tamaño pero otro hash | Backup falló, sin tar ni latido nuevo |
+| Subida del latido simulada como fallida | Un comando AWS falso aceptó el dump y rechazó `last-backup.json`; no hubo latido local nuevo ni conexión real al bucket |
+
+El nuevo tar contiene sólo originales vinculados a compras; una foto todavía
+pendiente de confirmación no queda cubierta por esta copia. Por eso esta prueba
+acerca la recuperación de comprobantes permanentes, pero **no habilita aún
+foto/PDF** ni acredita el respaldo remoto. Antes de activarlo hay que definir
+y comprobar la recuperación de adjuntos pendientes, ejecutar el backup real
+off-site y restaurar su par SQL/tar desde el objeto remoto.
+
+El candidato también añade al job `backup-restore-smoke` de CI un fixture
+descartable con original `ATTACHED`, compra y propuesta `COMMITTED`; el job
+archiva SQL y original, comprueba ambos hashes del latido, restaura en otra
+base/directorio privados y exige una referencia de propuesta íntegra. El
+fixture se ejecutó localmente contra MySQL 8 descartable y TypeScript pasó.
+**El job de CI todavía no ha corrido para este SHA**, por lo que este cableado
+no es evidencia de un resultado terminal remoto.
+La compuerta local integral pasó después del cableado: 491 archivos y 7090
+pruebas aprobadas; 50 archivos y 545 pruebas omitidas se contabilizan aparte.
+También pasaron diseño y build. La base, el contenedor y los originales
+sintéticos de este ensayo se retiraron al terminar.

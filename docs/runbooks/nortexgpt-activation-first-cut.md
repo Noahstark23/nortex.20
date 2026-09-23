@@ -61,6 +61,13 @@ permisos y hashes conciliados, un ensayo de reinicio con lease, evaluación por
 vertical y confirmación humana exacta. WhatsApp privado exige su propio worker,
 canal vinculado y pruebas de UNKNOWN; esta configuración no lo inicia.
 
+La copia programable de originales permanentes está detrás de
+`BACKUP_ASSISTANT_ORIGINALS_ENABLED=false` por defecto. Habilitarla exige
+montaje privado de solo lectura en `backup`, bucket privado y restauración
+verificada del par SQL/tar desde ese bucket. El tar actual incluye adjuntos
+vinculados a compras, no capturas pendientes; la recuperación de esas capturas
+debe resolverse antes de encender extracción.
+
 Después de restaurar una copia conjunta en un MySQL 8 descartable y un directorio
 privado, ejecutar `scripts/qa/verify-assistant-originals-restore.ts` con
 `RESTORE_DATABASE_URL` y `NORTEX_ASSISTANT_STORAGE_DIR` apuntando sólo a esos

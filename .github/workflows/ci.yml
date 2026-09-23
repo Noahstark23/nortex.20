@@ -218,6 +218,56 @@ jobs:
           test "$OBTENIDO" = "$ESPERADO" || { echo "::error::utf8 corrupto tras restaurar: '$OBTENIDO' != '$ESPERADO'"; exit 1; }
           echo "✓ $OBTENIDO"
 
+      - name: Sembrar un original permanente sintético para el respaldo conjunto
+        run: |
+          mkdir -m 700 "$NORTEX_ASSISTANT_STORAGE_DIR"
+          node --import tsx scripts/qa/seed-assistant-backup-ci.ts
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          NORTEX_QA_DATABASE_ACK: disposable-database
+          NORTEX_ASSISTANT_STORAGE_DIR: ${{ runner.temp }}/assistant-source-originals
+
+      - name: Generar respaldo conjunto local de SQL y original
+        run: bash scripts/backup-db.sh
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          BACKUP_DIR: ${{ runner.temp }}/assistant-backups
+          BACKUP_LOCAL_ONLY: '1'
+          BACKUP_ASSISTANT_ORIGINALS_ENABLED: 'true'
+          ASSISTANT_ORIGINALS_DIR: ${{ runner.temp }}/assistant-source-originals
+
+      - name: Restaurar SQL y original en un destino descartable
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const dir = process.env.BACKUP_DIR;
+          const h = JSON.parse(fs.readFileSync(path.join(dir, 'last-backup.json'), 'utf8'));
+          const check = (name, expected) => {
+            if (path.basename(name) !== name) throw new Error('nombre de archivo inseguro');
+            const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, name))).digest('hex');
+            if (actual !== expected) throw new Error('hash de respaldo distinto');
+          };
+          if (!h.verificado || h.assistantOriginals?.count !== 1) throw new Error('latido conjunto incompleto');
+          check(h.archivo, h.sha256);
+          check(h.assistantOriginals.archivo, h.assistantOriginals.sha256);
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'assistant-backup-names'), `${h.archivo}\n${h.assistantOriginals.archivo}\n`, { mode: 0o600 });
+          NODE
+          mapfile -t BACKUP_NAMES < "$RUNNER_TEMP/assistant-backup-names"
+          ASSISTANT_DUMP="$BACKUP_DIR/${BACKUP_NAMES[0]}"
+          ASSISTANT_ARCHIVE="$BACKUP_DIR/${BACKUP_NAMES[1]}"
+          bash scripts/verify-backup-restore.sh "$ASSISTANT_DUMP"
+          mkdir -m 700 "$NORTEX_ASSISTANT_STORAGE_DIR"
+          tar -xf "$ASSISTANT_ARCHIVE" -C "$NORTEX_ASSISTANT_STORAGE_DIR" --strip-components=1 files
+          node --import tsx scripts/qa/verify-assistant-originals-restore.ts > "$RUNNER_TEMP/assistant-restore-result.json"
+          node -e "const r=require(process.env.RUNNER_TEMP+'/assistant-restore-result.json'); if(r.status!=='ok'||r.checked!==1||r.proposalReferencesChecked!==1||r.brokenProposalReferences!==0) throw new Error('restauración conjunta incompleta');"
+          echo '✓ SQL, original y referencia de propuesta restaurados.'
+        env:
+          BACKUP_DIR: ${{ runner.temp }}/assistant-backups
+          RESTORE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_restore_assistant_test
+          NORTEX_ASSISTANT_STORAGE_DIR: ${{ runner.temp }}/assistant-restored-originals
+
       # Caso NEGATIVO: la verificación tiene que RECHAZAR un dump cortado. Si
       # este paso "pasara", el chequeo de integridad no estaría chequeando nada.
       - name: Un dump truncado debe ser rechazado

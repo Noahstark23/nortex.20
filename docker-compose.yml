@@ -140,8 +140,12 @@ services:
       # Aviso inmediato si un backup falla (Slack/Discord/webhook genérico).
       - BACKUP_ALERT_WEBHOOK=${BACKUP_ALERT_WEBHOOK:-}
       - BACKUP_KEEP_DAYS=${BACKUP_KEEP_DAYS:-7}
+      # Sólo al habilitar copias conjuntas y tras un restore remoto verificado.
+      - BACKUP_ASSISTANT_ORIGINALS_ENABLED=${BACKUP_ASSISTANT_ORIGINALS_ENABLED:-false}
+      - ASSISTANT_ORIGINALS_DIR=/var/lib/nortex/assistant/originals
     volumes:
       - 'backup_data:/var/backups/nortex'
+      - 'assistant_private:/var/lib/nortex/assistant:ro'
     depends_on:
       db:
         condition: service_healthy
