@@ -66,7 +66,7 @@ Usar el SHA candidato de la entrega, nunca copiar el de este documento como dest
    ejecución, promociones y WhatsApp. Audita el cambio en la misma transacción.
    El mismo cambio exige que `nortexgpt-primer-corte-20260923` esté publicado,
    con revisión humana registrada y el hash exacto
-   `f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb`.
+   `3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126`.
    Rechaza el corpus `LEGACY`, un borrador o una versión sólo revisada. Si una
    corrección editorial cambia el hash, actualizar el guard y repetir su QA antes
    de activar; no reutilizar una confirmación sobre contenido distinto.

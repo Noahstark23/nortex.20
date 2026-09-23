@@ -161,12 +161,12 @@
     },
     {
       "documentId": "reposicion",
-      "version": "2026-09-23.web1",
+      "version": "2026-09-23.web2",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
         "section": "Preparar reposición",
-        "body": "La cobertura es una estimación basada en salidas verificadas de los últimos 30 días completos. Revisá existencias vendibles, unidades, mínimos y entradas pendientes. Con pocos datos no se puede prometer una fecha exacta de agotamiento. Una orden preparada queda en borrador: todavía requiere aprobación y envío; no agrega existencias ni deuda.",
+        "body": "Para planificar una reposición en Inventario o Compras, revisá existencias vendibles, unidades, mínimos y entradas pendientes. Una orden de compra preparada queda en borrador hasta su aprobación y envío; no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT aún no está habilitada en este piloto.",
         "roles": [
           "ACCOUNTANT",
           "ADMIN",
@@ -233,12 +233,12 @@
     },
     {
       "documentId": "comparacion",
-      "version": "2026-09-23.web1",
+      "version": "2026-09-23.web2",
       "sectionId": "main",
       "payload": {
         "title": "Ayuda de Nortex",
         "section": "Comparar períodos y explicar resultados",
-        "body": "Una consulta diaria compara por defecto con el mismo día de la semana anterior hasta la misma hora de Managua. Varios días se comparan con una ventana anterior equivalente. Separá hechos, estimaciones e hipótesis: una variación no demuestra su causa. Cada rol ve sólo sus cifras autorizadas.",
+        "body": "En este piloto NortexGPT puede mostrar cifras del período autorizado, pero no realiza la comparación automática con una ventana anterior. Para comparar manualmente, usá períodos equivalentes y considerá el corte de Managua. Una variación no demuestra su causa.",
         "roles": [
           "ACCOUNTANT",
           "ADMIN",

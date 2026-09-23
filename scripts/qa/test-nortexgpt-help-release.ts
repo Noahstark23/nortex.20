@@ -4,13 +4,14 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import prisma from '../../backend/lib/prisma.js';
 import { readKnowledgeSnapshot } from '../../backend/services/assistant/knowledge/store.js';
+import { createAssistantConversation, sendAssistantMessage } from '../../backend/services/assistant/conversations.js';
 import { getAssistantKnowledgePassage, retrievePublishedAssistantHelp } from '../../backend/services/assistant/knowledge/service.js';
 import { stageAssistantKnowledgeRelease, reviewAssistantKnowledgeRelease,
   publishAssistantKnowledgeRelease } from '../../backend/services/assistant/knowledge/lifecycle.js';
 import { validateQualityDatabase } from '../quality-gate-contract.mjs';
 
 validateQualityDatabase(process.env.DATABASE_URL, process.env.NORTEX_QA_DATABASE_ACK);
-const expectedHash = 'f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb';
+const expectedHash = '3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126';
 const expectedIds = ['asistente', 'ventas', 'offline', 'compras', 'lotes', 'contabilidad',
   'reposicion', 'salida-proveedor', 'merma', 'comparacion'];
 
@@ -64,6 +65,20 @@ async function main() {
   const help = await retrievePublishedAssistantHelp(readerPrincipal, 'ventas', prisma);
   assert.equal(help.citations.some(citation => citation.id === 'ventas'), true);
   assert.equal((await getAssistantKnowledgePassage(readerPrincipal, help.knowledgeReferences[0], prisma)).publication, 'PUBLISHED');
+  process.env.NORTEX_ASSISTANT_OPERATIONS_ENABLED = 'false';
+  process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED = 'false';
+  const conversation = await createAssistantConversation(readerPrincipal, prisma);
+  const comparison = await sendAssistantMessage(readerPrincipal, conversation.id,
+    { requestId: randomUUID(), text: '¿Cómo comparar ventas?' }, prisma);
+  assert.equal(comparison.citations?.some(citation => citation.id === 'comparacion'), true);
+  assert.match(comparison.text, /no realiza la comparación automática/);
+  assert.equal(comparison.operationalRunId, undefined);
+  const replenishment = await sendAssistantMessage(readerPrincipal, conversation.id,
+    { requestId: randomUUID(), text: '¿Cómo reponer productos?' }, prisma);
+  assert.equal(replenishment.citations?.some(citation => citation.id === 'reposicion'), true);
+  assert.match(replenishment.text, /aún no está habilitada en este piloto/);
+  assert.equal(replenishment.operationalRunId, undefined);
+  assert.equal(await prisma.assistantRun.count({ where: { tenantId: tenant.id } }), 0);
   assert.deepEqual((await retrievePublishedAssistantHelp(readerPrincipal, 'whatsapp privado', prisma)).citations, []);
   await prisma.assistantTenantConfig.update({ where: { tenantId: tenant.id },
     data: { privateWhatsappEnabled: true } });
@@ -80,7 +95,7 @@ async function main() {
     action: { startsWith: 'ASSISTANT_KNOWLEDGE_' } }, take: 10 });
   assert.deepEqual(actions.map(row => row.action).sort(),
     ['ASSISTANT_KNOWLEDGE_STAGED', 'ASSISTANT_KNOWLEDGE_REVIEWED', 'ASSISTANT_KNOWLEDGE_PUBLISHED'].sort());
-  console.log('QA ayuda: borrador exacto, revisión exigida, 10 fuentes web, canal privado vacío, 2 excluidas e idempotencia OK.');
+  console.log('QA ayuda: borrador exacto, revisión exigida, 10 fuentes web, dos respuestas de piloto sin runs, canal privado vacío, 2 excluidas e idempotencia OK.');
 }
 
 main().catch(error => { console.error(error instanceof Error ? error.message : 'Falló QA editorial.'); process.exitCode = 1; })

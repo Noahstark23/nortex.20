@@ -5,15 +5,17 @@ Fecha: 2026-09-23. **Borrador sin revisión humana ni publicación.**
 [`release-draft.json`](release-draft.json) tiene la forma exacta que acepta
 `POST /api/admin/assistant-knowledge/releases`; [`manifest-draft.json`](manifest-draft.json)
 fija las referencias de las mismas diez versiones. Hash del manifiesto:
-`f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb`.
-Los cuerpos provienen del corpus `LEGACY` del candidato, sin declarar que su
-contenido sea correcto. Cada artículo usa una versión editorial nueva
-`2026-09-23.web1` y sólo el canal `WEB_INTERNAL`; ninguna de las diez versiones
+`3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126`.
+Ocho cuerpos provienen del corpus `LEGACY` del candidato; `reposicion` y
+`comparacion` se corrigieron para no prometer consultas operativas apagadas en
+este piloto. Ocho artículos usan `2026-09-23.web1` y esos dos usan
+`2026-09-23.web2`. Todos permiten sólo `WEB_INTERNAL`; ninguna de las diez versiones
 autoriza `WHATSAPP_PRIVATE`. No se hizo POST, revisión ni publicación.
 
 | Propuestos para revisión | Motivo de atención |
 |---|---|
-| asistente, ventas, offline, compras, lotes, contabilidad, reposicion, comparacion | Ayuda y lectura pertinentes al primer corte; comprobar texto, roles y recorrido real |
+| asistente, ventas, offline, compras, lotes, contabilidad | Ayuda y lectura pertinentes al primer corte; comprobar texto, roles y recorrido real |
+| reposicion, comparacion | Textos corregidos: explicar que las consultas operativas del asistente siguen apagadas en este piloto |
 | salida-proveedor, merma | Describen confirmaciones fuera del asistente inicial; revisar que el texto no sugiera que el chat puede ejecutarlas |
 
 `promociones` y `canal-privado` quedan **fuera de este borrador** porque el
@@ -48,12 +50,18 @@ excluyó promociones y canal privado de consultas nuevas, sirvió una cita
 También se comprobó que, aun encendiendo la capacidad privada en la base QA,
 la consulta de los artículos nuevos por `WHATSAPP_PRIVATE` no devuelve citas.
 La simulación acredita la mecánica editorial, **no** la revisión de los textos
-por una persona. El mismo ensayo quedó añadido al job MySQL de CI, aún sin
-corrida remota para este candidato. La base sintética se retiró al terminar.
+por una persona. El mismo ensayo quedó añadido al job MySQL de CI. Se repitió
+para el hash actual en una base sintética independiente y aprobó; la base se
+retiró al terminar.
+Otra base sintética confirmó que «¿Cómo comparar ventas?» y «¿Cómo reponer
+productos?» citan los dos textos corregidos, explican que esas consultas aún
+no están habilitadas y no crean `AssistantRun`.
 En una segunda base descartable se reprodujo el orden anterior de CI: ensayo
 de dos pilotos primero y ensayo editorial después; ambos aprobaron. El guard
 nuevo del piloto exige publicación previa, así que CI ahora usa una base
 descartable para cada ensayo. Ambos volvieron a pasar por separado. No se
 usaron negocios ni cuentas reales.
-La compuerta local segura posterior pasó con Prisma, TypeScript, Vitest,
-sistema de diseño y build. GitHub Actions sigue pendiente para este SHA.
+La compuerta local segura posterior del hash actual pasó con Prisma,
+TypeScript, 491 archivos/7091 pruebas, sistema de diseño y build; 50 archivos
+y 545 pruebas omitidos se cuentan aparte. CI remoto del nuevo SHA sigue
+pendiente.

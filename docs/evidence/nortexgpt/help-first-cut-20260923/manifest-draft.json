@@ -9,9 +9,9 @@
     },
     {
       "documentId": "comparacion",
-      "version": "2026-09-23.web1",
+      "version": "2026-09-23.web2",
       "sectionId": "main",
-      "contentHash": "8355f089a73eae1bf6a2e0ee7d944eaed65f3f00173375b3f0073247fc7b34e7"
+      "contentHash": "c5d6ee12e70175307d9b6e7ef68b9403aa17713620907f33bb11561cefc02d5f"
     },
     {
       "documentId": "compras",
@@ -45,9 +45,9 @@
     },
     {
       "documentId": "reposicion",
-      "version": "2026-09-23.web1",
+      "version": "2026-09-23.web2",
       "sectionId": "main",
-      "contentHash": "bc50f80ae206bce124e656506d52a8a916955129cb78bdff89c6ce86bbbf1069"
+      "contentHash": "a8844017076ff48ef6ce417a8e48657a7ec9a2fbfcba58882946706d2e2a58fe"
     },
     {
       "documentId": "salida-proveedor",

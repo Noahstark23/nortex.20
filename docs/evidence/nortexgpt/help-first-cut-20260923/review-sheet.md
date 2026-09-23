@@ -1,7 +1,7 @@
 # NortexGPT · hoja de revisión del primer corte web
 
 **Borrador sin aprobación ni publicación.** Revisar el texto completo y los roles de cada versión.
-Hash del manifiesto exacto: `f3fd57932a02205f49fd93fa957346b6a71c1705b0001114d44ff3bfe1ea1cfb`.
+Hash del manifiesto exacto: `3d18a116746db968c3e808daf406c1edb70350f706e8111752f80673907f1126`.
 Cada artículo permite sólo `WEB_INTERNAL`; promociones y canal privado están excluidos.
 Si se corrige un texto, generar otra versión y otro hash antes de aprobar.
 
@@ -67,13 +67,13 @@ Las ventas registradas no equivalen a utilidad ni a dinero recibido. Revisá por
 
 ## reposicion · Ayuda de Nortex
 
-- Versión: `2026-09-23.web1`
-- Hash del artículo: `bc50f80ae206bce124e656506d52a8a916955129cb78bdff89c6ce86bbbf1069`
+- Versión: `2026-09-23.web2`
+- Hash del artículo: `a8844017076ff48ef6ce417a8e48657a7ec9a2fbfcba58882946706d2e2a58fe`
 - Roles: ACCOUNTANT, ADMIN, BODEGUERO, MANAGER, OWNER, SUPER_ADMIN, VIEWER
 - Canal: WEB_INTERNAL
-- Atención: Confirmar que la orden en borrador describa el flujo manual vigente; operaciones del asistente siguen apagadas.
+- Atención: Verificar la ruta manual en Inventario o Compras; la consulta operativa del asistente sigue apagada.
 
-La cobertura es una estimación basada en salidas verificadas de los últimos 30 días completos. Revisá existencias vendibles, unidades, mínimos y entradas pendientes. Con pocos datos no se puede prometer una fecha exacta de agotamiento. Una orden preparada queda en borrador: todavía requiere aprobación y envío; no agrega existencias ni deuda.
+Para planificar una reposición en Inventario o Compras, revisá existencias vendibles, unidades, mínimos y entradas pendientes. Una orden de compra preparada queda en borrador hasta su aprobación y envío; no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT aún no está habilitada en este piloto.
 
 ## salida-proveedor · Ayuda de Nortex
 
@@ -97,10 +97,10 @@ Una fecha vencida no demuestra que las unidades fueron retiradas físicamente. R
 
 ## comparacion · Ayuda de Nortex
 
-- Versión: `2026-09-23.web1`
-- Hash del artículo: `8355f089a73eae1bf6a2e0ee7d944eaed65f3f00173375b3f0073247fc7b34e7`
+- Versión: `2026-09-23.web2`
+- Hash del artículo: `c5d6ee12e70175307d9b6e7ef68b9403aa17713620907f33bb11561cefc02d5f`
 - Roles: ACCOUNTANT, ADMIN, CASHIER, EMPLOYEE, MANAGER, OWNER, SUPER_ADMIN, VENDEDOR
 - Canal: WEB_INTERNAL
-- Atención: Comprobar texto, permisos y recorrido real en Nortex.
+- Atención: Verificar que el piloto muestre cifras del período sin prometer comparación automática.
 
-Una consulta diaria compara por defecto con el mismo día de la semana anterior hasta la misma hora de Managua. Varios días se comparan con una ventana anterior equivalente. Separá hechos, estimaciones e hipótesis: una variación no demuestra su causa. Cada rol ve sólo sus cifras autorizadas.
+En este piloto NortexGPT puede mostrar cifras del período autorizado, pero no realiza la comparación automática con una ventana anterior. Para comparar manualmente, usá períodos equivalentes y considerá el corte de Managua. Una variación no demuestra su causa.

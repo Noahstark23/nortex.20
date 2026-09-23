@@ -7,6 +7,10 @@ import { stageInput } from '../../backend/services/assistant/knowledge/lifecycle
 
 const RELEASE_ID = 'nortexgpt-primer-corte-20260923';
 const WEB_VERSION = '2026-09-23.web1';
+const PILOT_COPY: Record<string, string> = {
+  reposicion: 'Para planificar una reposición en Inventario o Compras, revisá existencias vendibles, unidades, mínimos y entradas pendientes. Una orden de compra preparada queda en borrador hasta su aprobación y envío; no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT aún no está habilitada en este piloto.',
+  comparacion: 'En este piloto NortexGPT puede mostrar cifras del período autorizado, pero no realiza la comparación automática con una ventana anterior. Para comparar manualmente, usá períodos equivalentes y considerá el corte de Managua. Una variación no demuestra su causa.',
+};
 const INCLUDED = ['asistente', 'ventas', 'offline', 'compras', 'lotes', 'contabilidad',
   'reposicion', 'salida-proveedor', 'merma', 'comparacion'] as const;
 const EXCLUDED = ['promociones', 'canal-privado'] as const;
@@ -19,9 +23,10 @@ function draft() {
     throw new Error('El inventario de ayuda LEGACY cambió; se requiere otra revisión.');
   const documents = INCLUDED.map(id => {
     const source = LEGACY_KNOWLEDGE.find(doc => doc.reference.documentId === id)!;
-    return { documentId: id, version: WEB_VERSION,
+    return { documentId: id, version: id in PILOT_COPY ? '2026-09-23.web2' : WEB_VERSION,
       sectionId: source.reference.sectionId,
-      payload: canonicalPayload({ ...source.payload, channels: ['WEB_INTERNAL'] }) };
+      payload: canonicalPayload({ ...source.payload, body: PILOT_COPY[id] ?? source.payload.body,
+        channels: ['WEB_INTERNAL'] }) };
   });
   const release = stageInput.parse({ id: RELEASE_ID, formatVersion: 1, documents });
   const manifest = canonicalManifest({ formatVersion: 1, references: documents.map(doc => ({
@@ -35,7 +40,8 @@ function reviewSheet(result: ReturnType<typeof draft>): string {
   const hashes = new Map(result.manifest.references.map(ref => [ref.documentId, ref.contentHash]));
   const attention: Record<string, string> = {
     asistente: 'Confirmar que la mención de propuestas de compra no sugiera confirmación desde el chat inicial.',
-    reposicion: 'Confirmar que la orden en borrador describa el flujo manual vigente; operaciones del asistente siguen apagadas.',
+    reposicion: 'Verificar la ruta manual en Inventario o Compras; la consulta operativa del asistente sigue apagada.',
+    comparacion: 'Verificar que el piloto muestre cifras del período sin prometer comparación automática.',
     'salida-proveedor': 'Confirmar que la salida física y la nota de crédito permanezcan fuera del chat inicial.',
     merma: 'Confirmar que la baja se ejecuta sólo en el flujo autorizado, no por una respuesta del modelo.',
   };
