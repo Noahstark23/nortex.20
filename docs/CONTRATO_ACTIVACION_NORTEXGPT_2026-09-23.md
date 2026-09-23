@@ -24,7 +24,7 @@ El checkout `codex/caja-nica-retention` y su archivo no rastreado quedan fuera d
 
 | Responsable | Archivos permitidos | Contrato |
 |---|---|---|
-| Codex principal | `docker-compose.yml`, `Dockerfile.backup`, `.github/workflows/ci.yml`, `backend/workers/assistant.ts`, `backend/services/assistant/operations/{workerCycle,workerHeartbeat,healthStatus}.ts`, pruebas correspondientes, `scripts/{assistant-operations-demo.ts,backup-db.sh,backup-scheduler.sh,backup-assistant-originals.sh}`, `scripts/qa/{seed-assistant-backup-ci,verify-assistant-originals-restore}.ts`, `docs/evidence/nortexgpt/{evaluation-20260923/,help-review-20260923.md,originals-joint-restore-20260923.md}`, `docs/runbooks/{nortexgpt-evaluacion-haiku,nortexgpt-activation-first-cut}.md` y este contrato | Arranque explícito, estado del worker, copia privada opcional, CI, QA y procedimiento del primer corte |
+| Codex principal | `docker-compose.yml`, `Dockerfile.backup`, `.github/workflows/ci.yml`, `backend/workers/assistant.ts`, `backend/services/assistant/operations/{workerCycle,workerHeartbeat,healthStatus}.ts`, pruebas correspondientes, `scripts/{assistant-operations-demo.ts,backup-db.sh,backup-scheduler.sh,backup-assistant-originals.sh}`, `scripts/ops/nortexgpt-pilot.ts`, `scripts/qa/{seed-assistant-backup-ci,test-nortexgpt-pilot,verify-assistant-originals-restore}.ts`, `docs/evidence/nortexgpt/{evaluation-20260923/,help-review-20260923.md,originals-joint-restore-20260923.md,pilot-activation-qa-20260923.md}`, `docs/runbooks/{nortexgpt-evaluacion-haiku,nortexgpt-activation-first-cut}.md` y este contrato | Arranque explícito, estado del worker, copia privada opcional, CI, QA, identidad/presupuesto de pilotos y procedimiento del primer corte |
 
 No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y flujos monetarios quedan fuera de este lote. Si otro trabajo modifica los archivos anteriores, se reconcilia antes de integrar.
 
@@ -37,7 +37,7 @@ No se delegó edición. `backend/server.ts`, `components/POS.tsx`, schema y fluj
 | SQL y originales | Copia remota coherente y restore aislado con referencias, hashes, permisos, compra y propuesta reconciliados | Parcial: mecanismo opcional de backup SQL + originales permanentes y ensayos locales sintéticos de 143 tablas/228-229 filas; original, compra y propuesta `COMMITTED` reconciliados; alteraciones detectadas. No cubre adjuntos pendientes, copia remota conjunta ni restore de producción; extracción sigue apagada |
 | Contenido y expected | Versiones completas y casos revisados por persona | Pendiente |
 | Modelo y presupuesto | Llamada sintética real, reserva/settlement y tope comprobados | Pendiente |
-| Piloto web | Rol real, fuentes, cifras, carrito, revocación y recuperación | Pendiente de negocio/cuenta |
+| Piloto web | Rol real, fuentes, cifras, carrito, revocación y recuperación | Procedimiento de identidad/configuración probado sólo con dos negocios sintéticos; cuentas, recorrido web y presupuesto real pendientes |
 | CI, staging y producción | SHA idéntico y smoke por ambiente | Pendiente para este candidato |
 
 La evidencia de cada compuerta conserva escenario, SHA, resultado y límites. Un total de tests no sustituye la prueba operativa ni la aceptación humana.
@@ -63,3 +63,5 @@ La evidencia de cada compuerta conserva escenario, SHA, resultado y límites. Un
 - El job de CI `backup-restore-smoke` quedó ampliado con un original, compra y propuesta sintéticos, hashes de ambos artefactos y restore conjunto descartable. El fixture se ejecutó en MySQL 8 local; la corrida terminal de CI del candidato sigue pendiente.
 - Tras ese cableado, la compuerta local pasó con 491 archivos/7090 pruebas; 50 archivos/545 pruebas omitidas se informan por separado. Diseño y build pasaron. No equivale a CI terminal.
 - El recorrido nuevo de CI se reprodujo íntegro en un segundo MySQL 8 local descartable: 143 tablas/6 filas restauradas con conteos iguales, ambos hashes coincidentes y una referencia de propuesta íntegra. GitHub Actions para este SHA sigue pendiente.
+- Se añadió `inspect`/`enable`/`disable` para el primer corte individual, con revisor derivado de JWT y AuditLog transaccional. En MySQL 8 local descartable se probaron dos negocios aislados, límite US$2, rechazos de identidad/revisión/sesión, repetición y revocación. Los nuevos pasos de `backup-restore-smoke` aún esperan CI terminal. Ver `pilot-activation-qa-20260923.md`.
+- Después de integrar esos pasos en el job existente, la compuerta local completa volvió a pasar: 491 archivos/7090 pruebas; 50 archivos/545 pruebas omitidas por separado, TypeScript, diseño y build. No acredita CI remoto ni cuentas reales.

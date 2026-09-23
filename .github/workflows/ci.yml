@@ -296,6 +296,22 @@ jobs:
           docker run --rm --entrypoint bash nortex-backup:ci -lc \
             'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
 
+      # El mismo MySQL 8 sirve para comprobar el control del piloto en una BD
+      # nueva; no se mezcla con el origen ni el destino del restore de backup.
+      - name: Schema descartable del piloto
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \
+            'CREATE DATABASE nortex_quality_pilot CHARACTER SET utf8mb4;'
+          npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+      - name: Identidad, límite, auditoría y revocación entre dos negocios
+        run: node --import tsx scripts/qa/test-nortexgpt-pilot.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          NORTEX_QA_DATABASE_ACK: disposable-database
+
   # Esta compuerta arranca su propia base MySQL 8 efímera y backend loopback.
   # La imagen se obtiene únicamente en CI; el script local falla cerrado si no
   # fue obtenida de forma explícita por la persona que ejecuta la verificación.
