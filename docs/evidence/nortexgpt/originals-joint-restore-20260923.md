@@ -76,3 +76,12 @@ La compuerta local integral pasó después del cableado: 491 archivos y 7090
 pruebas aprobadas; 50 archivos y 545 pruebas omitidas se contabilizan aparte.
 También pasaron diseño y build. La base, el contenedor y los originales
 sintéticos de este ensayo se retiraron al terminar.
+
+Se repitió el recorrido completo del nuevo CI contra un MySQL 8 descartable
+independiente: el sembrador creó un original PDF, una compra y una propuesta
+`COMMITTED`; la imagen actual de backup generó SQL de 143 tablas y un tar con
+un original; los dos hashes coincidieron con el latido. El SQL se restauró
+en otra base con 143 tablas y 6 filas idénticas al origen. El tar se extrajo
+en otro directorio 0700 y el verificador devolvió `ok`, un original y una
+referencia de propuesta, con cero diferencias. Es prueba local sintética del
+recorrido, no una ejecución de GitHub Actions ni restauración off-site.
