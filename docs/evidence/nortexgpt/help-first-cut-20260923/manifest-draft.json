@@ -1,0 +1,65 @@
+{
+  "formatVersion": 1,
+  "references": [
+    {
+      "documentId": "asistente",
+      "version": "2026-09-05.1",
+      "sectionId": "main",
+      "contentHash": "6873763822f40af06d1082878f968dd15a3de3a9372a8d86e667e5cc2a2df5e6"
+    },
+    {
+      "documentId": "comparacion",
+      "version": "2026-09-05.2",
+      "sectionId": "main",
+      "contentHash": "cbb614b0b2a2e4e94f21daa139ea8469dfb2696dc2b21fbee590f253b5754845"
+    },
+    {
+      "documentId": "compras",
+      "version": "2026-09-05.1",
+      "sectionId": "main",
+      "contentHash": "cd485d3c49b0e5ff002f201c8df4236dc7f59121bcca9f9aa55ac351576093b3"
+    },
+    {
+      "documentId": "contabilidad",
+      "version": "2026-09-05.1",
+      "sectionId": "main",
+      "contentHash": "5a623b593676e4a0983248eec7e855b42e20c2ce7fda5a0512d2a73e9b7c48a6"
+    },
+    {
+      "documentId": "lotes",
+      "version": "2026-09-05.1",
+      "sectionId": "main",
+      "contentHash": "babaac6683049b858e8041c884646a547bc3d3fcda64d030180cc567a3093736"
+    },
+    {
+      "documentId": "merma",
+      "version": "2026-09-05.2",
+      "sectionId": "main",
+      "contentHash": "df8c1fb22f81aa3174c3e097d88e8efe96a4734f6281422a6663b7ed3a5848d7"
+    },
+    {
+      "documentId": "offline",
+      "version": "2026-09-05.1",
+      "sectionId": "main",
+      "contentHash": "7c9f4c2240f54b1d73f182e303e189e3b110a1a36ed4c43c09cbdfb5360b2cc7"
+    },
+    {
+      "documentId": "reposicion",
+      "version": "2026-09-05.2",
+      "sectionId": "main",
+      "contentHash": "6767f7445bb9d9b4f9cc5b26e1aea70633a8dcf59eabf1840023424fb849fa2e"
+    },
+    {
+      "documentId": "salida-proveedor",
+      "version": "2026-09-05.2",
+      "sectionId": "main",
+      "contentHash": "7fdcbd03556a3c7facd02cf54038da7e92664e0c278d2b344236386b8cb3bd39"
+    },
+    {
+      "documentId": "ventas",
+      "version": "2026-09-05.1",
+      "sectionId": "main",
+      "contentHash": "fdd47f962bf3bc75c5419d048adfe39dc8f47871f60210123591854261465216"
+    }
+  ]
+}
