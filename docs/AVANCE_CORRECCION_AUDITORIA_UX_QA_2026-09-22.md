@@ -1,13 +1,13 @@
 # Avance de corrección — auditoría UX + QA 2026-09-22
 
-**Candidato local:** worktree aislado `uxqa-main-20260923`, rama `codex/uxqa-audit-main-20260923`, base `origin/main` en `8776be7241f46a1611f472c72d8a8ce2f0633570`. El checkout original, el candidato anterior y la cuenta demo no se modificaron. Este documento describe pruebas locales con datos sintéticos; no acredita CI del SHA, staging ni producción.
+**Candidato local:** worktree aislado `uxqa-main-20260923`, rama `codex/uxqa-audit-main-20260923`, base `origin/main` en `8776be7241f46a1611f472c72d8a8ce2f0633570`. El checkout original, el candidato anterior y la cuenta demo no se modificaron. Este documento describe pruebas locales con datos sintéticos; la CI del SHA se registra en el PR #222. No acredita staging ni producción.
 
 El 2026-09-23 se recibió el [reporte original con 72 capturas](EVIDENCIA_ORIGINAL_AUDITORIA_UX_QA_2026-09-22.md). Las imágenes confirman el saldo negativo de #11. Para #12, la captura previa a abrir caja muestra el campo en **C$ 0**, no en C$ 200; el envío de C$ 200 sigue sin evidencia. Las compuertas del código del candidato y la observación histórica se mantienen separadas.
 
 | Hallazgo | Estado local | Evidencia y límite |
 | --- | --- | --- |
 | #11 Inventario contable negativo | Reparación de alta futura demostrada; historia por conciliar | La creación de producto, la importación y el catálogo inicial registran existencia, Kardex y asiento de apertura atómicos. Pruebas de venta posterior y apertura de 1.1.4 por HTTP/MySQL; `buildInitialInventoryJournalLines` tiene pruebas de partida doble y Decimal. La cuenta 3.1.4 identifica origen por conciliar; no se modificó ningún saldo histórico ni se determinó el primer asiento negativo de la cuenta demo. |
-| #12 Fondo C$ 200 | Contrato actual demostrado; premisa histórica sin corroborar | Abrir turno con fondo persiste `initialCash`, auditoría y lectura en caja/monitor en la misma prueba de integración. El POS ahora acusa el turno y el fondo que devolvió el servidor. La única captura de apertura recibida muestra C$ 0 en el campo; no hay solicitud, respuesta ni `shiftId` que acredite el envío de C$ 200. |
+| #12 Fondo C$ 200 | Contrato actual demostrado; premisa histórica sin corroborar | Abrir turno con fondo persiste `initialCash`, auditoría y lectura en caja/monitor en la misma prueba de integración. El POS ahora acusa el turno y el fondo que devolvió el servidor. La única captura de apertura recibida muestra C$ 0 en el campo; el auditor confirmó que no hay solicitud, respuesta ni captura posterior que acredite el envío de C$ 200. Una apertura nueva en demo no resolvería el hecho histórico. |
 | #3 y U-03 Cobranza | Reparación local demostrada | La respuesta transaccional del abono y su reintento entregan por separado saldo de factura y deuda total del cliente. Modal y comprobante los etiquetan. Prueba con dos facturas y reintento. |
 | #2 Devolución | Reparación local demostrada | Un pago contado ofrece su canal original como elegible; los flujos de crédito y sus montos mantienen las restricciones. Pruebas de servicio e integración. La aprobación y el reembolso real no se ejecutaron en producción. |
 | U-01 Efectivo | Reparación local con pruebas de interfaz | Monto exacto precargado y botón válido; los tests cubren monto insuficiente y Enter, además de los casos existentes del POS. Falta recorrido visual en dispositivos. |
@@ -31,5 +31,5 @@ El 2026-09-23 se recibió el [reporte original con 72 capturas](EVIDENCIA_ORIGIN
 ## Siguiente trabajo y bloqueos
 
 1. Conciliar historia contable de la cuenta demo mediante copia segura y eventos originales; la reparación local no reconstruye automáticamente asientos anteriores.
-2. Si se mantiene la afirmación de apertura con C$ 200, obtener la captura del campo ya editado o una traza saneada de solicitud/respuesta para identificar `shiftId` y transición. La captura recibida muestra 0; no inferir pérdida de fondo a partir de la pantalla.
+2. Mantener #12 como observación histórica no verificable con el material conservado. El auditor confirmó que no existe captura posterior ni traza de apertura. La conducta actual con C$ 200 ya está probada en MySQL efímero; no abrir otra caja en la demo para intentar probar el evento anterior.
 3. Completar archivo de clientes/productos con política de relaciones activas y recorrido visual/accesible de utilidad por período, comprobante, buscador, foco y glosario. El alta operativa sin correo requiere contrato de identidad y seguridad antes de codificarse.
