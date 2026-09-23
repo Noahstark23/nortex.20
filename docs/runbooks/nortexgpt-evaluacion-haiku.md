@@ -111,11 +111,24 @@ scripts/qa/nortexgpt-qa-run.sh node scripts/qa/nortexgpt-eval-server.mjs --allow
 
 # Arrancar sin proveedor, para ensayar el recorrido sin gastar:
 node scripts/qa/nortexgpt-eval-server.mjs
+
+# Primer corte real del piloto: ayuda + interpretación, operaciones apagadas.
+# Esta opción sólo configura el backend de QA; no autoriza ni ejecuta una llamada.
+node scripts/qa/nortexgpt-eval-server.mjs --pilot-first-cut
 ```
 
 Imprime la URL base, la huella de la credencial propagada (nunca el valor) y las
 capacidades activas. **Detener:** `Ctrl+C` en esa terminal, o `SIGTERM` al proceso;
 el lanzador cierra el backend hijo y libera el puerto.
+
+La receta de la sección 6 usa `operations-model.mjs` y exige **operations=true**.
+No se debe ejecutar contra `--pilot-first-cut`: ese CLI no evalúa el recorrido
+que recibirán las cuentas piloto. En ese recorrido el modelo sólo interpreta
+la pregunta y los servicios deterministas recuperan ayuda publicada o cifras
+autorizadas. Antes de usar proveedor con este modo faltan la revisión humana
+del corpus de ayuda, su publicación controlada en QA, una evaluación específica
+de mensajes, y evidencia atribuible del consumo. El éxito de la sección 6 no
+acredita esas cuatro condiciones.
 
 El secreto JWT de QA se conserva en `~/.nortex-qa/eval-jwt-secret` (0600) para que
 un reinicio no invalide la sesión del evaluador. No es la clave del proveedor.
