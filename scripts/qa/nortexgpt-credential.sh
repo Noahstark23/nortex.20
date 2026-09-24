@@ -58,7 +58,7 @@ cmd_estado() {
     sk-ant-*'...'*) shape="pista-recortada" ;;
     sk-ant-*'…'*) shape="pista-recortada" ;;
     sk-ant-*)
-      if [ "$length" -lt 40 ]; then shape="demasiado-corta"; else shape="prefijo-reconocido"; fi ;;
+      if [ "$length" -lt 40 ]; then shape="demasiado-corta"; else shape="reconocida"; fi ;;
     *) shape="no-reconocida" ;;
   esac
   unset key
