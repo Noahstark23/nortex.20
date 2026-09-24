@@ -46,6 +46,14 @@ También permanece en `expectedOutcomesReviewed: false`; no es aprobación de
 la fuente, del resultado ni de una llamada pagada. El evaluador enlaza el
 consumo al mensaje y nunca reenvía un POST al recuperar, pero contacto y costo
 no prueban por sí solos que el plan del modelo se aplicó.
+El evaluador exige `expectedMode: "help_without_operations"` y compara capturas
+antes/después, acotadas al negocio sintético, de propuestas, compras, órdenes,
+Kardex, existencias y registros de dinero. Un cambio deja el ensayo incompleto.
+El estado `executed_pending_human_review` sólo acredita esas comprobaciones
+automáticas: la persona revisora debe juzgar si la respuesta orienta a
+existencias y recepciones pendientes, distingue unidades vencidas o retenidas,
+limita Compras Inteligentes a administración y no promete cobertura calculada
+por NortexGPT.
 
 Antes de una llamada pagada, una persona debe contrastar los formularios con
 las filas de la fixture, completar revisor, fecha y juicio en cada JSON, y sólo

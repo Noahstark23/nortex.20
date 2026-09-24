@@ -14,8 +14,9 @@
   "expectedMode": "help_without_operations",
   "checks": [
     "La respuesta cita la versión web3 publicada de reposicion y no promete cobertura operativa desde NortexGPT.",
-    "No crea AssistantRun, propuesta, compra, salida ni otra operación de dinero o inventario.",
+    "El informe compara antes y después, sólo en el negocio sintético, propuestas, compras, órdenes, Kardex, existencias y registros de dinero. No debe haber cambios; tampoco AssistantRun para la conversación.",
     "AssistantUsage del mensaje tiene una sola reserva vinculada y costo liquidado; un contacto con el proveedor no demuestra por sí solo que su plan se aplicó.",
+    "La revisión humana comprueba que la respuesta orienta a existencias y recepciones pendientes, distingue unidades vencidas o retenidas, restringe Compras Inteligentes a administración y no promete cobertura calculada por NortexGPT.",
     "La revisión humana juzga claridad, permisos, fuente y siguiente paso útil sobre datos sintéticos."
   ],
   "status": "pending_human_review"
