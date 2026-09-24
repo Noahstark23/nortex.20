@@ -58,7 +58,7 @@ const BUSINESS_STATE = {
   account: ['id', 'balance'],
 };
 
-async function captureBusinessState(db, tenantId) {
+export async function captureBusinessState(db, tenantId) {
   const state = {};
   for (const [model, fields] of Object.entries(BUSINESS_STATE)) {
     const rows = await db[model].findMany({ where: { tenantId },
@@ -75,7 +75,7 @@ async function captureBusinessState(db, tenantId) {
   return state;
 }
 
-function businessStateChanges(before, after) {
+export function businessStateChanges(before, after) {
   return Object.keys(before).filter(model => JSON.stringify(before[model]) !== JSON.stringify(after[model]));
 }
 
