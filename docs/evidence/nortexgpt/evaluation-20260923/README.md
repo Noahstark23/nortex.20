@@ -42,8 +42,9 @@ requiere evaluación y aprobación separadas, con gasto medido.
 una pregunta de ayuda del primer corte con `operations=false` y
 `language=true`. Exige la cita `reposicion` `web3` del manifiesto
 `debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c`.
-También permanece en `expectedOutcomesReviewed: false`; no es aprobación de
-la fuente, del resultado ni de una llamada pagada. El evaluador enlaza el
+El formulario de esta prueba tiene `expectedOutcomesReviewed: true` y atribuye
+la revisión de los resultados esperados a Jose Noel Pineda Alfaro. Esto no
+constituye revisión editorial autenticada ni aprobación del resultado del modelo. El evaluador enlaza el
 consumo al mensaje y nunca reenvía un POST al recuperar, pero contacto y costo
 no prueban por sí solos que el plan del modelo se aplicó.
 El evaluador exige `expectedMode: "help_without_operations"` y compara capturas
@@ -54,6 +55,17 @@ automáticas: la persona revisora debe juzgar si la respuesta orienta a
 existencias y recepciones pendientes, distingue unidades vencidas o retenidas,
 limita Compras Inteligentes a administración y no promete cobertura calculada
 por NortexGPT.
+
+El 24 de septiembre se ejecutó una consulta real de Haiku para la pregunta de
+ayuda del primer corte contra un backend local y una base MySQL desechable,
+con el manifiesto exacto `debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c`.
+El [reporte](first-cut-model-ferreteria-20260924.json) conserva la respuesta y
+la cita `reposicion` `2026-09-23.web3`, una única reserva liquidada por
+US$0,002015, cero ejecuciones operativas y cero cambios en los modelos de
+negocio capturados. Su estado es `executed_pending_human_review`: falta el
+juicio humano formal sobre la respuesta. La publicación del corpus fue sólo
+una simulación dentro de QA, no la aprobación editorial del manifiesto real.
+No autoriza fusionar ni desplegar.
 
 Antes de una llamada pagada, una persona debe contrastar los formularios con
 las filas de la fixture, completar revisor, fecha y juicio en cada JSON, y sólo

@@ -1,0 +1,1126 @@
+{
+  "version": 2,
+  "status": "executed_pending_human_review",
+  "paidCalls": null,
+  "humanReview": "pending",
+  "manifestHash": "debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c",
+  "maximumReservationUsd": "0.281920",
+  "binding": "69a29f62f236277be8e13e8f8200806b23dacbdbd26365de5d74e4187b66ab4d",
+  "review": {
+    "reviewer": "Jose Noel Pineda Alfaro",
+    "reviewedAt": "2026-09-24T03:37:15.762Z",
+    "tenantId": "operativo-demo-20260905-ferreteria",
+    "questionSha256": "110ef4924cd7c7979e2c3c3cf76c08113102b31b9c8047c50af972acb1c397c3"
+  },
+  "businessStateBefore": {
+    "assistantProposal": [],
+    "assistantActionProposal": [
+      {
+        "id": "342a5440-1912-4329-87ea-7f749586c341",
+        "status": "COMMITTED",
+        "version": "2",
+        "updatedAt": "2026-09-24T17:32:20.640Z"
+      },
+      {
+        "id": "3db159cb-1db4-422b-b5a6-b96c97ab5c67",
+        "status": "READY",
+        "version": "2",
+        "updatedAt": "2026-09-24T17:32:20.387Z"
+      },
+      {
+        "id": "63bdd23a-1519-450e-9a02-3c85d8ac6fcc",
+        "status": "DRAFT",
+        "version": "2",
+        "updatedAt": "2026-09-24T17:32:20.414Z"
+      },
+      {
+        "id": "9e22b275-56ce-49c7-9e90-382a316af5fb",
+        "status": "DRAFT",
+        "version": "2",
+        "updatedAt": "2026-09-24T17:32:20.448Z"
+      },
+      {
+        "id": "fe75be21-2ab8-49de-a8d8-bd13e76add87",
+        "status": "READY",
+        "version": "2",
+        "updatedAt": "2026-09-24T17:32:20.565Z"
+      }
+    ],
+    "assistantActionCommand": [
+      {
+        "id": "e3c0fc39-a95c-4e08-9b1e-7d6d87a22e1b",
+        "createdAt": "2026-09-24T17:32:20.620Z"
+      }
+    ],
+    "purchaseOrderDraftCommand": [],
+    "purchaseCommand": [
+      {
+        "id": "cmuft7oly0006ilvqayku2u62",
+        "createdAt": "2026-09-24T17:32:20.183Z"
+      },
+      {
+        "id": "cmuft7ont001uilvq4dgmhinu",
+        "createdAt": "2026-09-24T17:32:20.249Z"
+      },
+      {
+        "id": "cmuft7oor002dilvqp4pglrlb",
+        "createdAt": "2026-09-24T17:32:20.284Z"
+      }
+    ],
+    "purchaseOrder": [],
+    "purchase": [
+      {
+        "id": "cmuft7omc0008ilvqfusm3f5h",
+        "status": "PENDING_PAYMENT",
+        "total": "11500",
+        "balanceDue": "11500",
+        "paidAt": null
+      },
+      {
+        "id": "cmuft7onz001wilvqxbvhxarc",
+        "status": "PENDING_PAYMENT",
+        "total": "575",
+        "balanceDue": "575",
+        "paidAt": null
+      },
+      {
+        "id": "cmuft7op1002filvq3mofnb7q",
+        "status": "PENDING_PAYMENT",
+        "total": "828",
+        "balanceDue": "828",
+        "paidAt": null
+      }
+    ],
+    "goodsReceipt": [],
+    "supplierReturn": [],
+    "productReturn": [],
+    "stockTransfer": [],
+    "kardexMovement": [
+      {
+        "id": "cmuft7omz000cilvqz7djenx2",
+        "date": "2026-09-24T17:32:20.220Z"
+      },
+      {
+        "id": "cmuft7ooa0020ilvq4j0mdh5l",
+        "date": "2026-09-24T17:32:20.266Z"
+      },
+      {
+        "id": "cmuft7opp002oilvq6q0auf5v",
+        "date": "2026-09-24T17:32:20.317Z"
+      },
+      {
+        "id": "cmuft7oqc0031ilvqxogpeblh",
+        "date": "2026-09-10T06:01:00.000Z"
+      },
+      {
+        "id": "cmuft7oql0036ilvq9o9kk5eo",
+        "date": "2026-09-17T06:01:00.000Z"
+      },
+      {
+        "id": "cmuft7oqt003bilvqitfff02c",
+        "date": "2026-09-24T06:01:00.000Z"
+      }
+    ],
+    "productBatchLedgerEntry": [
+      {
+        "id": "cmuft7opn002milvq9rsayu3c",
+        "quantityDelta": "12",
+        "stockAfter": "12"
+      }
+    ],
+    "product": [
+      {
+        "id": "cmuft7olp0005ilvqu3zgvuvt",
+        "stock": "5"
+      },
+      {
+        "id": "cmuft7onp001tilvqbyf7ssek",
+        "stock": "250"
+      },
+      {
+        "id": "cmuft7oon002cilvqkhqt5ycy",
+        "stock": "12"
+      }
+    ],
+    "productStock": [
+      {
+        "id": "cmuft7omu000ailvqylhxht7o",
+        "stock": "5"
+      },
+      {
+        "id": "cmuft7oo6001yilvqebk4pch3",
+        "stock": "250"
+      },
+      {
+        "id": "cmuft7op9002hilvqhm51wta3",
+        "stock": "12"
+      }
+    ],
+    "productBatch": [
+      {
+        "id": "cmuft7opd002jilvqb0tuvf1m",
+        "stock": "12"
+      }
+    ],
+    "productBatchWarehouseStock": [
+      {
+        "id": "cmuft7opj002kilvqmzek930g",
+        "stock": "12",
+        "heldStock": "0"
+      }
+    ],
+    "journalEntry": [
+      {
+        "id": "cmuft7ona001jilvqsz9vdj4i",
+        "createdAt": "2026-09-24T17:32:20.231Z"
+      },
+      {
+        "id": "cmuft7ooe0022ilvqysed68td",
+        "createdAt": "2026-09-24T17:32:20.270Z"
+      },
+      {
+        "id": "cmuft7opt002qilvqvluqo3gr",
+        "createdAt": "2026-09-24T17:32:20.322Z"
+      }
+    ],
+    "sale": [
+      {
+        "id": "operativo-demo-20260905-ferreteria-sale-0",
+        "total": "2650",
+        "status": "COMPLETED"
+      },
+      {
+        "id": "operativo-demo-20260905-ferreteria-sale-14",
+        "total": "3975",
+        "status": "COMPLETED"
+      },
+      {
+        "id": "operativo-demo-20260905-ferreteria-sale-7",
+        "total": "5300",
+        "status": "COMPLETED"
+      }
+    ],
+    "cashMovement": [],
+    "expense": [],
+    "account": [
+      {
+        "id": "cmuft7on4000dilvqc1j0jqbx",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000eilvqvp13ycfz",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000filvq5ztkqejh",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000gilvqfko4k5c9",
+        "balance": "11220"
+      },
+      {
+        "id": "cmuft7on4000hilvqrthy66ym",
+        "balance": "1683"
+      },
+      {
+        "id": "cmuft7on4000iilvq9kxgyerk",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000jilvqq5ee4oy1",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000kilvq0w0is4an",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000lilvqrrumq1ow",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000milvqhl8pj95r",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000nilvqn7bzfjtb",
+        "balance": "12903"
+      },
+      {
+        "id": "cmuft7on4000oilvq9o4p1o83",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000pilvqjvg81nam",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000qilvqp58sfekz",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000rilvq4d67gvd0",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000silvq4e3buaju",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000tilvqd16mf4ct",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000uilvqfv32ckdo",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000vilvqhpllcs4z",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000wilvqeol6q018",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000xilvq7e83t41o",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000yilvqxz0rqmzb",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4000zilvqooiku63n",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40010ilvqxfcappqp",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40011ilvqkllt5kmt",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40012ilvqht0wcorp",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40013ilvqdqb2dnsj",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40014ilvqwltrktqs",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40015ilvqnix44rov",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40016ilvqzcfwmrox",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40017ilvqriwo4s34",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40018ilvqo5c2bfow",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on40019ilvqe3csz2lt",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001ailvq65v0t15a",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001bilvqzz2r3ttb",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001cilvqqoq0mra7",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001dilvqz4frq35t",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001eilvqxw0s838h",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001filvq7eyu3gso",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001gilvqi6eet6dz",
+        "balance": "0"
+      },
+      {
+        "id": "cmuft7on4001hilvq1b2nta9i",
+        "balance": "0"
+      }
+    ],
+    "payment": []
+  },
+  "conversationId": "cmuftefvz0001il6ce332k6ud",
+  "requestId": "7ae9fd20-f916-47e5-802c-92baae8d1754",
+  "usageKey": "message:cmuftefvz0001il6ce332k6ud:7ae9fd20-f916-47e5-802c-92baae8d1754",
+  "businessStateComparison": {
+    "before": {
+      "assistantProposal": [],
+      "assistantActionProposal": [
+        {
+          "id": "342a5440-1912-4329-87ea-7f749586c341",
+          "status": "COMMITTED",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.640Z"
+        },
+        {
+          "id": "3db159cb-1db4-422b-b5a6-b96c97ab5c67",
+          "status": "READY",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.387Z"
+        },
+        {
+          "id": "63bdd23a-1519-450e-9a02-3c85d8ac6fcc",
+          "status": "DRAFT",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.414Z"
+        },
+        {
+          "id": "9e22b275-56ce-49c7-9e90-382a316af5fb",
+          "status": "DRAFT",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.448Z"
+        },
+        {
+          "id": "fe75be21-2ab8-49de-a8d8-bd13e76add87",
+          "status": "READY",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.565Z"
+        }
+      ],
+      "assistantActionCommand": [
+        {
+          "id": "e3c0fc39-a95c-4e08-9b1e-7d6d87a22e1b",
+          "createdAt": "2026-09-24T17:32:20.620Z"
+        }
+      ],
+      "purchaseOrderDraftCommand": [],
+      "purchaseCommand": [
+        {
+          "id": "cmuft7oly0006ilvqayku2u62",
+          "createdAt": "2026-09-24T17:32:20.183Z"
+        },
+        {
+          "id": "cmuft7ont001uilvq4dgmhinu",
+          "createdAt": "2026-09-24T17:32:20.249Z"
+        },
+        {
+          "id": "cmuft7oor002dilvqp4pglrlb",
+          "createdAt": "2026-09-24T17:32:20.284Z"
+        }
+      ],
+      "purchaseOrder": [],
+      "purchase": [
+        {
+          "id": "cmuft7omc0008ilvqfusm3f5h",
+          "status": "PENDING_PAYMENT",
+          "total": "11500",
+          "balanceDue": "11500",
+          "paidAt": null
+        },
+        {
+          "id": "cmuft7onz001wilvqxbvhxarc",
+          "status": "PENDING_PAYMENT",
+          "total": "575",
+          "balanceDue": "575",
+          "paidAt": null
+        },
+        {
+          "id": "cmuft7op1002filvq3mofnb7q",
+          "status": "PENDING_PAYMENT",
+          "total": "828",
+          "balanceDue": "828",
+          "paidAt": null
+        }
+      ],
+      "goodsReceipt": [],
+      "supplierReturn": [],
+      "productReturn": [],
+      "stockTransfer": [],
+      "kardexMovement": [
+        {
+          "id": "cmuft7omz000cilvqz7djenx2",
+          "date": "2026-09-24T17:32:20.220Z"
+        },
+        {
+          "id": "cmuft7ooa0020ilvq4j0mdh5l",
+          "date": "2026-09-24T17:32:20.266Z"
+        },
+        {
+          "id": "cmuft7opp002oilvq6q0auf5v",
+          "date": "2026-09-24T17:32:20.317Z"
+        },
+        {
+          "id": "cmuft7oqc0031ilvqxogpeblh",
+          "date": "2026-09-10T06:01:00.000Z"
+        },
+        {
+          "id": "cmuft7oql0036ilvq9o9kk5eo",
+          "date": "2026-09-17T06:01:00.000Z"
+        },
+        {
+          "id": "cmuft7oqt003bilvqitfff02c",
+          "date": "2026-09-24T06:01:00.000Z"
+        }
+      ],
+      "productBatchLedgerEntry": [
+        {
+          "id": "cmuft7opn002milvq9rsayu3c",
+          "quantityDelta": "12",
+          "stockAfter": "12"
+        }
+      ],
+      "product": [
+        {
+          "id": "cmuft7olp0005ilvqu3zgvuvt",
+          "stock": "5"
+        },
+        {
+          "id": "cmuft7onp001tilvqbyf7ssek",
+          "stock": "250"
+        },
+        {
+          "id": "cmuft7oon002cilvqkhqt5ycy",
+          "stock": "12"
+        }
+      ],
+      "productStock": [
+        {
+          "id": "cmuft7omu000ailvqylhxht7o",
+          "stock": "5"
+        },
+        {
+          "id": "cmuft7oo6001yilvqebk4pch3",
+          "stock": "250"
+        },
+        {
+          "id": "cmuft7op9002hilvqhm51wta3",
+          "stock": "12"
+        }
+      ],
+      "productBatch": [
+        {
+          "id": "cmuft7opd002jilvqb0tuvf1m",
+          "stock": "12"
+        }
+      ],
+      "productBatchWarehouseStock": [
+        {
+          "id": "cmuft7opj002kilvqmzek930g",
+          "stock": "12",
+          "heldStock": "0"
+        }
+      ],
+      "journalEntry": [
+        {
+          "id": "cmuft7ona001jilvqsz9vdj4i",
+          "createdAt": "2026-09-24T17:32:20.231Z"
+        },
+        {
+          "id": "cmuft7ooe0022ilvqysed68td",
+          "createdAt": "2026-09-24T17:32:20.270Z"
+        },
+        {
+          "id": "cmuft7opt002qilvqvluqo3gr",
+          "createdAt": "2026-09-24T17:32:20.322Z"
+        }
+      ],
+      "sale": [
+        {
+          "id": "operativo-demo-20260905-ferreteria-sale-0",
+          "total": "2650",
+          "status": "COMPLETED"
+        },
+        {
+          "id": "operativo-demo-20260905-ferreteria-sale-14",
+          "total": "3975",
+          "status": "COMPLETED"
+        },
+        {
+          "id": "operativo-demo-20260905-ferreteria-sale-7",
+          "total": "5300",
+          "status": "COMPLETED"
+        }
+      ],
+      "cashMovement": [],
+      "expense": [],
+      "account": [
+        {
+          "id": "cmuft7on4000dilvqc1j0jqbx",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000eilvqvp13ycfz",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000filvq5ztkqejh",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000gilvqfko4k5c9",
+          "balance": "11220"
+        },
+        {
+          "id": "cmuft7on4000hilvqrthy66ym",
+          "balance": "1683"
+        },
+        {
+          "id": "cmuft7on4000iilvq9kxgyerk",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000jilvqq5ee4oy1",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000kilvq0w0is4an",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000lilvqrrumq1ow",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000milvqhl8pj95r",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000nilvqn7bzfjtb",
+          "balance": "12903"
+        },
+        {
+          "id": "cmuft7on4000oilvq9o4p1o83",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000pilvqjvg81nam",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000qilvqp58sfekz",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000rilvq4d67gvd0",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000silvq4e3buaju",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000tilvqd16mf4ct",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000uilvqfv32ckdo",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000vilvqhpllcs4z",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000wilvqeol6q018",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000xilvq7e83t41o",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000yilvqxz0rqmzb",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000zilvqooiku63n",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40010ilvqxfcappqp",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40011ilvqkllt5kmt",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40012ilvqht0wcorp",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40013ilvqdqb2dnsj",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40014ilvqwltrktqs",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40015ilvqnix44rov",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40016ilvqzcfwmrox",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40017ilvqriwo4s34",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40018ilvqo5c2bfow",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40019ilvqe3csz2lt",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001ailvq65v0t15a",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001bilvqzz2r3ttb",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001cilvqqoq0mra7",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001dilvqz4frq35t",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001eilvqxw0s838h",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001filvq7eyu3gso",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001gilvqi6eet6dz",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001hilvq1b2nta9i",
+          "balance": "0"
+        }
+      ],
+      "payment": []
+    },
+    "after": {
+      "assistantProposal": [],
+      "assistantActionProposal": [
+        {
+          "id": "342a5440-1912-4329-87ea-7f749586c341",
+          "status": "COMMITTED",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.640Z"
+        },
+        {
+          "id": "3db159cb-1db4-422b-b5a6-b96c97ab5c67",
+          "status": "READY",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.387Z"
+        },
+        {
+          "id": "63bdd23a-1519-450e-9a02-3c85d8ac6fcc",
+          "status": "DRAFT",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.414Z"
+        },
+        {
+          "id": "9e22b275-56ce-49c7-9e90-382a316af5fb",
+          "status": "DRAFT",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.448Z"
+        },
+        {
+          "id": "fe75be21-2ab8-49de-a8d8-bd13e76add87",
+          "status": "READY",
+          "version": "2",
+          "updatedAt": "2026-09-24T17:32:20.565Z"
+        }
+      ],
+      "assistantActionCommand": [
+        {
+          "id": "e3c0fc39-a95c-4e08-9b1e-7d6d87a22e1b",
+          "createdAt": "2026-09-24T17:32:20.620Z"
+        }
+      ],
+      "purchaseOrderDraftCommand": [],
+      "purchaseCommand": [
+        {
+          "id": "cmuft7oly0006ilvqayku2u62",
+          "createdAt": "2026-09-24T17:32:20.183Z"
+        },
+        {
+          "id": "cmuft7ont001uilvq4dgmhinu",
+          "createdAt": "2026-09-24T17:32:20.249Z"
+        },
+        {
+          "id": "cmuft7oor002dilvqp4pglrlb",
+          "createdAt": "2026-09-24T17:32:20.284Z"
+        }
+      ],
+      "purchaseOrder": [],
+      "purchase": [
+        {
+          "id": "cmuft7omc0008ilvqfusm3f5h",
+          "status": "PENDING_PAYMENT",
+          "total": "11500",
+          "balanceDue": "11500",
+          "paidAt": null
+        },
+        {
+          "id": "cmuft7onz001wilvqxbvhxarc",
+          "status": "PENDING_PAYMENT",
+          "total": "575",
+          "balanceDue": "575",
+          "paidAt": null
+        },
+        {
+          "id": "cmuft7op1002filvq3mofnb7q",
+          "status": "PENDING_PAYMENT",
+          "total": "828",
+          "balanceDue": "828",
+          "paidAt": null
+        }
+      ],
+      "goodsReceipt": [],
+      "supplierReturn": [],
+      "productReturn": [],
+      "stockTransfer": [],
+      "kardexMovement": [
+        {
+          "id": "cmuft7omz000cilvqz7djenx2",
+          "date": "2026-09-24T17:32:20.220Z"
+        },
+        {
+          "id": "cmuft7ooa0020ilvq4j0mdh5l",
+          "date": "2026-09-24T17:32:20.266Z"
+        },
+        {
+          "id": "cmuft7opp002oilvq6q0auf5v",
+          "date": "2026-09-24T17:32:20.317Z"
+        },
+        {
+          "id": "cmuft7oqc0031ilvqxogpeblh",
+          "date": "2026-09-10T06:01:00.000Z"
+        },
+        {
+          "id": "cmuft7oql0036ilvq9o9kk5eo",
+          "date": "2026-09-17T06:01:00.000Z"
+        },
+        {
+          "id": "cmuft7oqt003bilvqitfff02c",
+          "date": "2026-09-24T06:01:00.000Z"
+        }
+      ],
+      "productBatchLedgerEntry": [
+        {
+          "id": "cmuft7opn002milvq9rsayu3c",
+          "quantityDelta": "12",
+          "stockAfter": "12"
+        }
+      ],
+      "product": [
+        {
+          "id": "cmuft7olp0005ilvqu3zgvuvt",
+          "stock": "5"
+        },
+        {
+          "id": "cmuft7onp001tilvqbyf7ssek",
+          "stock": "250"
+        },
+        {
+          "id": "cmuft7oon002cilvqkhqt5ycy",
+          "stock": "12"
+        }
+      ],
+      "productStock": [
+        {
+          "id": "cmuft7omu000ailvqylhxht7o",
+          "stock": "5"
+        },
+        {
+          "id": "cmuft7oo6001yilvqebk4pch3",
+          "stock": "250"
+        },
+        {
+          "id": "cmuft7op9002hilvqhm51wta3",
+          "stock": "12"
+        }
+      ],
+      "productBatch": [
+        {
+          "id": "cmuft7opd002jilvqb0tuvf1m",
+          "stock": "12"
+        }
+      ],
+      "productBatchWarehouseStock": [
+        {
+          "id": "cmuft7opj002kilvqmzek930g",
+          "stock": "12",
+          "heldStock": "0"
+        }
+      ],
+      "journalEntry": [
+        {
+          "id": "cmuft7ona001jilvqsz9vdj4i",
+          "createdAt": "2026-09-24T17:32:20.231Z"
+        },
+        {
+          "id": "cmuft7ooe0022ilvqysed68td",
+          "createdAt": "2026-09-24T17:32:20.270Z"
+        },
+        {
+          "id": "cmuft7opt002qilvqvluqo3gr",
+          "createdAt": "2026-09-24T17:32:20.322Z"
+        }
+      ],
+      "sale": [
+        {
+          "id": "operativo-demo-20260905-ferreteria-sale-0",
+          "total": "2650",
+          "status": "COMPLETED"
+        },
+        {
+          "id": "operativo-demo-20260905-ferreteria-sale-14",
+          "total": "3975",
+          "status": "COMPLETED"
+        },
+        {
+          "id": "operativo-demo-20260905-ferreteria-sale-7",
+          "total": "5300",
+          "status": "COMPLETED"
+        }
+      ],
+      "cashMovement": [],
+      "expense": [],
+      "account": [
+        {
+          "id": "cmuft7on4000dilvqc1j0jqbx",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000eilvqvp13ycfz",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000filvq5ztkqejh",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000gilvqfko4k5c9",
+          "balance": "11220"
+        },
+        {
+          "id": "cmuft7on4000hilvqrthy66ym",
+          "balance": "1683"
+        },
+        {
+          "id": "cmuft7on4000iilvq9kxgyerk",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000jilvqq5ee4oy1",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000kilvq0w0is4an",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000lilvqrrumq1ow",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000milvqhl8pj95r",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000nilvqn7bzfjtb",
+          "balance": "12903"
+        },
+        {
+          "id": "cmuft7on4000oilvq9o4p1o83",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000pilvqjvg81nam",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000qilvqp58sfekz",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000rilvq4d67gvd0",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000silvq4e3buaju",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000tilvqd16mf4ct",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000uilvqfv32ckdo",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000vilvqhpllcs4z",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000wilvqeol6q018",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000xilvq7e83t41o",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000yilvqxz0rqmzb",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4000zilvqooiku63n",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40010ilvqxfcappqp",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40011ilvqkllt5kmt",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40012ilvqht0wcorp",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40013ilvqdqb2dnsj",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40014ilvqwltrktqs",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40015ilvqnix44rov",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40016ilvqzcfwmrox",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40017ilvqriwo4s34",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40018ilvqo5c2bfow",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on40019ilvqe3csz2lt",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001ailvq65v0t15a",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001bilvqzz2r3ttb",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001cilvqqoq0mra7",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001dilvqz4frq35t",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001eilvqxw0s838h",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001filvq7eyu3gso",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001gilvqi6eet6dz",
+          "balance": "0"
+        },
+        {
+          "id": "cmuft7on4001hilvq1b2nta9i",
+          "balance": "0"
+        }
+      ],
+      "payment": []
+    },
+    "changedModels": []
+  },
+  "response": {
+    "id": "cmuftegtd0005il6c23ag8iqi",
+    "text": "Para planificar una reposición, consultá las existencias según los permisos de tu rol y revisá unidades, mínimos y recepciones pendientes. Comprobá aparte los lotes vencidos o retenidos antes de tratar esas unidades como disponibles para vender. La pantalla Compras Inteligentes requiere permisos de administración. Una orden preparada queda en borrador hasta su aprobación; el envío al proveedor se gestiona por separado. Prepararla no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT sigue deshabilitada en este piloto.",
+    "citations": [
+      {
+        "id": "reposicion",
+        "title": "Ayuda de Nortex",
+        "section": "Preparar reposición",
+        "version": "2026-09-23.web3",
+        "path": "nortex-help:reposicion",
+        "sectionId": "main",
+        "contentHash": "ffdec72beef292a69ca8da89887e5841b15b634ac062c361bbe707773cdd71ee"
+      }
+    ],
+    "knowledgeUnavailable": false,
+    "operationalRunId": null
+  },
+  "expectedCitationPresent": true,
+  "operationalRuns": 0,
+  "usage": [
+    {
+      "id": "6c7e0fc8-1e49-4682-ae72-666f91a507ee",
+      "status": "SETTLED",
+      "reservedUsd": "0.28192",
+      "actualUsd": "0.002015",
+      "providerRequestIdPresent": true
+    }
+  ],
+  "settledUsdForMessage": "0.002015",
+  "modelPlanApplied": null,
+  "modelContactCredited": true
+}
