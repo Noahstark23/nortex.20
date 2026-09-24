@@ -1,8 +1,8 @@
 {
   "synthetic": true,
-  "expectedOutcomesReviewed": false,
-  "reviewer": null,
-  "reviewedAt": null,
+  "expectedOutcomesReviewed": true,
+  "reviewer": "Jose Noel Pineda Alfaro",
+  "reviewedAt": "2026-09-24T03:37:15.762Z",
   "tenantId": "operativo-demo-20260905-ferreteria",
   "role": "OWNER",
   "manifestHash": "debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c",
