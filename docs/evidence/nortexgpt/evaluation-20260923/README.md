@@ -68,8 +68,11 @@ con el manifiesto exacto `debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1
 El [reporte](first-cut-model-ferreteria-20260924.json) conserva la respuesta y
 la cita `reposicion` `2026-09-23.web3`, una única reserva liquidada por
 US$0,002015, cero ejecuciones operativas y cero cambios en los modelos de
-negocio capturados. Su estado es `executed_pending_human_review`: falta el
-juicio humano formal sobre la respuesta. La publicación del corpus fue sólo
+negocio capturados. Su estado al ejecutar fue `executed_pending_human_review`.
+La [constancia posterior de revisión humana](first-cut-model-human-review-20260924.json)
+aprueba sólo la respuesta literal de este ensayo sintético y enlaza los hashes
+del reporte y del texto. No equivale a una revisión autenticada del manifiesto.
+La publicación del corpus fue sólo
 una simulación dentro de QA, no la aprobación editorial del manifiesto real.
 No autoriza fusionar ni desplegar.
 

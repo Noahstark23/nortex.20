@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "scope": "synthetic_model_response_only",
+  "decision": "approved",
+  "reviewer": "stark",
+  "reviewerNameEquivalence": "Jose Noel Pineda Alfaro",
+  "source": "Confirmación del usuario en la conversación de Codex tras mostrar la respuesta literal de Haiku",
+  "recordedAt": "2026-09-25T04:12:27.260809Z",
+  "manifestHash": "debdabb3eafa5f4433df61bbfd56ce94c72bc2dddcfffa014389a1bce260ed5c",
+  "reportPath": "first-cut-model-ferreteria-20260924.json",
+  "reportSha256": "52dda115ae59dc001c86da34ffef12711372076d0da5a29df9800dbad63842c3",
+  "responseTextSha256": "e151731fb557e8f3b82a2921d7f58154212bb3b875cbf827f4bbc1dd7981a305",
+  "expectedCitation": {
+    "id": "reposicion",
+    "version": "2026-09-23.web3",
+    "contentHash": "ffdec72beef292a69ca8da89887e5841b15b634ac062c361bbe707773cdd71ee"
+  },
+  "humanJudgment": {
+    "clearAndCorrectHelpForThisQuestion": true,
+    "mentionsStockAndPendingReceipts": true,
+    "distinguishesExpiredOrHeldUnits": true,
+    "limitsSmartPurchasesToAdministration": true,
+    "doesNotPromiseCalculatedCoverage": true
+  },
+  "automatedEvidence": {
+    "expectedCitationPresent": true,
+    "operationalRuns": 0,
+    "changedBusinessModels": 0
+  },
+  "limits": "La aprobación cubre únicamente esta respuesta del ensayo sintético. La identidad se confirmó en la conversación, no mediante autenticación del producto. El reporte original conserva su estado al momento de ejecución. No marca el manifiesto REVIEWED ni autoriza publicar, fusionar, desplegar o activar pilotos."
+}
