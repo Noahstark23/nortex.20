@@ -1,0 +1,65 @@
+{
+  "formatVersion": 1,
+  "references": [
+    {
+      "documentId": "asistente",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "contentHash": "d19f5d5e04bcbd7aca9ec95a3038c207acd13d1a0b80c4815b72c82c33e57b9d"
+    },
+    {
+      "documentId": "comparacion",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "contentHash": "c5d6ee12e70175307d9b6e7ef68b9403aa17713620907f33bb11561cefc02d5f"
+    },
+    {
+      "documentId": "compras",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "contentHash": "577981bead300186c1427cf1f38a1170bd0e4bb4d0edf4e0b894f34bfee4d2e2"
+    },
+    {
+      "documentId": "contabilidad",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "contentHash": "ccbb8274c9aa0454fec9423aa61d64a65671812f4a942c181ffbef24dfd06c67"
+    },
+    {
+      "documentId": "lotes",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "contentHash": "dae01f007502ca3732e29bbc18dba71035082d7d8c7a224028b02cb270d2561e"
+    },
+    {
+      "documentId": "merma",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "contentHash": "f34186b9053339787c1e01de0bc9c94a0a17bb1e84174d0c48a3323bc1e94d7e"
+    },
+    {
+      "documentId": "offline",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "contentHash": "2a48b08976af8dae2a8c3d4dbbb3edc70613220e8aa49551ffd31c123c0e5631"
+    },
+    {
+      "documentId": "reposicion",
+      "version": "2026-09-23.web3",
+      "sectionId": "main",
+      "contentHash": "ffdec72beef292a69ca8da89887e5841b15b634ac062c361bbe707773cdd71ee"
+    },
+    {
+      "documentId": "salida-proveedor",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "contentHash": "e51b475431d14f5560b9939e9083ee5c66403177642cce7d7f5ab9804f05de3a"
+    },
+    {
+      "documentId": "ventas",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "contentHash": "69621f8c8845c9b52de5adb6de84b3f0028bf16ff288d3c98e3f3fe7740a4b38"
+    }
+  ]
+}

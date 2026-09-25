@@ -36,10 +36,15 @@ RUN microdnf install -y diffutils \
     && microdnf clean all \
     && command -v diff >/dev/null \
     && command -v gzip >/dev/null \
-    && command -v find >/dev/null
+    && command -v find >/dev/null \
+    && command -v tar >/dev/null \
+    && command -v sha256sum >/dev/null \
+    && command -v stat >/dev/null \
+    && command -v cp >/dev/null
 
 WORKDIR /app
 COPY scripts/db-url.sh scripts/backup-db.sh scripts/backup-scheduler.sh \
+     scripts/backup-assistant-originals.sh \
      scripts/verify-dump-file.sh scripts/verify-backup-restore.sh /app/scripts/
 RUN chmod +x /app/scripts/*.sh
 

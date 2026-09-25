@@ -24,6 +24,8 @@
 #   BACKUP_MIN_BYTES        tamaño mínimo del dump comprimido (default 1024)
 #   BACKUP_LOCAL_ONLY=1     NO subir off-site. SOLO para CI/pruebas: un backup que
 #                           se queda en el mismo disco que la BD no es un backup.
+#   BACKUP_ASSISTANT_ORIGINALS_ENABLED=true  Archiva originales permanentes
+#                           verificados. Requiere volumen privado read-only.
 #
 # ── Cómo se ejecuta ────────────────────────────────────────────────────────────
 #   En producción lo corre el servicio `backup` del docker-compose (ver
@@ -37,6 +39,7 @@
 # — el peor resultado: falla en silencio y nadie se entera hasta que hace falta
 # restaurar.
 set -Eeuo pipefail
+umask 077
 
 BACKUP_DIR="${BACKUP_DIR:-/var/backups/nortex}"
 BACKUP_KEEP_DAYS="${BACKUP_KEEP_DAYS:-7}"
@@ -91,7 +94,8 @@ mkdir -p "$BACKUP_DIR"
 
 # Password vía archivo temporal 0600 (NUNCA en argv → no se ve en `ps`).
 CNF="$(mktemp)"; chmod 600 "$CNF"
-trap 'rm -f "$CNF"; trap - ERR' EXIT
+HEARTBEAT_TMP=""
+trap 'rm -f "$CNF" "${HEARTBEAT_TMP:-}"; trap - ERR' EXIT
 escribir_cnf "$CNF" "$DB_USER" "$DB_PASS" "$DB_HOST" "$DB_PORT"
 
 DUMP_FILE="${BACKUP_DIR}/nortex-${DB_NAME}-${TIMESTAMP}.sql.gz"
@@ -115,6 +119,21 @@ echo "→ Verificando integridad del dump…"
 TABLE_COUNT="$("$(dirname "$0")/verify-dump-file.sh" "$DUMP_FILE")"
 echo "✓ Dump verificado: ${TABLE_COUNT} tablas, cierre presente."
 
+# El primer corte deja esta capacidad apagada. Al habilitar foto/PDF, una copia
+# SQL sola no basta: el mismo ciclo debe incluir los originales ATTACHED.
+ORIGINALS_ENABLED="${BACKUP_ASSISTANT_ORIGINALS_ENABLED:-false}"
+[[ "$ORIGINALS_ENABLED" == false || "$ORIGINALS_ENABLED" == true ]] || fail 'BACKUP_ASSISTANT_ORIGINALS_ENABLED inválido'
+ORIGINALS_ARCHIVE="" ORIGINALS_COUNT="" ORIGINALS_BYTES="" ORIGINALS_SHA="" ORIGINALS_DEST=""
+if [[ "$ORIGINALS_ENABLED" == true ]]; then
+  ORIGINALS_ROOT="${ASSISTANT_ORIGINALS_DIR:-/var/lib/nortex/assistant/originals}"
+  ORIGINALS_ARCHIVE="${BACKUP_DIR}/nortex-originals-${DB_NAME}-${TIMESTAMP}.tar"
+  ORIGINALS_META="${ORIGINALS_ARCHIVE}.meta"
+  bash "$(dirname "$0")/backup-assistant-originals.sh" "$CNF" "$DB_NAME" "$ORIGINALS_ROOT" "$ORIGINALS_ARCHIVE" "$ORIGINALS_META"
+  IFS=$'\t' read -r ORIGINALS_COUNT ORIGINALS_BYTES ORIGINALS_SHA < "$ORIGINALS_META"
+  [[ "$ORIGINALS_COUNT" =~ ^[0-9]+$ && "$ORIGINALS_BYTES" =~ ^[0-9]+$ && "$ORIGINALS_SHA" =~ ^[0-9a-f]{64}$ ]] || fail 'metadatos de originales inválidos'
+  rm -f "$ORIGINALS_META"
+fi
+
 # Copia off-site. Definida al nivel superior (no dentro del `if`) porque también
 # la usa el latido de evidencia más abajo.
 aws_cp() {
@@ -129,8 +148,16 @@ aws_cp() {
 S3_DEST="local://${DUMP_FILE}"
 if [[ "${BACKUP_LOCAL_ONLY:-0}" == "1" ]]; then
   echo "→ Subida omitida (BACKUP_LOCAL_ONLY=1)."
+  if [[ "$ORIGINALS_ENABLED" == true ]]; then
+    ORIGINALS_DEST="local://${ORIGINALS_ARCHIVE}"
+  fi
 else
   S3_DEST="${BACKUP_S3_BUCKET%/}/$(date +%Y)/$(date +%m)/$(basename "$DUMP_FILE")"
+  if [[ "$ORIGINALS_ENABLED" == true ]]; then
+    ORIGINALS_DEST="${BACKUP_S3_BUCKET%/}/$(date +%Y)/$(date +%m)/$(basename "$ORIGINALS_ARCHIVE")"
+    aws_cp "$ORIGINALS_ARCHIVE" "$ORIGINALS_DEST"
+    echo '✓ Archivo privado off-site OK.'
+  fi
   echo "→ Subiendo a ${S3_DEST}…"
   aws_cp "$DUMP_FILE" "$S3_DEST"
   echo "✓ Backup off-site OK."
@@ -142,15 +169,27 @@ fi
 # el planificador lo lee al arrancar para detectar un backup atrasado.
 SHA256="$(sha256sum "$DUMP_FILE" | cut -d' ' -f1)"
 HEARTBEAT_FILE="${BACKUP_DIR}/last-backup.json"
-printf '{"timestamp":"%s","archivo":"%s","bytes":%s,"sha256":"%s","destino":"%s","tablas":%s,"verificado":true}\n' \
-  "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$DUMP_FILE")" "$BYTES" "$SHA256" "$S3_DEST" "${TABLE_COUNT:-0}" \
-  > "$HEARTBEAT_FILE"
+HEARTBEAT_TMP="$(mktemp "${BACKUP_DIR}/last-backup.json.XXXXXX")"
+chmod 600 "$HEARTBEAT_TMP"
+if [[ "$ORIGINALS_ENABLED" == true ]]; then
+  printf '{"timestamp":"%s","archivo":"%s","bytes":%s,"sha256":"%s","destino":"%s","tablas":%s,"assistantOriginals":{"archivo":"%s","bytes":%s,"sha256":"%s","destino":"%s","count":%s},"verificado":true}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$DUMP_FILE")" "$BYTES" "$SHA256" "$S3_DEST" "${TABLE_COUNT:-0}" \
+    "$(basename "$ORIGINALS_ARCHIVE")" "$ORIGINALS_BYTES" "$ORIGINALS_SHA" "$ORIGINALS_DEST" "$ORIGINALS_COUNT" \
+    > "$HEARTBEAT_TMP"
+else
+  printf '{"timestamp":"%s","archivo":"%s","bytes":%s,"sha256":"%s","destino":"%s","tablas":%s,"verificado":true}\n' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$(basename "$DUMP_FILE")" "$BYTES" "$SHA256" "$S3_DEST" "${TABLE_COUNT:-0}" \
+    > "$HEARTBEAT_TMP"
+fi
 if [[ "${BACKUP_LOCAL_ONLY:-0}" != "1" ]]; then
   # Clave FIJA: el monitoreo lee el latido sin listar el bucket entero.
-  aws_cp "$HEARTBEAT_FILE" "${BACKUP_S3_BUCKET%/}/last-backup.json"
+  aws_cp "$HEARTBEAT_TMP" "${BACKUP_S3_BUCKET%/}/last-backup.json"
 fi
+mv "$HEARTBEAT_TMP" "$HEARTBEAT_FILE"
+HEARTBEAT_TMP=""
 echo "✓ Evidencia registrada en ${HEARTBEAT_FILE}."
 
 # ── Retención local (el ciclo de vida del bucket maneja la retención remota) ───
 find "$BACKUP_DIR" -name 'nortex-*.sql.gz' -type f -mtime "+${BACKUP_KEEP_DAYS}" -delete
+find "$BACKUP_DIR" -name 'nortex-originals-*.tar' -type f -mtime "+${BACKUP_KEEP_DAYS}" -delete
 echo "✓ Backup completo (${TIMESTAMP})."

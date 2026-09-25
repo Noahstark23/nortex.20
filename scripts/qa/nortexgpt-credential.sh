@@ -52,7 +52,15 @@ cmd_estado() {
   fi
   length="${#key}"
   fingerprint="$(printf '%s' "$key" | shasum -a 256 | cut -c1-12)"
-  case "$key" in sk-ant-*) shape="reconocida" ;; *) shape="no-reconocida" ;; esac
+  # La lista de Console muestra pistas parciales (por ejemplo, sk-ant-api03-ABC...xyz).
+  # El prefijo solo no acredita una clave completa ni su autenticación.
+  case "$key" in
+    sk-ant-*'...'*) shape="pista-recortada" ;;
+    sk-ant-*'…'*) shape="pista-recortada" ;;
+    sk-ant-*)
+      if [ "$length" -lt 40 ]; then shape="demasiado-corta"; else shape="reconocida"; fi ;;
+    *) shape="no-reconocida" ;;
+  esac
   unset key
   printf 'credencial=presente service=%s account=%s bytes=%s sha256[0:12]=%s forma=%s\n' \
     "$SERVICE" "$ACCOUNT" "$length" "$fingerprint" "$shape"

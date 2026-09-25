@@ -17,6 +17,8 @@ export const assistantReadPlanSchema = z.object({
   if(value.purchaseFacts?.length&&value.intent!=='purchase_intake')context.addIssue({code:'custom',message:'Los hechos de compra requieren una captura de compra.'});
 });
 export type AssistantReadPlan = z.infer<typeof assistantReadPlanSchema>;
+/** Clave durable y distinta de un AssistantRun para acreditar el consumo de un mensaje. */
+export const assistantMessageUsageKey = (conversationId:string,requestId:string) => `message:${conversationId}:${requestId}`;
 interface LanguageDependencies {
   db?: PrismaClient;
   client?: Pick<Anthropic,'messages'>;
@@ -27,7 +29,7 @@ interface LanguageDependencies {
 
 export function createAssistantLanguage(deps:LanguageDependencies={}) {
   let client=deps.client;
-  return async(principal:AssistantPrincipal,text:string,history:string[]=[]):Promise<AssistantReadPlan|null> => {
+  return async(principal:AssistantPrincipal,text:string,history:string[]=[],usageKey?:string):Promise<AssistantReadPlan|null> => {
     if(process.env.NORTEX_ASSISTANT_LANGUAGE_ENABLED !== 'true') return null;
     const db=deps.db??prisma;
     await assertAssistantAccess(principal,'help',db);
@@ -40,7 +42,7 @@ export function createAssistantLanguage(deps:LanguageDependencies={}) {
       tool_choice:{type:'tool',name:'interpretar_consulta',disable_parallel_tool_use:true},
     };
     client??=new Anthropic({timeout:30_000,maxRetries:0});
-    const budgetDeps={db,now:deps.now,capability:'help' as const};
+    const budgetDeps={db,now:deps.now,capability:'help' as const,runId:usageKey};
     const reservation=await (deps.reserve??reserveAssistantBudget)(principal,undefined,budgetDeps);
     let settled=false;
     try {

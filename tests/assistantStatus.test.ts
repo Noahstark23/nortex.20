@@ -1,13 +1,14 @@
 import type { PrismaClient } from '@prisma/client';
 import { beforeEach,afterEach,describe,it,expect,vi } from 'vitest';
-import { getAssistantHealthStatus } from '../backend/services/assistant/operations/healthStatus';
+import { getAssistantHealthStatus, type AssistantStatusDependencies } from '../backend/services/assistant/operations/healthStatus';
 const now=new Date('2026-09-01T04:00:00Z');
 const emptyBudget={bucketCount:0,reservations:0,unknownCount:0,unknownUsd:'0',activeReservationsUsd:'0',settledUsd:'0',missingSettledCost:0,spentUsd:null,reservedUsd:null,limitUsd:null,blocked:null};
 function fixture(role='OWNER') {
   const actor={tenantId:'tenant-a',userId:'user-a',role};
   const db={user:{findFirst:vi.fn().mockResolvedValue({id:actor.userId,role,status:'ACTIVE'})},assistantTenantConfig:{findUnique:vi.fn().mockResolvedValue({enabled:true})},
     $queryRaw:vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([emptyBudget]).mockResolvedValueOnce([]).mockResolvedValueOnce([])};
-  return {actor,db,deps:{db:db as unknown as PrismaClient,now:()=>now}};
+  const deps:AssistantStatusDependencies={db:db as unknown as PrismaClient,now:()=>now,workerHeartbeat:vi.fn(async()=>({status:'ok' as const,updatedAt:now.toISOString(),ageSeconds:0}))};
+  return {actor,db,deps};
 }
 beforeEach(()=>vi.stubEnv('NORTEX_ASSISTANT_ENABLED','true'));afterEach(()=>vi.unstubAllEnvs());
 
@@ -57,6 +58,11 @@ describe('Estado administrativo: evidencia agregada y privacidad',()=>{
   });
   it('si no se pudo consultar ningún agregado informa unavailable',async()=>{
     const {actor,db,deps}=fixture();db.$queryRaw.mockReset().mockRejectedValue(new Error('fail'));expect((await getAssistantHealthStatus(actor,deps)).status).toBe('unavailable');
+  });
+  it('un latido vencido impide presentar el asistente como operativo',async()=>{
+    const {actor,deps}=fixture();deps.workerHeartbeat=vi.fn(async()=>({status:'stale' as const,updatedAt:now.toISOString(),ageSeconds:120}));
+    const result=await getAssistantHealthStatus(actor,deps);
+    expect(result).toMatchObject({status:'partial',worker:{status:'stale'}});
   });
   it('permisos revocados durante la lectura impiden retornar datos',async()=>{
     const {actor,db,deps}=fixture();db.user.findFirst.mockResolvedValueOnce({id:actor.userId,role:'OWNER',status:'ACTIVE'}).mockResolvedValueOnce(null);await expect(getAssistantHealthStatus(actor,deps)).rejects.toMatchObject({code:'SESSION_REVOKED'});

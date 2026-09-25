@@ -1,0 +1,262 @@
+{
+  "id": "nortexgpt-primer-corte-20260923",
+  "formatVersion": 1,
+  "documents": [
+    {
+      "documentId": "asistente",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Qué puede hacer NortexGPT",
+        "body": "Podés consultar información permitida para tu rol y pedir ayuda para usar Nortex. Las consultas muestran su período y procedencia. Una propuesta de compra no cambia inventario ni dinero. Para registrarla, una persona con permiso debe revisar los datos en la vista correspondiente de Nortex y confirmarla allí; el chat no confirma la compra.",
+        "roles": [
+          "ACCOUNTANT",
+          "ADMIN",
+          "BODEGUERO",
+          "CASHIER",
+          "DRIVER",
+          "EMPLOYEE",
+          "LENDER",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VENDEDOR",
+          "VIEWER"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "nortexgpt asistente ayuda funciones permisos empezar hola"
+      }
+    },
+    {
+      "documentId": "ventas",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Vender y cobrar",
+        "body": "En Punto de venta, agregá los productos al carrito y revisá cantidades y total. Elegí el medio de pago y comprobá el recibido y el vuelto antes de registrar. Conservá el comprobante; cerrar una ventana no demuestra que la venta quedó registrada.",
+        "roles": [
+          "ADMIN",
+          "CASHIER",
+          "EMPLOYEE",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VENDEDOR"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "vender venta ventas cobrar cobro caja carrito lector pago vuelto"
+      }
+    },
+    {
+      "documentId": "offline",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Ventas pendientes de sincronización",
+        "body": "Una venta guardada en el dispositivo sigue pendiente hasta que Nortex confirme su registro. Consultá Avisos y usá el reintento disponible. Conservá la venta original: no la cobrés de nuevo ni la recreés para resolver una duda de sincronización.",
+        "roles": [
+          "ADMIN",
+          "CASHIER",
+          "EMPLOYEE",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VENDEDOR"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "offline internet conexion pendiente sincronizar sincronizacion avisos cola"
+      }
+    },
+    {
+      "documentId": "compras",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Revisar una factura de compra",
+        "body": "Revisá proveedor, número de factura, fecha, productos, cantidades, unidades, costos e impuestos. Confirmá por separado si recibiste la mercadería y si pagaste. Si la factura corresponde a una recepción de orden de compra, vinculá esa recepción para evitar ingresar existencias otra vez. Registrar requiere un rol autorizado de compras.",
+        "roles": [
+          "ACCOUNTANT",
+          "ADMIN",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VIEWER"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "compra compras factura proveedor recibida recepcion mercaderia credito contado impuestos"
+      }
+    },
+    {
+      "documentId": "lotes",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Lotes y vencimientos",
+        "body": "Para productos con seguimiento por lote, comprobá el número de lote y la fecha de vencimiento antes de recibir. El vencimiento se evalúa por día civil, tomando como referencia la fecha vigente en Managua. El stock físico puede incluir unidades retenidas o vencidas: no lo confundás con disponibilidad para vender.",
+        "roles": [
+          "ACCOUNTANT",
+          "ADMIN",
+          "BODEGUERO",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VIEWER"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "lote lotes vencimiento vencimientos farmacia fecha vencida vencido inventario existencias stock"
+      }
+    },
+    {
+      "documentId": "contabilidad",
+      "version": "2026-09-23.web1",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Leer los resultados del negocio",
+        "body": "Las ventas registradas no equivalen a utilidad ni a dinero recibido. Revisá por separado devoluciones, gastos y saldos por cobrar y pagar. Una cifra sin respaldo suficiente debe aparecer como no disponible; compará el período y la fecha de consulta antes de tomar decisiones.",
+        "roles": [
+          "ACCOUNTANT",
+          "ADMIN",
+          "OWNER",
+          "SUPER_ADMIN"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "utilidad ganancia ganancias balance contabilidad ingresos egresos gastos deuda cuentas"
+      }
+    },
+    {
+      "documentId": "reposicion",
+      "version": "2026-09-23.web3",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Preparar reposición",
+        "body": "Para planificar una reposición, consultá las existencias según los permisos de tu rol y revisá unidades, mínimos y recepciones pendientes. Comprobá aparte los lotes vencidos o retenidos antes de tratar esas unidades como disponibles para vender. La pantalla Compras Inteligentes requiere permisos de administración. Una orden preparada queda en borrador hasta su aprobación; el envío al proveedor se gestiona por separado. Prepararla no aumenta existencias ni deuda. La consulta de cobertura desde NortexGPT sigue deshabilitada en este piloto.",
+        "roles": [
+          "ACCOUNTANT",
+          "ADMIN",
+          "BODEGUERO",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VIEWER"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "reposicion reponer consumo cobertura faltante agotamiento orden pendiente"
+      }
+    },
+    {
+      "documentId": "salida-proveedor",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Devolver físicamente al proveedor",
+        "body": "Seleccioná el proveedor y la línea de compra o recepción original; revisá producto, lote, bodega y cantidad. Cuando la mercadería ya haya sido entregada físicamente al proveedor, confirmá ese hecho en el formulario autorizado de Nortex. El chat inicial no registra la salida. El comprobante de devolución no reduce por sí solo la cuenta por pagar; una nota de crédito del proveedor se concilia por separado.",
+        "roles": [
+          "ADMIN",
+          "BODEGUERO",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "devolver devolucion proveedor salida fisica remitir retiro"
+      }
+    },
+    {
+      "documentId": "merma",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Registrar una baja de lote",
+        "body": "Una fecha vencida no demuestra que las unidades fueron retiradas físicamente. Revisá lote, bodega, cantidad y motivo; la vista de confirmación muestra la salida y su valor. Al confirmar la baja en el flujo autorizado, Nortex registra la salida de inventario, el movimiento de Kardex y la auditoría; si la pérdida tiene valor positivo, también genera el asiento. El chat no ejecuta la baja. Si cambian los datos después de revisar, actualizá la propuesta y volvé a revisarla.",
+        "roles": [
+          "ADMIN",
+          "OWNER",
+          "SUPER_ADMIN"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "merma baja perdida deterioro destruccion retiro vencido"
+      }
+    },
+    {
+      "documentId": "comparacion",
+      "version": "2026-09-23.web2",
+      "sectionId": "main",
+      "payload": {
+        "title": "Ayuda de Nortex",
+        "section": "Comparar períodos y explicar resultados",
+        "body": "En este piloto NortexGPT puede mostrar cifras del período autorizado, pero no realiza la comparación automática con una ventana anterior. Para comparar manualmente, usá períodos equivalentes y considerá el corte de Managua. Una variación no demuestra su causa.",
+        "roles": [
+          "ACCOUNTANT",
+          "ADMIN",
+          "CASHIER",
+          "EMPLOYEE",
+          "MANAGER",
+          "OWNER",
+          "SUPER_ADMIN",
+          "VENDEDOR"
+        ],
+        "requiredCapabilities": [
+          "help"
+        ],
+        "channels": [
+          "WEB_INTERNAL"
+        ],
+        "keywords": "comparar comparacion variacion disminucion aumento causa hipotesis corte periodo"
+      }
+    }
+  ]
+}
