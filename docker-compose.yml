@@ -54,7 +54,6 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      - SOURCE_COMMIT=${SOURCE_COMMIT:-}
       - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD}@db:3306/nortex_db
       # ── Cobro ──────────────────────────────────────────────────────────────
       # Stripe NO soporta Nicaragua como país de comercio: el rail real de cobro
@@ -95,7 +94,6 @@ services:
     stop_grace_period: 180s
     environment:
       - NODE_ENV=production
-      - SOURCE_COMMIT=${SOURCE_COMMIT:-}
       - DATABASE_URL=mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD}@db:3306/nortex_db
       - NORTEX_ASSISTANT_STORAGE_DIR=/var/lib/nortex/assistant/originals
       - NORTEX_ASSISTANT_ENABLED=${NORTEX_ASSISTANT_ENABLED:-false}
