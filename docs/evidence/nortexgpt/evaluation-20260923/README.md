@@ -47,6 +47,12 @@ la revisión de los resultados esperados a Jose Noel Pineda Alfaro. Esto no
 constituye revisión editorial autenticada ni aprobación del resultado del modelo. El evaluador enlaza el
 consumo al mensaje y nunca reenvía un POST al recuperar, pero contacto y costo
 no prueban por sí solos que el plan del modelo se aplicó.
+
+En la conversación de Codex del 24 de septiembre, el usuario confirmó que
+«stark» y «Jose Noel Pineda Alfaro» son la misma persona y pidió documentar
+esa equivalencia. Esta constancia conserva el nombre usado al ejecutar el
+ensayo; no es una verificación de identidad del producto.
+
 El evaluador exige `expectedMode: "help_without_operations"` y compara capturas
 antes/después, acotadas al negocio sintético, de propuestas, compras, órdenes,
 Kardex, existencias y registros de dinero. Un cambio deja el ensayo incompleto.
