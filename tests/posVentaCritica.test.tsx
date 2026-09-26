@@ -7,7 +7,7 @@ import '@testing-library/jest-dom/vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import React from 'react';
 import POS from '../components/POS';
-import { claveCarrito } from '../utils/cartPersistence';
+import { claveCarrito, serializarCarrito } from '../utils/cartPersistence';
 
 /**
  * CARACTERIZACIÓN DEL CAMINO CRÍTICO DEL POS — la red del refactor.
@@ -581,6 +581,37 @@ describe('POS · selector de pago seguro', () => {
 });
 
 describe('POS · sin caja abierta', () => {
+    it('conserva un carrito de otro turno hasta decidir recuperarlo', async () => {
+        respuestas['/api/shifts/current'] = null;
+        const crudo = serializarCarrito({ shiftId: 'turno-anterior', lineas: [{ ...PRODUCTO, quantity: 1 }], clienteId: null, descuentoGlobal: '', ahoraMs: Date.now() });
+        localStorage.setItem(claveCarrito('t1', 'u1'), crudo as string);
+        montarPOS();
+        expect(await screen.findByText('Tenés una venta sin terminar')).toBeVisible();
+        await asentar(400);
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toBe(crudo);
+        await userEvent.setup().type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toBe(crudo);
+        fireEvent.click(screen.getByRole('button', { name: 'Recuperar' }));
+        expect(await screen.findByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        await asentar(400);
+        expect(JSON.parse(localStorage.getItem(claveCarrito('t1', 'u1')) as string).shiftId).toBeNull();
+        expect(posteos.some(p => p.ruta === '/api/sales')).toBe(false);
+    });
+
+    it('conserva el carrito previo al turno al salir y volver sin atribuir una venta', async () => {
+        respuestas['/api/shifts/current'] = null;
+        const user = userEvent.setup();
+        const view = montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        view.unmount();
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toContain('Coca Cola 500ml');
+        montarPOS();
+        expect(await screen.findByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(posteos.some(p => p.ruta === '/api/sales')).toBe(false);
+    });
+
     it('avisa que la caja está cerrada y no ofrece el saldo de la gaveta', async () => {
         // El backend devuelve `null` PELADO cuando no hay turno abierto
         // (`server.ts`: `if (!shift) return res.json(null)`).

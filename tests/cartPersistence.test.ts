@@ -476,6 +476,7 @@ describe('leerCarritoGuardado — basura adentro, null afuera', () => {
     it('exige turno: una venta sin turno no se puede atribuir a nadie', () => {
         expect(leerCarritoGuardado(JSON.stringify({ ...guardado(), shiftId: '' }))).toBeNull();
         expect(leerCarritoGuardado(JSON.stringify({ ...guardado(), shiftId: 42 }))).toBeNull();
+        expect(leerCarritoGuardado(JSON.stringify({ ...guardado(), v: VERSION_CARRITO_LEGACY, shiftId: null }))).toBeNull();
     });
 
     it('exige marca de tiempo numérica', () => {
@@ -575,8 +576,10 @@ describe('leerCarritoGuardado — rescata lo que se puede', () => {
 });
 
 describe('serializarCarrito', () => {
-    it('sin turno no guarda nada (el llamador debe BORRAR la clave)', () => {
-        expect(serializarCarrito({ shiftId: null, lineas: [{ id: 'p1', name: 'x', price: 1, quantity: 1 }], clienteId: null, descuentoGlobal: '', ahoraMs: AHORA })).toBeNull();
+    it('sin turno guarda un borrador sin atribuirlo a caja', () => {
+        const crudo = serializarCarrito({ shiftId: null, lineas: [{ id: 'p1', name: 'x', price: 1, quantity: 1 }], clienteId: null, descuentoGlobal: '', ahoraMs: AHORA });
+        expect(leerCarritoGuardado(crudo)?.shiftId).toBeNull();
+        expect(leerCarritoGuardado(crudo)?.lineas).toHaveLength(1);
     });
 
     it('carrito vacío no guarda nada', () => {
@@ -685,6 +688,13 @@ describe('serializarCarrito', () => {
 });
 
 describe('decidirRestauracion — nunca en el turno equivocado', () => {
+    it('restaura el borrador reciente sólo si sigue sin turno', () => {
+        const sinTurno = guardado({ shiftId: null });
+        expect(decidirRestauracion({ guardado: sinTurno, shiftIdActual: null, ahoraMs: AHORA })).toBe('RESTAURAR');
+        expect(decidirRestauracion({ guardado: sinTurno, shiftIdActual: 'turno-nuevo', ahoraMs: AHORA })).toBe('OFRECER');
+        expect(decidirRestauracion({ guardado: sinTurno, shiftIdActual: null, ahoraMs: AHORA + 13 * HORA })).toBe('OFRECER');
+    });
+
     it('mismo turno y reciente: entra sola, es la misma venta', () => {
         expect(decidirRestauracion({ guardado: guardado(), shiftIdActual: 'turno-1', ahoraMs: AHORA + 5000 })).toBe('RESTAURAR');
     });

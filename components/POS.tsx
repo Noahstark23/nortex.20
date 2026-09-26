@@ -923,11 +923,10 @@ const POS: React.FC = () => {
     // ── P0-1 · Guardar (con debounce) ──────────────────────────────────────
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
+        if (ventaPendiente) return; // La venta anterior espera una decisión; no se borra ni se pisa.
         const clave = claveCarrito(identidad.tenantId, identidad.userId);
         const claveLegacy = claveCarritoLegacy(identidad.tenantId, identidad.userId);
-        // Venta YA COBRADA: se borra sin esperar el debounce. Si no, navegar
-        // entre el "¡Venta completada!" y "Nueva venta" dejaría guardado un
-        // carrito de mercadería ya vendida — y al volver se cobraría dos veces.
+        // Venta cobrada: borrar sin debounce evita recuperar mercadería ya vendida.
         if (completedSale) {
             localStorage.removeItem(clave);
             localStorage.removeItem(claveLegacy);
@@ -942,7 +941,7 @@ const POS: React.FC = () => {
                 descuentoGlobal: globalDiscount,
                 ahoraMs: Date.now(),
             });
-            // Sin payload (carrito vacío o sin turno) se BORRA la clave: nunca
+            // Sin payload (carrito vacío) se BORRA la clave: nunca
             // se deja un `[]` guardado que después haya que interpretar.
             if (payload) {
                 localStorage.setItem(clave, payload);
@@ -955,7 +954,7 @@ const POS: React.FC = () => {
         const t = setTimeout(guardar, 300);
         window.addEventListener('pagehide', guardar);
         return () => { clearTimeout(t); window.removeEventListener('pagehide', guardar); guardar(); }; // Salida antes de 300 ms.
-    }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad]);
+    }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad, ventaPendiente]);
     // Aparcados: cambian de a uno (F4 / restaurar / quitar), sin debounce.
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
@@ -1605,7 +1604,10 @@ const POS: React.FC = () => {
             },
         });
     }, [navigate, showToast]);
-
+    const bloquearPorPendiente = useCallback(() => {
+        if (!ventaPendiente) return false;
+        setShowMobileCart(true); setParkingNotice({ tone: 'warning', message: 'Resolvé primero la venta pendiente antes de agregar productos.' }); return true;
+    }, [ventaPendiente]);
     const appendMeasuredLine = useCallback((params: {
         product: Product;
         baseQuantity: string;
@@ -1614,6 +1616,7 @@ const POS: React.FC = () => {
         measurement: CartItem['measurement'];
         overrideUnitPrice?: string;
     }) => {
+        if (bloquearPorPendiente()) return;
         const mode = effectiveSaleMode(params.product);
         const step = effectiveQuantityStep(params.product);
         const validated = validateQuantity(params.baseQuantity, { saleMode: mode, quantityStep: step });
@@ -1647,11 +1650,10 @@ const POS: React.FC = () => {
             measurement: params.measurement,
         }]);
         signalCartAddition(params.product.id);
-    }, [selectedCustomer?.isWholesale, signalCartAddition]);
-
+    }, [selectedCustomer?.isWholesale, signalCartAddition, bloquearPorPendiente]);
     const addToCart = useCallback((product: Product) => {
-        // Solo MEASURED explícito abre captura. Legacy null/undefined conserva
-        // el flujo histórico de +1/fusión, pero su editor admite fracciones D6.
+        if (bloquearPorPendiente()) return;
+        // MEASURED abre captura; legacy conserva +1/fusión y su editor admite fracciones.
         if (product.saleMode === 'MEASURED') {
             setManualMeasuredProduct(product);
             setManualQuantityDraft('');
@@ -1661,9 +1663,7 @@ const POS: React.FC = () => {
 
         signalCartAddition(product.id);
         const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
-        // Un producto contado puede venderse únicamente en múltiplos (p. ej.
-        // paquetes de 6). La primera pulsación también debe respetar ese paso;
-        // iniciar en 1 y luego sumar 6 producía cantidades inválidas 1, 7, 13…
+        // La primera pulsación respeta el paso del paquete, no inicia en 1.
         const initialQuantity = repeatedCatalogAddIncrement(product);
         setCart(prev => {
             const existing = prev.find(item => (
@@ -1692,9 +1692,9 @@ const POS: React.FC = () => {
             const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, initialQuantity, wholesaleCustomer, 'BASE');
             return [...prev, { ...product, quantity: initialQuantity, cartLineId: product.id, basePrice: product.price, price }];
         });
-    }, [selectedCustomer?.isWholesale, signalCartAddition]);
-
+    }, [selectedCustomer?.isWholesale, signalCartAddition, bloquearPorPendiente]);
     const addPackToCart = useCallback((product: Product) => {
+        if (bloquearPorPendiente()) return;
         const packUnit = product.packUnit?.trim();
         const packSize = Number(product.packSize);
         const configuredBasePrice = (product as CartLine).basePrice ?? product.price;
@@ -1765,7 +1765,7 @@ const POS: React.FC = () => {
         });
         signalCartAddition(product.id);
         playBeep();
-    }, [selectedCustomer?.isWholesale, signalCartAddition]);
+    }, [selectedCustomer?.isWholesale, signalCartAddition, bloquearPorPendiente]);
 
     const confirmManualMeasured = useCallback((event: React.FormEvent) => {
         event.preventDefault();
