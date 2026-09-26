@@ -608,8 +608,8 @@ const POS: React.FC = () => {
 
     // POST-SALE MODAL STATE
     const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
+    const completedSaleRef = useRef(completedSale); completedSaleRef.current = completedSale;
     const [cashReceived, setCashReceived] = useState('');
-
     // PRE-SALE CASH MODAL STATE
     const [showCashPreModal, setShowCashPreModal] = useState(false);
 
@@ -925,7 +925,6 @@ const POS: React.FC = () => {
         if (!persistenciaLista || !identidad) return;
         const clave = claveCarrito(identidad.tenantId, identidad.userId);
         const claveLegacy = claveCarritoLegacy(identidad.tenantId, identidad.userId);
-
         // Venta YA COBRADA: se borra sin esperar el debounce. Si no, navegar
         // entre el "¡Venta completada!" y "Nueva venta" dejaría guardado un
         // carrito de mercadería ya vendida — y al volver se cobraría dos veces.
@@ -935,6 +934,7 @@ const POS: React.FC = () => {
             return;
         }
         const guardar = () => {
+            if (completedSaleRef.current) { localStorage.removeItem(clave); localStorage.removeItem(claveLegacy); return; }
             const payload = serializarCarrito({
                 shiftId: currentShift?.id ?? null,
                 lineas: cart.map(aLineaGuardada),

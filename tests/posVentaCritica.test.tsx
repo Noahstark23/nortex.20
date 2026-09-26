@@ -7,6 +7,7 @@ import '@testing-library/jest-dom/vitest';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import React from 'react';
 import POS from '../components/POS';
+import { claveCarrito } from '../utils/cartPersistence';
 
 /**
  * CARACTERIZACIÓN DEL CAMINO CRÍTICO DEL POS — la red del refactor.
@@ -456,6 +457,8 @@ describe('POS · cobrar en efectivo', () => {
         // así que mandarlo como número sería perder precisión en balanza.
         expect(venta!.cuerpo.items).toHaveLength(1);
         expect(venta!.cuerpo.items[0]).toMatchObject({ id: 'p1', quantity: '1' });
+        fireEvent(window, new Event('pagehide'));
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toBeNull();
     });
 });
 

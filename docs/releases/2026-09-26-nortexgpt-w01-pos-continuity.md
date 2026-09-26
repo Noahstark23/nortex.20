@@ -8,12 +8,13 @@ El POS espera 300 ms antes de escribir el carrito en `localStorage`. Al navegar 
 
 ## Reparación
 
-El mismo serializador de carrito se ejecuta al limpiar el efecto y en `pagehide`; el temporizador de 300 ms sigue vigente mientras la pantalla permanece abierta. Se conserva el `shiftId`, la identidad tenant/usuario y la validación de turno existentes. No hay venta, caja, stock ni llamada de IA en este cambio. `POS.tsx` mantiene **5.895 líneas**, igual que su presupuesto vigente.
+El mismo serializador de carrito se ejecuta al limpiar el efecto y en `pagehide`; el temporizador de 300 ms sigue vigente mientras la pantalla permanece abierta. Una referencia al estado actual de venta completada evita que un callback anterior vuelva a guardar una venta ya cobrada. Se conserva el `shiftId`, la identidad tenant/usuario y la validación de turno existentes. No hay venta, caja, stock ni llamada de IA en este cambio. `POS.tsx` mantiene **5.895 líneas**, igual que su presupuesto vigente.
 
 ## Evidencia local
 
 - Recorrido de interfaz en jsdom con el POS real: guardar W01, guardar nota, cerrar NortexGPT, agregar producto, salir del POS, volver y recuperar la nota y la línea. La prueba comprueba que no se llamó a `/api/sales`.
 - Evento `pagehide` durante la venta en curso: el carrito queda en su clave privada antes de navegar.
+- Evento `pagehide` después de registrar una venta: la clave del carrito vendido permanece vacía.
 - `mise exec -- sh scripts/ci-local-safe.sh`: salida 0; Prisma generate, TypeScript, **7.130 Vitest aprobadas / 551 omitidas**, sistema de diseño y build.
 - `mise exec -- npm run test:integration:required`: salida 0 sobre MySQL 8 descartable; todas las suites requeridas, incluida W01, aprobaron sin omisiones.
 - `git diff --check`: salida 0.
