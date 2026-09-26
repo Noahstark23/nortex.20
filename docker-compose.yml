@@ -70,6 +70,9 @@ services:
       # Destino del aviso "entró un pago por revisar" (la activación es manual).
       - BILLING_ALERT_EMAIL=${BILLING_ALERT_EMAIL:-}
       - SUPPORT_WHATSAPP=${SUPPORT_WHATSAPP:-}
+      # Allowlist exacta del primer piloto, configurada sólo en el entorno.
+      # Sin dos pares tenantId/userId válidos, la activación administrativa falla cerrada.
+      - NORTEX_PILOT_TARGETS=${NORTEX_PILOT_TARGETS:-}
       # Almacenamiento privado compartido; la extracción sigue apagada hasta
       # acreditar respaldo y restore conjunto de SQL y originales.
       - NORTEX_ASSISTANT_STORAGE_DIR=/var/lib/nortex/assistant/originals
