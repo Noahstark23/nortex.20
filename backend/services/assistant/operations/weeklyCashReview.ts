@@ -15,7 +15,7 @@ const MAX_CLOSED = 20, MAX_OPEN = 10, MAX_REPORT_BYTES = 256 * 1024, MAX_OUTPUT_
 const civilDate = z.string().refine(value => parseManaguaCivilDateInput(value) !== null, 'Usá una fecha civil válida YYYY-MM-DD.');
 export const weeklyCashReviewQuerySchema = z.object({ startDate: civilDate.optional(), endDate: civilDate.optional() }).strict()
     .refine(value => Boolean(value.startDate) === Boolean(value.endDate), 'Indicá ambas fechas o ninguna.');
-type Dependencies = { db?: PrismaClient; now?: () => Date };
+type Dependencies = { db?: PrismaClient; tx?: Prisma.TransactionClient; now?: () => Date };
 interface ClosedRow extends ShiftSnapshotDbRow { closedAt: unknown; reportBytes: unknown }
 interface OpenRow { shiftId: string }
 
@@ -52,15 +52,15 @@ function reviewedRow(row: ClosedRow): WeeklyCashReviewRow {
 
 /** Dos consultas de lectura, sin reconstruir cierres ni ejecutar correcciones. */
 export async function reviewWeeklyCash(principal: AssistantPrincipal, input: unknown = {}, deps: Dependencies = {}): Promise<WeeklyCashReview> {
-    const db = deps.db ?? prisma, now = deps.now?.() ?? new Date();
-    await assertAssistantAccess(principal, 'operations', db);
+    const db = deps.tx ?? deps.db ?? prisma, now = deps.now?.() ?? new Date();
+    await assertAssistantAccess(principal, 'operations', db as PrismaClient);
     if (!canReadShiftReport(principal.role)) throw new SalesReportError('REPORT_ROLE_FORBIDDEN', 403, 'Tu rol no tiene acceso a la revisión de caja.');
     const period = reviewPeriod(input, now);
     const scope = resolveSalesReportScope(principal.role, principal.userId).kind === 'tenant' ? 'business' : 'own-shifts';
     const ownership = scope === 'business' ? Prisma.sql`` : Prisma.sql`AND sh.\`userId\` = ${principal.userId}`;
     let closed: ClosedRow[], opened: OpenRow[];
     try {
-        [closed, opened] = await db.$transaction(async tx => Promise.all([
+        const readRows = (tx: Prisma.TransactionClient) => Promise.all([
             tx.$queryRaw<ClosedRow[]>(Prisma.sql`
                 SELECT sh.\`id\` AS shiftId, sh.\`endTime\` AS closedAt,
                     scr.\`id\` AS id, scr.\`folio\` AS folio, scr.\`businessDate\` AS businessDate,
@@ -77,12 +77,14 @@ export async function reviewWeeklyCash(principal: AssistantPrincipal, input: unk
                 WHERE sh.\`tenantId\` = ${principal.tenantId} AND sh.\`status\` = 'OPEN'
                     AND sh.\`startTime\` < ${period.until} ${ownership}
                 ORDER BY sh.\`startTime\` ASC, sh.\`id\` ASC LIMIT ${MAX_OPEN + 1}`),
-        ]), { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+        ]);
+        [closed, opened] = deps.tx ? await readRows(deps.tx)
+            : await (db as PrismaClient).$transaction(readRows, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
     } catch {
-        await assertAssistantAccess(principal, 'operations', db);
+        await assertAssistantAccess(principal, 'operations', db as PrismaClient);
         throw new AssistantRunError(503, 'CASH_REVIEW_UNAVAILABLE', 'No pudimos verificar los cierres. La falta de respuesta no significa que no existan.');
     }
-    await assertAssistantAccess(principal, 'operations', db);
+    await assertAssistantAccess(principal, 'operations', db as PrismaClient);
     let truncated = closed.length > MAX_CLOSED || opened.length > MAX_OPEN;
     const rows = closed.slice(0, MAX_CLOSED).map(reviewedRow);
     rows.push(...opened.slice(0, MAX_OPEN).map(row => ({ shiftId: row.shiftId, status: 'OPEN' as const, closedAt: null, businessDate: null, folio: null, source: null, cash: null,
