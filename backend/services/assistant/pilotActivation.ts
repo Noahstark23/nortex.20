@@ -85,6 +85,8 @@ const guardedFlags = ['extractionEnabled', 'executionEnabled', 'operationsEnable
 const firstCut = { enabled: true, extractionEnabled: false, executionEnabled: false,
   operationsEnabled: false, actionsEnabled: false, promotionsEnabled: false,
   privateWhatsappEnabled: false, monthlyBudgetUsd: '2', approvedMonthlyBudgetUsd: '2' } as const;
+const budgetString = (config: Parameters<typeof effectiveAssistantBudget>[0]) =>
+  new Decimal(effectiveAssistantBudget(config)).toString();
 
 export async function changePilotAccount(principal: AssistantPrincipal, mode: 'enable' | 'disable', input: unknown, db: Database = prisma) {
   const target: PilotIdentity = identitySchema.parse(input);
@@ -132,16 +134,16 @@ export async function changePilotAccount(principal: AssistantPrincipal, mode: 'e
       await tx.assistantTenantConfig.upsert({ where: { tenantId: target.tenantId },
         create: { tenantId: target.tenantId, ...firstCut }, update: firstCut });
     } else {
-      if (!before?.enabled) return { changed: false, enabled: false, budgetUsd: before ? effectiveAssistantBudget(before) : null };
+      if (!before?.enabled) return { changed: false, enabled: false, budgetUsd: before ? budgetString(before) : null };
       await tx.assistantTenantConfig.update({ where: { tenantId: target.tenantId }, data: { enabled: false } });
     }
     await tx.auditLog.create({ data: { tenantId: target.tenantId, userId: actor.id,
       action: mode === 'enable' ? 'ASSISTANT_PILOT_ENABLED' : 'ASSISTANT_PILOT_DISABLED',
       details: JSON.stringify({ targetUserId: target.userId, manifestHash: PILOT_MANIFEST_HASH,
-        before: before && { enabled: before.enabled, budgetUsd: effectiveAssistantBudget(before) },
-        after: { enabled: mode === 'enable', budgetUsd: mode === 'enable' ? '2' : before && effectiveAssistantBudget(before) },
+        before: before && { enabled: before.enabled, budgetUsd: budgetString(before) },
+        after: { enabled: mode === 'enable', budgetUsd: mode === 'enable' ? '2' : before && budgetString(before) },
         reason: target.reason }),
     } });
-    return { changed: true, enabled: mode === 'enable', budgetUsd: mode === 'enable' ? '2' : before && effectiveAssistantBudget(before) };
+    return { changed: true, enabled: mode === 'enable', budgetUsd: mode === 'enable' ? '2' : before && budgetString(before) };
   }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
 }
