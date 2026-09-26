@@ -29,7 +29,7 @@ export function buildW01Report(input: ReportInput): AssistantWorkReport {
   const countsMatch = Object.entries(observed).every(([key, value]) => review.counts[key as keyof typeof observed] === value);
   const uniqueShifts = new Set(review.rows.map(row => row.shiftId)).size === review.rows.length;
   const complete = review.status === 'ok' && !review.truncated && review.period.completeDays
-    && countsMatch && uniqueShifts && review.warnings.length === 0;
+    && countsMatch && uniqueShifts;
   const rows = review.rows.map(row => ({ shiftId: row.shiftId, status: row.status, source: row.source, cash: row.cash }));
   const exceptions: AssistantWorkReport['exceptions'] = review.rows.flatMap((row, index) => row.status === 'BALANCED' ? [] : [{
     id: `shift:${row.shiftId}:${index}`, shiftId: row.shiftId, status: 'PENDING' as const, assignedUserId: input.assignedUserId,
@@ -41,7 +41,7 @@ export function buildW01Report(input: ReportInput): AssistantWorkReport {
       : review.status === 'unavailable' ? 'La fuente de revisión no estuvo disponible.'
         : !review.period.completeDays ? 'El período todavía está en curso.'
           : !countsMatch || !uniqueShifts ? 'Los turnos visibles no coinciden con los conteos de la fuente.'
-            : review.warnings.length ? 'La fuente conserva advertencias pendientes.' : 'La revisión es parcial.',
+            : 'La revisión es parcial.',
     source: null,
   });
   const notes = input.events.filter(event => event.type === 'ADD_NOTE').map(event => ({ id: event.id, note: event.note ?? null }));

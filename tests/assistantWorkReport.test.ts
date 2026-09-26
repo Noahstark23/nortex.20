@@ -57,6 +57,20 @@ describe('informe preliminar W01', () => {
     expect(report.exceptions.some(exception => exception.shiftId === null)).toBe(true);
   });
 
+  it('conserva los totales verificados aunque la revisión incluya advertencias generales', () => {
+    const item = input();
+    item.review.status = 'ok';
+    item.review.rows = [item.review.rows[0]];
+    item.review.counts = { closed: 1, verified: 1, differences: 1, missingReports: 0, invalidReports: 0, open: 0 };
+    item.review.totals = { shortageNio: '1.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' };
+    item.review.warnings = ['Un hash coherente no acredita conciliación contable.'];
+    const report = buildW01Report(item);
+    expect(report.counts).toEqual(item.review.counts);
+    expect(report.totals).toEqual(item.review.totals);
+    expect(report.exceptions.map(exception => exception.shiftId)).toEqual(['shift-1']);
+    expect(report.warnings).toEqual(item.review.warnings);
+  });
+
   it('no da por completo un corte cuyos conteos no corresponden a los turnos visibles', () => {
     const item = input(); item.review.status = 'ok'; item.review.counts.closed = 3;
     item.review.totals.shortageNio = '1.00';

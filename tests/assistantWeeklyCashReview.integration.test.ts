@@ -371,6 +371,27 @@ qa('W01 revisión semanal de caja: snapshots, permisos y lectura HTTP/MySQL', ()
     expect(await prisma.assistantUsage.count({ where: { tenantId: owner.tenantId } })).toBe(0);
   }, 20000);
 
+  it('HTTP conserva totales completos cuando todos los cierres tienen fuente pese a advertencias generales', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    await closedShift(owner, { cash: { countedNio: '107', differenceNio: '7' } });
+    const before = await businessState(owner);
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    expect(item.body.review).toMatchObject({ status: 'ok', counts: { closed: 2, verified: 2, differences: 2 },
+      totals: { shortageNio: '5.00', surplusNio: '7.00' } });
+    expect(item.body.review.warnings.length).toBeGreaterThan(0);
+    expect(item.body.report).toMatchObject({ completeness: 'ok', counts: { closed: 2, verified: 2, differences: 2 },
+      totals: { shortageNio: '5.00', surplusNio: '7.00' } });
+    expect(item.body.report.exceptions).toHaveLength(2);
+    expect(item.body.report.exceptions.every((exception: { shiftId: string | null }) => exception.shiftId !== null)).toBe(true);
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 200);
+    expect(accepted.body.acceptance).toMatchObject({ reportHash: item.body.report.reportHash, withExceptions: true });
+    expect(await businessState(owner)).toEqual(before);
+  }, 20000);
+
   it('rechaza aceptar una revisión cuando cambió un cierre verificable después de guardarla', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', '');
     const owner = await actorFixture();
