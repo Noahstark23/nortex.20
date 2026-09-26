@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AssistantRequest } from './useNortexAssistant';
-import type { AssistantWorkItemDTO, AssistantWorkItemEventInput, AssistantWorkItemListDTO } from '../shared/assistantWorkItems';
+import type { AssistantWorkAcceptanceInput, AssistantWorkItemDTO, AssistantWorkItemEventInput, AssistantWorkItemListDTO } from '../shared/assistantWorkItems';
 
 const initial = { items: [] as AssistantWorkItemListDTO['items'], nextCursor: null as string | null,
     selected: null as AssistantWorkItemDTO | null, note: '', error: '', busy: false,
-    pending: null as { id: string; input: AssistantWorkItemEventInput } | null };
+    pending: null as { id: string; input: AssistantWorkItemEventInput } | null,
+    pendingAcceptance: null as { id: string; input: AssistantWorkAcceptanceInput } | null };
 
 /** Estado privado en memoria; cada confirmación auxiliar tiene identidad durable en el servidor. */
 export function useAssistantWorkItems(request: AssistantRequest, scope: string, enabled: boolean) {
@@ -24,23 +25,26 @@ export function useAssistantWorkItems(request: AssistantRequest, scope: string, 
     useEffect(() => () => { epoch.current++; }, []);
     const accept = (item: AssistantWorkItemDTO) => setState(s => {
         const acknowledged = s.pending?.id === item.id && (item.receiptEventId === s.pending?.input.eventId || item.events.some(event => event.id === s.pending?.input.eventId));
+        const acceptanceAcknowledged = s.pendingAcceptance?.id === item.id && (item.receiptEventId === s.pendingAcceptance.input.eventId
+            || item.acceptance?.eventId === s.pendingAcceptance.input.eventId);
         return { ...s, selected: item, items: [item, ...s.items.filter(row => row.id !== item.id)],
-            ...(acknowledged ? { pending: null, note: s.pending?.input.type === 'ADD_NOTE' ? '' : s.note } : {}) };
+            ...(acknowledged ? { pending: null, note: s.pending?.input.type === 'ADD_NOTE' ? '' : s.note } : {}),
+            ...(acceptanceAcknowledged ? { pendingAcceptance: null } : {}) };
     });
     const load = useCallback((more = false) => run(async valid => {
         const result = await request<AssistantWorkItemListDTO>(`/work-items${more && state.nextCursor ? `?cursor=${encodeURIComponent(state.nextCursor)}` : ''}`);
         if (valid()) setState(s => ({ ...s, items: more ? [...new Map([...s.items, ...result.items].map(item => [item.id, item])).values()] : result.items, nextCursor: result.nextCursor }));
     }), [request, run, state.nextCursor]);
     const open = useCallback((id: string) => run(async valid => {
-        if ((state.note.trim() || state.pending) && state.selected?.id !== id) throw new Error('Guardá tu nota o comprobá el envío pendiente antes de abrir otro trabajo.');
+        if ((state.note.trim() || state.pending || state.pendingAcceptance) && state.selected?.id !== id) throw new Error('Guardá tu nota o comprobá el envío pendiente antes de abrir otro trabajo.');
         const item = await request<AssistantWorkItemDTO>(`/work-items/${encodeURIComponent(id)}`);
         if (valid()) accept(item);
-    }), [request, run, state.note, state.pending, state.selected?.id]);
+    }), [request, run, state.note, state.pending, state.pendingAcceptance, state.selected?.id]);
     const create = useCallback((runId: string) => run(async valid => {
-        if (state.note.trim() || state.pending) throw new Error('Conservá primero la nota o el envío pendiente del trabajo actual.');
+        if (state.note.trim() || state.pending || state.pendingAcceptance) throw new Error('Conservá primero la nota o el envío pendiente del trabajo actual.');
         const item = await request<AssistantWorkItemDTO>('/work-items', { method: 'POST', body: JSON.stringify({ runId }) });
         if (valid()) accept(item);
-    }), [request, run, state.note, state.pending]);
+    }), [request, run, state.note, state.pending, state.pendingAcceptance]);
     const rejectPending = (error: unknown) => {
         const failure = error as { status?: number; code?: string };
         if (failure.status === 409 && ['WORK_ITEM_CHANGED', 'WORK_ITEM_TRANSITION', 'WORK_ITEM_CANCELLED', 'WORK_ITEM_EVENT_CONFLICT'].includes(failure.code ?? '')) setState(s => ({ ...s, pending: null }));
@@ -48,6 +52,7 @@ export function useAssistantWorkItems(request: AssistantRequest, scope: string, 
     const change = useCallback((type: AssistantWorkItemEventInput['type']) => run(async valid => {
         if (!state.selected) return;
         if (state.pending) throw new Error('Comprobá o reintentá el envío pendiente con su misma referencia.');
+        if (state.pendingAcceptance) throw new Error('Comprobá la aceptación pendiente antes de cambiar el trabajo.');
         if (state.note.trim() && type !== 'ADD_NOTE') throw new Error('Guardá la nota antes de cambiar el estado.');
         const input: AssistantWorkItemEventInput = { eventId: crypto.randomUUID(), version: state.selected.version,
             ...(type === 'ADD_NOTE' ? { type, note: state.note.trim() } : { type }) };
@@ -57,7 +62,7 @@ export function useAssistantWorkItems(request: AssistantRequest, scope: string, 
             const item = await request<AssistantWorkItemDTO>(`/work-items/${encodeURIComponent(id)}/events`, { method: 'POST', body: JSON.stringify(input) });
             if (valid()) accept(item);
         } catch (error) { if (valid()) rejectPending(error); throw error; }
-    }), [request, run, state.selected, state.pending, state.note]);
+    }), [request, run, state.selected, state.pending, state.pendingAcceptance, state.note]);
     const retry = useCallback(() => run(async valid => {
         if (!state.pending) return;
         const { id, input } = state.pending;
@@ -66,8 +71,35 @@ export function useAssistantWorkItems(request: AssistantRequest, scope: string, 
             if (valid()) accept(item);
         } catch (error) { if (valid()) rejectPending(error); throw error; }
     }), [request, run, state.pending]);
+    const rejectAcceptance = (error: unknown) => {
+        const failure = error as { status?: number; code?: string };
+        if (failure.status === 409 && ['WORK_ITEM_CHANGED', 'WORK_ITEM_REPORT_CHANGED', 'WORK_ITEM_TRANSITION',
+            'WORK_ITEM_HISTORY_TRUNCATED', 'WORK_ITEM_EVENT_CONFLICT', 'WORK_ITEM_ACCEPTED'].includes(failure.code ?? '')) {
+            setState(s => ({ ...s, pendingAcceptance: null }));
+        }
+    };
+    const acceptReport = useCallback(() => run(async valid => {
+        const item = state.selected;
+        if (!item || item.status !== 'IN_REVIEW' || state.note.trim() || state.pending || state.pendingAcceptance || item.report.notesTruncated) {
+            throw new Error('Revisá el informe y guardá o comprobá los cambios pendientes antes de aceptarlo.');
+        }
+        const input: AssistantWorkAcceptanceInput = { eventId: crypto.randomUUID(), version: item.version, reportHash: item.report.reportHash };
+        setState(s => ({ ...s, pendingAcceptance: { id: item.id, input } }));
+        try {
+            const accepted = await request<AssistantWorkItemDTO>(`/work-items/${encodeURIComponent(item.id)}/accept`, { method: 'POST', body: JSON.stringify(input) });
+            if (valid()) accept(accepted);
+        } catch (error) { if (valid()) rejectAcceptance(error); throw error; }
+    }), [request, run, state.selected, state.note, state.pending, state.pendingAcceptance]);
+    const retryAcceptance = useCallback(() => run(async valid => {
+        if (!state.pendingAcceptance) return;
+        const { id, input } = state.pendingAcceptance;
+        try {
+            const accepted = await request<AssistantWorkItemDTO>(`/work-items/${encodeURIComponent(id)}/accept`, { method: 'POST', body: JSON.stringify(input) });
+            if (valid()) accept(accepted);
+        } catch (error) { if (valid()) rejectAcceptance(error); throw error; }
+    }), [request, run, state.pendingAcceptance]);
     const visible = state.scope === scope && enabled ? state : { ...initial, scope };
-    return { ...visible, load, open, create, change, retry,
-        setNote: (note: string) => { if (enabled && !state.pending) setState(s => ({ ...s, note })); } };
+    return { ...visible, load, open, create, change, retry, acceptReport, retryAcceptance,
+        setNote: (note: string) => { if (enabled && !state.pending && !state.pendingAcceptance) setState(s => ({ ...s, note })); } };
 }
 export type AssistantWorkItemsController = ReturnType<typeof useAssistantWorkItems>;

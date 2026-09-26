@@ -16,6 +16,8 @@ export const workItemEventSchema = z.discriminatedUnion('type', [
   z.object({ ...eventIdentity, type: z.literal('RESUME') }).strict(),
   z.object({ ...eventIdentity, type: z.literal('CANCEL') }).strict(),
 ]);
+export const acceptWorkItemReportSchema = z.object({ eventId: eventIdentity.eventId, version: eventIdentity.version,
+  reportHash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 
 export class AssistantWorkItemError extends Error {
   constructor(public statusCode: number, public code: string, message: string) {

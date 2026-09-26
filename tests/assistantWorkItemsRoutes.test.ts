@@ -3,12 +3,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 
 const auth = vi.hoisted(() => ({ verify: vi.fn(), user: vi.fn(), tenant: vi.fn() }));
-const services = vi.hoisted(() => ({ create: vi.fn(), get: vi.fn(), list: vi.fn(), append: vi.fn() }));
+const services = vi.hoisted(() => ({ create: vi.fn(), get: vi.fn(), list: vi.fn(), append: vi.fn(), accept: vi.fn() }));
 vi.mock('../backend/services/secrets', () => ({ verifyAuthToken: auth.verify }));
 vi.mock('../backend/lib/prisma.js', () => ({ default: { user: { findUnique: auth.user }, tenant: { findUnique: auth.tenant } } }));
 vi.mock('../backend/services/assistant/workItems/service.js', () => ({
   createAssistantWorkItem: services.create, getAssistantWorkItem: services.get,
   listAssistantWorkItems: services.list, appendAssistantWorkItemEvent: services.append,
+  acceptAssistantWorkItemReport: services.accept,
 }));
 import { createAssistantWorkItemsRouter } from '../backend/routes/assistantWorkItems';
 
@@ -16,6 +17,7 @@ const principal = { tenantId: 'tenant-a', userId: 'human-a', role: 'MANAGER' };
 const routes = [
   ['post', '/work-items', 'create'], ['get', '/work-items', 'list'],
   ['get', '/work-items/:id', 'get'], ['post', '/work-items/:id/events', 'append'],
+  ['post', '/work-items/:id/accept', 'accept'],
 ] as const;
 
 /** Router/auth reales con identidad sintética y servicios espía; sin socket, DB o proveedor. */
@@ -50,6 +52,7 @@ beforeEach(() => {
   services.get.mockResolvedValue({ id: 'work-a', status: 'WAITING' });
   services.list.mockResolvedValue({ items: [], nextCursor: null });
   services.append.mockResolvedValue({ id: 'work-a', status: 'WAITING', receiptEventId: 'event-a' });
+  services.accept.mockResolvedValue({ id: 'work-a', status: 'ACCEPTED', acceptance: { eventId: 'event-accept' } });
 });
 
 describe('transporte de continuidad W01: autenticación y lectura sin ejecución', () => {
@@ -92,6 +95,13 @@ describe('transporte de continuidad W01: autenticación y lectura sin ejecución
     const response = await request('post', '/work-items/:id/events', { body: event });
     expect(services.append).toHaveBeenCalledWith(principal, 'work-a', event, {});
     expect(response.body).toMatchObject({ receiptEventId: 'event-a' });
+  });
+
+  it('acepta sólo la versión y hash exactos bajo la identidad de la sesión', async () => {
+    const input = { eventId: '5e6e99d0-6000-4000-8000-000000000002', version: 3, reportHash: 'a'.repeat(64) };
+    const response = await request('post', '/work-items/:id/accept', { body: input });
+    expect(services.accept).toHaveBeenCalledWith(principal, 'work-a', input, {});
+    expect(response.body).toMatchObject({ status: 'ACCEPTED' });
   });
 
   it('expone conflicto de versión sin convertirlo en éxito', async () => {

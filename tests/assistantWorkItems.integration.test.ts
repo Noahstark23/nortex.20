@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { randomUUID } from 'node:crypto';
+import { spawnSync } from 'node:child_process';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
@@ -44,6 +45,30 @@ async function fixture(): Promise<{ actor: TestActor; runId: string }> {
 
 qa('W01 continuidad HTTP y MySQL descartable', () => {
   beforeAll(assertDisposableDatabase);
+
+  it('db push amplía una tabla W01 poblada, repara estado parcial y se puede repetir', async () => {
+    const { actor, runId } = await fixture();
+    const created = await api('/api/assistant/work-items', actor, 'POST', { runId }); status(created, 200);
+    const note = await api(`/api/assistant/work-items/${created.body.id}/events`, actor, 'POST', {
+      eventId: randomUUID(), version: 0, type: 'ADD_NOTE', note: 'Nota anterior a la ampliación.' }); status(note, 200);
+    const push = () => spawnSync(process.execPath,
+      ['node_modules/prisma/build/index.js', 'db', 'push', '--skip-generate', '--schema', 'backend/prisma/schema.prisma'],
+      { env: { PATH: process.env.PATH, DATABASE_URL: process.env.DATABASE_URL, NODE_ENV: 'test' }, encoding: 'utf8', timeout: 120_000 });
+    await prisma.$executeRawUnsafe('ALTER TABLE `AssistantWorkItem` DROP COLUMN `acceptedAt`, DROP COLUMN `acceptedByUserId`, DROP COLUMN `acceptedReportHash`, DROP COLUMN `acceptedReportVersion`, DROP COLUMN `acceptedEventId`');
+    expect(push().status).toBe(0);
+    await prisma.$executeRawUnsafe('ALTER TABLE `AssistantWorkItem` DROP COLUMN `acceptedEventId`');
+    expect(push().status).toBe(0);
+    expect(push().status).toBe(0);
+    const columns = await prisma.$queryRaw<Array<{ COLUMN_NAME: string }>>`
+      SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE()
+      AND TABLE_NAME='AssistantWorkItem' AND COLUMN_NAME LIKE 'accepted%'`;
+    expect(columns.map(row => row.COLUMN_NAME).sort()).toEqual([
+      'acceptedAt', 'acceptedByUserId', 'acceptedEventId', 'acceptedReportHash', 'acceptedReportVersion',
+    ].sort());
+    const recovered = await api(`/api/assistant/work-items/${created.body.id}`, actor); status(recovered, 200);
+    expect(recovered.body.events.map((event: { note: string | null }) => event.note)).toContain('Nota anterior a la ampliación.');
+    expect(recovered.body.version).toBe(1);
+  }, 180_000);
 
   it('creación concurrente, recuperación y reintento conservan un solo evento y no escriben caja', async () => {
     const { actor, runId } = await fixture();
@@ -111,5 +136,55 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
     expect(await prisma.assistantWorkEvent.count({ where: { workItemId: created.body.id } })).toBe(0);
     expect(await prisma.assistantWorkItem.count({ where: { id: created.body.id } })).toBe(0);
     expect(await prisma.assistantRun.count({ where: { id: runId } })).toBe(1);
+  });
+
+  it('acepta exactamente un hash y conserva el comprobante en reintentos sin escribir caja', async () => {
+    const { actor, runId } = await fixture();
+    const created = await api('/api/assistant/work-items', actor, 'POST', { runId }); status(created, 200);
+    const route = `/api/assistant/work-items/${created.body.id}`;
+    const invalid = await api(`${route}/accept`, actor, 'POST', { eventId: randomUUID(), version: 0, reportHash: '0'.repeat(64) });
+    status(invalid, 409); expect(invalid.body.code).toBe('WORK_ITEM_REPORT_CHANGED');
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: created.body.id } })).toBe(1);
+
+    const note = await api(`${route}/events`, actor, 'POST', { eventId: randomUUID(), version: 0,
+      type: 'ADD_NOTE', note: 'Pendiente: solicitar el reporte original.' }); status(note, 200);
+    const stale = await api(`${route}/accept`, actor, 'POST', { eventId: randomUUID(), version: 0,
+      reportHash: created.body.report.reportHash });
+    status(stale, 409); expect(stale.body.code).toBe('WORK_ITEM_CHANGED');
+    const input = { eventId: randomUUID(), version: note.body.version, reportHash: note.body.report.reportHash };
+    const accepted = await api(`${route}/accept`, actor, 'POST', input); status(accepted, 200);
+    expect(accepted.body).toMatchObject({ status: 'ACCEPTED', version: 2, receiptEventId: input.eventId,
+      acceptance: { eventId: input.eventId, reportHash: input.reportHash, reportVersion: 1, withExceptions: true } });
+    expect(accepted.body.report.reportHash).toBe(input.reportHash);
+    const replay = await api(`${route}/accept`, actor, 'POST', input); status(replay, 200);
+    expect(replay.body.acceptance).toEqual(accepted.body.acceptance);
+    expect((await api(route, actor)).body.report.reportHash).toBe(input.reportHash);
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: created.body.id } })).toBe(3);
+    const conflict = await api(`${route}/accept`, actor, 'POST', { ...input, reportHash: 'f'.repeat(64) });
+    status(conflict, 409); expect(conflict.body.code).toBe('WORK_ITEM_EVENT_CONFLICT');
+    const second = await api(`${route}/accept`, actor, 'POST', { ...input, eventId: randomUUID() });
+    status(second, 409); expect(second.body.code).toBe('WORK_ITEM_ACCEPTED');
+    expect(await Promise.all([
+      prisma.shift.count({ where: { tenantId: actor.tenantId } }),
+      prisma.cashMovement.count({ where: { tenantId: actor.tenantId } }),
+      prisma.journalEntry.count({ where: { tenantId: actor.tenantId } }),
+      prisma.auditLog.count({ where: { tenantId: actor.tenantId } }),
+      prisma.assistantUsage.count({ where: { tenantId: actor.tenantId } }),
+    ])).toEqual([0, 0, 0, 0, 0]);
+  });
+
+  it('dos aceptaciones concurrentes producen un único comprobante', async () => {
+    const { actor, runId } = await fixture();
+    const created = await api('/api/assistant/work-items', actor, 'POST', { runId }); status(created, 200);
+    const route = `/api/assistant/work-items/${created.body.id}/accept`;
+    const base = { version: 0, reportHash: created.body.report.reportHash };
+    const responses = await Promise.all([
+      api(route, actor, 'POST', { ...base, eventId: randomUUID() }),
+      api(route, actor, 'POST', { ...base, eventId: randomUUID() }),
+    ]);
+    expect(responses.map(response => response.status).sort()).toEqual([200, 409]);
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: created.body.id, type: 'ACCEPT_REPORT' } })).toBe(1);
+    const stored = await prisma.assistantWorkItem.findFirstOrThrow({ where: { id: created.body.id, tenantId: actor.tenantId } });
+    expect(stored).toMatchObject({ status: 'ACCEPTED', version: 1, acceptedReportHash: base.reportHash });
   });
 });

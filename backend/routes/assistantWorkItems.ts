@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { authenticate, type AuthRequest } from '../middleware/auth.js';
 import type { AssistantPrincipal } from '../../shared/assistant.js';
 import { createAssistantWorkItem, getAssistantWorkItem, listAssistantWorkItems, appendAssistantWorkItemEvent,
-  type WorkItemDependencies } from '../services/assistant/workItems/service.js';
+  acceptAssistantWorkItemReport, type WorkItemDependencies } from '../services/assistant/workItems/service.js';
 
 const actor = (req: Request & AuthRequest): AssistantPrincipal => ({ tenantId: req.tenantId ?? '', userId: req.userId ?? '', role: req.role ?? '' });
 function failure(error: unknown, res: Response) {
@@ -30,6 +30,9 @@ export function createAssistantWorkItemsRouter(deps: WorkItemDependencies = {}) 
   });
   router.post('/work-items/:id/events', async (req, res) => {
     try { res.json(await appendAssistantWorkItemEvent(actor(req), req.params.id, req.body, deps)); } catch (error) { failure(error, res); }
+  });
+  router.post('/work-items/:id/accept', async (req, res) => {
+    try { res.json(await acceptAssistantWorkItemReport(actor(req), req.params.id, req.body, deps)); } catch (error) { failure(error, res); }
   });
   return router;
 }
