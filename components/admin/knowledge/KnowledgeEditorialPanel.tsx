@@ -7,12 +7,12 @@ import { KnowledgeReleaseReview } from './KnowledgeReleaseReview';
 import { KnowledgeImport } from './KnowledgeImport';
 import { KnowledgeDocument } from './KnowledgeDocument';
 
-export default function KnowledgeEditorialPanel() {
+export default function KnowledgeEditorialPanel({ onPendingWorkChange }: { onPendingWorkChange?: (pending: boolean) => void }) {
     const session = useActivationSession();
-    return <EditorialContent key={session.key} session={session} />;
+    return <EditorialContent key={session.key} session={session} onPendingWorkChange={onPendingWorkChange} />;
 }
 
-function EditorialContent({ session }: { session: ActivationSession; key?: string }) {
+function EditorialContent({ session, onPendingWorkChange }: { session: ActivationSession; onPendingWorkChange?: (pending: boolean) => void; key?: string }) {
     const { request, current, denied } = useKnowledgeEditorial(session);
     const [capabilities, setCapabilities] = useState<KnowledgeEditorialCapabilities | null>(null);
     const [error, setError] = useState(''); const [initializing, setInitializing] = useState(true);
@@ -24,6 +24,10 @@ function EditorialContent({ session }: { session: ActivationSession; key?: strin
     const [legacyDrafts, setLegacyDrafts] = useState<string[]>([]);
     const [accessAttempt, setAccessAttempt] = useState(0);
     const hasWork = working || legacyDrafts.length > 0;
+    useEffect(() => {
+        onPendingWorkChange?.(!denied && hasWork);
+        return () => onPendingWorkChange?.(false);
+    }, [denied, hasWork, onPendingWorkChange]);
     const sequence = useRef(0); const lock = useRef(false);
     const load = async (cursor?: string) => {
         if (lock.current) return;

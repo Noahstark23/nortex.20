@@ -103,6 +103,15 @@ describe('editor de ayuda autenticado', () => {
         fireEvent.click(screen.getByRole('button', { name: 'Descartar observación sin guardar' }));
         expect(screen.getByLabelText('Estado de publicaciones')).toBeEnabled(); expect(posts()).toHaveLength(0);
     });
+    it('avisa a SuperAdmin mientras hay una observación sin enviar y libera la salida al descartarla', async () => {
+        const onPendingWorkChange = vi.fn();
+        render(<KnowledgeEditorialPanel onPendingWorkChange={onPendingWorkChange} />); await openRelease();
+        fireEvent.change(screen.getByLabelText('Tu observación'), { target: { value: 'Necesito revisar esta fuente.' } });
+        await waitFor(() => expect(onPendingWorkChange).toHaveBeenLastCalledWith(true));
+        fireEvent.click(screen.getByRole('button', { name: 'Descartar observación sin guardar' }));
+        await waitFor(() => expect(onPendingWorkChange).toHaveBeenLastCalledWith(false));
+        expect(posts()).toHaveLength(0);
+    });
     it('reintenta observación incierta con el mismo UUID, hash y contenido, sin autosend', async () => {
         let failures = 1;
         intercept = (path, options) => { if (path.endsWith('/notes') && options.method === 'POST' && failures--) return Promise.reject(new Error('Lost')); };
