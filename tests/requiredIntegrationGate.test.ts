@@ -15,6 +15,7 @@ describe('compuerta de integración requerida', () => {
     expect(REQUIRED_INTEGRATION_SUITES).toContain('tests/manualCashMovementVoid.integration.test.ts');
     expect(REQUIRED_INTEGRATION_SUITES).toContain('tests/purchaseSalePrice.integration.test.ts');
     expect(REQUIRED_INTEGRATION_SUITES).toContain('tests/assistantRuns.integration.test.ts');
+    expect(REQUIRED_INTEGRATION_SUITES).toContain('tests/assistantWorkItems.integration.test.ts');
     expect(gate).toContain('node scripts/verify-quality-suite-registration.mjs');
     expect(gate).toContain('node scripts/run-quality-integration.mjs');
   });
