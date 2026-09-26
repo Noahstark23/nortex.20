@@ -2,12 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient, type AssistantWorkItem, type AssistantWorkEvent } from '@prisma/client';
 import prisma from '../../../lib/prisma.js';
 import type { AssistantPrincipal } from '../../../../shared/assistant.js';
+import type { WeeklyCashReview } from '../../../../shared/assistantWeeklyCashReview.js';
 import type { AssistantWorkItemDTO, AssistantWorkItemSummaryDTO, AssistantWorkItemStatus, AssistantWorkItemEventDTO, AssistantWorkItemListDTO } from '../../../../shared/assistantWorkItems.js';
 import { assertAssistantAccess } from '../access.js';
+import { reviewWeeklyCash } from '../operations/weeklyCashReview.js';
 import { readWorkItemSource } from './source.js';
 import { buildW01Report } from './report.js';
 import { AssistantWorkItemError, createWorkItemSchema, listWorkItemsSchema, workItemEventSchema, workItemIdSchema,
-  acceptWorkItemReportSchema, WORK_ITEM_TTL_MS, WORK_ITEM_PAGE_SIZE, WORK_ITEM_EVENT_LIMIT, type WorkItemDatabase, type WorkItemDependencies } from './contracts.js';
+  acceptWorkItemReportSchema, unavailableWorkItemSource, WORK_ITEM_TTL_MS, WORK_ITEM_PAGE_SIZE, WORK_ITEM_EVENT_LIMIT, type WorkItemDatabase, type WorkItemDependencies } from './contracts.js';
 export { cleanupAssistantWorkItems } from './cleanup.js';
 export { AssistantWorkItemError } from './contracts.js';
 export type { WorkItemDependencies } from './contracts.js';
@@ -27,6 +29,17 @@ async function lockAuthority(principal: AssistantPrincipal, tx: Prisma.Transacti
   await tx.$queryRaw(Prisma.sql`SELECT id FROM User WHERE id=${principal.userId} AND tenantId=${principal.tenantId} FOR UPDATE`);
   await tx.$queryRaw(Prisma.sql`SELECT tenantId FROM AssistantTenantConfig WHERE tenantId=${principal.tenantId} FOR UPDATE`);
   await authorize(principal, tx);
+}
+
+/** Compara la fuente operativa completa al corte; la lectura del encargo histórico permanece intacta. */
+async function assertCurrentCashReview(principal: AssistantPrincipal, saved: WeeklyCashReview, tx: Prisma.TransactionClient, now: Date) {
+  const current = await reviewWeeklyCash(principal,
+    { startDate: saved.period.startDate, endDate: saved.period.endDate }, { tx, now: () => now });
+  const evidence = (review: WeeklyCashReview) => ({ period: { startDate: review.period.startDate,
+    endDate: review.period.endDate, timeZone: review.period.timeZone, completeDays: review.period.completeDays },
+    scope: review.scope, status: review.status, truncated: review.truncated,
+    rows: review.rows, counts: review.counts, totals: review.totals });
+  if (JSON.stringify(evidence(current)) !== JSON.stringify(evidence(saved))) throw unavailableWorkItemSource();
 }
 
 async function findItem(principal: AssistantPrincipal, id: string, db: WorkItemDatabase, now: Date) {
@@ -115,6 +128,7 @@ export async function createAssistantWorkItem(principal: AssistantPrincipal, inp
     const source = await readWorkItemSource(principal, runId, tx, now());
     const previous = await tx.assistantWorkItem.findFirst({ where: { runId, ...owner(principal) } });
     if (previous) { await authorize(principal, tx); return previous.id; }
+    await assertCurrentCashReview(principal, source.review, tx, now());
     const createdAt = now(), expiresAt = new Date(Math.min(createdAt.getTime() + WORK_ITEM_TTL_MS, source.expiresAt.getTime()));
     const row = await tx.assistantWorkItem.create({ data: { ...owner(principal), runId, conversationId: source.conversationId,
       evidenceId: source.summary.evidenceId, sourceHash: source.summary.contentHash, sourceSummary: json(source.summary),
@@ -162,6 +176,7 @@ export async function acceptAssistantWorkItemReport(principal: AssistantPrincipa
     if (row.status !== 'IN_REVIEW') throw new AssistantWorkItemError(409, 'WORK_ITEM_TRANSITION', 'Retomá la revisión antes de aceptar el informe.');
     if (row.eventCount > WORK_ITEM_EVENT_LIMIT) throw new AssistantWorkItemError(409, 'WORK_ITEM_HISTORY_TRUNCATED', 'El historial del informe no está completo para aceptarlo.');
     const source = await readWorkItemSource(principal, row.runId, tx, now(), row);
+    await assertCurrentCashReview(principal, source.review, tx, now());
     const events = await tx.assistantWorkEvent.findMany({ where: { workItemId: id, ...owner(principal), version: { lte: row.version } },
       orderBy: [{ version: 'desc' }, { id: 'desc' }], take: WORK_ITEM_EVENT_LIMIT });
     const report = buildW01Report({ id: row.id, version: row.version, assignedUserId: row.userId,
@@ -177,7 +192,7 @@ export async function acceptAssistantWorkItemReport(principal: AssistantPrincipa
       payloadHash, type: 'ACCEPT_REPORT', note: null, fromStatus: 'IN_REVIEW', status: 'ACCEPTED',
       version: row.version + 1, createdAt: acceptedAt } });
     await authorize(principal, tx);
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   const result = await getAssistantWorkItem(principal, id, deps);
   return { ...result, receiptEventId: accepted.eventId };
 }

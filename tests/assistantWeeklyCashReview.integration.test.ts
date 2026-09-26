@@ -70,6 +70,21 @@ async function conversation(actor: TestActor) {
     roleAtCreation: actor.role, expiresAt: new Date('2099-12-31T00:00:00Z') } });
 }
 
+async function workItemFromQuery(actor: TestActor, text: string) {
+  const chat = await conversation(actor);
+  const submitted = await api(`/api/assistant/conversations/${chat.id}/runs`, actor, 'POST',
+    { requestId: randomUUID(), text });
+  status(submitted, 202);
+  let run: Awaited<ReturnType<typeof api>>;
+  await vi.waitFor(async () => {
+    run = await api(`/api/assistant/runs/${submitted.body.id}`, actor); status(run, 200);
+    expect(run.body.status).toBe('SUCCEEDED');
+  }, { timeout: 12000, interval: 50 });
+  const item = await api('/api/assistant/work-items', actor, 'POST', { runId: run!.body.id });
+  status(item, 200);
+  return item;
+}
+
 qa('W01 revisión semanal de caja: snapshots, permisos y lectura HTTP/MySQL', () => {
   beforeAll(() => { assertDisposableDatabase(); });
   afterEach(() => { vi.unstubAllEnvs(); });
@@ -353,6 +368,61 @@ qa('W01 revisión semanal de caja: snapshots, permisos y lectura HTTP/MySQL', ()
     expect(accepted.body).toMatchObject({ status: 'ACCEPTED', acceptance: { reportHash: note.body.report.reportHash, withExceptions: true } });
     expect((await api(itemRoute, owner)).body.report.reportHash).toBe(note.body.report.reportHash);
     expect(await businessState(owner)).toEqual(before);
+    expect(await prisma.assistantUsage.count({ where: { tenantId: owner.tenantId } })).toBe(0);
+  }, 20000);
+
+  it('rechaza aceptar una revisión cuando cambió un cierre verificable después de guardarla', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const savedShift = await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    const changed = structuredClone(savedShift.report);
+    changed.cash.countedNio = '90'; changed.cash.differenceNio = '-10';
+    await prisma.shiftCloseReport.update({ where: { id: savedShift.stored!.id },
+      data: { report: asJson(changed), contentHash: hashShiftCloseReport(changed) } });
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 409); expect(accepted.body.code).toBe('WORK_ITEM_SOURCE_UNAVAILABLE');
+    expect(await prisma.assistantWorkItem.findUniqueOrThrow({ where: { id: item.body.id } })).toMatchObject({ status: 'IN_REVIEW', version: 0 });
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: item.body.id } })).toBe(1);
+  }, 20000);
+
+  it('rechaza aceptar cuando aparece el comprobante que faltaba en la revisión', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const missing = await closedShift(owner, { noReport: true });
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    await prisma.shiftCloseReport.create({ data: { tenantId: owner.tenantId, shiftId: missing.shift.id,
+      folio: missing.report.folio, businessDate: missing.report.businessDate, version: missing.report.version,
+      report: asJson(missing.report), contentHash: hashShiftCloseReport(missing.report), createdBy: owner.userId,
+      createdAt: missing.shift.endTime! } });
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 409); expect(accepted.body.code).toBe('WORK_ITEM_SOURCE_UNAVAILABLE');
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: item.body.id } })).toBe(1);
+  }, 20000);
+
+  it('rechaza aceptar si apareció otro cierre dentro del período revisado', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    await closedShift(owner);
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 409); expect(accepted.body.code).toBe('WORK_ITEM_SOURCE_UNAVAILABLE');
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: item.body.id } })).toBe(1);
+  }, 20000);
+
+  it('permite aceptar una lectura de hoy sin confundir el avance del reloj con un cambio de fuente', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const item = await workItemFromQuery(owner, 'Revisá mis cierres de caja hoy');
+    expect(item.body.review.period.completeDays).toBe(false);
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 200);
+    expect(accepted.body.acceptance.reportHash).toBe(item.body.report.reportHash);
     expect(await prisma.assistantUsage.count({ where: { tenantId: owner.tenantId } })).toBe(0);
   }, 20000);
 

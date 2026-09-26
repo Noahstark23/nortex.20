@@ -5,25 +5,15 @@ import { createServer } from 'node:net';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
+import { reviewWeeklyCash } from '../backend/services/assistant/operations/weeklyCashReview';
 import { cleanupAssistantWorkItems } from '../backend/services/assistant/workItems/service';
+import type { WeeklyCashReview } from '../shared/assistantWeeklyCashReview';
 import { api, assertDisposableDatabase, baseUrl, status, type TestActor } from './fixtures/assistant/integrationHelpers';
 
 const qa = baseUrl ? describe.sequential : describe.skip;
 const asJson = (value: unknown) => JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 
-function review() {
-  return {
-    kind: 'WEEKLY_CASH_REVIEW', status: 'partial', checkedAt: new Date().toISOString(), scope: 'business', truncated: false,
-    period: { startDate: '2026-09-12', endDate: '2026-09-18', cutoff: '2026-09-19T06:00:00.000Z', timeZone: 'America/Managua', completeDays: true },
-    rows: [{ shiftId: 'synthetic-shift', status: 'MISSING_REPORT', closedAt: '2026-09-18T17:00:00.000Z', businessDate: '2026-09-18',
-      folio: null, source: null, cash: null, message: 'Falta el comprobante de prueba.' }],
-    counts: { closed: 1, verified: 0, differences: 0, missingReports: 1, invalidReports: 0, open: 0 },
-    totals: { shortageNio: null, surplusNio: null, shortageUsd: null, surplusUsd: null },
-    warnings: ['La causa no está acreditada.'], evidence: ['Solo referencia sintética de QA.'],
-  };
-}
-
-async function fixture(): Promise<{ actor: TestActor; runId: string }> {
+async function fixture(): Promise<{ actor: TestActor; runId: string; shiftId: string }> {
   assertDisposableDatabase();
   const nonce = randomUUID();
   const tenant = await prisma.tenant.create({ data: { businessName: 'QA continuidad W01', taxId: `QA-${nonce}`, type: 'FERRETERIA' } });
@@ -33,15 +23,19 @@ async function fixture(): Promise<{ actor: TestActor; runId: string }> {
   const actor = { tenantId: tenant.id, userId: user.id, role: user.role,
     token: signAuthToken({ userId: user.id, tenantId: tenant.id, role: user.role, email: user.email! }) };
   await prisma.assistantTenantConfig.create({ data: { tenantId: tenant.id, enabled: true, operationsEnabled: true } });
+  const shift = await prisma.shift.create({ data: { tenantId: tenant.id, userId: user.id, status: 'CLOSED',
+    startTime: new Date('2026-09-18T12:00:00.000Z'), endTime: new Date('2026-09-18T17:00:00.000Z'),
+    initialCash: '100', finalCashDeclared: '100', systemExpectedCash: '100', difference: '0' } });
+  const sourceReview = await reviewWeeklyCash(actor, { startDate: '2026-09-12', endDate: '2026-09-18' });
   const expiresAt = new Date(Date.now() + 90 * 86_400_000);
   const conversation = await prisma.assistantConversation.create({ data: { tenantId: tenant.id, userId: user.id,
     roleAtCreation: user.role, expiresAt } });
   const run = await prisma.assistantRun.create({ data: { tenantId: tenant.id, userId: user.id, roleAtCreation: user.role,
     conversationId: conversation.id, requestId: randomUUID(), payloadHash: 'a'.repeat(64), inputText: 'Revisión sintética W01',
     knowledgeChannel: 'WEB_INTERNAL', status: 'SUCCEEDED', result: asJson({ text: 'Revisión parcial de QA.',
-      evidence: [{ id: `evidence-${nonce}`, tool: 'review_weekly_cash', label: 'Revisión semanal', data: review() }],
+      evidence: [{ id: `evidence-${nonce}`, tool: 'review_weekly_cash', label: 'Revisión semanal', data: sourceReview }],
       actionProposalIds: [], degraded: true }), expiresAt } });
-  return { actor, runId: run.id };
+  return { actor, runId: run.id, shiftId: shift.id };
 }
 
 qa('W01 continuidad HTTP y MySQL descartable', () => {
@@ -72,7 +66,7 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
   }, 180_000);
 
   it('creación concurrente, recuperación y reintento conservan un solo evento y no escriben caja', async () => {
-    const { actor, runId } = await fixture();
+    const { actor, runId, shiftId } = await fixture();
     const [first, second] = await Promise.all([
       api('/api/assistant/work-items', actor, 'POST', { runId }),
       api('/api/assistant/work-items', actor, 'POST', { runId }),
@@ -97,7 +91,7 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
     expect(recovered.body.review.totals.shortageNio).toBeNull();
     expect(recovered.body.report).toMatchObject({ kind: 'W01_CASH_REPORT', workItemVersion: 1,
       sourceHash: recovered.body.source.contentHash, totals: { shortageNio: null },
-      exceptions: expect.arrayContaining([expect.objectContaining({ shiftId: 'synthetic-shift', status: 'PENDING', assignedUserId: actor.userId })]) });
+      exceptions: expect.arrayContaining([expect.objectContaining({ shiftId, status: 'PENDING', assignedUserId: actor.userId })]) });
     expect(recovered.body.report.reportHash).toMatch(/^[a-f0-9]{64}$/);
     expect(recovered.body.report.reportHash).not.toBe(first.body.report.reportHash);
     expect((await api(route, actor)).body.report.reportHash).toBe(recovered.body.report.reportHash);
@@ -110,7 +104,7 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
       prisma.journalEntry.count({ where: { tenantId: actor.tenantId } }),
       prisma.auditLog.count({ where: { tenantId: actor.tenantId } }),
       prisma.assistantUsage.count({ where: { tenantId: actor.tenantId } }),
-    ])).toEqual([0, 0, 0, 0, 0]);
+    ])).toEqual([1, 0, 0, 0, 0]);
   });
 
   it('revocación, fuente cambiada y limpieza respetan autoridad y no borran el run', async () => {
@@ -125,7 +119,7 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
     await prisma.user.update({ where: { id: actor.userId }, data: { role: 'OWNER' } });
 
     const stored = await prisma.assistantRun.findUniqueOrThrow({ where: { id: runId } });
-    const result = structuredClone(stored.result as { evidence: Array<{ data: ReturnType<typeof review> }> });
+    const result = structuredClone(stored.result as unknown as { evidence: Array<{ data: WeeklyCashReview }> });
     result.evidence[0].data.warnings = ['La fuente cambió.'];
     await prisma.assistantRun.update({ where: { id: runId }, data: { result: asJson(result) } });
     const changed = await api(route, actor); status(changed, 409);
@@ -171,7 +165,7 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
       prisma.journalEntry.count({ where: { tenantId: actor.tenantId } }),
       prisma.auditLog.count({ where: { tenantId: actor.tenantId } }),
       prisma.assistantUsage.count({ where: { tenantId: actor.tenantId } }),
-    ])).toEqual([0, 0, 0, 0, 0]);
+    ])).toEqual([1, 0, 0, 0, 0]);
   });
 
   it('dos aceptaciones concurrentes producen un único comprobante', async () => {
