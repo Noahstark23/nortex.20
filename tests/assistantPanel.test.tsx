@@ -17,6 +17,8 @@ import type { AssistantCapabilities, AssistantMessageDTO, AssistantProposalDTO }
 import type { AssistantWorkItemDTO } from '../shared/assistantWorkItems';
 
 const caps: AssistantCapabilities = { enabled: true, help: true, overview: true, inventory: true, invoiceRead: true, invoicePrepare: true, invoiceConfirm: true, extractionEnabled: true, executionEnabled: true, purchasePrepare: true, accessScope: 'OWNER' };
+const tokenA = `header.${btoa(JSON.stringify({ tenantId: 't1', userId: 'u1' }))}.signature`;
+const tokenB = `header.${btoa(JSON.stringify({ tenantId: 't2', userId: 'u2' }))}.signature`;
 const ok = (value: unknown) => ({ ok: true, status: 200, json: async () => value });
 const denied = { ok: false, status: 403, json: async () => ({ error: 'Acceso no permitido' }) };
 const ready = (): AssistantProposalDTO => ({ id: 'p1', version: 1, status: 'READY', attachmentIds: ['a1'], expiresAt: '2026-10-01T00:00:00Z', issues: [],
@@ -33,7 +35,7 @@ function Route() { const location = useLocation(); const sale = useVentaEnCurso(
 function CurrentSale() { const report = useReportarVenta(); React.useEffect(() => report({ hayVenta: true, lineas: 3, total: 150 }), [report]); return <NortexAssistantLauncher />; }
 
 beforeEach(() => {
-    localStorage.clear(); localStorage.setItem('nortex_token', 'token-a'); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', tenant: { id: 't1' } }));
+    localStorage.clear(); sessionStorage.clear(); localStorage.setItem('nortex_token', tokenA); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', tenant: { id: 't1' } }));
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
     const storedMessages: unknown[] = [];
@@ -373,7 +375,7 @@ describe('NortexGPT dentro del negocio', () => {
         expect(screen.getByText(/Período: 2026-09-05 al 2026-09-05/)).toBeVisible(); expect(screen.queryByText('C$ 0.00')).not.toBeInTheDocument();
         const messageCall = fetcher.mock.calls.find(([url]) => url.endsWith('/messages'));
         expect(JSON.parse(messageCall![1].body)).toEqual({ requestId: expect.any(String), text: '¿Cómo va mi negocio hoy?' });
-        expect(messageCall![1]).toMatchObject({ cache: 'no-store', headers: { Authorization: 'Bearer token-a' } });
+        expect(messageCall![1]).toMatchObject({ cache: 'no-store', headers: { Authorization: `Bearer ${tokenA}` } });
     });
     it('mantiene la conversación al cerrar y nunca guarda texto en almacenamiento local', async () => {
         const persist = vi.spyOn(localStorage, 'setItem');
@@ -398,7 +400,7 @@ describe('NortexGPT dentro del negocio', () => {
         let finish!: (value: unknown) => void; const deferred = new Promise(resolve => { finish = resolve; });
         const base = fetcher.getMockImplementation() as (...args: any[]) => any; fetcher.mockImplementation((url, options) => url.endsWith('/messages') ? deferred : base(url, options));
         mount(); await open(); fireEvent.click(screen.getByRole('button', { name: '¿Cómo va mi negocio hoy?' })); await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith('/messages'))).toBe(true));
-        localStorage.setItem('nortex_token', 'token-b'); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u2', tenant: { id: 't2' } })); fireEvent(window, new Event('storage'));
+        localStorage.setItem('nortex_token', tokenB); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u2', tenant: { id: 't2' } })); fireEvent(window, new Event('storage'));
         await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
         finish(ok({ id: 'private', role: 'assistant', text: 'Dato privado del negocio anterior', createdAt: '2026-09-05T12:00:00Z' })); await open();
         expect(screen.queryByText('Dato privado del negocio anterior')).not.toBeInTheDocument(); expect(screen.queryByText('¿Cómo va mi negocio hoy?', { selector: 'p' })).not.toBeInTheDocument();

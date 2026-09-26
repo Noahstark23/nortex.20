@@ -5,7 +5,7 @@ import { AssistantWeeklyCashReview } from './AssistantWeeklyCashReview';
 
 const statusLabel = { IN_REVIEW: 'En revisión', WAITING: 'En espera', CANCELLED: 'Cancelado', ACCEPTED: 'Aceptado' };
 export function AssistantWorkItems({ controller: c }: { controller: AssistantWorkItemsController }) {
-    const item = c.selected, locked = c.busy || !!c.pending || !!c.pendingAcceptance || item?.status === 'CANCELLED' || item?.status === 'ACCEPTED';
+    const item = c.selected, locked = c.busy || c.storageBlocked || !!c.pending || !!c.pendingAcceptance || item?.status === 'CANCELLED' || item?.status === 'ACCEPTED';
     const [reviewed, setReviewed] = useState(false);
     useEffect(() => { setReviewed(false); }, [item?.id, item?.report?.reportHash]);
     return <section aria-label="Trabajos guardados" className="min-w-0 space-y-4">
@@ -13,6 +13,13 @@ export function AssistantWorkItems({ controller: c }: { controller: AssistantWor
         <p className="nx-shell-muted text-sm">Guardá notas y retomá la revisión cuando tengas la información. Esperar, consultar y aceptar el informe no ejecutan la IA ni cambian caja.</p>
         {c.error && <p role="alert" className="nx-tone-warning text-sm">{c.error}</p>}
         <button type="button" className={assistantButtonClass} disabled={c.busy} onClick={() => void c.load()}>Actualizar trabajos</button>
+        {!item && c.recoveryId && <section aria-label="Trabajo W01 pendiente de recuperación" className="nx-tone-warning space-y-2 text-sm">
+            <p>La referencia {c.recoveryId} sigue en esta pestaña. Consultá el servidor antes de reintentar un envío pendiente; no se repetirá automáticamente.</p>
+            {c.pending && <p className="break-all">Envío pendiente: {c.pending.input.eventId}</p>}
+            {c.pendingAcceptance && <p className="break-all">Aceptación pendiente: {c.pendingAcceptance.input.eventId} · Hash {c.pendingAcceptance.input.reportHash}</p>}
+            <button type="button" className={assistantButtonClass} disabled={c.busy} onClick={() => void c.open(c.recoveryId!)}>Comprobar trabajo guardado</button>
+            {c.note && <label className="block">Nota conservada<textarea className={assistantInputClass} readOnly value={c.note} /></label>}
+        </section>}
         <ul className="space-y-2">{c.items.map(row => <li key={row.id}><button type="button" className={`${assistantButtonClass} w-full justify-start text-left`} disabled={c.busy || ((!!c.note.trim() || !!c.pending || !!c.pendingAcceptance) && row.id !== item?.id)} onClick={() => void c.open(row.id)}>
             {row.source.period.startDate} al {row.source.period.endDate} · {statusLabel[row.status]}
         </button></li>)}</ul>

@@ -15,6 +15,8 @@ import { assistantJobMessage } from './assistantJobMessage';
 import { AssistantAttachmentPreview } from './AssistantAttachmentPreview';
 import { AssistantPrivateWhatsapp } from './AssistantPrivateWhatsapp';
 import { useAssistantWorkItems } from '../../hooks/useAssistantWorkItems';
+import { readActivationSession } from '../../hooks/useActivationJourney';
+import { assistantWorkDraftScope } from '../../utils/assistantWorkDraft';
 import { AssistantWorkItems } from './AssistantWorkItems';
 import { AssistantRunView } from './AssistantRunView';
 import { AssistantActionReview } from './AssistantActionReview';
@@ -34,7 +36,13 @@ export default function NortexAssistantPanel({ controller, open, onClose }: { co
     const { capabilities, messages: storedMessages, proposal, attachments, job, busy, error, purchaseIntake, pendingMessage } = controller;
     const invoiceEditor = useAssistantInvoiceReviewState(proposal);
     const operational = controller.operations;
-    const work = useAssistantWorkItems(controller.request, `${controller.sessionKey}:${capabilities?.accessScope ?? ''}`, !!capabilities?.enabled && !!capabilities?.operations && !!capabilities?.cashReview);
+    const workStorageScope = (() => {
+        const session = readActivationSession();
+        if (!session.token || session.key !== controller.sessionKey || !capabilities?.accessScope) return null;
+        try { return assistantWorkDraftScope(session.token, capabilities.accessScope); } catch { return null; }
+    })();
+    const work = useAssistantWorkItems(controller.request, `${controller.sessionKey}:${capabilities?.accessScope ?? ''}`,
+        !!capabilities?.enabled && !!capabilities?.operations && !!capabilities?.cashReview && !!workStorageScope, workStorageScope);
     const saveWork = async (runId: string) => { setTab('work'); await work.create(runId); };
     const refreshKnowledge = useCallback(async () => { await Promise.all([controller.refreshKnowledge(), operational.refreshKnowledge()]); }, [controller.refreshKnowledge, operational.refreshKnowledge]);
     const knowledge = useAssistantKnowledge(controller.request, `${controller.sessionKey}:${assistantKnowledgeCapabilityScope(capabilities)}`, open && !!capabilities?.help, refreshKnowledge);
