@@ -115,6 +115,24 @@ describe('verificación post-deploy por commit', () => {
         expect(sleep).toHaveBeenCalledWith(DEPLOYED_HEALTH_RETRY.intervalMs);
     });
 
+    it('acepta una release sana que aparece después de ocho minutos de build', async () => {
+        let clock = 0;
+        const fetchImpl = vi.fn(async () => clock >= 8 * 60_000 + 30_000
+            ? healthResponse({ ok: true, db: 'up', commit: SHA })
+            : new Response(null, { status: 503 }));
+        const sleep = vi.fn(async (ms: number) => { clock += ms; });
+
+        await expect(waitForExpectedRelease({
+            baseUrl: 'https://staging.somosnortex.com',
+            expectedCommit: SHA,
+            fetchImpl,
+            sleep,
+            now: () => clock,
+        })).resolves.toMatchObject({ attemptsUsed: 103 });
+
+        expect(clock).toBe(8 * 60_000 + 30_000);
+    });
+
     it('no supera la ventana total aunque los requests consuman su timeout', async () => {
         let clock = 0;
         const fetchImpl = vi.fn(async () => {
