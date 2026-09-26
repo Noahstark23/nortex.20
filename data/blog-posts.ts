@@ -1318,11 +1318,9 @@ El crédito a maestros y clientes frecuentes es parte del negocio ferretero. Per
 
 Vender a empresas constructoras exige factura formal con IVA y, a veces, manejar retenciones. Tené tu [facturación DGI](/blog/facturacion-dgi-nicaragua-guia) ordenada para no perder esos clientes.
 
-## Nortex está hecho para ferreterías
+## Cómo evaluar Nortex para tu ferretería
 
-Nortex controla miles de productos por código, descuenta inventario en cada venta, maneja crédito a clientes y factura cumpliendo la DGI. Probalo gratis 30 días.
-
-[Empezá ahora →](/register)
+Revisá el recorrido de mostrador, la venta confirmada y el Kardex, además del flujo separado de crédito y saldo, en la [página de software para ferreterías](/ferreterias). La práctica pública usa productos de ejemplo y no registra una venta real.
 `,
     },
     {
@@ -1367,11 +1365,9 @@ Algunos medicamentos tienen precios de referencia y márgenes ajustados; otros (
 
 La farmacia factura con IVA según corresponda y debe tener su [facturación DGI](/blog/facturacion-dgi-nicaragua-guia) ordenada. Un [POS](/blog/sistema-punto-de-venta-nicaragua-guia) que integre todo evita el doble trabajo.
 
-## Nortex controla lotes y caducidad
+## Cómo evaluar Nortex para tu farmacia
 
-Nortex maneja inventario por lote y fecha de caducidad, te alerta de lo próximo a vencer y factura cumpliendo la DGI. Dejá de perder plata por vencimientos.
-
-[Probá Nortex gratis 30 días →](/register)
+La [página de software para farmacias](/farmacias) muestra el registro de lotes, los avisos de vencimiento y la salida FEFO según la configuración de lotes. También explica qué queda a decisión del encargado.
 `,
     },
     {
@@ -1423,11 +1419,9 @@ En medicamentos, un lote que compraste después puede vencer antes que uno viejo
 
 Con cientos de presentaciones y múltiples lotes, llevar las caducidades en un cuaderno es inviable. Necesitás un sistema que registre el lote y te avise. Es el corazón de [administrar una farmacia](/blog/como-administrar-una-farmacia-nicaragua).
 
-## Nortex te avisa antes de que venza
+## Revisá el flujo en Nortex
 
-Nortex controla cada lote con su fecha de caducidad y te alerta de lo próximo a vencer para que actúes a tiempo. Menos pérdidas, más margen.
-
-[Probá Nortex gratis 30 días →](/register)
+Conocé cómo se registra un lote, cómo aparece el aviso de vencimiento y qué condiciones tiene la salida FEFO en la [página de software para farmacias](/farmacias). Los avisos informan; la decisión de retirar un lote corresponde al encargado.
 `,
     },
     {
