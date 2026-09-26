@@ -33,6 +33,7 @@ import {
     jsonLdScriptTags,
 } from '../utils/seo';
 import { pickRelatedGuides } from '../utils/related-guides';
+import { sectorLandingContent, type SectorKey } from '../data/sectorLandingContent';
 
 const DIST = path.join(process.cwd(), 'dist');
 const ORIGIN = 'https://somosnortex.com';
@@ -87,6 +88,20 @@ interface RouteSEO {
 const esc = (s: string): string =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+function sectorBody(key: SectorKey, type: 'FARMACIA' | 'FERRETERIA', source: string): string {
+    const sector = sectorLandingContent[key];
+    const registerUrl = `/register?type=${type}&amp;source=${source}`;
+    return `
+      <p>${esc(sector.intro)}</p>
+      <h2>${esc(sector.journeyTitle)}</h2>
+      <ol>${sector.steps.map(step => `<li><strong>${esc(step.title)}:</strong> ${esc(step.body)}</li>`).join('')}</ol>
+      <h2>Ejemplo para evaluar el recorrido</h2><p>${esc(sector.example)}</p><p>${esc(sector.limit)}</p>
+      ${key === 'farmacia' ? '<h2>Recorrido guiado con datos ficticios</h2><p>Registrá dos lotes, revisá Avisos y comprobá la salida FEFO y Kardex con productos de prueba.</p>' : ''}
+      ${'demo' in sector ? `<h2>Práctica navegable de mostrador</h2><p>Usa productos de ejemplo; no guarda stock ni crédito real. <a href="${sector.demo}">Abrir práctica de venta</a>.</p>` : ''}
+      <h2>Conocé el proceso</h2><ul>${sector.guides.map(guide => `<li><a href="${guide.to}">${esc(guide.label)}</a></li>`).join('')}</ul>
+      <p><a href="${registerUrl}" data-sector-cta="${key}" data-page-kind="landing" data-cta-location="hero">${esc(sector.cta)}</a> · 30 días de prueba sin tarjeta.</p>`;
+}
+
 // Legal no mantiene una segunda copia de su contenido en este script: el mismo
 // componente que hidrata React se serializa para crawlers y para el primer paint.
 // Esto evita que el HTML estatico quede reducido a un teaser o se desactualice.
@@ -98,41 +113,21 @@ const termsOfServiceBody = renderToStaticMarkup(createElement(TermsOfServiceCont
 const routes: RouteSEO[] = [
     {
         path: '/ferreterias',
-        title: 'Software para Ferreterías en Nicaragua | POS + Inventario | Nortex',
-        description: 'Sistema de punto de venta e inventario para ferreterías en Nicaragua. Control de stock por código, facturación DGI y crédito a clientes. Prueba gratis 30 días.',
-        h1: 'Software de facturación e inventario para ferreterías en Nicaragua',
+        title: sectorLandingContent.ferreteria.title,
+        description: sectorLandingContent.ferreteria.description,
+        h1: sectorLandingContent.ferreteria.hero,
         changefreq: 'monthly',
         priority: '0.9',
-        body: `
-      <p>Nortex es el sistema POS pensado para ferreterías nicaragüenses: controla miles de productos por código, factura cumpliendo la DGI y gestiona el crédito de tus clientes en un solo lugar.</p>
-      <h2>Hecho para el día a día de una ferretería</h2>
-      <ul>
-        <li>Punto de venta rápido con búsqueda por código o nombre</li>
-        <li>Inventario en tiempo real con alertas de stock mínimo y Kardex</li>
-        <li>Facturación DGI con Series A y B y constancias de retención</li>
-        <li>Cuentas por cobrar y crédito a clientes frecuentes</li>
-        <li>Reportes de ventas, márgenes y productos más vendidos</li>
-      </ul>
-      <p>Empieza gratis por 30 días, sin tarjeta de crédito.</p>`,
+        body: sectorBody('ferreteria', 'FERRETERIA', 'landing_ferreteria'),
     },
     {
         path: '/farmacias',
-        title: 'Software para Farmacias en Nicaragua | Control de Lotes y Caducidad | Nortex',
-        description: 'Sistema POS e inventario para farmacias en Nicaragua: control de lotes, fechas de caducidad, facturación DGI y Kardex. Prueba gratis 30 días.',
-        h1: 'Sistema de inventario y facturación para farmacias en Nicaragua',
+        title: sectorLandingContent.farmacia.title,
+        description: sectorLandingContent.farmacia.description,
+        h1: sectorLandingContent.farmacia.hero,
         changefreq: 'monthly',
         priority: '0.9',
-        body: `
-      <p>Nortex ayuda a las farmacias de Nicaragua a controlar lotes y fechas de caducidad, evitar pérdidas por vencimiento y facturar cumpliendo la DGI.</p>
-      <h2>Diseñado para el control que exige una farmacia</h2>
-      <ul>
-        <li>Control de inventario por lote y fecha de caducidad (FEFO)</li>
-        <li>Alertas de productos próximos a vencer</li>
-        <li>Facturación DGI con Series A y B</li>
-        <li>Kardex y trazabilidad de cada movimiento</li>
-        <li>Reportes de ventas y rotación de productos</li>
-      </ul>
-      <p>Prueba Nortex gratis por 30 días y deja de perder dinero por vencimientos.</p>`,
+        body: sectorBody('farmacia', 'FARMACIA', 'landing_farmacia'),
     },
     {
         path: '/nicaragua',

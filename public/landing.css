@@ -559,6 +559,24 @@ section { padding: clamp(72px, 10vw, 144px) 0; }
   color: var(--ink-3); margin-top: 8px;
   max-width: 36ch;
 }
+.v-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid currentColor;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  transition: color 180ms var(--ease);
+}
+.v-link:hover { color: var(--ink); }
+.v-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.v-link span { transition: transform 180ms var(--ease); }
+.v-link:hover span { transform: translateX(3px); }
 
 .v-big   { grid-column: span 7; }
 .v-tall  { grid-column: span 5; }

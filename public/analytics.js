@@ -71,6 +71,19 @@
     var a = e.target.closest('a');
     if (!a) return;
     var href = a.getAttribute('href') || '';
+    var sector = a.getAttribute('data-sector-cta');
+    if ((sector === 'farmacia' || sector === 'ferreteria') &&
+        (a.getAttribute('data-page-kind') === 'blog' || a.getAttribute('data-page-kind') === 'landing')) {
+      var ctaLocation = a.getAttribute('data-cta-location');
+      if (ctaLocation === 'nav' || ctaLocation === 'hero' || ctaLocation === 'footer') {
+        window.nxTrack('sector_cta_click', {
+          vertical: sector,
+          page_kind: a.getAttribute('data-page-kind'),
+          cta_location: ctaLocation
+        });
+      }
+      return; // Un CTA sectorial no cuenta otra vez como register_cta_click.
+    }
 
     if (href.indexOf('wa.me/') !== -1 || href.indexOf('wa.me%') !== -1) {
       window.nxTrack('whatsapp_click', {

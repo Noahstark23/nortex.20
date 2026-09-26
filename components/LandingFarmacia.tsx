@@ -1,13 +1,15 @@
 import React from 'react';
 import IndustryLanding from './public/IndustryLanding';
+import { sectorLandingContent } from '../data/sectorLandingContent';
 
 const LandingFarmacia: React.FC = () => (
   <IndustryLanding
     industryLabel="Farmacias"
     industryType="FARMACIA"
     source="landing_farmacia"
-    hero="Mostrador, inventario y caja en una experiencia más clara para tu farmacia."
-    intro="Diseñado para dependientes y administración que necesitan buscar productos, cobrar y revisar existencias con rapidez. Nortex reúne la operación diaria sin esconder texto ni cambiar de lenguaje visual al entrar."
+    sector={sectorLandingContent.farmacia}
+    hero={sectorLandingContent.farmacia.hero}
+    intro={sectorLandingContent.farmacia.intro}
     problems={[
       'Búsqueda por nombre, código y categoría para resolver consultas del mostrador.',
       'Inventario y alertas de stock visibles para organizar compras y reposición.',

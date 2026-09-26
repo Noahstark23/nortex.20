@@ -19,6 +19,9 @@ import BlogShell from './blog/BlogShell';
 const BlogPost: React.FC = () => {
     const { slug } = useParams<{ slug: string }>();
     const post = blogPosts.find(p => p.slug === slug);
+    const sector = slug === 'como-administrar-una-ferreteria-nicaragua' ? 'ferreteria'
+        : slug === 'como-administrar-una-farmacia-nicaragua' || slug === 'como-controlar-vencimientos-farmacia-fefo' ? 'farmacia' : null;
+    const sectorPath = sector === 'farmacia' ? '/farmacias' : '/ferreterias';
     const cluster = post ? getClusterByName(post.cluster) : undefined;
 
     useEffect(() => {
@@ -141,10 +144,10 @@ const BlogPost: React.FC = () => {
 
                 {/* CTA principal */}
                 <aside className="nx-public-surface mt-14 rounded-3xl border p-7 text-center sm:p-10" aria-labelledby="article-cta-title">
-                    <h2 id="article-cta-title" className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">¿Cansado de hacer esto a mano?</h2>
-                    <p className="nx-public-muted mx-auto mt-3 max-w-xl text-[17px] leading-7">Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.</p>
-                    <Link to="/register" className="nx-public-primary mt-6 inline-flex min-h-[44px] items-center justify-center gap-2 px-7 text-base font-semibold">
-                        Empezar gratis ahora →
+                    <h2 id="article-cta-title" className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">{sector ? 'Conocé el recorrido en Nortex' : '¿Cansado de hacer esto a mano?'}</h2>
+                    <p className="nx-public-muted mx-auto mt-3 max-w-xl text-[17px] leading-7">{sector ? 'Revisá los pasos, el ejemplo y los límites antes de crear tu cuenta.' : 'Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.'}</p>
+                    <Link to={sector ? sectorPath : '/register'} data-sector-cta={sector ?? undefined} data-page-kind={sector ? 'blog' : undefined} data-cta-location={sector ? 'footer' : undefined} className="nx-public-primary mt-6 inline-flex min-h-[44px] items-center justify-center gap-2 px-7 text-base font-semibold">
+                        {sector ? `Ver Nortex para ${sector === 'farmacia' ? 'farmacias' : 'ferreterías'} →` : 'Empezar gratis ahora →'}
                     </Link>
                 </aside>
 
