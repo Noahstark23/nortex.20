@@ -357,7 +357,12 @@ curl --fail --silent --show-error --max-time 10 \
     --output "$smoke_tmp_dir/ferreterias.html" \
     "$smoke_base_url/ferreterias" >/dev/null 2>&1 \
     || smoke_die 'la ruta prerenderizada local no respondió.'
-grep -Fq '<title>Software para Ferreterías' "$smoke_tmp_dir/ferreterias.html" \
+smoke_env ./node_modules/.bin/tsx -e '
+import { readFileSync } from "node:fs";
+import { sectorLandingContent } from "./data/sectorLandingContent.ts";
+const html = readFileSync(process.argv[1], "utf8");
+if (!html.includes(`<title>${sectorLandingContent.ferreteria.title}</title>`)) process.exit(1);
+' "$smoke_tmp_dir/ferreterias.html" \
     || smoke_die 'la ruta prerenderizada no conservó su título.'
 curl --fail --silent --show-error --max-time 10 \
     --output "$smoke_tmp_dir/sitemap.xml" \
