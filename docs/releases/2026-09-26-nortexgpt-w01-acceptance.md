@@ -15,7 +15,7 @@ Las cinco columnas nuevas de `AssistantWorkItem` son opcionales. El SQL espejo e
 - Prisma 6.4.1 `validate` y `generate` con URL dummy: aprobados.
 - Pruebas focalizadas de ruta, servicio e interfaz: 75 aprobadas; TypeScript aprobó.
 - MySQL 8 efímero: `npm run test:integration:required` aprobó **52 suites, 565 casos, cero omitidos**. La suite W01 pasó 6 casos: upgrade de tabla poblada y estado parcial con `db push` repetido, concurrencia, hash exacto, replay del comprobante, identidad/revocación/fuente y cero escrituras de caja/IA. Un segundo proceso backend recuperó por HTTP la nota y el hash aceptado desde la misma base, sin nueva llamada ni gasto de IA.
-- `mise exec -- sh scripts/ci-local-safe.sh`: Prisma generate, TypeScript, Vitest (7 122 aprobadas, 550 omitidas), diseño y build pasaron. Las omitidas se verificaron por la compuerta MySQL obligatoria cuando aplicaba.
+- `mise exec -- sh scripts/ci-local-safe.sh` en el candidato con prueba entre procesos: Prisma generate, TypeScript, Vitest (7 122 aprobadas, 551 omitidas), diseño y build pasaron. Las omitidas se verificaron por la compuerta MySQL obligatoria cuando aplicaba.
 - CI remoto, staging, restauración real y navegador físico: pendientes de su propia evidencia.
 
 La prueba de upgrade se ejecutó sólo sobre la base descartable. Antes de cualquier promoción con schema siguen siendo necesarios un respaldo off-site reciente y un restore drill vigente de la base real, CI y staging del mismo SHA y autorización separada de producción. La lectura desde otro proceso acredita persistencia entre procesos, pero no una interrupción del backend original ni la recuperación operativa después de un crash. El trabajo W01 aún requiere navegación con carrito y evaluación humana/modelo/piloto.
