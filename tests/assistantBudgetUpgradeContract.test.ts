@@ -7,7 +7,7 @@ const extra = 'backend/prisma/migrations/20260924010000_next_feature/migration.s
 describe('contrato del espejo completo de upgrade de presupuesto', () => {
   it('fija el origen productivo y acredita los siete SQL de este candidato', () => {
     expect(BASELINE_COMMIT).toBe('20fda8dc196b808b0508e53d1253510cacd7096b');
-    expect(MIGRATION_PATHS).toHaveLength(7);
+    expect(MIGRATION_PATHS).toHaveLength(8);
     expect(assertMigrationManifest(delta([...MIGRATION_PATHS].reverse()))).toEqual([...MIGRATION_PATHS].sort());
   });
 
