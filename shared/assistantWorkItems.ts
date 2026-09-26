@@ -1,4 +1,5 @@
 import type { WeeklyCashReview } from './assistantWeeklyCashReview.js';
+import type { AssistantWorkReport } from './assistantWorkReport.js';
 
 /** Continuidad privada de una lectura de caja; no acepta informes ni modifica la caja. */
 export type AssistantWorkItemStatus = 'IN_REVIEW' | 'WAITING' | 'CANCELLED';
@@ -41,6 +42,8 @@ export interface AssistantWorkItemEventDTO {
 export interface AssistantWorkItemDTO extends AssistantWorkItemSummaryDTO {
   /** Se recupera y revalida desde el run original en cada lectura. */
   review: WeeklyCashReview;
+  /** Vista previa determinista del informe actual; todavía no es una aceptación. */
+  report: AssistantWorkReport;
   events: AssistantWorkItemEventDTO[];
   eventsTruncated: boolean;
   /** POST de evento: UUID exacto acreditado, incluso si salió de la ventana de 100 eventos. */

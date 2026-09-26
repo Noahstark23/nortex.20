@@ -13,6 +13,13 @@ const fixture = (): AssistantWorkItemDTO => ({ id: 'work-1', kind: 'W01_CASH_REV
         period: { startDate: '2026-09-12', endDate: '2026-09-18', cutoff: '2026-09-19T06:00:00Z', timeZone: 'America/Managua', completeDays: true },
         rows: [], counts: { closed: 0, verified: 0, differences: 0, missingReports: 0, invalidReports: 0, open: 0 },
         totals: { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' }, warnings: [], evidence: [] },
+    report: { kind: 'W01_CASH_REPORT', workItemId: 'work-1', workItemVersion: 0, sourceHash: 'a'.repeat(64),
+        period: { startDate: '2026-09-12', endDate: '2026-09-18', cutoff: '2026-09-19T06:00:00Z', timeZone: 'America/Managua', completeDays: true },
+        checkedAt: '2026-09-19T12:00:00Z', scope: 'business', completeness: 'ok', truncated: false,
+        counts: { closed: 0, verified: 0, differences: 0, missingReports: 0, invalidReports: 0, open: 0 },
+        totals: { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' },
+        rows: [], exceptions: [], noteEventIds: [], notesHash: 'd'.repeat(64), notesTruncated: false,
+        warnings: [], evidence: ['Reporte de cierre sintético'], reportHash: 'c'.repeat(64) },
     events: [], eventsTruncated: false });
 afterEach(cleanup);
 
@@ -84,6 +91,8 @@ describe('continuidad privada de revisiones', () => {
         function Harness() { const c = useAssistantWorkItems(vi.fn().mockResolvedValue(fixture()), 'user-a', true); return <><button onClick={() => void c.create('run-1')}>Guardar fuente</button><AssistantWorkItems controller={c} /></>; }
         render(<Harness />); fireEvent.click(screen.getByText('Guardar fuente'));
         await screen.findByRole('region', { name: 'Revisión guardada' });
+        expect(screen.getByRole('region', { name: 'Informe preliminar W01' })).toHaveTextContent('Todavía no está aceptado');
+        expect(screen.getByRole('region', { name: 'Informe preliminar W01' })).toHaveTextContent('Reporte de cierre sintético');
         fireEvent.change(screen.getByLabelText('Nota de la revisión'), { target: { value: 'Falta evidencia' } });
         expect(screen.getByRole('button', { name: 'Dejar en espera' })).toBeDisabled();
         expect(screen.queryByRole('button', { name: /Aceptar informe|Confirmar caja/ })).not.toBeInTheDocument();

@@ -5,6 +5,7 @@ import type { AssistantPrincipal } from '../../../../shared/assistant.js';
 import type { AssistantWorkItemDTO, AssistantWorkItemSummaryDTO, AssistantWorkItemStatus, AssistantWorkItemEventDTO, AssistantWorkItemListDTO } from '../../../../shared/assistantWorkItems.js';
 import { assertAssistantAccess } from '../access.js';
 import { readWorkItemSource } from './source.js';
+import { buildW01Report } from './report.js';
 import { AssistantWorkItemError, createWorkItemSchema, listWorkItemsSchema, workItemEventSchema, workItemIdSchema,
   WORK_ITEM_TTL_MS, WORK_ITEM_PAGE_SIZE, WORK_ITEM_EVENT_LIMIT, type WorkItemDatabase, type WorkItemDependencies } from './contracts.js';
 export { cleanupAssistantWorkItems } from './cleanup.js';
@@ -68,7 +69,10 @@ export async function getAssistantWorkItem(principal: AssistantPrincipal, rawId:
   await authorize(principal, db);
   // Revalidar caducidad también después de leer el historial.
   if (row.expiresAt <= now()) throw notFound();
-  return { ...dto, review, events: events.reverse().map(eventDTO), eventsTruncated: row.eventCount > WORK_ITEM_EVENT_LIMIT };
+  const visibleEvents = events.reverse().map(eventDTO), eventsTruncated = row.eventCount > WORK_ITEM_EVENT_LIMIT;
+  const report = buildW01Report({ id: row.id, version: row.version, assignedUserId: row.userId,
+    source: dto.source, review, events: visibleEvents, eventsTruncated });
+  return { ...dto, review, report, events: visibleEvents, eventsTruncated };
 }
 
 export async function listAssistantWorkItems(principal: AssistantPrincipal, input: unknown = {}, deps: WorkItemDependencies = {}): Promise<AssistantWorkItemListDTO> {

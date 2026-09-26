@@ -69,6 +69,12 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
     const recovered = await api(route, actor); status(recovered, 200);
     expect(recovered.body.events.map((row: { type: string }) => row.type)).toEqual(['CREATED', 'ADD_NOTE']);
     expect(recovered.body.review.totals.shortageNio).toBeNull();
+    expect(recovered.body.report).toMatchObject({ kind: 'W01_CASH_REPORT', workItemVersion: 1,
+      sourceHash: recovered.body.source.contentHash, totals: { shortageNio: null },
+      exceptions: expect.arrayContaining([expect.objectContaining({ shiftId: 'synthetic-shift', status: 'PENDING', assignedUserId: actor.userId })]) });
+    expect(recovered.body.report.reportHash).toMatch(/^[a-f0-9]{64}$/);
+    expect(recovered.body.report.reportHash).not.toBe(first.body.report.reportHash);
+    expect((await api(route, actor)).body.report.reportHash).toBe(recovered.body.report.reportHash);
     const listed = await api('/api/assistant/work-items', actor); status(listed, 200);
     expect(listed.body.items.map((row: { id: string }) => row.id)).toContain(first.body.id);
     expect(await prisma.assistantRun.count({ where: { tenantId: actor.tenantId } })).toBe(1);

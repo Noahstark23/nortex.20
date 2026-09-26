@@ -18,6 +18,18 @@ export function AssistantWorkItems({ controller: c }: { controller: AssistantWor
             <h4 className="nx-shell-text font-semibold">{statusLabel[item.status]} · Revisión {item.version}</h4>
             <p className="nx-shell-muted break-all text-xs">Referencia: {item.id}<br />Fuente: {item.source.runId}<br />Se conserva hasta {new Date(item.expiresAt).toLocaleString('es-NI', { timeZone: 'America/Managua' })}</p>
             <AssistantWeeklyCashReview data={item.review} />
+            {item.report ? <section aria-label="Informe preliminar W01" className="nx-shell-border space-y-2 rounded-card border p-3 text-sm">
+                <h4 className="nx-shell-text font-semibold">Informe preliminar · versión {item.report.workItemVersion}</h4>
+                <p className="nx-shell-muted">Derivado de la revisión guardada. Todavía no está aceptado y no cambia la caja.</p>
+                <p className="nx-shell-muted break-all text-xs">Hash del informe: {item.report.reportHash}</p>
+                {item.report.exceptions.length > 0 ? <><h5 className="nx-tone-warning font-semibold">Excepciones pendientes ({item.report.exceptions.length})</h5>
+                    <ul className="nx-shell-text list-disc space-y-2 break-words pl-5">{item.report.exceptions.map(exception => <li key={exception.id}>
+                        {exception.shiftId ? `Turno ${exception.shiftId}: ` : 'Cobertura de la semana: '}{exception.reason} Responsable: tu cuenta. La causa sigue sin comprobarse.
+                    </li>)}</ul></> : <p className="nx-shell-muted">La fuente no presenta excepciones en este corte; aún requiere revisión humana.</p>}
+                {item.report.evidence.length > 0 && <><h5 className="nx-shell-text font-semibold">Fuentes declaradas por la revisión</h5>
+                    <ul className="nx-shell-muted list-disc space-y-1 break-words pl-5">{item.report.evidence.map((evidence, index) => <li key={index}>{evidence}</li>)}</ul></>}
+                {item.report.notesTruncated && <p className="nx-tone-warning">El historial visible de notas está truncado; este informe no muestra todos los aportes.</p>}
+            </section> : <p role="status" className="nx-tone-warning text-sm">No pudimos mostrar el informe preliminar de esta revisión.</p>}
             <h4 className="nx-shell-text font-semibold">Aportes del responsable</h4>
             <p className="nx-shell-muted text-xs">Las notas no prueban una causa ni cambian los importes de la fuente.</p>
             <ol className="nx-shell-text space-y-2 text-sm">{item.events.map(event => <li key={event.id} className="whitespace-pre-wrap break-words">{event.note ?? (event.type === 'CREATED' ? 'Revisión guardada' : statusLabel[event.status])}</li>)}</ol>
