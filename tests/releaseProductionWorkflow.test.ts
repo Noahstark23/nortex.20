@@ -11,6 +11,7 @@ type Workflow = Record<string, any>;
 
 const inputSha = '$' + '{{ inputs.candidate_sha }}';
 const inputConfirmation = '$' + '{{ inputs.confirmation }}';
+const inputSoleOwnerConfirmation = '$' + '{{ inputs.sole_owner_confirmation }}';
 const githubToken = '$' + '{{ github.token }}';
 const stagingWebhook = '$' + '{{ secrets.COOLIFY_STAGING_WEBHOOK }}';
 const stagingReadToken = '$' + '{{ secrets.COOLIFY_STAGING_READ_TOKEN }}';
@@ -297,6 +298,10 @@ const assertProduction = (workflow: Workflow) => {
         { required: inputs.confirmation.required, type: inputs.confirmation.type },
         { required: true, type: 'string' },
     );
+    assert.deepEqual(
+        { required: inputs.sole_owner_confirmation.required, type: inputs.sole_owner_confirmation.type },
+        { required: true, type: 'string' },
+    );
     assert.deepEqual(workflow.permissions, { contents: 'read', actions: 'read' });
     assert.deepEqual(workflow.concurrency, {
         group: 'nortex-production-promotion',
@@ -317,6 +322,7 @@ const assertProduction = (workflow: Workflow) => {
     assert.deepEqual(preflightGate.env, {
         CANDIDATE_SHA: inputSha,
         PRODUCTION_CONFIRMATION: inputConfirmation,
+        SOLE_OWNER_CONFIRMATION: inputSoleOwnerConfirmation,
         NORTEX_PRODUCTION_DEPLOY_ENABLED: '$' + '{{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}',
         STAGING_URL: '$' + '{{ vars.STAGING_URL }}',
     });
@@ -618,6 +624,14 @@ describe('contrato de separación CI, staging y producción', () => {
         }],
         ['confirmación de producción eliminada', (production: Workflow) => {
             delete production.on.workflow_dispatch.inputs.confirmation;
+        }],
+        ['excepción de fundador único eliminada', (production: Workflow) => {
+            delete production.on.workflow_dispatch.inputs.sole_owner_confirmation;
+        }],
+        ['excepción de fundador único ausente en preflight', (production: Workflow) => {
+            const gate = production.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar intención, main y staging del candidato');
+            delete gate.env.SOLE_OWNER_CONFIRMATION;
         }],
         ['preflight de producción protegido prematuramente', (production: Workflow) => {
             production.jobs.preflight.environment = { name: 'production' };

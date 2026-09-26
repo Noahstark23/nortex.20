@@ -36,7 +36,7 @@ comprobar la estrategia real de reemplazo y rollback de Coolify.
 |---|---|
 | CI | `ci.yml`: solo verificación, sin staging, producción, webhooks ni secretos de despliegue. |
 | Staging | `release-staging.yml`, dispatch manual en `main`, `candidate_sha` completo y `confirmation=STAGE <SHA>`. Exige CI terminal exitoso del candidato y `NORTEX_DEPLOY_ENABLED=true`. |
-| Producción | `release-production.yml`, dispatch manual en `main`, `candidate_sha` completo y `confirmation=PROMOTE <SHA>`. Exige `NORTEX_PRODUCTION_DEPLOY_ENABLED=true`, CI terminal exitoso, staging manual exitoso y salud del mismo SHA. |
+| Producción | `release-production.yml`, dispatch manual en `main`, `candidate_sha` completo, `confirmation=PROMOTE <SHA>` y `sole_owner_confirmation=SOLE_OWNER <SHA>`. Exige autorización de producto separada que acepte la excepción de fundador único, `NORTEX_PRODUCTION_DEPLOY_ENABLED=true`, CI terminal exitoso, staging manual exitoso y salud del mismo SHA. |
 | Revalidación | Después de aprobar el environment se vuelven a comprobar main, candidato, evidencia y destino antes del webhook. El checkout y el health quedan fijados al SHA. |
 
 Un push, merge o dispatch de CI no promueve ningún entorno. No reutilizar la receta
@@ -80,10 +80,14 @@ rechazada por la revisión automática de permisos, conservar ese bloqueo: no
 reintentar mediante `release:preflight`, otro wrapper o un dispatch remoto. No
 convertir el bloqueo en un resultado aprobado ni reducir el alcance requerido.
 
-La cuenta revisora ya elegida por el usuario no se vuelve a preguntar. Registrar
-quién inicia y quién aprueba cada run: la misma cuenta no acredita revisión
-independiente. La diferencia entre la protección exigida y la configuración viva
-se registra en el expediente; no modificar GitHub para resolverla por cuenta propia.
+La cuenta revisora ya elegida por el usuario no se vuelve a preguntar. Para este
+fundador único, `Noahstark23` puede iniciar y aprobar el run bajo la excepción
+explícita del [runbook](../../../docs/runbooks/release-promotion.md); registrar ambas
+acciones y reconocer que no hubo revisión independiente. No atribuir esa revisión
+a Claude, Codex ni a otra cuenta del mismo dueño. Las dos cadenas del dispatch,
+CI, staging, pin, environment sin bypass y autorización de producto con SHA/alcance
+son condiciones acumulativas. Esta guía no autoriza modificar protecciones
+externas ni desplegar un SHA concreto por inferencia.
 
 ## Variables del producto
 

@@ -13,6 +13,10 @@ on:
         description: Escribe exactamente PROMOTE <candidate_sha>
         required: true
         type: string
+      sole_owner_confirmation:
+        description: Excepción fundador único; escribe exactamente SOLE_OWNER <candidate_sha>
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -42,6 +46,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          SOLE_OWNER_CONFIRMATION: ${{ inputs.sole_owner_confirmation }}
           NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
           STAGING_URL: ${{ vars.STAGING_URL }}
         run: node scripts/authorize-production-release.mjs
@@ -140,6 +145,7 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          SOLE_OWNER_CONFIRMATION: ${{ inputs.sole_owner_confirmation }}
           NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
           STAGING_URL: ${{ vars.STAGING_URL }}
         run: node scripts/authorize-production-release.mjs

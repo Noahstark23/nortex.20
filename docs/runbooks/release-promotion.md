@@ -5,6 +5,14 @@
 > la aprobación técnica de un environment son señales distintas; ninguna sustituye
 > la autorización explícita del producto para producción.
 >
+> **Excepción de fundador único (2026-09-25).** El dueño confirmó que no dispone
+> de otra persona para aprobar el environment. `Noahstark23` puede iniciar y
+> aprobar la promoción, pero esa aprobación **no es independiente**. Se exige
+> una aceptación escrita del riesgo para el SHA y alcance concretos, dos cadenas
+> exactas en el dispatch, CI y staging manual sanos para el mismo SHA, pin de
+> Coolify, aprobación del environment sin bypass, salud y observación posterior.
+> Esta excepción de proceso no autoriza desplegar ningún SHA por sí sola.
+>
 > Este runbook tampoco configura proveedores externos. Las variables, UUIDs, tokens
 > y apps reales de Coolify se habilitan solo con autorización externa separada; su
 > ausencia o identidad no comprobada bloquea la promoción.
@@ -37,7 +45,7 @@ Después de esta reparación, las rutas son deliberadamente separadas:
 | Staging | `.github/workflows/release-staging.yml`, solo manual | Procedencia manual, destino Coolify validado y API/base/SHA exactos de staging | Producción ni el smoke funcional |
 | Decisión de producto | Registro humano explícito | Que el responsable acepta alcance, SHA, ventana y rollback | Ejecutar un deployment por sí sola |
 | Producción | `.github/workflows/release-production.yml`, solo manual | Que el mismo SHA vigente de `main`, un staging manual exitoso y su salud siguen siendo el candidato | Una autorización futura o un SHA distinto |
-| Environment `production` | Protección técnica dentro del workflow manual | Segunda revisión antes de acceder a secretos de producción | Autorización de producto por inferencia |
+| Environment `production` | Protección técnica dentro del workflow manual | Confirmación deliberada antes de acceder a secretos; en modo fundador único puede ser la misma persona | Autorización de producto por inferencia o revisión independiente inexistente |
 
 `ci.yml` solo verifica código: no puede invocar ningún webhook ni crear jobs de
 staging o producción, ni siquiera con `workflow_dispatch`. El único workflow con
@@ -151,6 +159,10 @@ La identidad pública no comprobada sigue bloqueando el webhook.
    “Aprobado”, la aprobación de un PR, una demostración local, CI verde, staging
    sano o el visto bueno de un environment no cumplen este requisito si no nombran
    producción, SHA y alcance.
+   En modo fundador único, el mismo registro debe reconocer expresamente que
+   `Noahstark23` inicia y aprueba el environment sin segunda persona. No presentar
+   esa excepción como una revisión independiente; si el dueño no acepta ese riesgo
+   para el SHA exacto, la promoción queda bloqueada.
 5. Confirmá responsable de la observación posterior y la decisión de rollback. No
    uses este runbook para inferir una autorización que no quedó registrada.
 
@@ -164,6 +176,7 @@ inicia manualmente. Debe introducir:
 |---|---|
 | `candidate_sha` | El SHA completo de 40 caracteres ya verificado en `main` y staging |
 | `confirmation` | Exactamente `PROMOTE <candidate_sha>` |
+| `sole_owner_confirmation` | Exactamente `SOLE_OWNER <candidate_sha>`; reconoce la excepción de fundador único para ese SHA |
 
 El workflow falla cerrado si los valores no son exactos, si el SHA ya no coincide
 con `main`, si no existe un staging **manual exitoso** y sano para ese SHA o si la
@@ -175,9 +188,10 @@ el input por un SHA nuevo: el nuevo SHA vuelve a CI y staging.
 El job que llega al environment `production` vuelve a comprobar **después** de la
 aprobación técnica que `main` y staging siguen en el SHA candidato. Si alguien
 mergea otro cambio mientras espera la aprobación, el job debe terminar sin invocar
-el webhook de producción. La persona que aprobó el environment actúa como segunda
-línea de defensa; esa acción no reemplaza la autorización de producto registrada
-arriba.
+el webhook de producción. La aprobación del environment es un segundo acto
+deliberado; en la excepción de fundador único la hace la misma persona y no se
+presenta como revisión independiente. Tampoco reemplaza la autorización de
+producto registrada arriba.
 
 ## Verificación posterior y cierre
 
@@ -208,8 +222,8 @@ ruta manual, lo siguiente:
 | Identidad Coolify de staging | `COOLIFY_STAGING_API_ORIGIN` y `COOLIFY_STAGING_APPLICATION_UUID` configurados como variables; `COOLIFY_STAGING_READ_TOKEN` y `COOLIFY_STAGING_WEBHOOK` solo en `staging`, más `COOLIFY_TOKEN` opcional si el webhook exige bearer. Los cuatro deben concordar según el contrato anterior y no ser accesibles desde CI. |
 | Variable de habilitación de staging | `NORTEX_DEPLOY_ENABLED=true` en repo u organización antes del preflight; un push no la usa para desplegar |
 | Environment `production` | Política de ramas limitada a `main` (preferiblemente solo ramas protegidas) |
-| Reviewer de producción | Revisor independiente del autor que inicia la promoción |
-| Autoaprobación | `prevent-self-review=true` |
+| Reviewer de producción | `Noahstark23` en la excepción de fundador único; registrar que coincide con el iniciador y que no hubo revisión independiente |
+| Autoaprobación | `prevent-self-review=false` solo para la excepción de fundador único, con las dos confirmaciones exactas y autorización de producto separada |
 | Bypass administrativo | `can_admins_bypass=false` |
 | Identidad Coolify de producción | `COOLIFY_PROD_API_ORIGIN` y `COOLIFY_PROD_APPLICATION_UUID` configurados como variables; `COOLIFY_PROD_READ_TOKEN` y `COOLIFY_PROD_WEBHOOK` solo en `production`, nunca expuestos a CI/staging. `COOLIFY_PROD_DEPLOY_TOKEN` es separado y opcional solo si el webhook exige bearer. |
 | Variable de habilitación de producción | `NORTEX_PRODUCTION_DEPLOY_ENABLED` a nivel repo u organización; no dentro del environment porque el preflight no entra a él |
@@ -221,17 +235,15 @@ Si cualquiera de estos controles no se puede verificar, el estado es
 `LISTO PARA PRODUCCIÓN BLOQUEADO`, no una excepción implícita. Documentá el
 bloqueo y escalalo al responsable de infraestructura.
 
-**Revisor ya elegido por el usuario:** en esta sesión el dueño eligió su propia
-cuenta, `Noahstark23`, para revisar producción. No volver a pedirle otra cuenta
-como si esa decisión no existiera. La lectura de GitHub del 2026-09-19 encontró
-esa cuenta como reviewer y `prevent_self_review=false`. Es un estado observado,
-no evidencia de una segunda persona independiente ni autorización para un nuevo
-SHA. La elección se conserva en el expediente junto con la diferencia respecto
-al control independiente de la tabla. Ningún agente debe cambiar protecciones,
-activar bypass o declarar cumplida la revisión independiente para resolver esa
-diferencia. Antes de una promoción, el responsable registra cómo aplica la
-decisión del dueño al iniciador y aprobador concretos; esta preparación no cambia
-la política ni la configuración externa.
+**Identidad y límite de la excepción:** el dueño eligió `Noahstark23` como
+revisor y confirmó que no hay otra persona disponible. GitHub muestra esa cuenta
+como único reviewer, `prevent_self_review=false` y bypass administrativo apagado.
+La excepción acepta expresamente la falta de independencia, sin cambiar las
+protecciones externas ni atribuir una aprobación a Claude, Codex u otra IA. El
+responsable debe registrar iniciador, aprobador, SHA, alcance y autorización de
+producto antes del dispatch. Si aparece una segunda persona autorizada, se
+restaura la regla de revisión independiente mediante una decisión y cambio
+controlados; nunca se asume por la existencia de otra cuenta del mismo dueño.
 
 Solo con autorización externa registrada, el responsable de infraestructura fija en
 Coolify `git_commit_sha` al candidato autorizado. El workflow no escribe esa
@@ -250,6 +262,7 @@ CI del mismo SHA:
 Run manual de release-staging.yml:
 Staging: procedencia manual, identidad Coolify saneada, salud/SHA/no-store/smoke:
 Autorización explícita de producto (responsable, fecha, ventana, rollback):
+Excepción fundador único aceptada para el SHA exacto, con iniciador y aprobador:
 Run manual de release-production.yml:
 Aprobación técnica del environment (quién/cuándo):
 Revalidación posterior a la aprobación (main y staging):

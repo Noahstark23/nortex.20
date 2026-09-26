@@ -19,6 +19,7 @@ export const assessProductionCandidate = (env) => {
     if (typeof candidate !== 'string' || !FULL_SHA.test(candidate)) return 'FULL_CANDIDATE_SHA_REQUIRED';
     if (candidate !== env.GITHUB_SHA) return 'WORKFLOW_SHA_MISMATCH';
     if (env.PRODUCTION_CONFIRMATION !== `PROMOTE ${candidate}`) return 'TYPED_CONFIRMATION_REQUIRED';
+    if (env.SOLE_OWNER_CONFIRMATION !== `SOLE_OWNER ${candidate}`) return 'SOLE_OWNER_ACK_REQUIRED';
     return null;
 };
 
