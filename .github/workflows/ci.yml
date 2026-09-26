@@ -311,6 +311,11 @@ jobs:
         env:
           DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
           NORTEX_QA_DATABASE_ACK: disposable-database
+      - name: Panel del piloto limitado a dos identidades
+        run: node --import tsx scripts/qa/test-nortexgpt-pilot-admin.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          NORTEX_QA_DATABASE_ACK: disposable-database
       - name: Schema editorial descartable e independiente
         run: |
           mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \

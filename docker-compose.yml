@@ -70,6 +70,19 @@ services:
       # Destino del aviso "entró un pago por revisar" (la activación es manual).
       - BILLING_ALERT_EMAIL=${BILLING_ALERT_EMAIL:-}
       - SUPPORT_WHATSAPP=${SUPPORT_WHATSAPP:-}
+      # Allowlist exacta del primer piloto, configurada sólo en el entorno.
+      # Sin dos pares tenantId/userId válidos, la activación administrativa falla cerrada.
+      - NORTEX_PILOT_TARGETS=${NORTEX_PILOT_TARGETS:-}
+      # Flags del asistente para la API. El worker tiene su propia lista más abajo.
+      - NORTEX_ASSISTANT_ENABLED=${NORTEX_ASSISTANT_ENABLED:-false}
+      - NORTEX_ASSISTANT_LANGUAGE_ENABLED=${NORTEX_ASSISTANT_LANGUAGE_ENABLED:-false}
+      - NORTEX_ASSISTANT_EXTRACTION_ENABLED=${NORTEX_ASSISTANT_EXTRACTION_ENABLED:-false}
+      - NORTEX_ASSISTANT_EXECUTION_ENABLED=${NORTEX_ASSISTANT_EXECUTION_ENABLED:-false}
+      - NORTEX_ASSISTANT_OPERATIONS_ENABLED=${NORTEX_ASSISTANT_OPERATIONS_ENABLED:-false}
+      - NORTEX_ASSISTANT_ACTIONS_ENABLED=${NORTEX_ASSISTANT_ACTIONS_ENABLED:-false}
+      - NORTEX_PROMOTIONS_ENABLED=${NORTEX_PROMOTIONS_ENABLED:-false}
+      - NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED=${NORTEX_ASSISTANT_PRIVATE_WHATSAPP_ENABLED:-false}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
       # Almacenamiento privado compartido; la extracción sigue apagada hasta
       # acreditar respaldo y restore conjunto de SQL y originales.
       - NORTEX_ASSISTANT_STORAGE_DIR=/var/lib/nortex/assistant/originals

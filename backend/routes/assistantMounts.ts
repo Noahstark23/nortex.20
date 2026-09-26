@@ -11,6 +11,7 @@ import { buildAssistantPrivateWhatsappRouter } from './assistantPrivateWhatsapp.
 import { createAssistantBudgetRouter, createAdminAssistantBudgetRouter } from './assistantBudget.js';
 import { createAssistantKnowledgeRouter } from './assistantKnowledge.js';
 import { assistantKnowledgeInputError, createAssistantKnowledgeAdminRouter } from './assistantKnowledgeAdmin.js';
+import { createAssistantPilotAdminRouter } from './assistantPilotAdmin.js';
 
 /** Conserva el orden de autenticación y rutas del asistente y sus canales. */
 export function mountAssistantRoutes(app: Express) {
@@ -27,4 +28,5 @@ export function mountAssistantRoutes(app: Express) {
   app.use('/api/assistant', createAssistantBudgetRouter());
   app.use('/api/admin/assistant-budget', createAdminAssistantBudgetRouter());
   app.use('/api/admin/assistant-knowledge', assistantKnowledgeInputError, createAssistantKnowledgeAdminRouter());
+  app.use('/api/admin/assistant-pilot', createAssistantPilotAdminRouter());
 }
