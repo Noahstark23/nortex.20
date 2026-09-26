@@ -1,6 +1,7 @@
 // @vitest-environment node
 import { randomUUID } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { createServer } from 'node:net';
 import { Prisma } from '@prisma/client';
 import { beforeAll, describe, expect, it } from 'vitest';
 import prisma from '../backend/lib/prisma';
@@ -187,4 +188,50 @@ qa('W01 continuidad HTTP y MySQL descartable', () => {
     const stored = await prisma.assistantWorkItem.findFirstOrThrow({ where: { id: created.body.id, tenantId: actor.tenantId } });
     expect(stored).toMatchObject({ status: 'ACCEPTED', version: 1, acceptedReportHash: base.reportHash });
   });
+
+  it('otro proceso backend recupera la nota y el hash aceptado sin ejecutar IA', async () => {
+    const { actor, runId } = await fixture();
+    const created = await api('/api/assistant/work-items', actor, 'POST', { runId }); status(created, 200);
+    const route = `/api/assistant/work-items/${created.body.id}`;
+    const note = await api(`${route}/events`, actor, 'POST', { eventId: randomUUID(), version: 0,
+      type: 'ADD_NOTE', note: 'Aporte que debe sobrevivir al proceso.' }); status(note, 200);
+    const accepted = await api(`${route}/accept`, actor, 'POST', { eventId: randomUUID(), version: 1,
+      reportHash: note.body.report.reportHash }); status(accepted, 200);
+    const socket = createServer();
+    await new Promise<void>((resolve, reject) => { socket.once('error', reject); socket.listen(0, '127.0.0.1', resolve); });
+    const address = socket.address();
+    if (!address || typeof address === 'string') throw new Error('Puerto QA no disponible');
+    const port = address.port;
+    await new Promise<void>(resolve => socket.close(() => resolve()));
+    const child = spawn(process.execPath, ['--import', 'tsx', 'backend/server.ts'], {
+      env: { ...process.env, HOST: '127.0.0.1', PORT: String(port) }, stdio: 'ignore',
+    });
+    try {
+      const otherBase = `http://127.0.0.1:${port}`;
+      let ready = false;
+      for (let attempt = 0; attempt < 60; attempt++) {
+        if (child.exitCode !== null) throw new Error('El segundo backend terminó antes de estar listo');
+        try {
+          const health = await fetch(`${otherBase}/api/health`, { signal: AbortSignal.timeout(1000) });
+          if (health.ok) { ready = true; break; }
+        } catch { /* Espera breve por arranque local. */ }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      expect(ready).toBe(true);
+      const response = await fetch(`${otherBase}${route}`, { headers: { authorization: `Bearer ${actor.token}` } });
+      expect(response.status).toBe(200);
+      const item = await response.json();
+      expect(item).toMatchObject({ status: 'ACCEPTED', acceptance: { reportHash: accepted.body.acceptance.reportHash } });
+      expect(item.events.map((event: { note: string | null }) => event.note)).toContain('Aporte que debe sobrevivir al proceso.');
+      expect(item.report.reportHash).toBe(accepted.body.report.reportHash);
+      expect(await prisma.assistantUsage.count({ where: { tenantId: actor.tenantId } })).toBe(0);
+    } finally {
+      if (child.exitCode === null) child.kill('SIGTERM');
+      await Promise.race([
+        new Promise<void>(resolve => child.once('exit', () => resolve())),
+        new Promise<void>(resolve => setTimeout(resolve, 3000)),
+      ]);
+      if (child.exitCode === null) child.kill('SIGKILL');
+    }
+  }, 90_000);
 });
