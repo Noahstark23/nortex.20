@@ -7,12 +7,14 @@ import { db } from '../lib/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route as RouterRoute, Routes, useLocation, useNavigate } from 'react-router-dom';
 import NortexAssistantLauncher from '../components/assistant/NortexAssistantLauncher';
 import { VentaEnCursoProvider, useReportarVenta, useVentaEnCurso } from '../components/VentaEnCursoContext';
+import { claveCarrito } from '../utils/cartPersistence';
 import type { AssistantRunDTO } from '../shared/assistantOperations';
 import { cashCloseInvestigationMessage } from '../shared/assistantCashCloseInvestigation';
 import type { AssistantCapabilities, AssistantMessageDTO, AssistantProposalDTO } from '../shared/assistant';
+import type { AssistantWorkItemDTO } from '../shared/assistantWorkItems';
 
 const caps: AssistantCapabilities = { enabled: true, help: true, overview: true, inventory: true, invoiceRead: true, invoicePrepare: true, invoiceConfirm: true, extractionEnabled: true, executionEnabled: true, purchasePrepare: true, accessScope: 'OWNER' };
 const ok = (value: unknown) => ({ ok: true, status: 200, json: async () => value });
@@ -502,6 +504,66 @@ describe('NortexGPT dentro del negocio', () => {
         await user.click(close); await waitFor(() => expect(screen.queryByRole('dialog', { name: 'NortexGPT' })).not.toBeInTheDocument());
         screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo|EFECTIVO.*C\$ 25\.00/ }).focus(); await user.keyboard('TOR-1{Enter}');
         await waitFor(() => expect(quantity).toHaveValue('2')); expect(fetcher.mock.calls.some(([url]) => url === '/api/sales')).toBe(false);
+    });
+    it('retoma un trabajo W01 guardado tras salir y volver al POS sin perder el carrito', async () => {
+        await db.offline_sales.clear(); installCashReview();
+        localStorage.setItem('nortex_tenant_data', JSON.stringify({ id: 't1', businessName: 'Ferretería QA', type: 'FERRETERIA' }));
+        localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', name: 'Dueña QA', role: 'OWNER', tenant: { id: 't1' } }));
+        localStorage.setItem('token', 'token-a');
+        const period = { startDate: '2026-09-02', endDate: '2026-09-08', cutoff: '2026-09-09T06:00:00Z', timeZone: 'America/Managua' as const, completeDays: true };
+        const counts = { closed: 1, verified: 1, differences: 0, missingReports: 0, invalidReports: 0, open: 0 };
+        const totals = { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' };
+        const review = { kind: 'WEEKLY_CASH_REVIEW' as const, status: 'ok' as const, checkedAt: '2026-09-09T15:00:00Z', scope: 'business' as const, truncated: false, period, rows: [], counts, totals, warnings: [], evidence: [] };
+        const initial: AssistantWorkItemDTO = { id: 'work-qa', kind: 'W01_CASH_REVIEW', status: 'IN_REVIEW', version: 0,
+            conversationId: 'c1', createdAt: '2026-09-09T15:00:00Z', updatedAt: '2026-09-09T15:00:00Z', expiresAt: '2026-10-09T15:00:00Z',
+            source: { runId: 'run-cash', evidenceId: 'e1', contentHash: 'a'.repeat(64), period, checkedAt: review.checkedAt, scope: 'business', reviewStatus: 'ok', truncated: false, counts },
+            review, report: { kind: 'W01_CASH_REPORT', workItemId: 'work-qa', workItemVersion: 0, sourceHash: 'a'.repeat(64), period,
+                checkedAt: review.checkedAt, scope: 'business', completeness: 'ok', truncated: false, counts, totals, rows: [], exceptions: [], noteEventIds: [],
+                notesHash: 'b'.repeat(64), notesTruncated: false, warnings: [], evidence: ['Cierre sintético'], reportHash: 'c'.repeat(64) },
+            events: [], eventsTruncated: false };
+        let stored = initial;
+        const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url === '/api/assistant/work-items' && options?.method === 'POST') return ok(stored);
+            if (url === '/api/assistant/work-items') return ok({ items: [stored], nextCursor: null });
+            if (url === '/api/assistant/work-items/work-qa') return ok(stored);
+            if (url === '/api/assistant/work-items/work-qa/events' && options?.method === 'POST') {
+                const input = JSON.parse(String(options.body));
+                stored = { ...stored, version: 1, receiptEventId: input.eventId,
+                    events: [{ id: input.eventId, type: 'ADD_NOTE', note: input.note, fromStatus: 'IN_REVIEW', status: 'IN_REVIEW', version: 1, createdAt: '2026-09-09T15:01:00Z' }] };
+                return ok(stored);
+            }
+            if (url.startsWith('/api/assistant')) return base(url, options);
+            const path = new URL(url, 'http://test').pathname;
+            const product = { id: 'x1', name: 'Tornillo QA', sku: 'TOR-1', price: 25, cost: 10, stock: 20, category: 'General', unit: 'unidad', saleMode: 'COUNTED', quantityStep: 1, minStock: 5 };
+            const responses: Record<string, unknown> = { '/api/products': [product], '/api/customers': [], '/api/shifts/current': { id: 'shift-a', status: 'OPEN', initialCash: '500', userId: 'u1', startTime: '2026-09-04T12:00:00Z', esTurnoPropio: true, turnoDe: null },
+                '/api/cash-movements': [], '/api/cash-movements/balance': { efectivo: 500, efectivoNIO: 500 }, '/api/tenant/inventory-settings': { allowNegativeStock: false }, '/api/agent-banking/agreements': [], '/api/operational-alerts': { checkedAt: '2026-09-05T12:00:00Z', sections: [] } };
+            return ok(responses[path] ?? {});
+        });
+        function Journey() { const navigate = useNavigate(); return <><button onClick={() => navigate('/app/dashboard')}>Ir al panel</button><button onClick={() => navigate('/app/pos')}>Volver al POS</button>
+            <Routes><RouterRoute path="/app/pos" element={<POS />} /><RouterRoute path="/app/dashboard" element={<p>Panel de prueba</p>} /></Routes><NortexAssistantLauncher /></>; }
+        const user = userEvent.setup();
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><Journey /></VentaEnCursoProvider></MemoryRouter>);
+        await open(); await sendMessage('Revisar caja QA');
+        fireEvent.click(await screen.findByRole('button', { name: 'Guardar revisión como trabajo' }));
+        await screen.findByRole('region', { name: 'Revisión guardada' });
+        fireEvent.change(screen.getByLabelText('Nota de la revisión'), { target: { value: 'Falta revisar el recibo' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar nota' }));
+        await screen.findByText('Falta revisar el recibo');
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' }));
+        await user.type(await screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i), 'TOR-1{Enter}');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Tornillo QA en unidad' })).toHaveValue('1');
+        fireEvent(window, new Event('pagehide'));
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toContain('Tornillo QA');
+        await user.click(screen.getByRole('button', { name: 'Ir al panel' }));
+        expect(await screen.findByText('Panel de prueba')).toBeVisible();
+        await user.click(screen.getByRole('button', { name: 'Volver al POS' }));
+        expect(await screen.findByRole('textbox', { name: 'Cantidad de Tornillo QA en unidad' })).toHaveValue('1');
+        await open(); fireEvent.click(screen.getByRole('tab', { name: 'Trabajos' }));
+        fireEvent.click(await screen.findByRole('button', { name: /2026-09-02 al 2026-09-08/ }));
+        expect(await screen.findByText('Falta revisar el recibo')).toBeVisible();
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/work-items/work-qa/events'))).toHaveLength(1);
+        expect(fetcher.mock.calls.some(([url]) => url === '/api/sales')).toBe(false);
     });
     it('una falla transitoria de acceso oculta datos y conserva la corrección hasta reconectar', async () => {
         mount(); await invoice(); fireEvent.change(screen.getByLabelText('Referencia'), { target: { value: 'p1' } }); fireEvent.click(screen.getByRole('button', { name: 'Consultar referencia' })); await waitFor(() => expect(screen.getByLabelText('Cantidad 1')).toBeEnabled());

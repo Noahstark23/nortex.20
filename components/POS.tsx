@@ -934,8 +934,7 @@ const POS: React.FC = () => {
             localStorage.removeItem(claveLegacy);
             return;
         }
-
-        const t = setTimeout(() => {
+        const guardar = () => {
             const payload = serializarCarrito({
                 shiftId: currentShift?.id ?? null,
                 lineas: cart.map(aLineaGuardada),
@@ -952,10 +951,11 @@ const POS: React.FC = () => {
                 localStorage.removeItem(clave);
                 localStorage.removeItem(claveLegacy);
             }
-        }, 300);
-        return () => clearTimeout(t);
+        };
+        const t = setTimeout(guardar, 300);
+        window.addEventListener('pagehide', guardar);
+        return () => { clearTimeout(t); window.removeEventListener('pagehide', guardar); guardar(); }; // Salida antes de 300 ms.
     }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad]);
-
     // Aparcados: cambian de a uno (F4 / restaurar / quitar), sin debounce.
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
