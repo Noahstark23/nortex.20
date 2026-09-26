@@ -15,6 +15,7 @@ const MAX_FIRST_CUT_TENANTS = 2;
 function allowedTarget(tenantId: string, userId: string) {
   const entries = (process.env.NORTEX_PILOT_TARGETS ?? '').split(',').map(value => value.trim()).filter(Boolean);
   if (entries.length !== MAX_FIRST_CUT_TENANTS || new Set(entries).size !== MAX_FIRST_CUT_TENANTS
+    || new Set(entries.map(value => value.split('/')[0])).size !== MAX_FIRST_CUT_TENANTS
     || entries.some(value => !/^[a-zA-Z0-9_-]{1,191}\/[a-zA-Z0-9_-]{1,191}$/.test(value)))
     fail('PILOT_TARGETS_NOT_CONFIGURED', 'Las dos identidades del piloto no están configuradas.');
   return entries.includes(`${tenantId}/${userId}`);
