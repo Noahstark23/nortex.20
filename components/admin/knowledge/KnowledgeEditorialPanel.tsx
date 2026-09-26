@@ -6,6 +6,7 @@ import { assistantButtonClass, assistantInputClass } from '../../assistant/Assis
 import { KnowledgeReleaseReview } from './KnowledgeReleaseReview';
 import { KnowledgeImport } from './KnowledgeImport';
 import { KnowledgeDocument } from './KnowledgeDocument';
+import { clearEditorialDraft, clearEditorialImport, readEditorialDraft, readEditorialImport, rememberEditorialSelection } from './editorialDraftMemory';
 
 export default function KnowledgeEditorialPanel({ onPendingWorkChange }: { onPendingWorkChange?: (pending: boolean) => void }) {
     const session = useActivationSession();
@@ -17,13 +18,16 @@ function EditorialContent({ session, onPendingWorkChange }: { session: Activatio
     const [capabilities, setCapabilities] = useState<KnowledgeEditorialCapabilities | null>(null);
     const [error, setError] = useState(''); const [initializing, setInitializing] = useState(true);
     const [status, setStatus] = useState<KnowledgeReleaseStatus>('DRAFT'); const [page, setPage] = useState<KnowledgeEditorialList | null>(null);
-    const [selection, setSelection] = useState<string | null>(null); const [importing, setImporting] = useState(false);
+    const [selection, setSelection] = useState<string | null>(() => readEditorialDraft(session.key)?.releaseId ?? null);
+    const [importing, setImporting] = useState(() => Boolean(readEditorialImport(session.key)));
     const [legacy, setLegacy] = useState<KnowledgeEditorialDocument[] | null>(null); const [busy, setBusy] = useState(false);
     const [legacyUncertain, setLegacyUncertain] = useState(false);
     const [working, setWorking] = useState(false);
     const [legacyDrafts, setLegacyDrafts] = useState<string[]>([]);
     const [accessAttempt, setAccessAttempt] = useState(0);
     const hasWork = working || legacyDrafts.length > 0;
+    useEffect(() => { if (denied) clearEditorialDraft(); }, [denied]);
+    const selectRelease = (releaseId: string | null) => { rememberEditorialSelection(session.key, releaseId); setSelection(releaseId); };
     useEffect(() => {
         onPendingWorkChange?.(!denied && hasWork);
         return () => onPendingWorkChange?.(false);
@@ -59,7 +63,7 @@ function EditorialContent({ session, onPendingWorkChange }: { session: Activatio
     useEffect(() => { if (capabilities) void load(); }, [capabilities, status]);
     const loadLegacy = async () => {
         if (lock.current) return;
-        lock.current = true; setBusy(true); setError(''); setLegacy(null); setSelection(null); setImporting(false);
+        lock.current = true; setBusy(true); setError(''); setLegacy(null); selectRelease(null); setImporting(false);
         try { const value = await request<{ documents: KnowledgeEditorialDocument[] }>('/legacy'); if (current()) { setLegacy(value.documents); setLegacyUncertain(false); } }
         catch (failure) { if (current()) setError(editorialError(failure)); }
         finally { lock.current = false; if (current()) setBusy(false); }
@@ -83,30 +87,30 @@ function EditorialContent({ session, onPendingWorkChange }: { session: Activatio
         {!initializing && !capabilities && <button type="button" className={assistantButtonClass} onClick={() => setAccessAttempt(value => value + 1)}>Reintentar acceso editorial</button>}
         {capabilities && <>
             <p className="nx-shell-text text-sm">Sesión editorial: {capabilities.actor.name}</p>
-            <p className="nx-shell-muted text-sm">Guardá tu observación antes de salir de esta sección. El texto sin enviar se conserva sólo mientras esta pantalla siga en la sesión; ocultarla y reabrirla conserva el trabajo.</p>
+            <p className="nx-shell-muted text-sm">Guardá tu trabajo antes de salir. Si navegás a otra sección y volvés en esta pestaña, los borradores editoriales siguen en memoria para esta sesión; cerrar la pestaña los descarta después del aviso del navegador.</p>
             <div className="flex flex-wrap items-end gap-3">
-                <label className="nx-shell-text text-sm">Estado de publicaciones<select className={assistantInputClass} value={status} disabled={busy || hasWork} onChange={event => { setPage(null); setSelection(null); setLegacy(null); setImporting(false); setStatus(event.target.value as KnowledgeReleaseStatus); }}>
+                <label className="nx-shell-text text-sm">Estado de publicaciones<select className={assistantInputClass} value={status} disabled={busy || hasWork} onChange={event => { setPage(null); selectRelease(null); setLegacy(null); setImporting(false); setStatus(event.target.value as KnowledgeReleaseStatus); }}>
                     <option value="DRAFT">Borradores</option><option value="REVIEWED">Revisadas</option><option value="PUBLISHED">Publicadas</option><option value="RETIRED">Retiradas</option>
                 </select></label>
                 <button type="button" className={assistantButtonClass} disabled={busy} onClick={() => void load()}>Actualizar listado</button>
-                <button type="button" className={assistantButtonClass} disabled={busy || hasWork} onClick={() => { setSelection(null); setLegacy(null); setImporting(true); }}>Preparar borrador</button>
+                <button type="button" className={assistantButtonClass} disabled={busy || hasWork} onClick={() => { selectRelease(null); setLegacy(null); setImporting(true); }}>Preparar borrador</button>
                 <button type="button" className={assistantButtonClass} disabled={busy || hasWork} onClick={() => void loadLegacy()}>Consultar ayuda heredada</button>
             </div>
             {busy && <p role="status" className="nx-shell-muted text-sm">Consultando biblioteca…</p>}
             {page && page.releases.length === 0 && <p role="status" className="nx-shell-muted text-sm">No hay publicaciones en este estado.</p>}
             {page && <ul className="space-y-2" aria-label="Publicaciones">{page.releases.map(row => <li key={row.id} className="nx-shell-border flex flex-wrap items-center gap-3 border-t py-2">
                 <p className="nx-shell-text min-w-0 break-words text-sm">{row.id} · {row.status} · {row.documentsCount} pasajes{row.active ? ' · Activa' : ''}</p>
-                <button type="button" className={assistantButtonClass} disabled={busy || hasWork} onClick={() => { setImporting(false); setLegacy(null); setSelection(row.id); }}>Abrir {row.id}</button>
+                <button type="button" className={assistantButtonClass} disabled={busy || hasWork} onClick={() => { setImporting(false); setLegacy(null); selectRelease(row.id); }}>Abrir {row.id}</button>
             </li>)}</ul>}
             {page?.nextCursor && <button type="button" className={assistantButtonClass} disabled={busy} onClick={() => void load(page.nextCursor!)}>Cargar más publicaciones</button>}
-            {importing && <KnowledgeImport request={request} current={current} onWorkingChange={setWorking} onCreated={id => { setImporting(false); setSelection(id); void load(); }} />}
-            {selection && <KnowledgeReleaseReview key={selection} releaseId={selection} actorName={capabilities.actor.name} request={request} current={current} onWorkingChange={setWorking} onChanged={() => { void load(); }} />}
+            {importing && <KnowledgeImport sessionKey={session.key} request={request} current={current} onWorkingChange={setWorking} onCreated={id => { clearEditorialImport(session.key); setImporting(false); selectRelease(id); void load(); }} />}
+            {selection && <KnowledgeReleaseReview key={selection} sessionKey={session.key} releaseId={selection} actorName={capabilities.actor.name} request={request} current={current} onWorkingChange={setWorking} onChanged={() => { void load(); }} />}
             {legacyUncertain && <div className="space-y-2"><p role="status" className="nx-tone-warning text-sm">La retirada tuvo un resultado incierto. Consultá otra vez la ayuda heredada antes de repetir.</p><button type="button" disabled={busy} className={assistantButtonClass} onClick={() => void loadLegacy()}>Comprobar ayuda heredada</button></div>}
             {legacy && <section aria-label="Ayuda heredada" className="space-y-3"><h3 className="nx-shell-text font-semibold">Pasajes heredados</h3>
                 <p className="nx-shell-muted text-sm">Conservan su procedencia LEGACY. Consultarlos no los declara revisados.</p>
                 {legacy.map(document => {
                     const key = `${document.reference.documentId}/${document.reference.version}/${document.reference.sectionId}`;
-                    return <KnowledgeDocument key={`${key}/${document.status}`} document={document} disabled={busy || legacyUncertain} onRetire={retireLegacy} onEditingChange={editing => setLegacyDrafts(previous => editing ? previous.includes(key) ? previous : [...previous, key] : previous.filter(value => value !== key))} />;
+                    return <KnowledgeDocument key={`${key}/${document.status}`} sessionKey={session.key} document={document} disabled={busy || legacyUncertain} onRetire={retireLegacy} onEditingChange={editing => setLegacyDrafts(previous => editing ? previous.includes(key) ? previous : [...previous, key] : previous.filter(value => value !== key))} />;
                 })}
             </section>}
         </>}

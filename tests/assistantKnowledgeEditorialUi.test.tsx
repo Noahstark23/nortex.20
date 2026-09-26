@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import KnowledgeEditorialPanel from '../components/admin/knowledge/KnowledgeEditorialPanel';
+import { clearEditorialDraft } from '../components/admin/knowledge/editorialDraftMemory';
 import type { KnowledgeEditorialReleaseDetail } from '../shared/assistantKnowledgeEditorial';
 
 const prefix = '/api/admin/assistant-knowledge';
@@ -42,7 +43,7 @@ beforeEach(() => {
     });
     vi.stubGlobal('fetch', fetchMock);
 });
-afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
+afterEach(() => { cleanup(); clearEditorialDraft(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 async function openRelease() {
     fireEvent.click(await screen.findByRole('button', { name: `Abrir ${base.id}` }));
     await screen.findByText(base.documents[0].payload.body);
@@ -112,6 +113,21 @@ describe('editor de ayuda autenticado', () => {
         await waitFor(() => expect(onPendingWorkChange).toHaveBeenLastCalledWith(false));
         expect(posts()).toHaveLength(0);
     });
+    it('recupera una observación al volver a SuperAdmin sin enviarla ni compartirla con otra sesión', async () => {
+        const first = render(<KnowledgeEditorialPanel />); await openRelease();
+        fireEvent.change(screen.getByLabelText('Tu observación'), { target: { value: 'Revisar evidencia antes de publicar.' } });
+        first.unmount();
+        render(<KnowledgeEditorialPanel />);
+        await screen.findByText(base.documents[0].payload.body);
+        expect(screen.getByLabelText('Tu observación')).toHaveValue('Revisar evidencia antes de publicar.');
+        expect(posts()).toHaveLength(0);
+        cleanup();
+        localStorage.setItem('nortex_token', 'another-synthetic-session');
+        render(<KnowledgeEditorialPanel />);
+        await openRelease();
+        expect(screen.getByLabelText('Tu observación')).toHaveValue('');
+        expect(posts()).toHaveLength(0);
+    });
     it('reintenta observación incierta con el mismo UUID, hash y contenido, sin autosend', async () => {
         let failures = 1;
         intercept = (path, options) => { if (path.endsWith('/notes') && options.method === 'POST' && failures--) return Promise.reject(new Error('Lost')); };
@@ -124,6 +140,24 @@ describe('editor de ayuda autenticado', () => {
         const first = String(posts()[0][1].body); fireEvent.click(retry);
         await screen.findByText('Observación guardada. No aprueba ni publica el contenido.');
         expect(posts()).toHaveLength(2); expect(String(posts()[1][1].body)).toBe(first);
+    });
+    it('conserva UUID y hash tras salir de la ruta con respuesta incierta', async () => {
+        let failures = 1;
+        intercept = (path, options) => { if (path.endsWith('/notes') && options.method === 'POST' && failures--) return Promise.reject(new Error('Lost')); };
+        const firstView = render(<KnowledgeEditorialPanel />); await openRelease();
+        fireEvent.change(screen.getByLabelText('Tu observación'), { target: { value: 'Observación pendiente tras cambiar de ruta.' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar observación sin aprobar' }));
+        await screen.findByRole('button', { name: 'Reintentar la misma observación' });
+        const firstBody = String(posts()[0][1].body);
+        firstView.unmount();
+        render(<KnowledgeEditorialPanel />);
+        await screen.findByText(base.documents[0].payload.body);
+        expect(screen.getByLabelText('Tu observación')).toHaveValue('Observación pendiente tras cambiar de ruta.');
+        expect(posts()).toHaveLength(1);
+        fireEvent.click(screen.getByRole('button', { name: 'Reintentar la misma observación' }));
+        await screen.findByText('Observación guardada. No aprueba ni publica el contenido.');
+        expect(posts()).toHaveLength(2);
+        expect(String(posts()[1][1].body)).toBe(firstBody);
     });
     it('POST nota confirmado y refresco fallido no inventa reintento sin identidad', async () => {
         let saved = false;
@@ -192,6 +226,30 @@ describe('editor de ayuda autenticado', () => {
         expect(screen.getByText(`Publicación: ${base.id} · 1 pasajes`)).toBeVisible();
         expect(screen.queryByText('Otro contenido que creó otro editor.')).not.toBeInTheDocument(); expect(posts()).toHaveLength(1);
     });
+    it('recupera archivo pendiente tras salir de la ruta sin confirmar ni enviar por sí solo', async () => {
+        const firstView = render(<KnowledgeEditorialPanel />); await fileReady();
+        firstView.unmount();
+        render(<KnowledgeEditorialPanel />);
+        await screen.findByText(`Publicación: ${base.id} · 1 pasajes`);
+        expect(screen.getByRole('button', { name: 'Preparar borrador sin publicar' })).toBeDisabled();
+        expect(posts()).toHaveLength(0);
+        fireEvent.click(screen.getByRole('button', { name: 'Descartar archivo sin importar' }));
+        cleanup();
+        render(<KnowledgeEditorialPanel />);
+        await screen.findByRole('button', { name: 'Preparar borrador' });
+        expect(screen.queryByText(`Publicación: ${base.id} · 1 pasajes`)).not.toBeInTheDocument();
+    });
+    it('una importación incierta conserva su archivo y exige comprobar por GET al volver', async () => {
+        intercept = (path, options) => path === '/releases' && options.method === 'POST' ? Promise.reject(new Error('lost')) : undefined;
+        const firstView = render(<KnowledgeEditorialPanel />); await fileReady();
+        fireEvent.click(screen.getByLabelText(/Confirmo preparar este contenido/)); fireEvent.click(screen.getByRole('button', { name: 'Preparar borrador sin publicar' }));
+        await screen.findByRole('button', { name: 'Comprobar borrador' });
+        firstView.unmount();
+        render(<KnowledgeEditorialPanel />);
+        await screen.findByRole('button', { name: 'Comprobar borrador' });
+        expect(screen.getByText(`Publicación: ${base.id} · 1 pasajes`)).toBeVisible();
+        expect(posts()).toHaveLength(1);
+    });
     it('un fallo temporal de capacidades permite reintentar lectura sin recargar la aplicación', async () => {
         let attempts = 0;
         intercept = path => path === '/capabilities' && attempts++ === 0 ? fail(503) : undefined;
@@ -221,6 +279,17 @@ describe('editor de ayuda autenticado', () => {
         const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload); expect(unload.defaultPrevented).toBe(true);
         fireEvent.click(screen.getByRole('button', { name: 'Descartar motivo sin retirar' }));
         expect(screen.getByRole('button', { name: 'Preparar borrador' })).toBeEnabled();
+    });
+    it('recupera motivo de retirada de una publicación al volver sin confirmar la acción', async () => {
+        const firstView = render(<KnowledgeEditorialPanel />); await openRelease();
+        fireEvent.click(screen.getByRole('button', { name: 'Retirar esta versión' }));
+        fireEvent.change(screen.getByLabelText('Motivo de retirada'), { target: { value: 'Revisar procedencia antes de retirar.' } });
+        firstView.unmount();
+        render(<KnowledgeEditorialPanel />);
+        await screen.findByText(base.documents[0].payload.body);
+        expect(screen.getByLabelText('Motivo de retirada')).toHaveValue('Revisar procedencia antes de retirar.');
+        expect(screen.getByRole('button', { name: 'Confirmar retirada' })).toBeDisabled();
+        expect(posts()).toHaveLength(0);
     });
     it('retira una versión exacta sólo con motivo y confirmación explícitos', async () => {
         render(<KnowledgeEditorialPanel />); await openRelease();
