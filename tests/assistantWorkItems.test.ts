@@ -5,9 +5,10 @@ import type { AssistantPrincipal } from '../shared/assistant';
 import type { WeeklyCashReview } from '../shared/assistantWeeklyCashReview';
 import { createWorkItemsFake } from './fixtures/assistant/workItemsFake';
 
-const boundary = vi.hoisted(() => ({ access: vi.fn(), getRun: vi.fn() }));
+const boundary = vi.hoisted(() => ({ access: vi.fn(), getRun: vi.fn(), reviewCash: vi.fn() }));
 vi.mock('../backend/services/assistant/access', () => ({ assertAssistantAccess: boundary.access }));
 vi.mock('../backend/services/assistant/operations/runService', () => ({ getAssistantRun: boundary.getRun }));
+vi.mock('../backend/services/assistant/operations/weeklyCashReview', () => ({ reviewWeeklyCash: boundary.reviewCash }));
 vi.mock('../backend/services/assistant/operations/orchestrator', () => ({ runAssistantOrchestrator: () => { throw new Error('Unexpected AI execution'); } }));
 vi.mock('../backend/services/assistant/provider', () => ({ createExtractionProvider: () => { throw new Error('Unexpected AI provider'); } }));
 vi.mock('../backend/lib/prisma', () => ({ default: new Proxy({}, { get: (_target, key) => { throw new Error(`Unexpected default database: ${String(key)}`); } }) }));
@@ -43,6 +44,10 @@ function harness() {
   const h = createWorkItemsFake();
   const authorization = { active: true, operations: true, cashReview: true };
   const deps = { db: h.db, now: () => now };
+  boundary.reviewCash.mockImplementation(async (_p: AssistantPrincipal, _input: unknown, options: { tx: unknown }) => {
+    expect(options.tx).toBe(h.db);
+    return review();
+  });
   const addRun = (id = 'run-a', identity = principal) => {
     const row = { id, ...owner(identity), conversationId: `conversation-${id}`, expiresAt: new Date('2026-10-30T18:00:00Z'), status: 'SUCCEEDED', result: { text: 'Revisión guardada.', evidence: [{ id: `evidence-${id}`, tool: 'review_weekly_cash', label: 'Revisión de caja', data: review() }], actionProposalIds: [], degraded: true } };
     h.runs.push(row); return row;
@@ -67,7 +72,7 @@ type Harness = ReturnType<typeof harness>;
 const create = (h: Harness, runId = 'run-a') => createAssistantWorkItem(principal, { runId }, h.deps);
 const event = (h: Harness, id: string, version: number, type: 'WAIT' | 'RESUME' | 'CANCEL') => appendAssistantWorkItemEvent(principal, id, { eventId: randomUUID(), version, type }, h.deps);
 beforeEach(() => {
-  boundary.access.mockReset(); boundary.getRun.mockReset();
+  boundary.access.mockReset(); boundary.getRun.mockReset(); boundary.reviewCash.mockReset();
   vi.spyOn(globalThis, 'fetch').mockImplementation(async () => { throw new Error('Unexpected outbound network'); });
 });
 afterEach(() => vi.restoreAllMocks());

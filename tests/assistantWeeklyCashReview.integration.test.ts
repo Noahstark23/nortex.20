@@ -70,6 +70,21 @@ async function conversation(actor: TestActor) {
     roleAtCreation: actor.role, expiresAt: new Date('2099-12-31T00:00:00Z') } });
 }
 
+async function workItemFromQuery(actor: TestActor, text: string) {
+  const chat = await conversation(actor);
+  const submitted = await api(`/api/assistant/conversations/${chat.id}/runs`, actor, 'POST',
+    { requestId: randomUUID(), text });
+  status(submitted, 202);
+  let run: Awaited<ReturnType<typeof api>>;
+  await vi.waitFor(async () => {
+    run = await api(`/api/assistant/runs/${submitted.body.id}`, actor); status(run, 200);
+    expect(run.body.status).toBe('SUCCEEDED');
+  }, { timeout: 12000, interval: 50 });
+  const item = await api('/api/assistant/work-items', actor, 'POST', { runId: run!.body.id });
+  status(item, 200);
+  return item;
+}
+
 qa('W01 revisión semanal de caja: snapshots, permisos y lectura HTTP/MySQL', () => {
   beforeAll(() => { assertDisposableDatabase(); });
   afterEach(() => { vi.unstubAllEnvs(); });
@@ -312,6 +327,125 @@ qa('W01 revisión semanal de caja: snapshots, permisos y lectura HTTP/MySQL', ()
     await prisma.user.update({ where: { id: owner.userId }, data: { status: 'DISABLED' } });
     await expect(getAssistantRun(owner, run.id, deps)).rejects.toMatchObject({ code: 'SESSION_REVOKED' });
   });
+
+  it('HTTP enlaza cierres verificables y faltantes con encargo, nota y aceptación sin escribir caja', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const shortage = await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    const surplus = await closedShift(owner, { cash: { countedNio: '107', differenceNio: '7' } });
+    const missing = await closedShift(owner, { noReport: true });
+    const before = await businessState(owner);
+    const chat = await conversation(owner);
+    const submitted = await api(`/api/assistant/conversations/${chat.id}/runs`, owner, 'POST',
+      { requestId: randomUUID(), text: 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07' });
+    status(submitted, 202);
+    let run: Awaited<ReturnType<typeof api>>;
+    await vi.waitFor(async () => {
+      run = await api(`/api/assistant/runs/${submitted.body.id}`, owner); status(run, 200);
+      expect(run.body.status).toBe('SUCCEEDED');
+    }, { timeout: 12000, interval: 50 });
+    const saved = await api('/api/assistant/work-items', owner, 'POST', { runId: run!.body.id }); status(saved, 200);
+    expect(saved.body.review.counts).toMatchObject({ closed: 3, verified: 2, differences: 2, missingReports: 1 });
+    expect(saved.body.report.totals).toMatchObject({ shortageNio: null, surplusNio: null });
+    expect(saved.body.report.rows.map((row: { shiftId: string }) => row.shiftId)).toEqual(expect.arrayContaining([
+      shortage.shift.id, surplus.shift.id, missing.shift.id,
+    ]));
+    const rowFor = (shiftId: string) => saved.body.report.rows.find((row: { shiftId: string }) => row.shiftId === shiftId);
+    expect(rowFor(shortage.shift.id)).toMatchObject({ status: 'DIFFERENCE',
+      source: { id: shortage.stored!.id, contentHash: shortage.stored!.contentHash }, cash: { differenceNio: '-5.00' } });
+    expect(rowFor(surplus.shift.id)).toMatchObject({ status: 'DIFFERENCE',
+      source: { id: surplus.stored!.id, contentHash: surplus.stored!.contentHash }, cash: { differenceNio: '7.00' } });
+    expect(rowFor(missing.shift.id)).toMatchObject({ status: 'MISSING_REPORT', source: null, cash: null });
+    expect(saved.body.report.exceptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ shiftId: missing.shift.id, status: 'PENDING', assignedUserId: owner.userId }),
+    ]));
+    const itemRoute = `/api/assistant/work-items/${saved.body.id}`;
+    const note = await api(`${itemRoute}/events`, owner, 'POST', { eventId: randomUUID(), version: saved.body.version,
+      type: 'ADD_NOTE', note: 'Falta el reporte original; no atribuir causa.' }); status(note, 200);
+    expect(note.body.report.reportHash).not.toBe(saved.body.report.reportHash);
+    const accepted = await api(`${itemRoute}/accept`, owner, 'POST', { eventId: randomUUID(), version: note.body.version,
+      reportHash: note.body.report.reportHash }); status(accepted, 200);
+    expect(accepted.body).toMatchObject({ status: 'ACCEPTED', acceptance: { reportHash: note.body.report.reportHash, withExceptions: true } });
+    expect((await api(itemRoute, owner)).body.report.reportHash).toBe(note.body.report.reportHash);
+    expect(await businessState(owner)).toEqual(before);
+    expect(await prisma.assistantUsage.count({ where: { tenantId: owner.tenantId } })).toBe(0);
+  }, 20000);
+
+  it('HTTP conserva totales completos cuando todos los cierres tienen fuente pese a advertencias generales', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    await closedShift(owner, { cash: { countedNio: '107', differenceNio: '7' } });
+    const before = await businessState(owner);
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    expect(item.body.review).toMatchObject({ status: 'ok', counts: { closed: 2, verified: 2, differences: 2 },
+      totals: { shortageNio: '5.00', surplusNio: '7.00' } });
+    expect(item.body.review.warnings.length).toBeGreaterThan(0);
+    expect(item.body.report).toMatchObject({ completeness: 'ok', counts: { closed: 2, verified: 2, differences: 2 },
+      totals: { shortageNio: '5.00', surplusNio: '7.00' } });
+    expect(item.body.report.exceptions).toHaveLength(2);
+    expect(item.body.report.exceptions.every((exception: { shiftId: string | null }) => exception.shiftId !== null)).toBe(true);
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 200);
+    expect(accepted.body.acceptance).toMatchObject({ reportHash: item.body.report.reportHash, withExceptions: true });
+    expect(await businessState(owner)).toEqual(before);
+  }, 20000);
+
+  it('rechaza aceptar una revisión cuando cambió un cierre verificable después de guardarla', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const savedShift = await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    const changed = structuredClone(savedShift.report);
+    changed.cash.countedNio = '90'; changed.cash.differenceNio = '-10';
+    await prisma.shiftCloseReport.update({ where: { id: savedShift.stored!.id },
+      data: { report: asJson(changed), contentHash: hashShiftCloseReport(changed) } });
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 409); expect(accepted.body.code).toBe('WORK_ITEM_SOURCE_UNAVAILABLE');
+    expect(await prisma.assistantWorkItem.findUniqueOrThrow({ where: { id: item.body.id } })).toMatchObject({ status: 'IN_REVIEW', version: 0 });
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: item.body.id } })).toBe(1);
+  }, 20000);
+
+  it('rechaza aceptar cuando aparece el comprobante que faltaba en la revisión', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const missing = await closedShift(owner, { noReport: true });
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    await prisma.shiftCloseReport.create({ data: { tenantId: owner.tenantId, shiftId: missing.shift.id,
+      folio: missing.report.folio, businessDate: missing.report.businessDate, version: missing.report.version,
+      report: asJson(missing.report), contentHash: hashShiftCloseReport(missing.report), createdBy: owner.userId,
+      createdAt: missing.shift.endTime! } });
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 409); expect(accepted.body.code).toBe('WORK_ITEM_SOURCE_UNAVAILABLE');
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: item.body.id } })).toBe(1);
+  }, 20000);
+
+  it('rechaza aceptar si apareció otro cierre dentro del período revisado', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    await closedShift(owner);
+    const item = await workItemFromQuery(owner, 'Revisá el cierre semanal de caja 2026-09-01 2026-09-07');
+    await closedShift(owner, { cash: { countedNio: '95', differenceNio: '-5' } });
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 409); expect(accepted.body.code).toBe('WORK_ITEM_SOURCE_UNAVAILABLE');
+    expect(await prisma.assistantWorkEvent.count({ where: { workItemId: item.body.id } })).toBe(1);
+  }, 20000);
+
+  it('permite aceptar una lectura de hoy sin confundir el avance del reloj con un cambio de fuente', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', '');
+    const owner = await actorFixture();
+    const item = await workItemFromQuery(owner, 'Revisá mis cierres de caja hoy');
+    expect(item.body.review.period.completeDays).toBe(false);
+    const accepted = await api(`/api/assistant/work-items/${item.body.id}/accept`, owner, 'POST',
+      { eventId: randomUUID(), version: item.body.version, reportHash: item.body.report.reportHash });
+    status(accepted, 200);
+    expect(accepted.body.acceptance.reportHash).toBe(item.body.report.reportHash);
+    expect(await prisma.assistantUsage.count({ where: { tenantId: owner.tenantId } })).toBe(0);
+  }, 20000);
 
   it('HTTP crea ejecución, permite polling/reload y niega historial ajeno o sesión deshabilitada', async () => {
     const owner = await actorFixture(), foreign = await actorFixture(), chat = await conversation(owner);

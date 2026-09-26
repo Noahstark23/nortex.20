@@ -2,11 +2,14 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Prisma, type PrismaClient, type AssistantWorkItem, type AssistantWorkEvent } from '@prisma/client';
 import prisma from '../../../lib/prisma.js';
 import type { AssistantPrincipal } from '../../../../shared/assistant.js';
+import type { WeeklyCashReview } from '../../../../shared/assistantWeeklyCashReview.js';
 import type { AssistantWorkItemDTO, AssistantWorkItemSummaryDTO, AssistantWorkItemStatus, AssistantWorkItemEventDTO, AssistantWorkItemListDTO } from '../../../../shared/assistantWorkItems.js';
 import { assertAssistantAccess } from '../access.js';
+import { reviewWeeklyCash } from '../operations/weeklyCashReview.js';
 import { readWorkItemSource } from './source.js';
+import { buildW01Report } from './report.js';
 import { AssistantWorkItemError, createWorkItemSchema, listWorkItemsSchema, workItemEventSchema, workItemIdSchema,
-  WORK_ITEM_TTL_MS, WORK_ITEM_PAGE_SIZE, WORK_ITEM_EVENT_LIMIT, type WorkItemDatabase, type WorkItemDependencies } from './contracts.js';
+  acceptWorkItemReportSchema, unavailableWorkItemSource, WORK_ITEM_TTL_MS, WORK_ITEM_PAGE_SIZE, WORK_ITEM_EVENT_LIMIT, type WorkItemDatabase, type WorkItemDependencies } from './contracts.js';
 export { cleanupAssistantWorkItems } from './cleanup.js';
 export { AssistantWorkItemError } from './contracts.js';
 export type { WorkItemDependencies } from './contracts.js';
@@ -28,10 +31,21 @@ async function lockAuthority(principal: AssistantPrincipal, tx: Prisma.Transacti
   await authorize(principal, tx);
 }
 
+/** Compara la fuente operativa completa al corte; la lectura del encargo histórico permanece intacta. */
+async function assertCurrentCashReview(principal: AssistantPrincipal, saved: WeeklyCashReview, tx: Prisma.TransactionClient, now: Date) {
+  const current = await reviewWeeklyCash(principal,
+    { startDate: saved.period.startDate, endDate: saved.period.endDate }, { tx, now: () => now });
+  const evidence = (review: WeeklyCashReview) => ({ period: { startDate: review.period.startDate,
+    endDate: review.period.endDate, timeZone: review.period.timeZone, completeDays: review.period.completeDays },
+    scope: review.scope, status: review.status, truncated: review.truncated,
+    rows: review.rows, counts: review.counts, totals: review.totals });
+  if (JSON.stringify(evidence(current)) !== JSON.stringify(evidence(saved))) throw unavailableWorkItemSource();
+}
+
 async function findItem(principal: AssistantPrincipal, id: string, db: WorkItemDatabase, now: Date) {
   const row = await db.assistantWorkItem.findFirst({ where: { id, ...owner(principal), expiresAt: { gt: now } } });
   if (!row) throw notFound();
-  if (row.kind !== 'W01_CASH_REVIEW' || !['IN_REVIEW', 'WAITING', 'CANCELLED'].includes(row.status)) {
+  if (row.kind !== 'W01_CASH_REVIEW' || !['IN_REVIEW', 'WAITING', 'CANCELLED', 'ACCEPTED'].includes(row.status)) {
     throw new AssistantWorkItemError(409, 'WORK_ITEM_INVALID', 'El encargo requiere una revisión de su estado guardado.');
   }
   return row;
@@ -47,8 +61,8 @@ async function presentSummary(principal: AssistantPrincipal, row: AssistantWorkI
 }
 
 function eventDTO(row: AssistantWorkEvent): AssistantWorkItemEventDTO {
-  if (!['CREATED', 'ADD_NOTE', 'WAIT', 'RESUME', 'CANCEL'].includes(row.type)
-    || !['IN_REVIEW', 'WAITING', 'CANCELLED'].includes(row.status)
+  if (!['CREATED', 'ADD_NOTE', 'WAIT', 'RESUME', 'CANCEL', 'ACCEPT_REPORT'].includes(row.type)
+    || !['IN_REVIEW', 'WAITING', 'CANCELLED', 'ACCEPTED'].includes(row.status)
     || (row.fromStatus !== null && !['IN_REVIEW', 'WAITING', 'CANCELLED'].includes(row.fromStatus))) {
     throw new AssistantWorkItemError(409, 'WORK_ITEM_INVALID', 'El historial del encargo requiere revisión.');
   }
@@ -64,11 +78,27 @@ export async function getAssistantWorkItem(principal: AssistantPrincipal, rawId:
   const row = await findItem(principal, id, db, now());
   const { dto, review } = await presentSummary(principal, row, db, now());
   const events = await db.assistantWorkEvent.findMany({ where: { workItemId: id, ...owner(principal), version: { lte: row.version } },
-    orderBy: [{ version: 'desc' }, { id: 'desc' }], take: WORK_ITEM_EVENT_LIMIT });
+    orderBy: [{ version: 'desc' }, { id: 'desc' }], take: WORK_ITEM_EVENT_LIMIT + (row.status === 'ACCEPTED' ? 1 : 0) });
   await authorize(principal, db);
   // Revalidar caducidad también después de leer el historial.
   if (row.expiresAt <= now()) throw notFound();
-  return { ...dto, review, events: events.reverse().map(eventDTO), eventsTruncated: row.eventCount > WORK_ITEM_EVENT_LIMIT };
+  const allEvents = events.reverse().map(eventDTO), eventsTruncated = row.eventCount > WORK_ITEM_EVENT_LIMIT;
+  const reportEvents = row.status === 'ACCEPTED' ? allEvents.filter(event => event.type !== 'ACCEPT_REPORT') : allEvents;
+  const reportVersion = row.status === 'ACCEPTED' ? row.acceptedReportVersion : row.version;
+  if (reportVersion === null) throw new AssistantWorkItemError(409, 'WORK_ITEM_INVALID', 'Falta la versión del informe aceptado.');
+  const report = buildW01Report({ id: row.id, version: reportVersion, assignedUserId: row.userId,
+    source: dto.source, review, events: reportEvents, eventsTruncated: row.status === 'ACCEPTED' ? row.eventCount - 1 > WORK_ITEM_EVENT_LIMIT : eventsTruncated });
+  let acceptance: AssistantWorkItemDTO['acceptance'];
+  if (row.status === 'ACCEPTED') {
+    if (!row.acceptedReportHash || !row.acceptedAt || !row.acceptedByUserId || !row.acceptedEventId
+      || row.acceptedReportVersion !== row.version - 1 || report.reportHash !== row.acceptedReportHash) {
+      throw new AssistantWorkItemError(409, 'WORK_ITEM_INVALID', 'El informe aceptado ya no coincide con su comprobante.');
+    }
+    acceptance = { eventId: row.acceptedEventId, reportHash: row.acceptedReportHash, reportVersion: row.acceptedReportVersion,
+      acceptedAt: row.acceptedAt.toISOString(), acceptedByUserId: row.acceptedByUserId, withExceptions: report.exceptions.length > 0 };
+  }
+  return { ...dto, review, report, ...(acceptance ? { acceptance } : {}),
+    events: allEvents.slice(-WORK_ITEM_EVENT_LIMIT), eventsTruncated };
 }
 
 export async function listAssistantWorkItems(principal: AssistantPrincipal, input: unknown = {}, deps: WorkItemDependencies = {}): Promise<AssistantWorkItemListDTO> {
@@ -98,6 +128,7 @@ export async function createAssistantWorkItem(principal: AssistantPrincipal, inp
     const source = await readWorkItemSource(principal, runId, tx, now());
     const previous = await tx.assistantWorkItem.findFirst({ where: { runId, ...owner(principal) } });
     if (previous) { await authorize(principal, tx); return previous.id; }
+    await assertCurrentCashReview(principal, source.review, tx, now());
     const createdAt = now(), expiresAt = new Date(Math.min(createdAt.getTime() + WORK_ITEM_TTL_MS, source.expiresAt.getTime()));
     const row = await tx.assistantWorkItem.create({ data: { ...owner(principal), runId, conversationId: source.conversationId,
       evidenceId: source.summary.evidenceId, sourceHash: source.summary.contentHash, sourceSummary: json(source.summary),
@@ -114,12 +145,56 @@ export async function createAssistantWorkItem(principal: AssistantPrincipal, inp
 }
 
 function nextStatus(status: AssistantWorkItemStatus, type: 'ADD_NOTE' | 'WAIT' | 'RESUME' | 'CANCEL'): AssistantWorkItemStatus {
+  if (status === 'ACCEPTED') throw new AssistantWorkItemError(409, 'WORK_ITEM_ACCEPTED', 'Este informe ya fue aceptado. Conservá su comprobante.');
   if (status === 'CANCELLED') throw new AssistantWorkItemError(409, 'WORK_ITEM_CANCELLED', 'Un encargo cancelado conserva su historial y no admite cambios.');
   if (type === 'ADD_NOTE') return status;
   if (type === 'CANCEL') return 'CANCELLED';
   if (type === 'WAIT' && status === 'IN_REVIEW') return 'WAITING';
   if (type === 'RESUME' && status === 'WAITING') return 'IN_REVIEW';
   throw new AssistantWorkItemError(409, 'WORK_ITEM_TRANSITION', 'Recuperá el estado actual antes de cambiar el encargo.');
+}
+
+/** Aceptación humana de un hash exacto. El evento y el comprobante se guardan juntos. */
+export async function acceptAssistantWorkItemReport(principal: AssistantPrincipal, rawId: string, input: unknown,
+  deps: WorkItemDependencies = {}): Promise<AssistantWorkItemDTO> {
+  const id = workItemIdSchema.parse(rawId), accepted = acceptWorkItemReportSchema.parse(input);
+  const db = deps.db ?? prisma, now = clock(deps), payloadHash = hash({ version: accepted.version, reportHash: accepted.reportHash });
+  await authorize(principal, db);
+  await db.$transaction(async tx => {
+    await lockAuthority(principal, tx);
+    await tx.$queryRaw(Prisma.sql`SELECT id FROM AssistantWorkItem WHERE id=${id} AND tenantId=${principal.tenantId}
+      AND userId=${principal.userId} AND roleAtCreation=${principal.role} AND expiresAt>${now()} FOR UPDATE`);
+    const row = await findItem(principal, id, tx, now());
+    const replay = await tx.assistantWorkEvent.findFirst({ where: { workItemId: id, eventId: accepted.eventId, ...owner(principal) } });
+    if (replay) {
+      if (replay.type !== 'ACCEPT_REPORT' || replay.payloadHash !== payloadHash || row.status !== 'ACCEPTED'
+        || row.acceptedEventId !== accepted.eventId) throw new AssistantWorkItemError(409, 'WORK_ITEM_EVENT_CONFLICT', 'Ese identificador ya corresponde a otro cambio del encargo.');
+      await authorize(principal, tx); return;
+    }
+    if (row.status === 'ACCEPTED') throw new AssistantWorkItemError(409, 'WORK_ITEM_ACCEPTED', 'Este informe ya fue aceptado. Conservá su comprobante.');
+    if (row.version !== accepted.version) throw new AssistantWorkItemError(409, 'WORK_ITEM_CHANGED', 'El encargo cambió. Recuperalo antes de aceptar.');
+    if (row.status !== 'IN_REVIEW') throw new AssistantWorkItemError(409, 'WORK_ITEM_TRANSITION', 'Retomá la revisión antes de aceptar el informe.');
+    if (row.eventCount > WORK_ITEM_EVENT_LIMIT) throw new AssistantWorkItemError(409, 'WORK_ITEM_HISTORY_TRUNCATED', 'El historial del informe no está completo para aceptarlo.');
+    const source = await readWorkItemSource(principal, row.runId, tx, now(), row);
+    await assertCurrentCashReview(principal, source.review, tx, now());
+    const events = await tx.assistantWorkEvent.findMany({ where: { workItemId: id, ...owner(principal), version: { lte: row.version } },
+      orderBy: [{ version: 'desc' }, { id: 'desc' }], take: WORK_ITEM_EVENT_LIMIT });
+    const report = buildW01Report({ id: row.id, version: row.version, assignedUserId: row.userId,
+      source: source.summary, review: source.review, events: events.reverse().map(eventDTO), eventsTruncated: false });
+    if (report.reportHash !== accepted.reportHash) throw new AssistantWorkItemError(409, 'WORK_ITEM_REPORT_CHANGED', 'El informe cambió. Revisá la versión y el hash actuales antes de aceptar.');
+    const acceptedAt = now();
+    const changed = await tx.assistantWorkItem.updateMany({ where: { id, ...owner(principal), version: row.version,
+      status: 'IN_REVIEW', expiresAt: { gt: acceptedAt } }, data: { status: 'ACCEPTED', version: { increment: 1 },
+        eventCount: { increment: 1 }, acceptedAt, acceptedByUserId: principal.userId,
+        acceptedReportHash: report.reportHash, acceptedReportVersion: row.version, acceptedEventId: accepted.eventId } });
+    if (changed.count !== 1) throw new AssistantWorkItemError(409, 'WORK_ITEM_CHANGED', 'Otro intento modificó el informe. Recuperalo antes de aceptar.');
+    await tx.assistantWorkEvent.create({ data: { ...owner(principal), workItemId: id, eventId: accepted.eventId,
+      payloadHash, type: 'ACCEPT_REPORT', note: null, fromStatus: 'IN_REVIEW', status: 'ACCEPTED',
+      version: row.version + 1, createdAt: acceptedAt } });
+    await authorize(principal, tx);
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  const result = await getAssistantWorkItem(principal, id, deps);
+  return { ...result, receiptEventId: accepted.eventId };
 }
 
 export async function appendAssistantWorkItemEvent(principal: AssistantPrincipal, rawId: string, input: unknown, deps: WorkItemDependencies = {}): Promise<AssistantWorkItemDTO> {

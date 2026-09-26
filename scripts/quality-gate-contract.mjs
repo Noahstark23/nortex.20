@@ -31,6 +31,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/assistantInventory.integration.test.ts',
   'tests/assistantCatalog.integration.test.ts',
   'tests/assistantRuns.integration.test.ts',
+  'tests/assistantWorkItems.integration.test.ts',
   'tests/assistantStatus.integration.test.ts',
   'tests/assistantActions.integration.test.ts',
   'tests/assistantActionsHttp.integration.test.ts',

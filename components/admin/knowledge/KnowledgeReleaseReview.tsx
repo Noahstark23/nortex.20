@@ -3,16 +3,19 @@ import type { KnowledgeEditorialDocument, KnowledgeEditorialNote, KnowledgeEdito
 import { editorialError, uncertainEditorialResult, type KnowledgeEditorialRequest } from '../../../hooks/useKnowledgeEditorial';
 import { assistantButtonClass, assistantInputClass } from '../../assistant/AssistantCatalogSelect';
 import { KnowledgeDocument } from './KnowledgeDocument';
+import { readEditorialDraft, rememberEditorialNote, type PendingEditorialNote } from './editorialDraftMemory';
 
-export function KnowledgeReleaseReview({ releaseId, actorName, request, current, onChanged, onWorkingChange }: {
-    releaseId: string; actorName: string; request: KnowledgeEditorialRequest; current: () => boolean; onChanged: () => void; onWorkingChange: (working: boolean) => void; key?: string;
+export function KnowledgeReleaseReview({ sessionKey, releaseId, actorName, request, current, onChanged, onWorkingChange }: {
+    sessionKey: string; releaseId: string; actorName: string; request: KnowledgeEditorialRequest; current: () => boolean; onChanged: () => void; onWorkingChange: (working: boolean) => void; key?: string;
 }) {
+    const saved = readEditorialDraft(sessionKey);
+    const retained = saved?.releaseId === releaseId ? saved : null;
     const [detail, setDetail] = useState<KnowledgeEditorialReleaseDetail | null>(null);
     const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
     const [reviewAck, setReviewAck] = useState(false); const [publishAck, setPublishAck] = useState(false);
-    const [note, setNote] = useState(''); const [uncertain, setUncertain] = useState(false); const [noteUncertain, setNoteUncertain] = useState(false);
+    const [note, setNote] = useState(retained?.note ?? ''); const [uncertain, setUncertain] = useState(false); const [noteUncertain, setNoteUncertain] = useState(Boolean(retained?.pendingNote));
     const [retirementDrafts, setRetirementDrafts] = useState<string[]>([]);
-    const pendingNote = useRef<{ requestId: string; manifestHash: string; body: string } | null>(null);
+    const pendingNote = useRef<PendingEditorialNote | null>(retained?.pendingNote ?? null);
     const alive = useRef(true); const lock = useRef(false); const path = `/releases/${encodeURIComponent(releaseId)}`;
     const active = () => alive.current && current();
     useEffect(() => { onWorkingChange(busy || uncertain || noteUncertain || note.length > 0 || retirementDrafts.length > 0); return () => onWorkingChange(false); }, [busy, uncertain, noteUncertain, note, retirementDrafts.length, onWorkingChange]);
@@ -56,18 +59,19 @@ export function KnowledgeReleaseReview({ releaseId, actorName, request, current,
             if (!detail || note.trim().length < 10 || note.trim().length > 2000) return;
             pendingNote.current = { requestId: crypto.randomUUID(), manifestHash: detail.manifestHash, body: note.trim() };
         }
+        rememberEditorialNote(sessionKey, releaseId, note, pendingNote.current);
         lock.current = true; setBusy(true); setError(''); setNotice(''); resetConsent();
         try {
             await request(`${path}/notes`, { method: 'POST', body: JSON.stringify(pendingNote.current) });
             if (!active()) return;
-            pendingNote.current = null; setNoteUncertain(false); setNote('');
+            pendingNote.current = null; rememberEditorialNote(sessionKey, releaseId, '', null); setNoteUncertain(false); setNote('');
             setNotice('Observación guardada. No aprueba ni publica el contenido.');
             try { await readDetail(); }
             catch (failure) { if (active()) { setDetail(null); setError(`La observación quedó guardada. ${editorialError(failure)}`); } }
         } catch (failure) {
             if (active()) {
                 const lost = uncertainEditorialResult(failure); setNoteUncertain(lost);
-                if (!lost) pendingNote.current = null;
+                if (!lost) { pendingNote.current = null; rememberEditorialNote(sessionKey, releaseId, note, null); }
                 setError(editorialError(failure));
             }
         } finally { lock.current = false; if (active()) setBusy(false); }
@@ -98,7 +102,7 @@ export function KnowledgeReleaseReview({ releaseId, actorName, request, current,
             <p className="nx-shell-muted text-sm">El contenido es inmutable. Para corregirlo, prepará otra publicación con una versión nueva del pasaje.</p>
             {detail.documents.map(doc => {
                 const key = `${doc.reference.documentId}/${doc.reference.version}/${doc.reference.sectionId}`;
-                return <KnowledgeDocument key={`${key}/${doc.status}`} document={doc} disabled={decisionDisabled} onRetire={retire} onEditingChange={editing => setRetirementDrafts(previous => editing ? previous.includes(key) ? previous : [...previous, key] : previous.filter(value => value !== key))} />;
+                return <KnowledgeDocument key={`${key}/${doc.status}`} sessionKey={sessionKey} document={doc} disabled={decisionDisabled} onRetire={retire} onEditingChange={editing => setRetirementDrafts(previous => editing ? previous.includes(key) ? previous : [...previous, key] : previous.filter(value => value !== key))} />;
             })}
             {detail.status === 'DRAFT' && <div className="nx-shell-control space-y-3 rounded-card border p-4">
                 <label className="nx-shell-text flex items-start gap-2 text-sm"><input type="checkbox" checked={reviewAck} disabled={publicationDisabled} onChange={event => setReviewAck(event.target.checked)} />Leí todos los pasajes, roles y canales de este manifiesto y confirmo mi revisión como {actorName}.</label>
@@ -115,8 +119,8 @@ export function KnowledgeReleaseReview({ releaseId, actorName, request, current,
                 {detail.nextNotesCursor && <button type="button" disabled={disabled} className={assistantButtonClass} onClick={() => void moreNotes()}>Cargar más observaciones</button>}
             </section>
         </>}
-        <label className="nx-shell-text block text-sm">Tu observación<textarea className={assistantInputClass} value={note} maxLength={2000} disabled={busy || noteUncertain} onChange={event => { setNote(event.target.value); resetConsent(); }} /></label>
-        {note.length > 0 && !noteUncertain && <><p className="nx-shell-muted text-sm">Guardá o descartá la observación antes de cambiar de publicación o tomar una decisión.</p><button type="button" className={assistantButtonClass} disabled={busy} onClick={() => { setNote(''); resetConsent(); }}>Descartar observación sin guardar</button></>}
+        <label className="nx-shell-text block text-sm">Tu observación<textarea className={assistantInputClass} value={note} maxLength={2000} disabled={busy || noteUncertain} onChange={event => { rememberEditorialNote(sessionKey, releaseId, event.target.value, null); setNote(event.target.value); resetConsent(); }} /></label>
+        {note.length > 0 && !noteUncertain && <><p className="nx-shell-muted text-sm">Guardá o descartá la observación antes de cambiar de publicación o tomar una decisión.</p><button type="button" className={assistantButtonClass} disabled={busy} onClick={() => { rememberEditorialNote(sessionKey, releaseId, '', null); setNote(''); resetConsent(); }}>Descartar observación sin guardar</button></>}
         {noteUncertain ? <><p role="status" className="nx-tone-warning text-sm">La respuesta de la observación se perdió. El texto y su identificador están conservados.</p><button type="button" className={assistantButtonClass} disabled={busy} onClick={() => void saveNote()}>Reintentar la misma observación</button></>
             : <button type="button" className={assistantButtonClass} disabled={disabled || !detail || note.trim().length < 10} onClick={() => void saveNote()}>Guardar observación sin aprobar</button>}
     </section>;

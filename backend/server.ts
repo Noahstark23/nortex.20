@@ -21,6 +21,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
+import { registerProductionFrontend } from './productionFrontend';
 import {
     ACCOUNTING_READ_ROLES,
     CUSTOMER_CREATE_ROLES,
@@ -124,7 +125,6 @@ import { encryptField } from './services/crypto';
 import { calcularMargenBruto, calcularRetiroSeguro, calcularEfectivoTurno } from '../utils/margen';
 import Stripe from 'stripe';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
@@ -12931,43 +12931,7 @@ registerFiscalExports(app);
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION
 // ==========================================
-const isProduction = process.env.NODE_ENV === 'production';
-if (isProduction) {
-    const distPath = path.join(__dirname, '../dist');
-
-    // Landing page en la raíz — tiene prioridad sobre el SPA
-    app.get('/', (req: any, res: any) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.sendFile(path.join(distPath, 'landing.html'));
-    });
-
-    // Assets con hash (JS/CSS) → cache agresivo 1 año
-    app.use('/assets', express.static(path.join(distPath, 'assets'), {
-        maxAge: '1y',
-        immutable: true,
-    }));
-
-    // Resto de archivos estáticos (favicon, logos, etc.).
-    // redirect:false → no redirige /ruta → /ruta/ (controlamos el HTML por-ruta abajo).
-    app.use(express.static(distPath, { maxAge: 0, redirect: false }));
-
-    // SPA catch-all: cualquier ruta que no sea /api.
-    // Sirve el HTML prerenderizado por-ruta (dist/<ruta>/index.html) si existe — cada uno
-    // con su <title>, description y canonical únicos (SEO). Si no, cae al shell del SPA.
-    app.get(/^(?!\/api).+/, (req: any, res: any) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        const rel = req.path.replace(/^\/+|\/+$/g, '');
-        if (rel) {
-            const prerendered = path.join(distPath, rel, 'index.html');
-            // Guard anti-traversal: el archivo debe quedar dentro de distPath.
-            if (prerendered.startsWith(distPath + path.sep) && fs.existsSync(prerendered)) {
-                return res.sendFile(prerendered);
-            }
-        }
-        res.sendFile(path.join(distPath, 'index.html'));
-    });
-    console.log(`📂 Serving static files from: ${distPath}`);
-}
+if (process.env.NODE_ENV === 'production') registerProductionFrontend(app, path.join(__dirname, '../dist'));
 
 // ==========================================
 // ⏰ CRON: EXPIRACIÓN AUTOMÁTICA DE SUSCRIPCIONES
