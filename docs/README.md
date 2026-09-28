@@ -2,11 +2,21 @@
 
 # Documentación de Nortex
 
-Actualización del índice: 2026-09-08. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
+Actualización del índice: 2026-09-28. La prioridad actual es primera venta, uso recurrente, distribución móvil/WhatsApp y soporte confiable para comercios. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
 
 ## Dirección y evidencia actual
 
 **Plan actual:** [RAG y estabilidad operativa](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md), con prioridad C00 para consolidar cuatro clientes. La integración del 2026-09-08 debe registrar su candidato y pruebas nuevas; los informes anteriores conservan su fecha y alcance.
+
+### Planes de distribución e identidad — 2026-09-28
+
+Estos documentos son **PROPUESTOS**. Preparan decisiones y contratos; no autorizan filings, pagos, cuentas, credenciales, publicación ni producción.
+
+- [Nortex USA: identidad, distribución y capital](PLAN_NORTEX_USA_DISTRIBUCION_2026-09-28.md): secuencia entidad/EIN/D-U-N-S/Play/Meta, business credit y límites.
+- [Google Play como organización](PLAN_PLAY_STORE_ORGANIZACION_2026-09-28.md): D-U-N-S, firma, AAB, Data Safety, QA física y publicación.
+- [WhatsApp + catálogo + cotizaciones](PLAN_WHATSAPP_CATALOGO_COTIZACIONES_2026-09-28.md): el catálogo web queda canónico; WhatsApp interpreta intención y prepara cotizaciones revisables sin autoridad de venta.
+
+**Decisión de producto nueva:** no crear un segundo catálogo dentro de WhatsApp en la primera fase. Reutilizar el catálogo público y el flujo de cotizaciones existentes; WhatsApp será la interfaz conversacional y el catálogo web la superficie de revisión/confirmación.
 
 **Historial de preparación del 2026-09-04:** [Candidato POS, caja y calidad](releases/2026-09-04-pos-release-candidate.md), [compuerta de producción](releases/2026-09-04-production-gate.md) y [siguiente entrega de Stock, cámara y RAG](PLAN_STOCK_RAG_CAMARA_2026-09-04.md). Candidato integrado local; CI remoto, staging y producción son etapas pendientes.
 
@@ -30,7 +40,8 @@ Actualización del índice: 2026-09-08. La prioridad actual es primera venta, us
 | Compras/devoluciones | [ADR procurement](ADR_PROCUREMENT_DEVOLUCIONES_NOTAS_CREDITO.md), [Compras sin IVA](PLAN_COMPRAS_SIN_IVA_2026-09-09.md) | Conciliar documentos/saldos y pruebas de datos; el plan de traslación del IVA es diseño sin implementar |
 | RRHH | [Plan RRHH Nicaragua](PLAN_RRHH_NICARAGUA.md) | Mantener trabajo existente; nuevas capacidades según demanda |
 | Hardware | [Cámara/códigos](PLAN_CAMARA_CODIGOS_BODEGA.md), [Balanzas](PLAN_BALANZAS_DIGITALES_Y_ETIQUETAS.md) | Simulación no acredita dispositivo físico; diferir expansión no requerida |
-| Móvil | [App móvil](PLAN_APP_MOVIL.md), [Tiendas](PLAN_MOBILE_STORES.md) | Priorizar PWA/dispositivos actuales antes de nuevas publicaciones |
+| Móvil | [App móvil](PLAN_APP_MOVIL.md), [Tiendas](PLAN_MOBILE_STORES.md), [Play organización 2026-09-28](PLAN_PLAY_STORE_ORGANIZACION_2026-09-28.md) | Publicar el shell existente con identidad y QA; no reescribir la app |
+| WhatsApp/comercio | [Infraestructura](WHATSAPP_INFRA.md), [Catálogo y cotizaciones 2026-09-28](PLAN_WHATSAPP_CATALOGO_COTIZACIONES_2026-09-28.md) | Reutilizar catálogo/cotización; no dar al LLM autoridad de dinero |
 | Verticales | [Comercios híbridos](PLAN_COMERCIOS_HIBRIDOS_CARNES_AGROPECUARIA.md), [Prestamistas](PLAN_PRESTAMISTAS.md), [Agente bancario](PLAN_AGENTE_BANCARIO.md) | Conservar y atender defectos de clientes existentes; expansión diferida |
 
 ## Historial que requiere revalidación
