@@ -1272,8 +1272,7 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
             // usuario exista o no crea un oráculo de enumeración de cuentas (el caso "email
             // inexistente" ya responde 200 genericMsg). Registrar el fallo solo del lado del
             // servidor y devolver el mismo mensaje genérico.
-            console.error(`❌ FAILED TO SEND RESET EMAIL to ${user.email}`);
-            console.log(`🔗 Reset link (fallback): ${resetLink}`);
+            console.error('❌ No se pudo entregar email de recuperación.');
             return res.json({ message: genericMsg });
         }
 
