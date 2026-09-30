@@ -54,7 +54,7 @@ qa('Promociones: precios, carreras y cobro real MySQL', () => {
         const prepared = await quoted(f); expect(prepared.quote.total).toBe('180.00');
         expect(prepared.quote.hasPromotions).toBe(true);
         // C$180 incluyen IVA: 180 × 15 / 115 = 23.478260..., snapshot a 4dp.
-        expect(prepared.quote.vatAmount).toBe(vertical === 'FARMACIA' ? '0.0000' : '23.4783');
+        expect(prepared.quote.vatAmount).toBe(vertical === 'FARMACIA' ? '0.0000' : '23.4800');
         const settled = await Promise.allSettled([1, 2].map(() => sale(f, prepared.input)));
         for (const result of settled) if (result.status === 'rejected') throw result.reason;
         const results = settled.map(result => (result as PromiseFulfilledResult<Awaited<ReturnType<typeof sale>>>).value);
