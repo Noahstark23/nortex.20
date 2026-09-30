@@ -301,16 +301,16 @@ export function calculateLaborLiability(
         : Decimal.min(new Decimal(monthsWorked).mul('2.5'), 30);
     const vacacionesPendientes = diasVacaciones.mul(salarioDiario).toDecimalPlaces(4);
 
-    // Aguinaldo (Art. 93): días desde max(último 1-dic, contratación), /360.
+    // Aguinaldo (Art. 93): días desde max(último 1-dic, contratación), /365 (H2: días calendario, decisión del dueño).
     const lastDec1 = now.getUTCMonth() >= 11
         ? new Date(Date.UTC(now.getUTCFullYear(), 11, 1))
         : new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 1));
     const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, now);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
-        ? Math.min(360, diasDesdeInicioAguinaldo + 1)
+        ? Math.min(365, diasDesdeInicioAguinaldo + 1)
         : 0;
-    const aguinaldoAcumulado = dBase.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(4);
+    const aguinaldoAcumulado = dBase.mul(Decimal.min(1, new Decimal(diasAguinaldo).div(365))).toDecimalPlaces(4);
 
     // Indemnización (Art. 45): tramos 30/20 días con fracción, techo 150 días.
     const anios = Math.max(0, daysWorked / 365.25);
@@ -422,9 +422,9 @@ export function calculateSettlement(params: {
     const aguinaldoStart = new Date(Math.max(hire.getTime(), lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, term);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
-        ? Math.min(360, diasDesdeInicioAguinaldo + 1)
+        ? Math.min(365, diasDesdeInicioAguinaldo + 1)
         : 0;
-    const aguinaldo = salarioMensual.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(2);
+    const aguinaldo = salarioMensual.mul(Decimal.min(1, new Decimal(diasAguinaldo).div(365))).toDecimalPlaces(2);
 
     // El total se suma sobre los componentes YA redondeados, que son los que se
     // imprimen: si se suma en crudo y se redondea al final, el documento puede
@@ -448,4 +448,27 @@ export function calculateSettlement(params: {
         aguinaldo: aguinaldo.toDecimalPlaces(2).toNumber(),
         total: total.toNumber(),
     };
+}
+
+/**
+ * Aguinaldo de la corrida anual (Art. 93-95 Ley 185), extraído de server.ts.
+ * Período dic[year-1] → nov[year], desde el ingreso si es posterior y solo
+ * hasta `today` si el período no terminó. H2 (decisión del dueño): días
+ * calendario en numerador Y denominador → salario × min(1, días/365), con tope
+ * de 365 días. Antes mezclaba días calendario con un denominador de 360.
+ */
+export function computeAguinaldoAnual(baseSalary: Decimal.Value, hireDate: Date, year: number, today: Date) {
+    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
+    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
+    const effectiveEnd = today < periodEnd ? today : periodEnd;
+    const start = hireDate > periodStart ? hireDate : periodStart;
+    let dias = 0;
+    if (effectiveEnd >= start) {
+        dias = Math.min(365, Math.floor((effectiveEnd.getTime() - start.getTime()) / MS_PER_DAY) + 1);
+    }
+    const monto = new Decimal(baseSalary)
+        .mul(Decimal.min(1, new Decimal(dias).div(365)))
+        .toDecimalPlaces(2)
+        .toNumber();
+    return { dias, monto };
 }

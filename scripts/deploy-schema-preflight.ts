@@ -5062,6 +5062,112 @@ export async function applyAccountingDecimalSchemaPreflight(
     logger.info('Preflight contable verificado: saldos, débitos y créditos usan DECIMAL(18,4) sin pérdida.');
 }
 
+// ── B5 H3: unicidad del número DGI por serie en Sale ─────────────────────────
+export const SALE_INVOICE_UNIQUE_INDEX = 'Sale_tenantId_invoiceSeries_invoiceNumber_key';
+const SALE_INVOICE_UNIQUE_INDEX_SQL = Prisma.raw('`Sale_tenantId_invoiceSeries_invoiceNumber_key`');
+const SALE_TABLE_SQL = Prisma.raw('`Sale`');
+const INVOICE_SERIES_COLUMN_SQL = Prisma.raw('`invoiceSeries`');
+
+export type SaleInvoiceIndexRow = WarehouseSellerIndexRow;
+
+export function inspectSaleInvoiceUniqueIndex(rows: SaleInvoiceIndexRow[]): SchemaObjectState {
+    return inspectExactIndex(rows, SALE_INVOICE_UNIQUE_INDEX, ['tenantId', 'invoiceSeries', 'invoiceNumber'], true);
+}
+
+async function saleTableExists(db: DeploySchemaClient): Promise<boolean> {
+    const rows = await db.query<Array<{ tableName: string }>>(Prisma.sql`
+        SELECT TABLE_NAME AS tableName
+        FROM information_schema.TABLES
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Sale'
+        LIMIT 1
+    `);
+    return rows.length === 1;
+}
+
+async function readSaleInvoiceUniqueIndex(db: DeploySchemaClient): Promise<SaleInvoiceIndexRow[]> {
+    return db.query<SaleInvoiceIndexRow[]>(Prisma.sql`
+        SELECT
+            INDEX_NAME AS indexName,
+            NON_UNIQUE AS nonUnique,
+            SEQ_IN_INDEX AS seqInIndex,
+            COLUMN_NAME AS columnName,
+            SUB_PART AS subPart,
+            INDEX_TYPE AS indexType,
+            IS_VISIBLE AS isVisible,
+            COLLATION AS collation,
+            EXPRESSION AS expression
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = DATABASE()
+          AND TABLE_NAME = 'Sale'
+          AND INDEX_NAME = ${SALE_INVOICE_UNIQUE_INDEX}
+        ORDER BY SEQ_IN_INDEX
+    `);
+}
+
+/**
+ * Antes de crear el UNIQUE se buscan números DGI repetidos dentro de la misma
+ * serie. NULL no colisiona en MySQL, así que solo cuentan filas con serie y
+ * número. Si hay duplicados se DETIENE el arranque: no se renumera ni se borra.
+ */
+async function assertSaleInvoicesAreUnique(db: DeploySchemaClient): Promise<void> {
+    const duplicates = await db.query<Array<{ tenantId: string; invoiceSeries: string; invoiceNumber: number | bigint; duplicateCount: number | bigint }>>(Prisma.sql`
+        SELECT tenantId, invoiceSeries, invoiceNumber, COUNT(*) AS duplicateCount
+        FROM ${SALE_TABLE_SQL}
+        WHERE invoiceSeries IS NOT NULL
+          AND invoiceNumber IS NOT NULL
+        GROUP BY tenantId, invoiceSeries, invoiceNumber
+        HAVING COUNT(*) > 1
+        LIMIT 10
+    `);
+    if (duplicates.length === 0) return;
+    const rows = duplicates.reduce((total, row) => total + BigInt(row.duplicateCount), 0n);
+    throw new UnsafeSchemaStateError(
+        `Hay ${duplicates.length} grupo(s) de facturas de venta con número DGI repetido (${String(rows)} filas); `
+        + 'no se creará el índice único ni se alterarán datos. Reportar y conciliar antes de desplegar.',
+    );
+}
+
+async function ensureSaleInvoiceUniqueIndex(db: DeploySchemaClient, logger: DeploySchemaLogger): Promise<void> {
+    const initialState = inspectSaleInvoiceUniqueIndex(await readSaleInvoiceUniqueIndex(db));
+    if (initialState === 'invalid') {
+        throw new UnsafeSchemaStateError(`${SALE_INVOICE_UNIQUE_INDEX} existe con columnas u opciones incompatibles.`);
+    }
+    if (initialState === 'missing') {
+        await assertSaleInvoicesAreUnique(db);
+        logger.info(`Aplicando DDL seguro: índice único ${SALE_INVOICE_UNIQUE_INDEX}.`);
+        try {
+            await db.execute(Prisma.sql`
+                CREATE UNIQUE INDEX ${SALE_INVOICE_UNIQUE_INDEX_SQL}
+                ON ${SALE_TABLE_SQL}(${TENANT_ID_COLUMN_SQL}, ${INVOICE_SERIES_COLUMN_SQL}, ${INVOICE_NUMBER_COLUMN_SQL})
+            `);
+        } catch (error) {
+            if (inspectSaleInvoiceUniqueIndex(await readSaleInvoiceUniqueIndex(db)) !== 'valid') {
+                await assertSaleInvoicesAreUnique(db);
+                throw error;
+            }
+            logger.warn(`${SALE_INVOICE_UNIQUE_INDEX} fue creado concurrentemente; definición verificada.`);
+        }
+    }
+    if (inspectSaleInvoiceUniqueIndex(await readSaleInvoiceUniqueIndex(db)) !== 'valid') {
+        throw new UnsafeSchemaStateError(`No se pudo verificar la definición final de ${SALE_INVOICE_UNIQUE_INDEX}.`);
+    }
+}
+
+export async function applySaleInvoiceSchemaPreflight(
+    db: DeploySchemaClient,
+    logger: DeploySchemaLogger = console,
+): Promise<void> {
+    if (!await saleTableExists(db)) {
+        logger.info('Preflight DDL: Sale aún no existe; db push creará su schema completo.');
+        return;
+    }
+    await assertSaleInvoicesAreUnique(db);
+    await ensureSaleInvoiceUniqueIndex(db, logger);
+    await assertSaleInvoicesAreUnique(db);
+    logger.info('Preflight DDL verificado: numeración DGI única por serie sin alterar históricos.');
+}
+
 /**
  * DDL expand-only que Prisma db push considera "data loss" aunque no borra filas.
  * Se ejecuta antes del db push normal y converge desde estados parciales.
@@ -5108,6 +5214,7 @@ export async function applyDeploySchemaPreflight(
     await applyPaymentSchemaPreflight(db, logger);
     await applyRetencionSufridaSchemaPreflight(db, logger);
     await applyPurchaseInvoiceSchemaPreflight(db, logger);
+    await applySaleInvoiceSchemaPreflight(db, logger);
     await applyPurchaseMatchResolutionSchemaPreflight(db, logger);
     await applyProcurementPhaseTwoBSchemaPreflight(db, logger);
     await applyProcurementPhaseTwoCSchemaPreflight(db, logger);

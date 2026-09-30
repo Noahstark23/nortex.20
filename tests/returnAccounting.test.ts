@@ -153,8 +153,8 @@ describe('exactitud e invariantes del asiento de devolución', () => {
             refundMethod: 'CASH',
         });
 
-        expect(amountFor(lines, '4.1.2', 'debit').toFixed(4)).toBe('86.9565');
-        expect(amountFor(lines, '2.1.2', 'debit').toFixed(4)).toBe('13.0435');
+        expect(amountFor(lines, '4.1.2', 'debit').toFixed(4)).toBe('86.9600');
+        expect(amountFor(lines, '2.1.2', 'debit').toFixed(4)).toBe('13.0400');
         expect(amountFor(lines, '1.1.4', 'debit').toFixed(2)).toBe('33.33');
         expect(amountFor(lines, '5.1.1', 'credit').toFixed(2)).toBe('33.33');
         expect(amountFor(lines, '1.1.3', 'credit').toFixed(2)).toBe('30.01');
@@ -174,9 +174,9 @@ describe('exactitud e invariantes del asiento de devolución', () => {
     it('devolución mixta: calcula ingreso e IVA solo sobre la parte gravada', () => {
         const lines = build({ exemptTotal: 50 });
 
-        // total 115, exento 50: ingreso = 50 + 65/1.15; IVA = 65 - 65/1.15.
-        expect(amountFor(lines, '4.1.2', 'debit').toFixed(4)).toBe('106.5217');
-        expect(amountFor(lines, '2.1.2', 'debit').toFixed(4)).toBe('8.4783');
+        // total 115, exento 50: ingreso = 50 + 65/1.15; IVA = 65 - 65/1.15 (H1: a centavos).
+        expect(amountFor(lines, '4.1.2', 'debit').toFixed(4)).toBe('106.5200');
+        expect(amountFor(lines, '2.1.2', 'debit').toFixed(4)).toBe('8.4800');
         expect(
             amountFor(lines, '4.1.2', 'debit')
                 .plus(amountFor(lines, '2.1.2', 'debit'))
