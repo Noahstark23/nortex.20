@@ -1,14 +1,14 @@
 # Contrato C12: worker comercial en staging
 
-Integrador único Codex. Propietario de edición: docker-compose.whatsapp-staging.yml y este contrato. Compose general y checkout dirty se preservan. Revisor sólo lectura.
+Integrador único Codex. Propietario de edición: integrador Compose base/overlay y contrato del candidato. Checkout dirty se preserva; no se sobrescribe su Compose/Dockerfile/server. Revisor sólo lectura.
 
-Resultado: overlay versionado arranca API y worker comercial del mismo checkout y Dockerfile; image ID requiere comprobación en staging, flags fijados a false, sin permitir activación por entorno heredado; requiere overlay y perfil explícitos. DB privada, ningún puerto del worker, dependencia API healthy, SIGTERM y restart persistente. No cambio de schema/dinero/stock. Sin llamadas IA/Meta ni lectura de .env/claves/datos productivos.
+Resultado: overlay versionado arranca API y worker comercial del mismo checkout y Dockerfile; image ID requiere comprobación en staging, flags fijados a false, sin permitir activación por entorno heredado; requiere overlay y perfil explícitos. DB privada, ningún puerto del worker, dependencia API healthy, SIGTERM y restart persistente. No cambio de schema/dinero/stock. Servicio comercial aditivo en Compose base, ausente del arranque sin perfil. Sin llamadas IA/Meta ni lectura de .env/claves/datos productivos.
 
 Autoridad: implementación C12 y staging aprobados por Noel en la conversación. Push/PR/CI/merge dentro del programa aprobado; promoción valida SHA exacto. Producción, conexión Meta y nuevos mensajes siguen separados.
 
 Verificación: Docker Compose real con --env-file /dev/null y entorno sintético aislado; servicio ausente del arranque base, overlay presente, flags false, dependencia healthy, restart y sin puertos. Types sobre base integrada, revisión y CI remota. Parser no acredita ejecución/heartbeat en staging.
 
-El comando conserva explícitamente Compose base antes del overlay. Build: docker compose -f ./docker-compose.yml -f docker-compose.whatsapp-staging.yml --profile assistant-worker --profile whatsapp-commerce-worker build app assistant-worker whatsapp-commerce-worker. Start equivalente: up -d app assistant-worker whatsapp-commerce-worker. No iniciar backup/debug por este lote; revisar preview antes de guardar.
+El comando conserva explícitamente Compose base antes del overlay. Build: sh scripts/build-whatsapp-staging.sh. Start equivalente: up -d app assistant-worker whatsapp-commerce-worker. No iniciar backup/debug por este lote; revisar preview antes de guardar.
 
 Recuperación: apagar procesamiento/envío y conservar inbox/outbox/UNKNOWN e identidad; no forzar retorno legacy. Registrar pin y comandos previos. Límite gasto cero IA/Meta en humo apagado; no contratar servicios nuevos. Verificar backups fuera del Droplet antes de promover.
 
@@ -21,6 +21,8 @@ La primera promoción de API43d8 terminó construcción pero falló la compuerta
 
 C12 agrega identidad de build: NORTEX_BUILD_COMMIT proviene de git rev-parse HEAD en checkout; Dockerfile genera .nortex-release.json dentro de imagen con commit y hash del servidor. Health valida el marker y prevalece sobre entorno; marker inválido devuelve null. Ausente conserva SOURCE_COMMIT para QA/builds existentes. La identidad no es firma del árbol completo.
 
-Comando build actualizado: docker compose -f ./docker-compose.yml -f docker-compose.whatsapp-staging.yml --profile assistant-worker --profile whatsapp-commerce-worker build --build-arg NORTEX_BUILD_COMMIT="$(git rev-parse --verify HEAD || printf invalid)" app assistant-worker whatsapp-commerce-worker. Si no hay Git, invalid hace fallar la generación. Coolify debe conservar repositorio durante despliegue para que overlay esté presente al ejecutar start; .git permanece excluido del contexto Docker.
+Comando build final: sh scripts/build-whatsapp-staging.sh. La validación del formulario Coolify bloquea sustituciones $, por lo que la lectura Git y argumentos Docker viven en un script versionado con argv fijo, no en una cadena inyectada al formulario. El script falla ante Git ausente o SHA inválido, y ejecuta Compose base+overlay con build arg de Git. No lee ni imprime secretos. Coolify debe conservar repositorio para el overlay en start; .git sigue excluido de imagen. Se añade el servicio comercial con perfil al Compose base para que Coolify genere imagen/labels y lo registre; sigue inactivo sin perfil.
 
 Edición: worker C12 identity propietario Dockerfile candidato, scripts/write-release-identity.mjs, backend/lib/releaseIdentity.ts y tests/releaseIdentity.test.ts; integrador único backend/server.ts (sólo import y campo health). Root Dockerfile/server existentes no se sobrescriben. Reviewer sólo lectura.
+
+Propiedad adicional: worker C12 identity edita scripts/build-whatsapp-staging.sh y tests/whatsappStagingBuild.test.ts; integración Compose base/overlay por Codex. Prueba stub de Git/Docker acredita argumentos y fallo cerrado, no ejecución remota.

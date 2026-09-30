@@ -418,8 +418,7 @@ app.get('/api/health', async (_req: any, res: any) => {
         ok: db === 'up',
         db,
         uptimeSeconds: Math.floor((Date.now() - arranqueDelProceso) / 1000),
-        // La identidad generada dentro de la imagen prevalece sobre metadata del entorno.
-        commit: getReleaseCommit(),
+        commit: getReleaseCommit(), // Identidad de imagen; el entorno sólo sirve al QA local.
     });
 });
 
