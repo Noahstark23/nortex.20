@@ -1,5 +1,5 @@
 -- Metadatos auxiliares aditivos; no activa canal ni cambia dinero/stock.
-ALTER TABLE `WaCommerceActivationRequest` ADD COLUMN `version` INTEGER NOT NULL DEFAULT 1, ADD COLUMN `assignedTo` VARCHAR(191) NULL;
+ALTER TABLE `WaCommerceActivationRequest` ADD COLUMN `version` INTEGER NOT NULL DEFAULT 1 AFTER `status`, ADD COLUMN `assignedTo` VARCHAR(191) NULL AFTER `version`;
 CREATE TABLE `WaCommerceWorkerHeartbeat` (
  `id` VARCHAR(191) NOT NULL,
  `startedAt` DATETIME(3) NOT NULL,
