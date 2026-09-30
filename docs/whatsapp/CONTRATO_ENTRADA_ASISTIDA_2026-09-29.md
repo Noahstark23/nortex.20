@@ -1,0 +1,12 @@
+# Lote C07 — entrada asistida para negocio nicaragüense
+
+Corrección solicitada: no trasladar tenant, Meta Business, WABA ni credenciales al comerciante.
+Resultado: dueño/admin autenticado indica sólo su número y guarda una solicitud recuperable de ayuda de conexión. Nortex resuelve configuración; el comercio revisa catálogo, condiciones y verifica propiedad del número con asistencia antes de activar.
+Autoridad: JWT + usuario activo OWNER/ADMIN; tenant derivado, petición estricta sin campos de proveedor. Solicitar ayuda no conecta, no activa canales, no envía mensajes y no acepta tarifas ni términos por el dueño. No introducir altas automáticas ni inferir consentimiento de compradores.
+Candidato: /private/tmp/nortex-whatsapp-20260928-21pepma0; hashes previos ONBOARDING_SOURCE.json. Cambios de RRHH conservados y fuera del lote.
+Contrato API: GET /api/whatsapp-commerce/activation-request => {request:null|{id,phone,status,createdAt}}; POST mismo path {phone} => {request:{...},replayed:boolean}, 201 alta, 200 repetición. Una solicitud pendiente por tenant; mismo número normalizado devuelve la misma identidad, otro número exige resolver la anterior (409). Ningún canal se crea por este flujo. Modelo WaCommerceActivationRequest id, tenantId único, phone, requestedBy, status REQUESTED, noticeVersion, createdAt, updatedAt. Auditoría atómica de alta; no registrar número en details.
+Responsables: ux_qa edita sólo components/whatsapp/CommerceActivation.tsx, components/whatsapp/CommerceInbox.tsx y tests/whatsappCommerceActivationExperience.test.tsx. identidad edita sólo backend/services/whatsapp/commerce/activation.ts y tests/whatsappCommerceActivation.mysql.test.ts. Integrador único schema, migración, router, pruebas HTTP y documentos. Todos preservan ediciones ajenas; fuera de sus archivos sólo leen.
+Evidencia: UX solicitud/recarga/error/reintento, aislamiento/rol/revocación/concurrencia/replay en MySQL descartable, HTTP estricto, Prisma, TypeScript, diseño y build. Sin dinero/inventario ni llamada de modelo. Gasto externo cero. Recuperación: solicitud durable, número normalizado, error no libera identidad previa, ninguna repetición de altas ante timeout.
+Límites: soporte todavía no tiene panel para procesar solicitudes ni integración de signup Meta. No declarar conectado/activo. Release, worker, horarios, retención y entrega real conservan sus gates pendientes.
+
+Cierre de coordinación: integrador asumió activation.ts y su prueba MySQL para corregir prefijo 505 en número local; QA final 9/9 PASS.

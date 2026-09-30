@@ -1,11 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ queryRaw: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), create: vi.fn() }));
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+const mocks = vi.hoisted(() => ({ queryRaw: vi.fn(), findFirst: vi.fn(), findUnique: vi.fn(), update: vi.fn(), create: vi.fn(), channel:vi.fn(), decrypt:vi.fn(), sender:vi.fn() }));
 vi.mock('../backend/services/whatsapp/db', () => ({ prisma: {
     $queryRaw: mocks.queryRaw, customer: { findFirst: mocks.findFirst },
     whatsAppConversation: { findUnique: mocks.findUnique, update: mocks.update, create: mocks.create },
+    whatsAppChannel:{findUnique:mocks.channel},
 } }));
-vi.mock('../backend/services/crypto', () => ({ decryptField: vi.fn() }));
-import { resolveIdentity, type ResolvedChannel } from '../backend/services/whatsapp/identity';
+vi.mock('../backend/services/crypto', () => ({ decryptField: mocks.decrypt }));
+vi.mock('../backend/services/whatsapp/client',()=>({CloudApiSender:class {constructor(config:unknown){mocks.sender(config);}}}));
+import { resolveChannel, resolveIdentity, type ResolvedChannel } from '../backend/services/whatsapp/identity';
 
 const channel = { channelId: 'channel-a', tenantId: 'tenant-a', botScope: 'B2C', defaultMode: 'BOT' } as ResolvedChannel;
 let customers: { id: string; name: string; phone: string; tenantId: string }[];
@@ -21,6 +23,24 @@ beforeEach(() => {
     mocks.findUnique.mockResolvedValue(null);
     mocks.create.mockImplementation(async ({ data }) => ({ id: 'conversation-a', status: data.status, customerId: data.customerId }));
     mocks.update.mockImplementation(async ({ data }) => ({ id: 'conversation-a', status: 'BOT', customerId: data.customerId }));
+});
+afterEach(()=>vi.unstubAllEnvs());
+
+describe('propiedad del canal al retomar un trabajo legacy',()=>{
+    it('conserva un canal legacy activo y construye su sender',async()=>{
+        mocks.channel.mockResolvedValue({id:'legacy',tenantId:'tenant-a',active:true,commerceEnabled:false,commercePolicyVersion:0,accessTokenEnc:'QA-NO-TOKEN',botScope:'B2C',defaultMode:'BOT'});
+        mocks.decrypt.mockReturnValue('QA-SYNTHETIC');
+        expect(await resolveChannel('10001','v21.0')).toMatchObject({channelId:'legacy',tenantId:'tenant-a'});
+        expect(mocks.decrypt).toHaveBeenCalledOnce();
+        expect(mocks.sender).toHaveBeenCalledOnce();
+    });
+    it.each([{commerceEnabled:true,commercePolicyVersion:0},{commerceEnabled:false,commercePolicyVersion:2}])('un canal comercial activo o pausado nunca retoma legacy: %j',async policy=>{
+        vi.stubEnv('WHATSAPP_COMMERCE_ENABLED','false');
+        mocks.channel.mockResolvedValue({id:'commercial',tenantId:'tenant-a',active:true,accessTokenEnc:'QA-NO-TOKEN',...policy});
+        expect(await resolveChannel('10001','v21.0')).toBeNull();
+        expect(mocks.decrypt).not.toHaveBeenCalled();
+        expect(mocks.sender).not.toHaveBeenCalled();
+    });
 });
 
 describe('vinculación WhatsApp a una única cuenta del tenant', () => {

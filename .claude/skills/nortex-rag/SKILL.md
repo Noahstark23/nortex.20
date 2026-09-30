@@ -351,3 +351,12 @@ pagada si el presupuesto sólo permite un lote; informar evaluación parcial.
 - [ ] Ayuda: citas/pasajes autorizados, publicación/retirada y respuestas derivadas probadas
 - [ ] Calidad de recuperación y del modelo registradas por separado; revisión humana y costo vinculados
 - [ ] Monolitos/contratos compartidos editados sólo por integrador; presupuesto no aumentado
+
+
+## WhatsApp comercial — C08/C10 local 2026-09-29
+
+Ferretería, búsqueda guiada, precio detalle y unidad base. Tenant de administración viene del JWT; canal firmado determina negocio receptor. El comprador no gana permisos administrativos por su teléfono. Cotización determinista no cobra, reserva stock ni registra venta. El modelo no confirma.
+
+Recepción enruta por canal: commerceEnabled o commercePolicyVersion>0 mantiene propiedad comercial aun pausada. WHATSAPP_COMMERCE_ENABLED controla ejecución del worker; nunca selecciona un handler global. Canales legacy activos conservan cola en memoria; drenar antes de adoptar política y no ejecutar ambos motores para el mismo tráfico. Inbox comercial commit antes de ACK; callbacks mixtos encolan legacy después del commit, sin prometer durabilidad legacy.
+
+Worker separado, heartbeat durable y estados de cola por tenant. Intento registrado antes de red; UNKNOWN no se reenvía ni resuelve por coincidencia aproximada. ID aceptado no demuestra entrega. SUPER_ADMIN tramita solicitudes versionadas; PREPARED no significa conectado. Runbook: docs/runbooks/whatsapp-commerce.md. Gates locales, CI, staging, recepción real y aceptación comercial son distintos. No activa producción ni acepta permisos nuevos.
