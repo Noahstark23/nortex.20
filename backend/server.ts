@@ -4,6 +4,9 @@ import { executeProductCreation, DuplicateProductCode } from './services/product
 import productEnrollmentRouter from './routes/productEnrollment';
 import { registerRetentionCertificate } from './routes/retentionCertificate';
 import { registerFiscalExports } from './routes/fiscalExports';
+import { registerInvoiceSeriesRoutes } from './routes/invoiceSeries';
+import { issueSaleVoidCreditNote, SaleVoidCreditNoteError, voidKardexReason } from './services/saleVoidCreditNoteService';
+import { InvoiceNumberingError } from './services/invoiceNumberingService';
 import { executeShiftHandover, ShiftHandoverError } from './services/shiftHandoverService';
 import { rejectProductDeletion, ProductDeletionError } from './services/productDeletionService';
 import inventoryAdjustmentsRouter from './routes/inventoryAdjustments';
@@ -3223,7 +3226,8 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                 && textoUtil(correctionRequest.reason) === motivo
                 && (sale.status === ESTADO_ANULADA || sale.cancelledAt !== null)
             ) {
-                return { id: saleId, status: ESTADO_ANULADA, motivo, idempotentReplay: true };
+                const creditNote = await tx.saleCreditNote.findFirst({ where: { tenantId: authReq.tenantId!, saleId } });
+                return { id: saleId, status: ESTADO_ANULADA, motivo, creditNote, idempotentReplay: true };
             }
             if (!correctionRequest || correctionRequest.status !== 'APPROVED' || textoUtil(correctionRequest.reason) !== motivo) {
                 throw new ReturnResolutionError(
@@ -3395,6 +3399,9 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
             if (marcada.count === 0) {
                 throw new Error('La factura ya fue anulada por otra operación.');
             }
+            // H6: nota de crédito numerada propia; la original conserva total, IVA y número.
+            const notaCredito = await issueSaleVoidCreditNote(tx, { tenantId: authReq.tenantId!, issuedById: authReq.userId!, motivo, sale, correctionRequest });
+            const motivoKardex = voidKardexReason(motivo, notaCredito);
 
             // 2 · OFF conserva el agregado legacy. En SHADOW/ENFORCED cada
             //     allocation vuelve primero al sidecar de su bodega y después
@@ -3411,9 +3418,8 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                             enforceSufficient: false,
                         });
                     } catch (err) {
-                        // Producto borrado del catálogo: la venta se anula igual, no
-                        // se puede rehacer inventario de algo que ya no existe.
-                        if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                        // H6: nunca omitir en silencio (antes `continue` sin Kardex).
+                        if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') throw new ReturnResolutionError('RETURN_PRODUCT_NOT_FOUND', 409, 'Un producto de la venta ya no existe; no se puede restaurar su stock. Conciliá antes de anular.');
                         throw err;
                     }
 
@@ -3427,7 +3433,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                             stockAfter: stockResult.stockAfter,
                             referenceId: saleId,
                             referenceType: 'SALE_VOIDED',
-                            reason: `Anulación de factura: ${motivo}`,
+                            reason: motivoKardex,
                             userId: authReq.userId!,
                         },
                     });
@@ -3506,7 +3512,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                                 stockAfter: stockResult.stockAfter,
                                 referenceId: saleId,
                                 referenceType: 'SALE_VOIDED',
-                                reason: `Anulación de factura: ${motivo} - lote ${restoration.batchNumber}`,
+                                reason: `${motivoKardex} - lote ${restoration.batchNumber}`,
                                 userId: authReq.userId!,
                                 ...(restoration.warehouseId
                                     ? { batchId: restoration.batchId }
@@ -3534,7 +3540,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                                 stockAfter: stockResult.stockAfter,
                                 referenceId: saleId,
                                 referenceType: 'SALE_VOIDED',
-                                reason: `Anulación de factura: ${motivo} - sin lote asignado`,
+                                reason: `${motivoKardex} - sin lote asignado`,
                                 userId: authReq.userId!,
                                 warehouseId: stockResult.warehouseId,
                             },
@@ -3659,6 +3665,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                         invoiceSeries: sale.invoiceSeries,
                         invoiceNumber: sale.invoiceNumber,
                         motivo,
+                        notaCredito: { id: notaCredito.id, series: notaCredito.series, number: notaCredito.number, authorizedById: notaCredito.authorizedById },
                         before: { status: sale.status, balance: String(sale.balance), cancelledAt: null },
                         after: { status: ESTADO_ANULADA, balance: '0' },
                         total: String(sale.total),
@@ -3688,12 +3695,12 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                 throw new ReturnResolutionError('CORRECTION_CONCURRENCY_CONFLICT', 409, 'La solicitud cambió mientras se anulaba la venta');
             }
 
-            return { id: saleId, status: ESTADO_ANULADA, motivo };
+            return { id: saleId, status: ESTADO_ANULADA, motivo, creditNote: notaCredito };
         });
 
         res.json({ success: true, ...resultado });
     } catch (error: any) {
-        if (error instanceof ReturnResolutionError || error instanceof BatchWarehouseLedgerError) {
+        if (error instanceof ReturnResolutionError || error instanceof BatchWarehouseLedgerError || error instanceof SaleVoidCreditNoteError || error instanceof InvoiceNumberingError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error instanceof StockError) {
@@ -7865,7 +7872,9 @@ app.get('/api/purchases/pending', authenticate, checkRole(PURCHASE_PAYMENT_ROLES
 // 🇳🇮 NÓMINA NICARAGÜENSE & MOTOR FISCAL
 // ==========================================
 
-import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
+import { calculatePayroll, calculateLaborLiability, computeAguinaldoAnual } from './services/nicaLabor';
+import { runAguinaldoForYear } from './services/aguinaldoRunService';
+import { updateTaxConfig, TaxConfigValidationError } from './services/taxConfigService';
 import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido, desglosarVentaConExoneracion } from './services/nicaTax';
 import { plegarReporteVendedores, alcanceDelReporte } from './services/sellerReport';
 
@@ -8162,7 +8171,7 @@ app.get('/api/payroll/aguinaldo/:year', authenticate, checkRole(HR_READ_ROLES), 
         const items = employees.map(emp => {
             const paid = paidMap.get(emp.id);
             const base = Number(emp.baseSalary);
-            const calc = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            const calc = computeAguinaldoAnual(base, new Date(emp.hireDate), year, today);
             return {
                 employeeId: emp.id,
                 name: `${emp.firstName} ${emp.lastName}`,
@@ -8412,88 +8421,18 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
 // 🎄 AGUINALDO (TRECEAVO MES) — Art. 93-95 Ley 185
 // ==========================================
 
-// Aguinaldo proporcional = salario × min(1, díasLaborados / 360) en el período
-// dic[year-1] → nov[year], desde la fecha de ingreso si es posterior, y solo
-// hasta hoy si el período aún no termina.
-function computeAguinaldo(baseSalary: number, hireDate: Date, year: number, today: Date) {
-    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
-    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
-    const effectiveEnd = today < periodEnd ? today : periodEnd;
-    const start = hireDate > periodStart ? hireDate : periodStart;
-    let dias = 0;
-    if (effectiveEnd >= start) {
-        dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);
-    }
-    // Precisión financiera (Capa 4): salario × min(1, días/360) con decimal.js para
-    // no divergir del motor Decimal de la liquidación (nicaLabor) al conciliar.
-    const monto = new Decimal(baseSalary.toString())
-        .mul(Decimal.min(1, new Decimal(dias).div(360)))
-        .toDecimalPlaces(2)
-        .toNumber();
-    return { dias, monto };
-}
-
 // POST /api/payroll/aguinaldo/:year/run — corre y paga el aguinaldo (idempotente).
+// Cálculo (H2: días/365) y pago con asiento obligatorio (H8) en aguinaldoRunService.
 app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
     if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
     try {
-        await seedChartOfAccounts(tenantId);
-        const today = new Date();
-        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' } });
-        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year }, select: { employeeId: true } });
-        const alreadyPaid = new Set(existing.map(a => a.employeeId));
-
-        let pagados = 0;
-        let total = 0;
-        for (const emp of employees) {
-            if (alreadyPaid.has(emp.id)) continue; // ya tiene aguinaldo este año
-            const base = Number(emp.baseSalary);
-            const { dias, monto } = computeAguinaldo(base, new Date(emp.hireDate), year, today);
-            if (monto <= 0) continue;
-            try {
-                await prisma.$transaction(async (tx: any) => {
-                    const ag = await tx.aguinaldo.create({
-                        data: { tenantId, employeeId: emp.id, year, diasLaborados: dias, baseSalary: base, monto, status: 'PAGADO' },
-                    });
-                    // Exento de INSS/IR: Debe Aguinaldo por Pagar / Haber Caja.
-                    // Fail-soft: el aguinaldo se paga aunque el período esté cerrado.
-                    try {
-                        await recordAguinaldoPayment(tx, tenantId, authReq.userId!, ag.id, monto);
-                    } catch (accErr) {
-                        console.warn('⚠️ Asiento de aguinaldo omitido:', accErr);
-                    }
-                    // Asiento de auditoría inmutable (Capa 3): la corrida mueve efectivo
-                    // por empleado, así que dentro de la misma $transaction dejamos userId,
-                    // tenantId y los montos del pago de aguinaldo.
-                    await tx.auditLog.create({
-                        data: {
-                            tenantId,
-                            userId: authReq.userId!,
-                            action: 'AGUINALDO_PAID',
-                            details: JSON.stringify({
-                                aguinaldoId: ag.id,
-                                employeeId: emp.id,
-                                year,
-                                diasLaborados: dias,
-                                baseSalary: base,
-                                monto,
-                                timestamp: new Date().toISOString(),
-                            }),
-                        },
-                    });
-                });
-                pagados++;
-                total += monto;
-            } catch (e: any) {
-                if (e?.code === 'P2002') continue; // carrera: ya pagado
-                console.error('Aguinaldo empleado error:', e);
-            }
-        }
-
-        res.json({ message: `Aguinaldo procesado para ${pagados} colaborador(es).`, pagados, total: Number(total.toFixed(2)), year });
+        await seedChartOfAccounts(authReq.tenantId!);
+        const r = await runAguinaldoForYear({ tenantId: authReq.tenantId!, userId: authReq.userId!, year, today: new Date() });
+        // Nunca "pagado" sin asiento: si nadie pudo pagarse por el mayor, es un conflicto.
+        const status = r.pagados === 0 && r.fallidos.length > 0 ? 409 : 200;
+        res.status(status).json({ message: `Aguinaldo procesado para ${r.pagados} colaborador(es).`, ...r, year });
     } catch (error) {
         console.error('Aguinaldo run error:', error);
         res.status(500).json({ error: 'Error al correr el aguinaldo.' });
@@ -10746,26 +10685,13 @@ app.get('/api/accounting/tax-config', authenticate, checkRole(ACCOUNTING_READ_RO
 app.put('/api/accounting/tax-config', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { inssPatronalRate, anticipoIrRate, imiRate, salarioMinimo } = req.body ?? {};
-        const rate = (v: unknown, name: string) => {
-            const n = new Decimal(Number(v) || 0);
-            if (n.lessThan(0) || n.greaterThan(1)) throw new Error(`${name} debe ser una fracción entre 0 y 1 (ej. 0.225 = 22.5%).`);
-            return n.toDecimalPlaces(4).toNumber();
-        };
-        const data = {
-            inssPatronalRate: rate(inssPatronalRate, 'INSS patronal'),
-            anticipoIrRate: rate(anticipoIrRate, 'Anticipo IR'),
-            imiRate: rate(imiRate, 'IMI'),
-            salarioMinimo: new Decimal(Number(salarioMinimo) || 0).toDecimalPlaces(2).toNumber(),
-        };
-        const cfg = await prisma.taxConfig.upsert({
-            where: { tenantId: authReq.tenantId! },
-            create: { tenantId: authReq.tenantId!, ...data },
-            update: data,
-        });
+        // H7: Zod + tasas legales cerradas + PUT parcial + AuditLog (taxConfigService).
+        const cfg = await updateTaxConfig({ tenantId: authReq.tenantId!, userId: authReq.userId!, body: req.body });
         res.json({ message: 'Configuración fiscal actualizada.', config: cfg });
     } catch (error: unknown) {
-        res.status(400).json({ error: error instanceof Error ? error.message : 'Error al guardar.' });
+        if (error instanceof TaxConfigValidationError) return res.status(400).json({ error: error.message });
+        console.error('Tax config error:', error);
+        res.status(500).json({ error: 'Error al guardar la configuración fiscal.' });
     }
 });
 
@@ -12810,6 +12736,7 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
 // Devuelve HTML listo para imprimir como PDF via window.print()
 registerRetentionCertificate(app);
 registerFiscalExports(app);
+registerInvoiceSeriesRoutes(app); // H3: serie A/B y rango DGI por tenant
 
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION

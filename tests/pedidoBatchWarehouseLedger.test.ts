@@ -32,6 +32,12 @@ vi.mock('../backend/services/productBatchWarehouseLedgerService.js', async (impo
     applyBatchWarehouseDelta: applyBatchWarehouseDeltaMock,
 }));
 
+// H4: numeración DGI cubierta en b5HallazgosFiscales; aquí solo se aísla.
+vi.mock('../backend/services/invoiceNumberingService.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../backend/services/invoiceNumberingService.js')>()),
+    allocateSaleInvoiceNumber: vi.fn(async () => ({ series: 'A', number: 1 })),
+}));
+
 import { BatchAllocationError } from '../backend/services/saleBatchAllocationService';
 import { BatchWarehouseLedgerError } from '../backend/services/productBatchWarehouseLedgerService';
 import {

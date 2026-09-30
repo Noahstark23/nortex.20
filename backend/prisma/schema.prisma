@@ -103,6 +103,7 @@ model Tenant {
   journalEntries            JournalEntry[]
   fiscalRetentions          FiscalRetention[]
   invoiceSeries             InvoiceSeries[]
+  saleCreditNotes           SaleCreditNote[]
   publicOrders              PublicOrder[]
   capitalLoans              CapitalLoan[]
   tenantCapabilities        TenantCapability[]
@@ -1830,7 +1831,12 @@ model Sale {
   customerCreditEntries CustomerCreditEntry[]
   serialNumbers  SerialNumber[]
   pedidos        Pedido[]
+  voidCreditNote SaleCreditNote?
 
+  // H3: un número DGI no se repite dentro de su serie. NULL (ventas sin
+  // correlativo) no colisiona en MySQL. El preflight verifica duplicados
+  // antes de crearlo y se detiene si los hay (scripts/saleInvoiceSchemaPreflight.ts).
+  @@unique([tenantId, invoiceSeries, invoiceNumber])
   @@index([tenantId])
   @@index([customerId])
   @@index([employeeId])
@@ -3235,6 +3241,31 @@ model InvoiceSeries {
 
   @@unique([tenantId, series])
   @@index([tenantId])
+}
+
+// H6 — Nota de crédito por ANULACIÓN: documento propio con su número (serie
+// 'NC', correlativo separado de las series de venta A/B). La venta original
+// conserva total, IVA, líneas, serie y número; solo queda marcada como anulada.
+// Quién autorizó (aprobador de la solicitud) y quién ejecutó quedan en la fila.
+model SaleCreditNote {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  saleId              String   @unique
+  correctionRequestId String   @unique
+  series              String   @db.VarChar(8)
+  number              Int
+  total               Decimal  @db.Decimal(18, 4)
+  vatAmount           Decimal  @db.Decimal(18, 4)
+  reason              String   @db.Text
+  authorizedById      String
+  issuedById          String
+  createdAt           DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, series, number])
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
