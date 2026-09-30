@@ -1,0 +1,36 @@
+# Preparación revisable. No aplicada a Coolify. Flags apagados por defecto.
+services:
+  app:
+    environment:
+      WHATSAPP_ENABLED: ${WHATSAPP_ENABLED:-false}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      WHATSAPP_COMMERCE_ENABLED: ${WHATSAPP_COMMERCE_ENABLED:-false}
+      NORTEX_DATA_KEYS: ${NORTEX_DATA_KEYS:-}
+      NORTEX_LEDGER_KEYS: ${NORTEX_LEDGER_KEYS:-}
+      NORTEX_INDEX_KEY: ${NORTEX_INDEX_KEY:-}
+  whatsapp-commerce-worker:
+    profiles: [whatsapp-commerce-worker]
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: [npm, run, whatsapp:commerce-worker]
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 45s
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: mysql://root:${DB_ROOT_PASSWORD:?Define DB_ROOT_PASSWORD}@db:3306/nortex_db
+      WHATSAPP_COMMERCE_ENABLED: ${WHATSAPP_COMMERCE_ENABLED:-false}
+      WHATSAPP_COMMERCE_WORKER_ENABLED: ${WHATSAPP_COMMERCE_WORKER_ENABLED:-false}
+      WHATSAPP_COMMERCE_SENDING_ENABLED: ${WHATSAPP_COMMERCE_SENDING_ENABLED:-false}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-v21.0}
+      NORTEX_DATA_KEYS: ${NORTEX_DATA_KEYS:-}
+      NORTEX_LEDGER_KEYS: ${NORTEX_LEDGER_KEYS:-}
+      NORTEX_INDEX_KEY: ${NORTEX_INDEX_KEY:-}
+    depends_on:
+      app:
+        condition: service_healthy
+    healthcheck:
+      disable: true
