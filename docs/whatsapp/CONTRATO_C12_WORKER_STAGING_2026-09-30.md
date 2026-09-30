@@ -15,3 +15,12 @@ Recuperación: apagar procesamiento/envío y conservar inbox/outbox/UNKNOWN e id
 Coolify añade por su cuenta el primer -f ./docker-compose.yml y --env-file. El custom command sólo agrega el overlay, sin repetir base; confirmar preview con ambos archivos antes del subcomando. Revisor C12 independiente: parser real y controles locales aprobados; image IDs/SHA/heartbeat pendientes de ejecución.
 
 Instalación inicial: los cuatro flags de WhatsApp son literales false en este overlay. Activar requiere un cambio explícito y revisado de configuración después de la autorización separada de Meta/envío.
+
+## Reparación necesaria de procedencia
+La primera promoción de API43d8 terminó construcción pero falló la compuerta con COMMIT_MISMATCH. API y DB sanas; cuatro archivos de código coinciden por SHA256 con candidato, mientras health devuelve SOURCE_COMMIT bd67. Es evidencia parcial, no promoción aprobada.
+
+C12 agrega identidad de build: NORTEX_BUILD_COMMIT proviene de git rev-parse HEAD en checkout; Dockerfile genera .nortex-release.json dentro de imagen con commit y hash del servidor. Health valida el marker y prevalece sobre entorno; marker inválido devuelve null. Ausente conserva SOURCE_COMMIT para QA/builds existentes. La identidad no es firma del árbol completo.
+
+Comando build actualizado: docker compose -f docker-compose.whatsapp-staging.yml --profile assistant-worker --profile whatsapp-commerce-worker build --build-arg NORTEX_BUILD_COMMIT="$(git rev-parse --verify HEAD || printf invalid)" app assistant-worker whatsapp-commerce-worker. Si no hay Git, invalid hace fallar la generación. Coolify debe conservar repositorio durante despliegue para que overlay esté presente al ejecutar start; .git permanece excluido del contexto Docker.
+
+Edición: worker C12 identity propietario Dockerfile candidato, scripts/write-release-identity.mjs, backend/lib/releaseIdentity.ts y tests/releaseIdentity.test.ts; integrador único backend/server.ts (sólo import y campo health). Root Dockerfile/server existentes no se sobrescriben. Reviewer sólo lectura.
