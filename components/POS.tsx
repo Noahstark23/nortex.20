@@ -5211,7 +5211,7 @@ const POS: React.FC = () => {
                                         </button>
                                     </div>
                                     {quantityErrors[key] && <p id={`quantity-error-${key}`} role="alert" className="mt-1.5 text-[11px] text-danger">{quantityErrors[key]}</p>}
-                                    {!guidedSimpleMode && !isQuotationLine && (
+                                    {!isQuotationLine && (
                                         <>
                                             {lineDiscountD.greaterThan(0) ? (
                                                 <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
@@ -5318,8 +5318,8 @@ const POS: React.FC = () => {
                 {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
                 <div data-empty={cart.length === 0} className={`nx-pos-ticket-footer sticky bottom-0 z-checkout border-t border-white/[0.06] text-slate-100 ${guidedSimpleMode ? 'bg-surface-950 px-5 py-4 lg:px-6 lg:py-5' : 'bg-surface-800 p-5'}`}>
-                    {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
-                    {!guidedSimpleMode && <div className="flex items-center gap-2 mb-2">
+                    {/* 💸 Descuento Global — visible en los DOS modos (ver resolvePosSimple). */}
+                    <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
                         <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
                         <input
@@ -5340,7 +5340,7 @@ const POS: React.FC = () => {
                         {globalDiscountD.greaterThan(0) && (
                             <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
-                    </div>}
+                    </div>
                     {/* P1-5 — Antes: "Subtotal C$19.00 · IVA incluido C$2.48 ·
                         TOTAL C$19.00". Tres líneas donde dos eran idénticas y la
                         del medio no sumaba, porque "Subtotal" estaba puesto sobre
