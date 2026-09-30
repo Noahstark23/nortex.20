@@ -26,3 +26,5 @@ Comando build final: sh scripts/build-whatsapp-staging.sh. La validación del fo
 Edición: worker C12 identity propietario Dockerfile candidato, scripts/write-release-identity.mjs, backend/lib/releaseIdentity.ts y tests/releaseIdentity.test.ts; integrador único backend/server.ts (sólo import y campo health). Root Dockerfile/server existentes no se sobrescriben. Reviewer sólo lectura.
 
 Propiedad adicional: worker C12 identity edita scripts/build-whatsapp-staging.sh y tests/whatsappStagingBuild.test.ts; integración Compose base/overlay por Codex. Prueba stub de Git/Docker acredita argumentos y fallo cerrado, no ejecución remota.
+
+Runtime: primer contenedor observado Node22.23.3 por tag flotante22-slim. Candidato fija imagen oficial node:22.23.2-slim (manifest remoto existe) al toolchain canónico. Versión ejecutada todavía debe observarse después del despliegue.
