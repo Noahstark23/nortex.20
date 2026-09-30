@@ -39,6 +39,9 @@ export interface ResolvedIdentity {
 export async function resolveChannel(phoneNumberId: string, apiVersion: string): Promise<ResolvedChannel | null> {
     const channel = await prisma.whatsAppChannel.findUnique({ where: { phoneNumberId } });
     if (!channel || !channel.active) return null;
+    // Queued legacy jobs may outlive a channel's adoption of commerce. Pausing
+    // that channel never grants the old engine ownership or access to its token.
+    if (channel.commerceEnabled || channel.commercePolicyVersion > 0) return null;
 
     const accessToken = decryptField(channel.accessTokenEnc);
     const sender = new CloudApiSender({ phoneNumberId, accessToken, apiVersion });
