@@ -458,13 +458,15 @@ export function calculateSettlement(params: {
  * de 365 días. Antes mezclaba días calendario con un denominador de 360.
  */
 export function computeAguinaldoAnual(baseSalary: Decimal.Value, hireDate: Date, year: number, today: Date) {
-    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
-    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
+    const periodStart = new Date(Date.UTC(year - 1, 11, 1)); // 1 dic año anterior
+    const periodEnd = new Date(Date.UTC(year, 10, 30));      // 30 nov del año
     const effectiveEnd = today < periodEnd ? today : periodEnd;
     const start = hireDate > periodStart ? hireDate : periodStart;
     let dias = 0;
-    if (effectiveEnd >= start) {
-        dias = Math.min(365, Math.floor((effectiveEnd.getTime() - start.getTime()) / MS_PER_DAY) + 1);
+    // Mismo día calendario UTC que pasivo/liquidación, sin descontar horas.
+    const elapsedDays = calendarDaysBetween(start, effectiveEnd);
+    if (elapsedDays >= 0) {
+        dias = Math.min(365, elapsedDays + 1);
     }
     const monto = new Decimal(baseSalary)
         .mul(Decimal.min(1, new Decimal(dias).div(365)))
