@@ -73,6 +73,9 @@ model Tenant {
   dgiAuthDate          DateTime? // Fecha de autorización DGI
   createdAt            DateTime  @default(now())
 
+  platformAccountEvidence    PlatformAccountEvidence?
+  platformPaymentEvidence    PlatformPaymentEvidence[]
+
   users                     User[]
   customers                 Customer[]
   suppliers                 Supplier[]
@@ -166,6 +169,8 @@ model Tenant {
   assistantWaInbox AssistantWaInbox[]
   assistantWaOutbox AssistantWaOutbox[]
 
+  @@index([createdAt, id])
+
   // HR Module
   leaveRequests          LeaveRequest[]
   payrollRuns            PayrollRun[]
@@ -236,6 +241,7 @@ model User {
   // Retención: escaneo de usuarios activos por recencia de login (métricas admin
   // + detección de dormancia). Índice agregado con la query que lo usa.
   @@index([lastLogin])
+  @@index([tenantId, lastLogin])
 }
 
 /// Activación explícita por negocio; ningún tenant se habilita por migración.
@@ -2491,6 +2497,7 @@ model Product {
   @@index([tenantId, brand])
   @@fulltext([name, category])
   @@index([tenantId, name])
+  @@index([tenantId, stock])
 }
 
 model KardexMovement {
@@ -4094,4 +4101,36 @@ model WaCommerceOutboxAttempt {
   errorCode String? @db.VarChar(64)
   @@index([tenantId, outboxId, claimedAt])
   @@index([status, claimedAt])
+}
+
+// Evidencia administrativa separada del entitlement y del dinero del comercio.
+// No hay backfill ni escrituras desde el panel: nada se deduce del trial legacy.
+model PlatformAccountEvidence {
+  tenantId         String @id
+  businessKind     String @default("UNKNOWN") @db.VarChar(16)
+  founder          Boolean?
+  benefitStartedAt DateTime?
+  benefitEndsAt    DateTime?
+  planLabel        String? @db.VarChar(100)
+  evidenceReference String @db.VarChar(191)
+  verifiedAt       DateTime
+  tenant           Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([businessKind, verifiedAt])
+}
+
+// Un recibo aquí exige conciliación explícita con una fuente externa verificable.
+// APPROVED en ManualPayment y ACTIVE en Tenant no crean evidencia en esta tabla.
+model PlatformPaymentEvidence {
+  id                String @id @default(cuid())
+  tenantId          String
+  amount            Decimal @db.Decimal(18, 4)
+  currency          String @db.VarChar(3)
+  paidAt            DateTime
+  reconciledAt      DateTime
+  evidenceReference String @db.VarChar(191)
+  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, evidenceReference])
+  @@index([tenantId, paidAt, reconciledAt])
 }

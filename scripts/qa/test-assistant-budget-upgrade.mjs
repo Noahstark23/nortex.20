@@ -23,6 +23,7 @@ export const MIGRATION_PATHS = [
   'backend/prisma/migrations/202609290002_whatsapp_activation_request/migration.sql',
   'backend/prisma/migrations/202609290004_whatsapp_operations/migration.sql',
   'backend/prisma/migrations/202609300001_b5_fiscal_numbering_credit_note/migration.sql',
+  'backend/prisma/migrations/202609300010_platform_admin_evidence/migration.sql',
 ];
 
 // `git diff --name-status --no-renames -z` incluye cambios sin commit; los SQL

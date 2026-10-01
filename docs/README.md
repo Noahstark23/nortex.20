@@ -6,6 +6,8 @@ Actualización del índice: 2026-09-08. La prioridad actual es primera venta, us
 
 ## Dirección y evidencia actual
 
+**Admin SaaS local, 2026-09-30:** [Fuentes, contrato y QA](ADMIN_SAAS_LOCAL_2026-09-30.md). Lectura de activación, uso, cohortes y cuentas fundadoras; datos desconocidos explícitos. Candidato local sobre main 43d8d77; no acredita publicación, ingresos ni activación financiera.
+
 **Plan actual:** [RAG y estabilidad operativa](PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md), con prioridad C00 para consolidar cuatro clientes. La integración del 2026-09-08 debe registrar su candidato y pruebas nuevas; los informes anteriores conservan su fecha y alcance.
 
 **Historial de preparación del 2026-09-04:** [Candidato POS, caja y calidad](releases/2026-09-04-pos-release-candidate.md), [compuerta de producción](releases/2026-09-04-production-gate.md) y [siguiente entrega de Stock, cámara y RAG](PLAN_STOCK_RAG_CAMARA_2026-09-04.md). Candidato integrado local; CI remoto, staging y producción son etapas pendientes.
