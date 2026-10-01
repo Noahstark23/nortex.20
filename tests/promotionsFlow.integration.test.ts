@@ -62,7 +62,7 @@ qa('Promociones HTTP: revisión, cobro, devolución y anulación reales', () => 
             const receipt = await api(`/api/promotions/checkout/operations/${reviewed.input.offlineId}`, f.actor); status(receipt, 200);
             expect(receipt.cacheControl).toBe('private, no-store');
             expect(receipt.body.sale.items[0]).toMatchObject({ presentationAtSale: 'PACK', presentationQuantityAtSale: '1', unitAtSale: 'unidad', quantity: 3 });
-            expect(Number(receipt.body.sale.vatAmountAtSale)).toBe(vertical === 'FARMACIA' ? 0 : 1.0826);
+            expect(Number(receipt.body.sale.vatAmountAtSale)).toBe(vertical === 'FARMACIA' ? 0 : 1.08); // H1: IVA a centavos
             expect(receipt.body.sale.fiscalRegimeAtSale).toBe('GENERAL');
             sales.push({ id: sold.body.id as string, item });
         }
@@ -80,7 +80,7 @@ qa('Promociones HTTP: revisión, cobro, devolución y anulación reales', () => 
         expect(returned.refunds).toHaveLength(1); expect(returned.refunds[0].amount.toFixed(2)).toBe('2.77');
         expect(returned.refunds[0].status).toBe('COMPLETED');
         const returnJournal = await journal(f.actor, returned.id, 'RETURN');
-        expect(returnJournal.find(line => line.code === '2.1.2')?.debit ?? '0.0000').toBe(vertical === 'FARMACIA' ? '0.0000' : '0.3613');
+        expect(returnJournal.find(line => line.code === '2.1.2')?.debit ?? '0.0000').toBe(vertical === 'FARMACIA' ? '0.0000' : '0.3600'); // H1
         const cash = await prisma.cashMovement.findMany({ where: { tenantId: f.actor.tenantId, category: 'DEVOLUCION' } });
         expect(cash).toHaveLength(1); expect(cash[0].type).toBe('OUT'); expect(cash[0].amount.toFixed(2)).toBe('2.77');
         const beforeVoid = await journal(f.actor, sales[1].id, 'SALE');

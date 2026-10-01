@@ -240,7 +240,8 @@ qa('NortexGPT: propuestas y privacidad mediante HTTP + MySQL', () => {
   });
 
   it('MySQL serializa reservas concurrentes y nunca excede US$2 del negocio', async () => {
-    const month = `${2040 + Math.floor(Math.random() * 200)}-06`;
+    // Meses propios: no colisionan con solicitudes (2087) ni titularidad (2091).
+    const month = '2601-06';
     const deps = { now: () => new Date(`${month}-15T12:00:00Z`) };
     const results = await Promise.allSettled(Array.from({ length: 50 }, () => reserveAssistantBudget(owner, '0.25', deps)));
     const failures = results.filter(row => row.status === 'rejected') as PromiseRejectedResult[];
@@ -257,7 +258,7 @@ qa('NortexGPT: propuestas y privacidad mediante HTTP + MySQL', () => {
   }, 120_000);
 
   it('liquidación de consumo repetida cobra una sola vez y no usa reserva ajena', async () => {
-    const month = `${2300 + Math.floor(Math.random() * 200)}-07`;
+    const month = '2601-07';
     const row = await reserveAssistantBudget(owner, '0.25', { now: () => new Date(`${month}-15T12:00:00Z`) });
     await settleAssistantBudget(foreign, row.id, { inputTokens: 1000, outputTokens: 1000 });
     expect((await prisma.assistantUsage.findUniqueOrThrow({ where: { id: row.id } })).status).toBe('RESERVED');

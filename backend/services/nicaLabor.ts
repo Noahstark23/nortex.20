@@ -301,21 +301,23 @@ export function calculateLaborLiability(
         : Decimal.min(new Decimal(monthsWorked).mul('2.5'), 30);
     const vacacionesPendientes = diasVacaciones.mul(salarioDiario).toDecimalPlaces(4);
 
-    // Aguinaldo (Art. 93): días desde max(último 1-dic, contratación), /360.
+    // Aguinaldo (Art. 93): días desde max(último 1-dic, contratación), /365 (H2: días calendario, decisión del dueño).
     const lastDec1 = now.getUTCMonth() >= 11
         ? new Date(Date.UTC(now.getUTCFullYear(), 11, 1))
         : new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 1));
-    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    const hireTime = hire.getTime();
+    const aguinaldoStart = new Date(Math.max(Number.isNaN(hireTime) ? lastDec1.getTime() : hireTime, lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, now);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
-        ? Math.min(360, diasDesdeInicioAguinaldo + 1)
+        ? Math.min(365, diasDesdeInicioAguinaldo + 1)
         : 0;
-    const aguinaldoAcumulado = dBase.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(4);
+    const aguinaldoAcumulado = dBase.mul(Decimal.min(1, new Decimal(diasAguinaldo).div(365))).toDecimalPlaces(4);
 
     // Indemnización (Art. 45): tramos 30/20 días con fracción, techo 150 días.
     const anios = Math.max(0, daysWorked / 365.25);
     let indemnizacionDias = 0;
-    if (anios > 0) {
+    // Cero ya acumula cero en el bloque; NaN conserva la indemnización en cero.
+    if (Number.isFinite(anios)) {
         const completos = Math.floor(anios);
         for (let i = 1; i <= completos; i++) indemnizacionDias += i <= 3 ? 30 : 20;
         const fraccion = anios - completos;
@@ -422,9 +424,9 @@ export function calculateSettlement(params: {
     const aguinaldoStart = new Date(Math.max(hire.getTime(), lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, term);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
-        ? Math.min(360, diasDesdeInicioAguinaldo + 1)
+        ? Math.min(365, diasDesdeInicioAguinaldo + 1)
         : 0;
-    const aguinaldo = salarioMensual.mul(Math.min(1, diasAguinaldo / 360)).toDecimalPlaces(2);
+    const aguinaldo = salarioMensual.mul(Decimal.min(1, new Decimal(diasAguinaldo).div(365))).toDecimalPlaces(2);
 
     // El total se suma sobre los componentes YA redondeados, que son los que se
     // imprimen: si se suma en crudo y se redondea al final, el documento puede
@@ -448,4 +450,31 @@ export function calculateSettlement(params: {
         aguinaldo: aguinaldo.toDecimalPlaces(2).toNumber(),
         total: total.toNumber(),
     };
+}
+
+/**
+ * Aguinaldo de la corrida anual (Art. 93-95 Ley 185), extraído de server.ts.
+ * Período dic[year-1] → nov[year], desde el ingreso si es posterior y solo
+ * hasta `today` si el período no terminó. H2 (decisión del dueño): días
+ * calendario en numerador Y denominador → salario × min(1, días/365), con tope
+ * de 365 días. Antes mezclaba días calendario con un denominador de 360.
+ */
+export function computeAguinaldoAnual(baseSalary: Decimal.Value, hireDate: Date, year: number, today: Date) {
+    const periodStart = new Date(Date.UTC(year - 1, 11, 1)); // 1 dic año anterior
+    const periodEnd = new Date(Date.UTC(year, 10, 30));      // 30 nov del año
+    const todayTime = today.getTime();
+    const hireTime = hireDate.getTime();
+    const effectiveEnd = new Date(Math.min(Number.isNaN(todayTime) ? periodEnd.getTime() : todayTime, periodEnd.getTime()));
+    const start = new Date(Math.max(Number.isNaN(hireTime) ? periodStart.getTime() : hireTime, periodStart.getTime()));
+    let dias = 0;
+    // Mismo día calendario UTC que pasivo/liquidación, sin descontar horas.
+    const elapsedDays = calendarDaysBetween(start, effectiveEnd);
+    if (elapsedDays >= 0) {
+        dias = Math.min(365, elapsedDays + 1);
+    }
+    const monto = new Decimal(baseSalary)
+        .mul(Decimal.min(1, new Decimal(dias).div(365)))
+        .toDecimalPlaces(2)
+        .toNumber();
+    return { dias, monto };
 }

@@ -95,7 +95,7 @@ describe('promociones: autoridad de precios y revisión', () => {
         ] as any;
         const totals = calculateSaleTotals(items, '5', 'GENERAL');
         expect(totals.finalTotal.toString()).toBe('169.81'); expect(totals.exemptTotal.toFixed(2)).toBe('34.20');
-        expect(totals.fiscalAmounts.vatAmount.toFixed(4)).toBe('17.6883');
+        expect(totals.fiscalAmounts.vatAmount.toFixed(4)).toBe('17.6900'); // H1: IVA a centavos
         expect(calculateSaleTotals(items, '5', 'CUOTA_FIJA').fiscalAmounts.netRevenue.toFixed(2)).toBe('169.81');
         const halfCent = calculateSaleTotals([{ unitPrice: new Decimal('0.005'), quantity: new Decimal(1), discountPct: new Decimal(0), ivaExento: true }] as any, '0', 'GENERAL');
         expect(halfCent.finalTotal.toString()).toBe('0.01'); expect(halfCent.exemptTotal.toString()).toBe('0.01');

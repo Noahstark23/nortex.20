@@ -229,9 +229,13 @@ const PISO_MUTANTES = {
     // red destapó tres errores de dinero: el techo cotizable del INSS (derogado
     // por el Decreto 06-2019), un hueco de un centavo entre tramos de la tabla IR
     // que devolvía IR = 0, y un finiquito que imprimía los días sin topar junto a
-    // un monto topado. Entra por rangos: las constantes de módulo y
-    // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
-    'backend/services/nicaLabor.ts': 106,
+    // un monto topado. Las constantes de módulo conservan su alcance previo.
+    // Pasivo y aguinaldo anual protegen sus cuerpos completos con50 +13.
+    // El refactor equivalente reemplaza tres comparaciones ternarias por
+    // min/max y la guarda de antigüedad por finitud preservando NaN. Elimina
+    // 11 mutantes de esas expresiones:55→50 y19→13, sin recortar rangos ni
+    // añadir ignores. Con los127 anteriores el piso medido es190; umbral100.
+    'backend/services/nicaLabor.ts': 190,
     'backend/services/nicaTax.ts': 7,
     // Régimen fiscal puro: normalización, conflicto de versión (incluido el
     // cliente legacy tras un cambio) y desglose autoritativo GENERAL/CUOTA_FIJA.
@@ -291,6 +295,7 @@ const PISO_MUTANTES = {
 // La reducción 212 → 199 anterior a ampliar caja se explica función por función
 // en docs/releases/2026-09-04-production-gate.md; no fue un rango truncado.
 const FUNCTION_FLOORS = {
+    'backend/services/nicaLabor.ts': { calculateLaborLiability: 50, computeAguinaldoAnual: 13 },
     'backend/services/assistant/operations/cashCloseInvestigation.ts': { money: 26 },
     'backend/services/assistant/operations/weeklyCashReviewSummary.ts': { checkedSnapshotCash: 38, summarizeCashReviewRows: 51 },
     'backend/services/accounting.ts': {

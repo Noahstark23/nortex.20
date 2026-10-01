@@ -21,6 +21,14 @@ vi.mock('../backend/services/productBatchWarehouseLedgerService.js', async (impo
     applyBatchWarehouseDelta: applyBatchWarehouseDeltaMock,
 }));
 
+// H4: la numeración DGI se prueba en b5HallazgosFiscales; acá se verifica que
+// la venta del pedido reciba la serie y el número asignados.
+const allocateSaleInvoiceNumberMock = vi.hoisted(() => vi.fn(async () => ({ series: 'A', number: 42 })));
+vi.mock('../backend/services/invoiceNumberingService.js', async (importOriginal) => ({
+    ...(await importOriginal<typeof import('../backend/services/invoiceNumberingService.js')>()),
+    allocateSaleInvoiceNumber: allocateSaleInvoiceNumberMock,
+}));
+
 import {
     cancelPedidoInTransaction,
     claimPedidoDelivery,
@@ -126,8 +134,11 @@ describe('fulfillment autoritativo de Pedido', () => {
                 fiscalRegimeAtSale: 'CUOTA_FIJA',
                 fiscalRegimeVersionAtSale: 4,
                 vatAmountAtSale: '0.0000',
+                invoiceSeries: 'A',
+                invoiceNumber: 42,
             }),
         });
+        expect(allocateSaleInvoiceNumberMock).toHaveBeenCalledWith(tx, 'tenant-a');
         const recordArgs = recordSaleMock.mock.calls[0];
         expect(recordArgs.slice(0, 4)).toEqual([tx, 'tenant-a', 'user-a', 'sale-a']);
         expect(recordArgs[4].toString()).toBe('115');

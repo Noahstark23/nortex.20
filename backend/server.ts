@@ -5,6 +5,9 @@ import { executeProductCreation, DuplicateProductCode } from './services/product
 import productEnrollmentRouter from './routes/productEnrollment';
 import { registerRetentionCertificate } from './routes/retentionCertificate';
 import { registerFiscalExports } from './routes/fiscalExports';
+import { registerInvoiceSeriesRoutes } from './routes/invoiceSeries';
+import { issueSaleVoidCreditNote, SaleVoidCreditNoteError, voidKardexReason } from './services/saleVoidCreditNoteService';
+import { InvoiceNumberingError } from './services/invoiceNumberingService';
 import { executeShiftHandover, ShiftHandoverError } from './services/shiftHandoverService';
 import { rejectProductDeletion, ProductDeletionError } from './services/productDeletionService';
 import inventoryAdjustmentsRouter from './routes/inventoryAdjustments';
@@ -130,6 +133,7 @@ import Stripe from 'stripe';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
+import adminOverviewRouter from './routes/adminOverview';
 import pedidosRouter from './routes/pedidos';
 import motorizadosRouter from './routes/motorizados';
 import driverRouter from './routes/driver';
@@ -3223,7 +3227,8 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                 && textoUtil(correctionRequest.reason) === motivo
                 && (sale.status === ESTADO_ANULADA || sale.cancelledAt !== null)
             ) {
-                return { id: saleId, status: ESTADO_ANULADA, motivo, idempotentReplay: true };
+                const creditNote = await tx.saleCreditNote.findFirst({ where: { tenantId: authReq.tenantId!, saleId } });
+                return { id: saleId, status: ESTADO_ANULADA, motivo, creditNote, idempotentReplay: true };
             }
             if (!correctionRequest || correctionRequest.status !== 'APPROVED' || textoUtil(correctionRequest.reason) !== motivo) {
                 throw new ReturnResolutionError(
@@ -3395,6 +3400,9 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
             if (marcada.count === 0) {
                 throw new Error('La factura ya fue anulada por otra operación.');
             }
+            // H6: nota de crédito numerada propia; la original conserva total, IVA y número.
+            const notaCredito = await issueSaleVoidCreditNote(tx, { tenantId: authReq.tenantId!, issuedById: authReq.userId!, motivo, sale, correctionRequest });
+            const motivoKardex = voidKardexReason(motivo, notaCredito);
 
             // 2 · OFF conserva el agregado legacy. En SHADOW/ENFORCED cada
             //     allocation vuelve primero al sidecar de su bodega y después
@@ -3411,9 +3419,8 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                             enforceSufficient: false,
                         });
                     } catch (err) {
-                        // Producto borrado del catálogo: la venta se anula igual, no
-                        // se puede rehacer inventario de algo que ya no existe.
-                        if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') continue;
+                        // H6: nunca omitir en silencio (antes `continue` sin Kardex).
+                        if (err instanceof StockError && err.code === 'PRODUCT_NOT_FOUND') throw new ReturnResolutionError('RETURN_PRODUCT_NOT_FOUND', 409, 'Un producto de la venta ya no existe; no se puede restaurar su stock. Conciliá antes de anular.');
                         throw err;
                     }
 
@@ -3427,7 +3434,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                             stockAfter: stockResult.stockAfter,
                             referenceId: saleId,
                             referenceType: 'SALE_VOIDED',
-                            reason: `Anulación de factura: ${motivo}`,
+                            reason: motivoKardex,
                             userId: authReq.userId!,
                         },
                     });
@@ -3506,7 +3513,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                                 stockAfter: stockResult.stockAfter,
                                 referenceId: saleId,
                                 referenceType: 'SALE_VOIDED',
-                                reason: `Anulación de factura: ${motivo} - lote ${restoration.batchNumber}`,
+                                reason: `${motivoKardex} - lote ${restoration.batchNumber}`,
                                 userId: authReq.userId!,
                                 ...(restoration.warehouseId
                                     ? { batchId: restoration.batchId }
@@ -3534,7 +3541,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                                 stockAfter: stockResult.stockAfter,
                                 referenceId: saleId,
                                 referenceType: 'SALE_VOIDED',
-                                reason: `Anulación de factura: ${motivo} - sin lote asignado`,
+                                reason: `${motivoKardex} - sin lote asignado`,
                                 userId: authReq.userId!,
                                 warehouseId: stockResult.warehouseId,
                             },
@@ -3659,6 +3666,7 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                         invoiceSeries: sale.invoiceSeries,
                         invoiceNumber: sale.invoiceNumber,
                         motivo,
+                        notaCredito: { id: notaCredito.id, series: notaCredito.series, number: notaCredito.number, authorizedById: notaCredito.authorizedById },
                         before: { status: sale.status, balance: String(sale.balance), cancelledAt: null },
                         after: { status: ESTADO_ANULADA, balance: '0' },
                         total: String(sale.total),
@@ -3688,12 +3696,12 @@ app.post('/api/sales/:id/cancel', authenticate, checkRole(['OWNER', 'ADMIN', 'MA
                 throw new ReturnResolutionError('CORRECTION_CONCURRENCY_CONFLICT', 409, 'La solicitud cambió mientras se anulaba la venta');
             }
 
-            return { id: saleId, status: ESTADO_ANULADA, motivo };
+            return { id: saleId, status: ESTADO_ANULADA, motivo, creditNote: notaCredito };
         });
 
         res.json({ success: true, ...resultado });
     } catch (error: any) {
-        if (error instanceof ReturnResolutionError || error instanceof BatchWarehouseLedgerError) {
+        if (error instanceof ReturnResolutionError || error instanceof BatchWarehouseLedgerError || error instanceof SaleVoidCreditNoteError || error instanceof InvoiceNumberingError) {
             return res.status(error.httpStatus).json({ error: error.message, code: error.code });
         }
         if (error instanceof StockError) {
@@ -7865,7 +7873,9 @@ app.get('/api/purchases/pending', authenticate, checkRole(PURCHASE_PAYMENT_ROLES
 // 🇳🇮 NÓMINA NICARAGÜENSE & MOTOR FISCAL
 // ==========================================
 
-import { calculatePayroll, calculateLaborLiability } from './services/nicaLabor';
+import { calculatePayroll, calculateLaborLiability, computeAguinaldoAnual } from './services/nicaLabor';
+import { runAguinaldoForYear } from './services/aguinaldoRunService';
+import { updateTaxConfig, TaxConfigValidationError } from './services/taxConfigService';
 import { generateMonthlyReport, saveMonthlyReport, desglosarIvaIncluido, desglosarVentaConExoneracion } from './services/nicaTax';
 import { plegarReporteVendedores, alcanceDelReporte } from './services/sellerReport';
 
@@ -8162,7 +8172,7 @@ app.get('/api/payroll/aguinaldo/:year', authenticate, checkRole(HR_READ_ROLES), 
         const items = employees.map(emp => {
             const paid = paidMap.get(emp.id);
             const base = Number(emp.baseSalary);
-            const calc = computeAguinaldo(base, new Date(emp.hireDate), year, today);
+            const calc = computeAguinaldoAnual(base, new Date(emp.hireDate), year, today);
             return {
                 employeeId: emp.id,
                 name: `${emp.firstName} ${emp.lastName}`,
@@ -8412,88 +8422,18 @@ app.post('/api/payroll/:id/pay', authenticate, checkRole(['OWNER', 'ADMIN', 'ACC
 // 🎄 AGUINALDO (TRECEAVO MES) — Art. 93-95 Ley 185
 // ==========================================
 
-// Aguinaldo proporcional = salario × min(1, díasLaborados / 360) en el período
-// dic[year-1] → nov[year], desde la fecha de ingreso si es posterior, y solo
-// hasta hoy si el período aún no termina.
-function computeAguinaldo(baseSalary: number, hireDate: Date, year: number, today: Date) {
-    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
-    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
-    const effectiveEnd = today < periodEnd ? today : periodEnd;
-    const start = hireDate > periodStart ? hireDate : periodStart;
-    let dias = 0;
-    if (effectiveEnd >= start) {
-        dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);
-    }
-    // Precisión financiera (Capa 4): salario × min(1, días/360) con decimal.js para
-    // no divergir del motor Decimal de la liquidación (nicaLabor) al conciliar.
-    const monto = new Decimal(baseSalary.toString())
-        .mul(Decimal.min(1, new Decimal(dias).div(360)))
-        .toDecimalPlaces(2)
-        .toNumber();
-    return { dias, monto };
-}
-
 // POST /api/payroll/aguinaldo/:year/run — corre y paga el aguinaldo (idempotente).
+// Cálculo (H2: días/365) y pago con asiento obligatorio (H8) en aguinaldoRunService.
 app.post('/api/payroll/aguinaldo/:year/run', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
-    const tenantId = authReq.tenantId!;
     const year = parseInt(req.params.year);
     if (isNaN(year)) return res.status(400).json({ error: 'Año inválido.' });
     try {
-        await seedChartOfAccounts(tenantId);
-        const today = new Date();
-        const employees = await prisma.employee.findMany({ where: { tenantId, status: 'ACTIVE' } });
-        const existing = await prisma.aguinaldo.findMany({ where: { tenantId, year }, select: { employeeId: true } });
-        const alreadyPaid = new Set(existing.map(a => a.employeeId));
-
-        let pagados = 0;
-        let total = 0;
-        for (const emp of employees) {
-            if (alreadyPaid.has(emp.id)) continue; // ya tiene aguinaldo este año
-            const base = Number(emp.baseSalary);
-            const { dias, monto } = computeAguinaldo(base, new Date(emp.hireDate), year, today);
-            if (monto <= 0) continue;
-            try {
-                await prisma.$transaction(async (tx: any) => {
-                    const ag = await tx.aguinaldo.create({
-                        data: { tenantId, employeeId: emp.id, year, diasLaborados: dias, baseSalary: base, monto, status: 'PAGADO' },
-                    });
-                    // Exento de INSS/IR: Debe Aguinaldo por Pagar / Haber Caja.
-                    // Fail-soft: el aguinaldo se paga aunque el período esté cerrado.
-                    try {
-                        await recordAguinaldoPayment(tx, tenantId, authReq.userId!, ag.id, monto);
-                    } catch (accErr) {
-                        console.warn('⚠️ Asiento de aguinaldo omitido:', accErr);
-                    }
-                    // Asiento de auditoría inmutable (Capa 3): la corrida mueve efectivo
-                    // por empleado, así que dentro de la misma $transaction dejamos userId,
-                    // tenantId y los montos del pago de aguinaldo.
-                    await tx.auditLog.create({
-                        data: {
-                            tenantId,
-                            userId: authReq.userId!,
-                            action: 'AGUINALDO_PAID',
-                            details: JSON.stringify({
-                                aguinaldoId: ag.id,
-                                employeeId: emp.id,
-                                year,
-                                diasLaborados: dias,
-                                baseSalary: base,
-                                monto,
-                                timestamp: new Date().toISOString(),
-                            }),
-                        },
-                    });
-                });
-                pagados++;
-                total += monto;
-            } catch (e: any) {
-                if (e?.code === 'P2002') continue; // carrera: ya pagado
-                console.error('Aguinaldo empleado error:', e);
-            }
-        }
-
-        res.json({ message: `Aguinaldo procesado para ${pagados} colaborador(es).`, pagados, total: Number(total.toFixed(2)), year });
+        await seedChartOfAccounts(authReq.tenantId!);
+        const r = await runAguinaldoForYear({ tenantId: authReq.tenantId!, userId: authReq.userId!, year, today: new Date() });
+        // Nunca "pagado" sin asiento: si nadie pudo pagarse por el mayor, es un conflicto.
+        const status = r.pagados === 0 && r.fallidos.length > 0 ? 409 : 200;
+        res.status(status).json({ message: `Aguinaldo procesado para ${r.pagados} colaborador(es).`, ...r, year });
     } catch (error) {
         console.error('Aguinaldo run error:', error);
         res.status(500).json({ error: 'Error al correr el aguinaldo.' });
@@ -8829,173 +8769,8 @@ app.post('/api/admin/motorizados/:id/wallet/payout', authenticate, requireSuperA
     }
 });
 
-// ── Command Center: contrato de métricas globales (tipado estricto) ──
-// Todos los montos viajan como string con precisión Decimal(18,4): cero float en el cable.
-interface AdminMetricsResponse {
-    totalTenants: number;
-    activeTenants: number;       // RETENCIÓN: uso real (venta o login en 30d), NO "no suspendido"
-    activeSubscriptions: number; // suscripciones vigentes (no morosas) — métrica de negocio distinta
-    activeUsers30d: number;      // usuarios con login en 30d (actividad real)
-    newTenantsThisMonth: number; // altas del mes en curso
-    dormantTenants: number;      // registradas hace >7d y SIN uso en 30d (el "se registran pero no se quedan")
-    morosos: number;
-    activeUsers: number;
-    monthlyTransactions: number;
-    totalDebtLent: string;   // Capital asignado vigente
-    totalWallet: string;     // Suma de wallets de los tenants
-    monthlySales: string;    // Ventas del mes en curso
-    platformFee: string;     // 2% sobre ventas
-    interestIncome: string;  // 5% de retención sobre capital
-    monthlyRevenue: string;  // platformFee + interestIncome
-}
-
-// GET /api/admin/metrics - KPIs globales de la plataforma (Decimal-safe, sin mock)
-app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: express.Request, res: express.Response) => {
-    try {
-        const now = new Date();
-        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        const sevenDaysAgo  = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-        // Una sola ronda de queries reales; si la BD cae, el endpoint falla (el panel lo refleja).
-        // RETENCIÓN: "activo" se mide por USO real (venta o login en 30d), no por
-        // "no suspendido". Los tenantIds activos salen de dos señales que ya viven
-        // en la BD —Sale.createdAt y User.lastLogin— agregadas en la BD (distinct),
-        // no traídas fila por fila (guardrail de escalabilidad #2).
-        const [tenants, loanAgg, salesAgg, activeUsers, activeUsers30d, newTenantsThisMonth, salesTenantIds, loginTenantIds] = await Promise.all([
-            prisma.tenant.findMany({ select: { id: true, subscriptionStatus: true, walletBalance: true, createdAt: true } }),
-            prisma.b2BOrder.aggregate({
-                where: { status: { in: ['PENDING', 'APPROVED', 'DELIVERED'] } },
-                _sum: { total: true },
-            }),
-            prisma.sale.aggregate({
-                where: { createdAt: { gte: monthStart } },
-                _sum: { total: true },
-                _count: true,
-            }),
-            prisma.user.count(),
-            prisma.user.count({ where: { lastLogin: { gte: thirtyDaysAgo } } }),
-            prisma.tenant.count({ where: { createdAt: { gte: monthStart } } }),
-            prisma.sale.findMany({ where: { createdAt: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
-            prisma.user.findMany({ where: { lastLogin: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
-        ]);
-
-        const morosos = tenants.filter(t => t.subscriptionStatus === 'PAST_DUE' || t.subscriptionStatus === 'CANCELLED').length;
-
-        // Set de tenants ACTIVOS por uso (unión de "vendió en 30d" ∪ "entró en 30d").
-        const activeSet = new Set<string>();
-        for (const s of salesTenantIds) activeSet.add(s.tenantId);
-        for (const u of loginTenantIds) { if (u.tenantId) activeSet.add(u.tenantId); }
-        const activeByUsage = activeSet.size;
-        // DORMIDAS: registradas hace >7d (ya tuvieron tiempo de arrancar) y sin uso
-        // en 30d. Es la medida directa de "se registran pero no se quedan".
-        const dormantTenants = tenants.filter(t => t.createdAt < sevenDaysAgo && !activeSet.has(t.id)).length;
-
-        // ── Todo el dinero con Decimal.js, extraído de columnas Decimal(18,4) ──
-        const totalWallet    = tenants.reduce((acc, t) => acc.plus(new Decimal(t.walletBalance.toString())), new Decimal(0));
-        const capitalLent    = new Decimal((loanAgg._sum.total ?? 0).toString());
-        const monthlySales   = new Decimal((salesAgg._sum.total ?? 0).toString());
-        const platformFee    = monthlySales.mul('0.02');   // 2% sobre ventas del mes
-        const retentionFee   = capitalLent.mul('0.05');    // 5% de retención sobre el capital asignado
-        const monthlyRevenue = platformFee.plus(retentionFee);
-
-        const money = (d: Decimal): string => d.toDecimalPlaces(4, Decimal.ROUND_HALF_UP).toFixed(4);
-
-        const body: AdminMetricsResponse = {
-            totalTenants:        tenants.length,
-            activeTenants:       activeByUsage,            // uso real (venta o login 30d)
-            activeSubscriptions: tenants.length - morosos, // suscripciones no morosas (métrica de negocio)
-            activeUsers30d,
-            newTenantsThisMonth,
-            dormantTenants,
-            morosos,
-            activeUsers,
-            monthlyTransactions: salesAgg._count,
-            totalDebtLent:       money(capitalLent),
-            totalWallet:         money(totalWallet),
-            monthlySales:        money(monthlySales),
-            platformFee:         money(platformFee),
-            interestIncome:      money(retentionFee),
-            monthlyRevenue:      money(monthlyRevenue),
-        };
-        res.json(body);
-    } catch (error) {
-        console.error('Admin metrics error:', error);
-        res.status(500).json({ error: 'Error al obtener métricas' });
-    }
-});
-
-// GET /api/admin/tenants - Lista completa de empresas
-// Retención R1: incluye contacto (email/phone), última actividad y la marca
-// `dormant` (>7 días registrada y sin venta NI login en 30 días — la misma
-// definición que el KPI "DORMIDAS" de /api/admin/metrics). Con ?dormant=1
-// devuelve solo esas: la lista de llamadas del CEO. Antes el KPI era un número
-// muerto: se sabía CUÁNTAS dormían pero no QUIÉNES ni cómo contactarlas.
-app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (req: any, res: express.Response) => {
-    try {
-        const now = new Date();
-        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-        const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-
-        // Actividad agregada en la BD (guardrail #2): máx lastLogin por tenant y
-        // tenants con ventas en 30d (distinct) — sin traer filas de negocio.
-        const [tenants, lastLoginByTenant, salesTenantIds] = await Promise.all([
-            prisma.tenant.findMany({
-                include: {
-                    users: {
-                        select: { id: true, name: true, email: true, role: true },
-                        take: 1,
-                        orderBy: { createdAt: 'asc' }
-                    },
-                    _count: {
-                        select: { sales: true, products: true, employees: true }
-                    }
-                },
-                orderBy: { createdAt: 'desc' }
-            }),
-            prisma.user.groupBy({ by: ['tenantId'], _max: { lastLogin: true } }),
-            prisma.sale.findMany({ where: { createdAt: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
-        ]);
-
-        const lastLoginMap = new Map(lastLoginByTenant.map(g => [g.tenantId, g._max.lastLogin]));
-        const soldRecently = new Set(salesTenantIds.map(s => s.tenantId));
-
-        const tenantsWithOwner = tenants.map(t => {
-            const lastLogin = lastLoginMap.get(t.id) || null;
-            const dormant =
-                t.createdAt < sevenDaysAgo &&
-                !soldRecently.has(t.id) &&
-                (!lastLogin || lastLogin < thirtyDaysAgo);
-            return {
-                id: t.id,
-                businessName: t.businessName,
-                taxId: t.taxId,
-                type: t.type,
-                phone: t.phone || null,
-                walletBalance: new Decimal(t.walletBalance.toString()).toFixed(4),
-                creditLimit: new Decimal(t.creditLimit.toString()).toFixed(4),
-                creditScore: t.creditScore,
-                subscriptionStatus: t.subscriptionStatus || 'ACTIVE',
-                createdAt: t.createdAt,
-                trialEndsAt: t.trialEndsAt,
-                lastLogin,
-                dormant,
-                owner: t.users[0] || null,
-                stats: {
-                    sales: t._count.sales,
-                    products: t._count.products,
-                    employees: t._count.employees,
-                }
-            };
-        });
-
-        const onlyDormant = req.query?.dormant === '1' || req.query?.dormant === 'true';
-        res.json(onlyDormant ? tenantsWithOwner.filter(t => t.dormant) : tenantsWithOwner);
-    } catch (error) {
-        console.error('Admin tenants error:', error);
-        res.status(500).json({ error: 'Error al obtener empresas' });
-    }
-});
+// Panel SaaS: sólo evidencia operativa y pagos conciliados, con acceso SUPER_ADMIN.
+app.use('/api/admin', adminOverviewRouter);
 
 // POST /api/admin/tenants/:id/suspend - Suspender empresa
 app.post('/api/admin/tenants/:id/suspend', authenticate, requireSuperAdmin, async (req: any, res: any) => {
@@ -10746,26 +10521,13 @@ app.get('/api/accounting/tax-config', authenticate, checkRole(ACCOUNTING_READ_RO
 app.put('/api/accounting/tax-config', authenticate, checkRole(['OWNER', 'ADMIN', 'ACCOUNTANT']), async (req: any, res: any) => {
     const authReq = req as AuthRequest;
     try {
-        const { inssPatronalRate, anticipoIrRate, imiRate, salarioMinimo } = req.body ?? {};
-        const rate = (v: unknown, name: string) => {
-            const n = new Decimal(Number(v) || 0);
-            if (n.lessThan(0) || n.greaterThan(1)) throw new Error(`${name} debe ser una fracción entre 0 y 1 (ej. 0.225 = 22.5%).`);
-            return n.toDecimalPlaces(4).toNumber();
-        };
-        const data = {
-            inssPatronalRate: rate(inssPatronalRate, 'INSS patronal'),
-            anticipoIrRate: rate(anticipoIrRate, 'Anticipo IR'),
-            imiRate: rate(imiRate, 'IMI'),
-            salarioMinimo: new Decimal(Number(salarioMinimo) || 0).toDecimalPlaces(2).toNumber(),
-        };
-        const cfg = await prisma.taxConfig.upsert({
-            where: { tenantId: authReq.tenantId! },
-            create: { tenantId: authReq.tenantId!, ...data },
-            update: data,
-        });
+        // H7: Zod + tasas legales cerradas + PUT parcial + AuditLog (taxConfigService).
+        const cfg = await updateTaxConfig({ tenantId: authReq.tenantId!, userId: authReq.userId!, body: req.body });
         res.json({ message: 'Configuración fiscal actualizada.', config: cfg });
     } catch (error: unknown) {
-        res.status(400).json({ error: error instanceof Error ? error.message : 'Error al guardar.' });
+        if (error instanceof TaxConfigValidationError) return res.status(400).json({ error: error.message });
+        console.error('Tax config error:', error);
+        res.status(500).json({ error: 'Error al guardar la configuración fiscal.' });
     }
 });
 
@@ -12810,6 +12572,7 @@ app.patch('/api/public-orders/:id/convert', authenticate, checkRole(QUOTATION_WR
 // Devuelve HTML listo para imprimir como PDF via window.print()
 registerRetentionCertificate(app);
 registerFiscalExports(app);
+registerInvoiceSeriesRoutes(app); // H3: serie A/B y rango DGI por tenant
 
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION
