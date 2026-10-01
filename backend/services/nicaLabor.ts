@@ -305,7 +305,8 @@ export function calculateLaborLiability(
     const lastDec1 = now.getUTCMonth() >= 11
         ? new Date(Date.UTC(now.getUTCFullYear(), 11, 1))
         : new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 1));
-    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    const hireTime = hire.getTime();
+    const aguinaldoStart = new Date(Math.max(Number.isNaN(hireTime) ? lastDec1.getTime() : hireTime, lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, now);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
         ? Math.min(365, diasDesdeInicioAguinaldo + 1)
@@ -315,7 +316,8 @@ export function calculateLaborLiability(
     // Indemnización (Art. 45): tramos 30/20 días con fracción, techo 150 días.
     const anios = Math.max(0, daysWorked / 365.25);
     let indemnizacionDias = 0;
-    if (anios > 0) {
+    // Cero ya acumula cero en el bloque; NaN conserva la indemnización en cero.
+    if (Number.isFinite(anios)) {
         const completos = Math.floor(anios);
         for (let i = 1; i <= completos; i++) indemnizacionDias += i <= 3 ? 30 : 20;
         const fraccion = anios - completos;
@@ -460,8 +462,10 @@ export function calculateSettlement(params: {
 export function computeAguinaldoAnual(baseSalary: Decimal.Value, hireDate: Date, year: number, today: Date) {
     const periodStart = new Date(Date.UTC(year - 1, 11, 1)); // 1 dic año anterior
     const periodEnd = new Date(Date.UTC(year, 10, 30));      // 30 nov del año
-    const effectiveEnd = today < periodEnd ? today : periodEnd;
-    const start = hireDate > periodStart ? hireDate : periodStart;
+    const todayTime = today.getTime();
+    const hireTime = hireDate.getTime();
+    const effectiveEnd = new Date(Math.min(Number.isNaN(todayTime) ? periodEnd.getTime() : todayTime, periodEnd.getTime()));
+    const start = new Date(Math.max(Number.isNaN(hireTime) ? periodStart.getTime() : hireTime, periodStart.getTime()));
     let dias = 0;
     // Mismo día calendario UTC que pasivo/liquidación, sin descontar horas.
     const elapsedDays = calendarDaysBetween(start, effectiveEnd);
