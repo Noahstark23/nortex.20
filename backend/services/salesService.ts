@@ -33,6 +33,7 @@ import {
     type OfflineReplaySaleInput,
 } from '../lib/offlineSaleReplay.js';
 import { calculateSaleTotals } from './promotions/totals.js';
+import { allocateSaleInvoiceNumber, ensureDefaultSaleInvoiceSeries, InvoiceNumberingError } from './invoiceNumberingService.js';
 import { assertCheckoutMatches, completeCheckout, lockCheckoutForSale, promotionReplayHash } from './promotions/checkout.js';
 import { authorizePromotion, PromotionError } from './promotions/authority.js';
 import {
@@ -53,6 +54,7 @@ export type SaleErrorCode =
     | 'CUSTOMER_BLOCKED'
     | 'CREDIT_LIMIT_EXCEEDED'
     | 'INVOICE_RANGE_EXHAUSTED'
+    | 'INVOICE_SERIES_NOT_CONFIGURED'
     | 'PRODUCT_NOT_FOUND'
     | 'INSUFFICIENT_STOCK'
     | 'SCALE_LABEL_INVALID'
@@ -788,10 +790,7 @@ async function executeSaleWithResultInternal(
     }
 
     // Filas perezosas fuera de la tx: evita carreras de primer uso en MySQL.
-    await prisma.invoiceSeries.createMany({
-        data: [{ tenantId, series: 'A', lastNumber: 0 }],
-        skipDuplicates: true,
-    });
+    await ensureDefaultSaleInvoiceSeries(prisma, tenantId);
     await asegurarBodegaPorDefecto(prisma, tenantId);
     await ensureAccountingCatalog(tenantId);
 
@@ -1032,18 +1031,11 @@ async function executeSaleWithResultInternal(
             }
             const sellerWarehouse = sellerWarehouses[0];
 
-            const counter = await tx.invoiceSeries.upsert({
-                where: { tenantId_series: { tenantId, series: 'A' } },
-                update: { lastNumber: { increment: 1 } },
-                create: { tenantId, series: 'A', lastNumber: 1 },
+            // H3: serie activa del tenant (A/B) y consecutivo desde rangeStart.
+            const invoice = await allocateSaleInvoiceNumber(tx, tenantId).catch((error: unknown) => {
+                if (error instanceof InvoiceNumberingError) throw new SaleError(error.code as SaleErrorCode, error.httpStatus, error.message);
+                throw error;
             });
-            if (counter.lastNumber > counter.rangeEnd) {
-                throw new SaleError(
-                    'INVOICE_RANGE_EXHAUSTED',
-                    422,
-                    'Rango de facturacion DGI agotado',
-                );
-            }
 
             const created = await tx.sale.create({
                 data: {
@@ -1064,8 +1056,8 @@ async function executeSaleWithResultInternal(
                     shiftId: shiftId ?? null,
                     soldById: userId,
                     globalDiscount: globalDiscount.toNumber(),
-                    invoiceNumber: counter.lastNumber,
-                    invoiceSeries: 'A',
+                    invoiceNumber: invoice.number,
+                    invoiceSeries: invoice.series,
                     offlineId: input.offlineId
                         ? storedOfflineId(tenantId, input.offlineId)
                         : null,

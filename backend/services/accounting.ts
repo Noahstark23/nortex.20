@@ -339,7 +339,7 @@ export function buildSaleJournalLines(
             ? [{ accountCode: '2.1.14', debit: storeCreditApplied.toNumber(), credit: 0 }]
             : []),
         { accountCode: '4.1.1', debit: 0, credit: fiscalAmounts.netRevenue.toNumber() },
-        { accountCode: '2.1.2', debit: 0, credit: fiscalAmounts.vatAmount.toNumber() },
+        ...(fiscalAmounts.vatAmount.isZero() ? [] : [{ accountCode: '2.1.2', debit: 0, credit: fiscalAmounts.vatAmount.toNumber() }]),
         { accountCode: '5.1.1', debit: normalizedCost.toNumber(), credit: 0 },
         { accountCode: '1.1.4', debit: 0, credit: normalizedCost.toNumber() },
     ];
