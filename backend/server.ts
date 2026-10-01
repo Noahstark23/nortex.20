@@ -1,3 +1,4 @@
+import { getReleaseCommit } from './lib/releaseIdentity';
 import { createQuotationHandler } from './routes/quotationCreate';
 import { buildWhatsappCommerceRouter } from './routes/whatsappCommerce';
 import { executeProductCreation, DuplicateProductCode } from './services/productCreationService';
@@ -417,8 +418,7 @@ app.get('/api/health', async (_req: any, res: any) => {
         ok: db === 'up',
         db,
         uptimeSeconds: Math.floor((Date.now() - arranqueDelProceso) / 1000),
-        // Coolify inyecta SOURCE_COMMIT en el build: permite ver QUÉ versión corre.
-        commit: process.env.SOURCE_COMMIT ?? null,
+        commit: getReleaseCommit(), // Identidad de imagen; el entorno sólo sirve al QA local.
     });
 });
 
