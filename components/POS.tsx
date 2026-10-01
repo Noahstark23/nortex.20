@@ -4,6 +4,7 @@ import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
+import { resolvePosCredit } from '../utils/posCredit';
 import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
@@ -286,8 +287,8 @@ interface Customer {
     id: string;
     name: string;
     phone?: string;
-    creditLimit: number;
-    currentDebt: number;
+    creditLimit: number | string;
+    currentDebt: number | string;
     storeCreditBalance?: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
@@ -2687,7 +2688,7 @@ const POS: React.FC = () => {
             showToast({
                 tone: 'success',
                 title: 'Cliente creado y seleccionado',
-                message: created.creditLimit > 0
+                message: new Decimal(created.creditLimit).gt(0)
                     ? 'Podés continuar con el cobro.'
                     : canManageCustomerCreateControls
                         ? 'Para venderle fiado, definí primero su límite de crédito.'
@@ -2819,27 +2820,9 @@ const POS: React.FC = () => {
     // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
     useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
 
-    // SMART CREDIT CHECK
-    const isCreditBlocked = useMemo(() => {
-        if (creditOverrideAuthorized) return false; // Owner override
-        if (!selectedCustomer) return true; // Cannot use credit without customer
-        if (selectedCustomer.isBlocked) return true;
-        if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
-        return false;
-    }, [selectedCustomer, grandTotal, creditOverrideAuthorized]);
-
-    // CREDIT THERMOMETER DATA
-    const creditInfo = useMemo(() => {
-        if (!selectedCustomer) return null;
-        const limit = selectedCustomer.creditLimit;
-        const currentDebt = selectedCustomer.currentDebt;
-        const debtPct = limit > 0 ? (currentDebt / limit) * 100 : 100;
-        const projectedDebt = currentDebt + grandTotal;
-        const projectedPct = limit > 0 ? (projectedDebt / limit) * 100 : 100;
-        const color = debtPct >= 80 || selectedCustomer.isBlocked ? 'red' : debtPct >= 50 ? 'yellow' : 'green';
-        const projectedColor = projectedPct >= 100 ? 'red' : projectedPct >= 80 ? 'yellow' : 'green';
-        return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
-    }, [selectedCustomer, grandTotal]);
+    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, amountDueD), [selectedCustomer, amountDueD]);
+    const isCreditBlocked = !creditInfo || (!creditOverrideAuthorized &&
+        (!selectedCustomer || selectedCustomer.isBlocked || creditInfo.exceedsLimit));
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT') => {
         if (!currentShift) {
@@ -2901,6 +2884,11 @@ const POS: React.FC = () => {
         }
         setShowMobileCart(false);
         trackEvent('sale_checkout_started', { payment_method: method, cart_items: cart.length });
+
+        if (method === 'CREDIT' && !creditInfo) {
+            showToast({ tone: 'error', title: 'No se pudo verificar el crédito', message: 'Volvé a seleccionar el cliente con conexión antes de venderle fiado.' });
+            return;
+        }
 
         // Front-end Block (skip if override authorized)
         if (method === 'CREDIT' && isCreditBlocked && !creditOverrideAuthorized) {
@@ -5004,13 +4992,13 @@ const POS: React.FC = () => {
                         <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-500/10 border-red-300 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
                             <div className="flex justify-between font-bold mb-1.5">
                                 <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
-                                {!selectedCustomer.isBlocked && <span className="text-sm">{formatMoney((selectedCustomer.creditLimit - selectedCustomer.currentDebt))}</span>}
+                                {!selectedCustomer.isBlocked && <span className="text-sm">{creditInfo ? formatMoney(creditInfo.available) : 'No disponible'}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
                                     <div
                                         className="bg-blue-500 h-full transition-[width]"
-                                        style={{ width: `${customerCreditUsagePct(selectedCustomer.creditLimit, selectedCustomer.currentDebt)}%` }}
+                                        style={{ width: `${Math.min(creditInfo?.debtPct ?? 0, 100)}%` }}
                                     />
                                 </div>
                             )}
@@ -5545,7 +5533,7 @@ const POS: React.FC = () => {
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(grandTotal)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(amountDueD)}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>
