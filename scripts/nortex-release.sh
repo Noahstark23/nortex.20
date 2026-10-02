@@ -1,6 +1,7 @@
 #!/bin/sh
-# UI Coolify: sh scripts/nortex-release.sh staging build (o production/start).
-# El nombre evita la sustitución literal de "compose" en el campo de comandos.
+# UI Coolify: sh scripts/nortex-release.sh staging prepare (o production/start).
+# El nombre evita la sustitución de "compose"; prepare evita la inyección
+# del proveedor sobre cualquier argumento externo llamado "build".
 set -eu
 target=${1:-}
 phase=${2:-}
@@ -9,13 +10,13 @@ case "$target" in
   production) project=loksow84gw0wccs8ookkosw8 ;;
   *) echo 'NORTEX_TARGET_INVALID' >&2; exit 1 ;;
 esac
-case "$phase" in build|start) ;; *) echo 'NORTEX_PHASE_INVALID' >&2; exit 1 ;; esac
+case "$phase" in prepare|start) ;; *) echo 'NORTEX_PHASE_INVALID' >&2; exit 1 ;; esac
 [ "$#" -eq 2 ] || { echo 'NORTEX_ARGUMENTS_INVALID' >&2; exit 1; }
 [ -f ./docker-compose.yml ] && [ -f "./deploy/nortex/$target.yml" ] \
   || { echo 'NORTEX_REPOSITORY_REQUIRED' >&2; exit 1; }
 
 # Resolver con el mismo env-file que el proveedor, sin leer/evaluar su contenido.
-if [ "$phase" = build ]; then env_file=/artifacts/build-time.env; else env_file=./.env; fi
+if [ "$phase" = prepare ]; then env_file=/artifacts/build-time.env; else env_file=./.env; fi
 [ -f "$env_file" ] || { echo 'NORTEX_ENV_FILE_REQUIRED' >&2; exit 1; }
 # Coolify elimina .git antes del custom build. Su Compose generado vincula
 # app al SHA del checkout; no dependemos de Git ni Node dentro del helper.
@@ -49,7 +50,7 @@ else
   set -- db app assistant-worker backup
 fi
 
-if [ "$phase" = build ]; then
+if [ "$phase" = prepare ]; then
   # Helper: archivo oficial de variables de build. No se lee ni imprime en shell.
   env_file=/artifacts/build-time.env
   [ -f "$env_file" ] || { echo 'NORTEX_BUILD_ENV_REQUIRED' >&2; exit 1; }

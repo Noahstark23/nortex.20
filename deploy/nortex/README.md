@@ -9,7 +9,7 @@ No reutilizar el CI ni receipts de despliegue de C/B como evidencia de C′/B′
 Conservar UUID, repo, rama, base `/`, Compose `/docker-compose.yml`, red, labels,
 slots y Auto Deploy=false. Guardar General primero y Source fresco al final.
 
-Staging Build: `sh scripts/nortex-release.sh staging build`
+Staging Build: `sh scripts/nortex-release.sh staging prepare`
 
 Staging Start: `sh scripts/nortex-release.sh staging start`
 
@@ -21,7 +21,9 @@ El helper contiene los scripts/overlays del checkout, aunque Coolify elimine `.g
 Build usa el Compose **generado**, `/artifacts/build-time.env` y el overlay Git;
 Start usa ese Compose, `.env` del workdir y el mismo overlay Git. Los comandos UI
 no necesitan `-f`, redirecciones, variables ni operadores inline. El wrapper
-gestiona explícitamente flags/env/build-args: Coolify no los inyecta en una llamada shell pura. Los nombres ARG del Dockerfile se
+gestiona explícitamente flags/env/build-args. El verbo externo `prepare` evita
+que Coolify v4.3.18 agregue argumentos al encontrar ` build`; el wrapper mantiene
+exactamente dos argumentos y ejecuta `docker compose build` internamente. Los nombres ARG del Dockerfile se
 resuelven desde el env-file por Compose, sin evaluar ni imprimir valores.
 La base Node 22.23.2 se fija por digest; npm usa el lockfile.
 

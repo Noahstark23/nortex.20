@@ -1,5 +1,6 @@
 // @vitest-environment node
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -54,4 +55,30 @@ test('deployment uses scripts from repository and image; original DDL entrypoint
   const start = readFileSync(new URL('../scripts/nortex-start.sh', import.meta.url), 'utf8');
   assert.match(start, /set -eu[\s\S]*node scripts\/nortex-schema-gate\.mjs[\s\S]*exec env NODE_ENV=production node node_modules\/tsx\/dist\/cli\.mjs backend\/server\.ts/);
   assert.doesNotMatch(start, /db push|migrate|npm run/);
+});
+
+// Captured by running the real public Coolify v4.3.18 PHP validation/flags/
+// build-args helpers in deployment order; provenance is in the fixture.
+// The full local container regression also executes the internal Docker calls.
+const providerCommands = JSON.parse(readFileSync(new URL('./fixtures/nortex-provider-v4.3.18.json', import.meta.url), 'utf8'));
+test('provider-transformed prepare/start commands pass the strict wrapper argument gate', () => {
+  const root = mkdtempSync(join(tmpdir(), 'nortex-command-'));
+  try {
+    mkdirSync(join(root, 'scripts'));
+    writeFileSync(join(root, 'scripts/nortex-release.sh'), readFileSync(new URL('../scripts/nortex-release.sh', import.meta.url)));
+    for (const command of providerCommands.cases) {
+      const result = spawnSync('sh', ['-c', command.output], { cwd: root, encoding: 'utf8' });
+      assert.equal(result.status, 1, command.output);
+      // Reaching repository validation proves dispatch/arity succeeded; no
+      // repository, Docker, database or real environment values are accessed.
+      assert.equal(result.stderr.trim(), 'NORTEX_REPOSITORY_REQUIRED', command.output);
+    }
+  } finally { rmSync(root, { recursive: true }); }
+});
+test('prepare continues to reject unexpected external build arguments', () => {
+  for (const target of ['staging', 'production']) {
+    const result = spawnSync('sh', [new URL('../scripts/nortex-release.sh', import.meta.url).pathname, target, 'prepare', '--build-arg', 'SYNTHETIC_FLAG'], { encoding: 'utf8' });
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr.trim(), 'NORTEX_ARGUMENTS_INVALID');
+  }
 });
