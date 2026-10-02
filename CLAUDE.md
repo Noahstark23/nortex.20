@@ -362,7 +362,7 @@ libro firmado de caja · keyring JWT rotable.
 La ruta vigente de promoción es `docs/runbooks/release-promotion.md`.
 Los expedientes de `docs/releases/` prueban su candidato y fecha, no habilitan
 una release nueva. CI de un PR y CI de main son evidencias distintas: la promoción
-exige el candidato exacto vigente de main y staging manual del mismo SHA.
+exige el candidato exacto vigente de main y staging manual del mismo SHA. La única excepción puntual autorizada es crédito20261001: main conserva el SHA de controles M y las protecciones; los workflows existentes pueden promover exclusivamente C=d563c750dd62c9192df1d078c4c13308748f69bd o recuperar B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 conforme al manifiesto y runbook, con revisión, CI separado, staging/drill/smoke y sin bypass. No es una ruta genérica de ramas ni permite assets directos.
 
 Actualizar las guías operativas al cambiar sus contratos, con propietario y
 referencias ejecutables; conservar resultados históricos fechados. El índice
