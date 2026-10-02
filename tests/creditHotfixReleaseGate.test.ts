@@ -141,10 +141,10 @@ describe('excepción puntual: identidad, Git y fallo cerrado', () => {
     ])('rechaza contexto inválido %j antes de Git', (patch, reason) => {
         const git = vi.fn(); expect(() => verifyFixtureGit({ env: { ...env, ...patch }, git })).toThrow(reason); expect(git).not.toHaveBeenCalled();
     });
-    it('admite C y recuperación sólo de B, verificando árbol y nueve fuentes', () => {
+    it('admite C y recuperación sólo de B, verificando árbol y diez fuentes', () => {
         expect(verifyFixtureGit({ env, git: fixtureGit() }).target).toBe(H.candidate);
         expect(verifyFixtureGit({ env: recover, git: fixtureGit() }).target).toBe(H.base);
-        expect(hotfixTarget(recover)).toBe(H.base); expect(readCreditHotfixManifest().source_files).toHaveLength(9);
+        expect(hotfixTarget(recover)).toBe(H.base); expect(readCreditHotfixManifest().source_files).toHaveLength(10);
     });
     it.each([
         ['HEAD', (a: string[], b: Buffer) => a.join(' ') === 'rev-parse HEAD' ? Buffer.from(H.candidate) : b, 'CONTROL_CHECKOUT_MISMATCH'],
@@ -171,10 +171,25 @@ describe('excepción puntual: identidad, Git y fallo cerrado', () => {
     it('promover exige B sano/no-store; recuperar usa el gate de recibo, sin exigir C sano', async () => {
         const verifyHealth = vi.fn().mockResolvedValue({});
         await verifyCreditHotfixRelease({ env, phase: 'production', git: fixtureGit(), verifyHealth, verifyGit: verifyFixtureGit });
-        expect(verifyHealth).toHaveBeenCalledWith({ baseUrl: H.productionOrigin, expectedCommit: H.base, attempts: 1 });
+        expect(verifyHealth).toHaveBeenCalledWith({ baseUrl: H.productionOrigin, expectedCommit: H.initialProductionBase, attempts: 1 });
         verifyHealth.mockClear(); await verifyCreditHotfixRelease({ env: recover, phase: 'production', git: fixtureGit(), verifyHealth, verifyGit: verifyFixtureGit });
         expect(verifyHealth).not.toHaveBeenCalled();
         await expect(verifyCreditHotfixRelease({ env, phase: 'production', git: fixtureGit(), verifyHealth: async () => { throw new Error('secret'); }, verifyGit: verifyFixtureGit })).rejects.toThrow('HOTFIX_PRODUCTION_BASE_NOT_VERIFIED');
+    });
+    it('permite volver a promover sólo desde B′ después de una recuperación', async () => {
+        const verifyHealth = vi.fn(async ({ expectedCommit }) => {
+            if (expectedCommit !== H.base) throw new Error('mismatch');
+        });
+        await verifyCreditHotfixRelease({ env, phase: 'production', git: fixtureGit(), verifyHealth, verifyGit: verifyFixtureGit });
+        expect(verifyHealth.mock.calls.map(([request]) => request.expectedCommit)).toEqual([H.initialProductionBase, H.base]);
+    });
+    it('C/B históricos no son candidatos ni receipts válidos para la integración nueva', () => {
+        for (const sha of ['d563c750dd62c9192df1d078c4c13308748f69bd', 'bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4']) {
+            expect(() => assessCreditHotfix({ ...env, CANDIDATE_SHA: sha })).toThrow('HOTFIX_CANDIDATE_MISMATCH');
+            expect(() => assessCreditHotfix({ ...recover, CANDIDATE_SHA: sha })).toThrow('HOTFIX_CANDIDATE_MISMATCH');
+        }
+        const r = run(99);
+        expect(() => assessHotfixEvidence({ evidence: { ...evidence(r), candidate: 'd563c750dd62c9192df1d078c4c13308748f69bd' }, run: r, env, phase: 'healthy', environment: 'staging', target: H.candidate })).toThrow('HOTFIX_EVIDENCE_INVALID');
     });
     it('autorización preserva stage target y exige main controlador también en recuperación', async () => {
         const verifyHotfix = vi.fn().mockResolvedValue({}); const verifyStaging = vi.fn().mockResolvedValue({});

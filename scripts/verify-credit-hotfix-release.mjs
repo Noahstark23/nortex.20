@@ -6,12 +6,13 @@ import { waitForExpectedRelease } from './verify-deployed-release.mjs';
 
 export const CREDIT_HOTFIX = Object.freeze({
     case: 'credit-20261001', repository: 'Noahstark23/nortex.20',
-    candidate: 'd563c750dd62c9192df1d078c4c13308748f69bd',
-    base: 'bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4',
-    tree: '8038a539d7b4479625f9eadfd7885c43a914a154',
-    baseTree: '40d74221bdf462c1f5c09fc29e47fe445cf87ecc',
-    branch: 'codex/hotfix-pos-credit-20261001',
-    recoveryBranch: 'codex/credit-hotfix-recovery-20261001',
+    candidate: '6c6d1d2608316bacc55bc9a9ce6b7b394f520dc8',
+    base: 'e315c5a8c796f2bcbb285dc6fe4ef3699264766a',
+    initialProductionBase: 'bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4',
+    tree: '5deba66796c14e069e2c7db376e2650edcf00ed7',
+    baseTree: '883331c0f27acfae264c1752736a28af5638b012',
+    branch: 'codex/hotfix-pos-credit-packaged-20261002',
+    recoveryBranch: 'codex/credit-recovery-packaged-20261002',
     stageOrigin: 'https://staging.somosnortex.com', productionOrigin: 'https://somosnortex.com',
     stageAppHash: '18ce89ef7c4909f28286601331102f6770691bfb51925d04b98e531c0d69a8f6',
     productionAppHash: '7995eb46427376f2da54ab6a179e0e18e9d6503aecf304d09b59a9373db7c2b4',
@@ -34,13 +35,14 @@ export const readCreditHotfixManifest = () => {
         || manifest.repository !== CREDIT_HOTFIX.repository
         || manifest.candidate_commit !== CREDIT_HOTFIX.candidate || manifest.base_commit !== CREDIT_HOTFIX.base
         || manifest.candidate_tree !== CREDIT_HOTFIX.tree || manifest.base_tree !== CREDIT_HOTFIX.baseTree
+        || manifest.initial_production_base !== CREDIT_HOTFIX.initialProductionBase
         || manifest.branch !== CREDIT_HOTFIX.branch || manifest.recovery_branch !== CREDIT_HOTFIX.recoveryBranch
         || manifest.applications?.staging?.origin !== CREDIT_HOTFIX.stageOrigin
         || manifest.applications?.production?.origin !== CREDIT_HOTFIX.productionOrigin
         || manifest.applications?.staging?.identity_sha256 !== CREDIT_HOTFIX.stageAppHash
         || manifest.applications?.production?.identity_sha256 !== CREDIT_HOTFIX.productionAppHash
-        || !Array.isArray(manifest.source_files) || manifest.source_files.length !== 9
-        || manifest.patch_sha256 !== 'e4dc53907b0d2dd685850b6bfd81fe65576f59283429963fdea325a69560aab0') {
+        || !Array.isArray(manifest.source_files) || manifest.source_files.length !== 10
+        || manifest.patch_sha256 !== 'a5715d6ae54fb07f36a0d4f2edd8059a09651cb258b0e1b669ead47f2550286a') {
         fail('HOTFIX_MANIFEST_INVALID');
     }
     return manifest;
@@ -93,7 +95,7 @@ export const verifyCreditHotfixGit = ({ env = process.env, git = runGit, readMan
             || textGit(git, ['rev-parse', CREDIT_HOTFIX.base + '^{tree}']) !== CREDIT_HOTFIX.baseTree) fail('HOTFIX_TREE_MISMATCH');
         const paths = git(['diff', '--no-renames', '--name-only', '-z', CREDIT_HOTFIX.base, CREDIT_HOTFIX.candidate]).toString('utf8').split('\0').filter(Boolean).sort();
         const expected = manifest.source_files.map(file => file.path).sort();
-        if (JSON.stringify(paths) !== JSON.stringify(expected) || new Set(expected).size !== 9) fail('HOTFIX_SCOPE_MISMATCH');
+        if (JSON.stringify(paths) !== JSON.stringify(expected) || new Set(expected).size !== 10) fail('HOTFIX_SCOPE_MISMATCH');
         for (const file of manifest.source_files) {
             const source = git(['show', CREDIT_HOTFIX.candidate + ':' + file.path]);
             if (sha256(source) !== file.sha256 || source.length !== file.bytes) fail('HOTFIX_SOURCE_MISMATCH');
@@ -123,8 +125,13 @@ export const verifyCreditHotfixRelease = async ({ env = process.env, phase = env
     // Recuperar no puede exigir que el contenedor averiado esté sano. El gate
     // REST separado exige el recibo confiable de la solicitud C a la misma app.
     if (hotfixAction(env) === 'promote') {
-        try { await verifyHealth({ baseUrl: env.PROD_URL, expectedCommit: CREDIT_HOTFIX.base, attempts: 1 }); }
-        catch { fail('HOTFIX_PRODUCTION_BASE_NOT_VERIFIED'); }
+        // Primera promoción parte de B histórico; después de recuperar, de B′.
+        // Son dos identidades fijas, nunca un SHA suministrado por el solicitante.
+        try { await verifyHealth({ baseUrl: env.PROD_URL, expectedCommit: CREDIT_HOTFIX.initialProductionBase, attempts: 1 }); }
+        catch {
+            try { await verifyHealth({ baseUrl: env.PROD_URL, expectedCommit: CREDIT_HOTFIX.base, attempts: 1 }); }
+            catch { fail('HOTFIX_PRODUCTION_BASE_NOT_VERIFIED'); }
+        }
     }
     return result;
 };
