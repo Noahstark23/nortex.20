@@ -1,9 +1,10 @@
+// @vitest-environment node
 import assert from 'node:assert/strict';
 import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import { test } from 'vitest';
 import { sealImage } from '../scripts/nortex-seal-image.mjs';
 
 const sha = value => createHash('sha256').update(value).digest('hex');

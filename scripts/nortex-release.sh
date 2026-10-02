@@ -14,6 +14,24 @@ case "$phase" in build|start) ;; *) echo 'NORTEX_PHASE_INVALID' >&2; exit 1 ;; e
 [ -f ./docker-compose.yml ] && [ -f "./deploy/nortex/$target.yml" ] \
   || { echo 'NORTEX_REPOSITORY_REQUIRED' >&2; exit 1; }
 
+# Resolver con el mismo env-file que el proveedor, sin leer/evaluar su contenido.
+if [ "$phase" = build ]; then env_file=/artifacts/build-time.env; else env_file=./.env; fi
+[ -f "$env_file" ] || { echo 'NORTEX_ENV_FILE_REQUIRED' >&2; exit 1; }
+# Coolify elimina .git antes del custom build. Su Compose generado vincula
+# app al SHA del checkout; no dependemos de Git ni Node dentro del helper.
+images=$(docker compose --project-name "$project" --project-directory "$PWD" \
+  --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" config --images app)
+commit=
+for image in $images; do
+  case "$image" in
+    "${project}_app:"*)
+      [ -z "$commit" ] || { echo 'NORTEX_IMAGE_IDENTITY_AMBIGUOUS' >&2; exit 1; }
+      commit=${image#*:} ;;
+  esac
+done
+case "$commit" in *[!a-f0-9]*|'') echo 'NORTEX_IMAGE_IDENTITY_REQUIRED' >&2; exit 1 ;; esac
+[ "${#commit}" -eq 40 ] || { echo 'NORTEX_IMAGE_IDENTITY_REQUIRED' >&2; exit 1; }
+
 # Ambos comandos usan el mismo daemon que el proveedor. Sólo inspección aquí;
 # la limpieza sigue siendo exclusivamente de Coolify y ocurre después del build.
 for volume in "${project}_mysql-data" "${project}_assistant-private"; do
@@ -35,26 +53,20 @@ if [ "$phase" = build ]; then
   # Helper: archivo oficial de variables de build. No se lee ni imprime en shell.
   env_file=/artifacts/build-time.env
   [ -f "$env_file" ] || { echo 'NORTEX_BUILD_ENV_REQUIRED' >&2; exit 1; }
-  # Coolify elimina .git antes del custom build. Su Compose generado vincula
-  # app al SHA del checkout; no dependemos de Git ni Node dentro del helper.
-  images=$(docker compose --project-name "$project" --project-directory "$PWD" \
-    --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" config --images app)
-  commit=
-  for image in $images; do
-    case "$image" in
-      "${project}_app:"*)
-        [ -z "$commit" ] || { echo 'NORTEX_IMAGE_IDENTITY_AMBIGUOUS' >&2; exit 1; }
-        commit=${image#*:} ;;
-    esac
-  done
-  case "$commit" in *[!a-f0-9]*|'') echo 'NORTEX_IMAGE_IDENTITY_REQUIRED' >&2; exit 1 ;; esac
-  [ "${#commit}" -eq 40 ] || { echo 'NORTEX_IMAGE_IDENTITY_REQUIRED' >&2; exit 1; }
   printf '{"version":1,"commit":"%s"}\n' "$commit" > .nortex-build-source.json
   docker compose --project-name "$project" --project-directory "$PWD" \
     --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" \
     --profile assistant-worker config --quiet
+  # Una llamada shell pura no recibe los --build-arg que Coolify inyectaría
+  # en "docker compose build". Pasar sólo sus nombres declarados: Compose
+  # resuelve sus valores con su parser dotenv, sin source/eval ni logs de valores.
+  set --
+  for argument in $(awk '$1 == "ARG" { split($2, name, "="); print name[1] }' Dockerfile); do
+    case "$argument" in ''|[0-9]*|*[!a-zA-Z0-9_]*) echo 'NORTEX_BUILD_ARG_INVALID' >&2; exit 1 ;; esac
+    set -- "$@" --build-arg "$argument"
+  done
   exec docker compose --project-name "$project" --project-directory "$PWD" \
-    --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" build app
+    --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" build "$@" app
 fi
 
 # Con Preserve repository=true, Coolify copia repo y .env al workdir del host;

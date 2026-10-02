@@ -21,7 +21,9 @@ El helper contiene los scripts/overlays del checkout, aunque Coolify elimine `.g
 Build usa el Compose **generado**, `/artifacts/build-time.env` y el overlay Git;
 Start usa ese Compose, `.env` del workdir y el mismo overlay Git. Los comandos UI
 no necesitan `-f`, redirecciones, variables ni operadores inline. El wrapper
-gestiona explícitamente flags/env: Coolify no los inyecta en una llamada shell pura.
+gestiona explícitamente flags/env/build-args: Coolify no los inyecta en una llamada shell pura. Los nombres ARG del Dockerfile se
+resuelven desde el env-file por Compose, sin evaluar ni imprimir valores.
+La base Node 22.23.2 se fija por digest; npm usa el lockfile.
 
 Los identificadores públicos `NORTEX_ROLLBACK_DATABASE`, `NORTEX_ROLLBACK_MYSQL_UUID`
 y `NORTEX_ROLLBACK_CONFIRMATION` deben estar disponibles para resolver Compose en
