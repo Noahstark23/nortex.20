@@ -14,7 +14,8 @@ def docker(args, **kwargs):
     return subprocess.check_output(D + args, text=True, stderr=subprocess.PIPE, **kwargs).strip()
 
 def sql(cfg, query, database=None):
-    return docker(['exec', '-i', cfg['container'], 'mysql', '-uroot', '--batch', '--raw', '--skip-column-names'] + ([database] if database else []), input=query)
+    # TCP excludes MySQL's temporary --skip-networking initialization server.
+    return docker(['exec', '-i', cfg['container'], 'mysql', '--protocol=TCP', '-h127.0.0.1', '-uroot', '--batch', '--raw', '--skip-column-names'] + ([database] if database else []), input=query)
 
 def cleanup():
     path = E / 'synthetic-db.json'
