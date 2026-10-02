@@ -1,0 +1,13 @@
+{
+  "prismaVersion": "6.4.1",
+  "models": 143,
+  "scalarColumns": 1735,
+  "expandedTables": [],
+  "expandedIndexes": [],
+  "generatedSchemaSha256": "ae5f3d7638dd9b1f3b113a1ae76084817e0f4114aa98f9cdfb26e95daba1d641",
+  "schemaFingerprintSha256": "65341b108be99cda2a06a2ce32660e3d48e4e1e33e89b4a89b596ee1b016870c",
+  "provenance": {
+    "receiptSha256": "9f0455ad187e5ddc6fec38e5e8a82c1f1ed6f1154043359a1c668f34fd48d2fd",
+    "scope": "Only reviewed schema/client contract; not evidence for new candidate or build"
+  }
+}

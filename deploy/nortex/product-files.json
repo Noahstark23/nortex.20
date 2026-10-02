@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "origin": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
+  "files": {
+    "backend/server.ts": "35bf8fce7658cd128ad1c472815a4fc274ffe85b8f6bbba283998bb82cf7d4c4",
+    "backend/prisma/schema.prisma": "3162c81a2ad0b0fa225b89828dbccb2cbe6389ce42104d92f860e191f24fc779",
+    "package.json": "0652d9a03e6a99bef1fbdfc198458fe19c430ced5886dcdeabedcf6dee916543",
+    "package-lock.json": "d2ee4115a5672416f24f334d7f91c3b2537f86d5ee77a95b7c5df730c2eaa7ad",
+    "scripts/docker-entrypoint.sh": "148e44c6cd059ae8c82651de8c7e62d70edca10f83d2bbef4908aba0e14f725e",
+    "components/POS.tsx": "6fae1f0118c89bbeac87fff8ca9c3bb93b8df0d374a149ad666b4309a0392cf4",
+    "scripts/deploy-schema-preflight.ts": "7609215d9c936673cbddf48e787ed8c201dbd8f1b79ae45e5fb3c7e81e4de4ca"
+  }
+}
