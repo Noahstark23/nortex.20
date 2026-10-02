@@ -179,6 +179,7 @@ describe('excepción puntual: identidad, Git y fallo cerrado', () => {
     it('permite volver a promover sólo desde B′ después de una recuperación', async () => {
         const verifyHealth = vi.fn(async ({ expectedCommit }) => {
             if (expectedCommit !== H.base) throw new Error('mismatch');
+            return { healthUrl: H.productionOrigin + '/api/health', payload: { commit: expectedCommit }, attemptsUsed: 1 };
         });
         await verifyCreditHotfixRelease({ env, phase: 'production', git: fixtureGit(), verifyHealth, verifyGit: verifyFixtureGit });
         expect(verifyHealth.mock.calls.map(([request]) => request.expectedCommit)).toEqual([H.initialProductionBase, H.base]);

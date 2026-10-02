@@ -344,3 +344,32 @@ jobs:
         run: docker pull mysql:8.0
       - name: Integración obligatoria de dinero e inventario
         run: npm run test:integration:required
+
+  app-image-amd64:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      NORTEX_IMAGE_QA_ROOT: ${{ runner.temp }}/nortex-credit-image-${{ github.run_id }}-${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Dockerfile real, SHAs exactos y MySQL efímero en AMD64 nativo
+        run: python3 scripts/qa/credit-image/prepare-ci.py
+      - name: CMD real, health por SHA y recuperación sintética C-B-C
+        run: python3 scripts/qa/credit-image/runtime-check.py
+      - name: Evidencia de imágenes y runtime AMD64
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: credit-app-image-amd64
+          path: ${{ env.NORTEX_IMAGE_QA_ROOT }}/evidence/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Limpiar sólo los recursos sintéticos de este intento
+        if: always()
+        run: python3 scripts/qa/credit-image/prepare-ci.py cleanup
