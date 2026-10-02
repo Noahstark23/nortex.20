@@ -1,8 +1,8 @@
 {
-  "candidate_commit": "d563c750dd62c9192df1d078c4c13308748f69bd",
-  "candidate_tree": "8038a539d7b4479625f9eadfd7885c43a914a154",
-  "base_commit": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
-  "patch_sha256": "e4dc53907b0d2dd685850b6bfd81fe65576f59283429963fdea325a69560aab0",
+  "candidate_commit": "df6fc095fe8da39b4829336e79b78e4454997046",
+  "candidate_tree": "44fe586fac288df75ca0076c74c21de0e1e972b8",
+  "base_commit": "f656392d2c3a861d605e3da7012c7a9d4732e221",
+  "patch_sha256": "a5715d6ae54fb07f36a0d4f2edd8059a09651cb258b0e1b669ead47f2550286a",
   "product_files": [
     "components/POS.tsx",
     "utils/posCredit.ts"
@@ -12,6 +12,11 @@
       "path": "components/POS.tsx",
       "sha256": "7ad836457ea642e1721c9e4d25ea52b10532b8fd815bafd2650740fbe13ff57f",
       "bytes": 349891
+    },
+    {
+      "path": "deploy/nortex/product-files.json",
+      "sha256": "b5c4ae80cf75d6318b217f37000796d8274515983c4aeb5df6b10bb7c4cb904c",
+      "bytes": 872
     },
     {
       "path": "scripts/check-mutation-scope.cjs",
@@ -61,7 +66,7 @@
     },
     {
       "path": "Dockerfile",
-      "sha256": "34984676c299418264cd940daad4666cf9b7cf1a405eea8fed6117bf86980e39"
+      "sha256": "6dec466affda21195a3d35d6485f35bd250d5d5dd4c9350ba4e4219c0949168c"
     },
     {
       "path": "docker-compose.yml",
@@ -78,9 +83,9 @@
   ],
   "case": "credit-20261001",
   "repository": "Noahstark23/nortex.20",
-  "branch": "codex/hotfix-pos-credit-20261001",
-  "recovery_branch": "codex/credit-hotfix-recovery-20261001",
-  "base_tree": "40d74221bdf462c1f5c09fc29e47fe445cf87ecc",
+  "branch": "codex/hotfix-pos-credit-packaged-20261002",
+  "recovery_branch": "codex/credit-recovery-packaged-20261002",
+  "base_tree": "b687bcd3cb27bfa0ca6adeca36ba80d7ca6d5364",
   "active": true,
   "applications": {
     "staging": {
@@ -91,5 +96,12 @@
       "origin": "https://somosnortex.com",
       "identity_sha256": "7995eb46427376f2da54ab6a179e0e18e9d6503aecf304d09b59a9373db7c2b4"
     }
+  },
+  "initial_production_base": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
+  "integration_provenance": {
+    "original_product_c": "d563c750dd62c9192df1d078c4c13308748f69bd",
+    "original_recovery_b": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
+    "controller_base": "535a1c50a90597f858810cbf14a26b72878cd60a",
+    "scope": "New image/launcher integration, v2 external prepare command; requires new CI, staging and authorization. Historical receipts are not release evidence."
   }
 }
