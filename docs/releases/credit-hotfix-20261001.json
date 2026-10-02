@@ -1,7 +1,7 @@
 {
-  "candidate_commit": "6c6d1d2608316bacc55bc9a9ce6b7b394f520dc8",
-  "candidate_tree": "5deba66796c14e069e2c7db376e2650edcf00ed7",
-  "base_commit": "e315c5a8c796f2bcbb285dc6fe4ef3699264766a",
+  "candidate_commit": "df6fc095fe8da39b4829336e79b78e4454997046",
+  "candidate_tree": "44fe586fac288df75ca0076c74c21de0e1e972b8",
+  "base_commit": "f656392d2c3a861d605e3da7012c7a9d4732e221",
   "patch_sha256": "a5715d6ae54fb07f36a0d4f2edd8059a09651cb258b0e1b669ead47f2550286a",
   "product_files": [
     "components/POS.tsx",
@@ -85,7 +85,7 @@
   "repository": "Noahstark23/nortex.20",
   "branch": "codex/hotfix-pos-credit-packaged-20261002",
   "recovery_branch": "codex/credit-recovery-packaged-20261002",
-  "base_tree": "883331c0f27acfae264c1752736a28af5638b012",
+  "base_tree": "b687bcd3cb27bfa0ca6adeca36ba80d7ca6d5364",
   "active": true,
   "applications": {
     "staging": {
@@ -102,6 +102,6 @@
     "original_product_c": "d563c750dd62c9192df1d078c4c13308748f69bd",
     "original_recovery_b": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
     "controller_base": "535a1c50a90597f858810cbf14a26b72878cd60a",
-    "scope": "New image/launcher integration; requires new CI, staging and authorization. Historical receipts are not release evidence."
+    "scope": "New image/launcher integration, v2 external prepare command; requires new CI, staging and authorization. Historical receipts are not release evidence."
   }
 }

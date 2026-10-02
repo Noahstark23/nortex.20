@@ -6,11 +6,11 @@ import { waitForExpectedRelease } from './verify-deployed-release.mjs';
 
 export const CREDIT_HOTFIX = Object.freeze({
     case: 'credit-20261001', repository: 'Noahstark23/nortex.20',
-    candidate: '6c6d1d2608316bacc55bc9a9ce6b7b394f520dc8',
-    base: 'e315c5a8c796f2bcbb285dc6fe4ef3699264766a',
+    candidate: 'df6fc095fe8da39b4829336e79b78e4454997046',
+    base: 'f656392d2c3a861d605e3da7012c7a9d4732e221',
     initialProductionBase: 'bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4',
-    tree: '5deba66796c14e069e2c7db376e2650edcf00ed7',
-    baseTree: '883331c0f27acfae264c1752736a28af5638b012',
+    tree: '44fe586fac288df75ca0076c74c21de0e1e972b8',
+    baseTree: 'b687bcd3cb27bfa0ca6adeca36ba80d7ca6d5364',
     branch: 'codex/hotfix-pos-credit-packaged-20261002',
     recoveryBranch: 'codex/credit-recovery-packaged-20261002',
     stageOrigin: 'https://staging.somosnortex.com', productionOrigin: 'https://somosnortex.com',

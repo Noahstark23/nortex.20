@@ -183,13 +183,16 @@ describe('excepción puntual: identidad, Git y fallo cerrado', () => {
         await verifyCreditHotfixRelease({ env, phase: 'production', git: fixtureGit(), verifyHealth, verifyGit: verifyFixtureGit });
         expect(verifyHealth.mock.calls.map(([request]) => request.expectedCommit)).toEqual([H.initialProductionBase, H.base]);
     });
-    it('C/B históricos no son candidatos ni receipts válidos para la integración nueva', () => {
-        for (const sha of ['d563c750dd62c9192df1d078c4c13308748f69bd', 'bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4']) {
+    it('C/B históricos y v1 no son candidatos ni receipts válidos para v2', () => {
+        const r = run(99);
+        for (const sha of ['d563c750dd62c9192df1d078c4c13308748f69bd', 'bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4',
+            '6c6d1d2608316bacc55bc9a9ce6b7b394f520dc8', 'e315c5a8c796f2bcbb285dc6fe4ef3699264766a']) {
             expect(() => assessCreditHotfix({ ...env, CANDIDATE_SHA: sha })).toThrow('HOTFIX_CANDIDATE_MISMATCH');
             expect(() => assessCreditHotfix({ ...recover, CANDIDATE_SHA: sha })).toThrow('HOTFIX_CANDIDATE_MISMATCH');
+            for (const field of ['candidate', 'base']) {
+                expect(() => assessHotfixEvidence({ evidence: { ...evidence(r), [field]: sha }, run: r, env, phase: 'healthy', environment: 'staging', target: H.candidate })).toThrow('HOTFIX_EVIDENCE_INVALID');
+            }
         }
-        const r = run(99);
-        expect(() => assessHotfixEvidence({ evidence: { ...evidence(r), candidate: 'd563c750dd62c9192df1d078c4c13308748f69bd' }, run: r, env, phase: 'healthy', environment: 'staging', target: H.candidate })).toThrow('HOTFIX_EVIDENCE_INVALID');
     });
     it('autorización preserva stage target y exige main controlador también en recuperación', async () => {
         const verifyHotfix = vi.fn().mockResolvedValue({}); const verifyStaging = vi.fn().mockResolvedValue({});
