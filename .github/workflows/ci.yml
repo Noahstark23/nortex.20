@@ -351,9 +351,9 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
-    env:
-      NORTEX_IMAGE_QA_ROOT: ${{ runner.temp }}/nortex-credit-image-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
+      - name: Preparar ruta efímera del ensayo
+        run: echo "NORTEX_IMAGE_QA_ROOT=$RUNNER_TEMP/nortex-credit-image-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
