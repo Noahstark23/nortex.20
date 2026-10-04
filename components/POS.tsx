@@ -752,8 +752,7 @@ const POS: React.FC = () => {
     );
     const storeCreditCheckout = useStoreCreditCheckout(token, headers, showToast);
     const { useStoreCredit, setUseStoreCredit, sourceReturnId: storeCreditSourceReturnId } = storeCreditCheckout;
-
-    useEffect(() => {
+                useEffect(() => {
         const customer = storeCreditCheckout.exchangeCustomer;
         if (!customer) return;
         setCustomerList((current) => current.some((item) => item.id === customer.id) ? current : [customer, ...current]);
@@ -770,13 +769,10 @@ const POS: React.FC = () => {
             const response = await fetch(`/api/customers?${params.toString()}`, { headers });
             if (!response.ok) return;
             const payload = await response.json();
-            const raw = Array.isArray(payload) ? payload : (payload.customers ?? []);
-            // La API serializa los Decimal de Prisma como texto: normalizar a
-            // número para que la aritmética del POS no concatene ("900" + 1960).
-            setCustomerList(raw.map((c: any) => ({
+                                    // Los Decimal de Prisma llegan serializados como texto: se pasan
+            // crudos a resolvePosCredit, que falla cerrado si son inválidos.
                 ...c,
-                creditLimit: Number(c.creditLimit ?? 0),
-                currentDebt: Number(c.currentDebt ?? 0),
+                            setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
             })));
         } catch (error) {
             console.error('Failed to fetch customers', error);
@@ -2829,7 +2825,8 @@ const POS: React.FC = () => {
 
     // SMART CREDIT CHECK — usa el helper canónico del hotfix (Decimal, falla
     // cerrado si el saldo es inválido: un saldo desconocido no habilita venta).
-    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, grandTotal), [selectedCustomer, grandTotal]);
+    // Igual que C′: se evalúa sobre amountDueD (después del saldo a favor).
+    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, amountDueD), [selectedCustomer, amountDueD]);
     const isCreditBlocked = !creditInfo || (!creditOverrideAuthorized &&
         (!selectedCustomer || selectedCustomer.isBlocked || creditInfo.exceedsLimit));
 
