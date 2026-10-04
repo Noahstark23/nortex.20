@@ -568,6 +568,7 @@ const Warehouses: React.FC = () => {
                                         <option value="">Bodega común (sin vendedor)</option>
                                         {equipo.map(u => <option key={u.id} value={u.id}>Carga de {u.name}</option>)}
                                     </select>
+                                    <p className="mt-1 text-[11px] leading-4 text-slate-400">La carga es la mercadería que el vendedor lleva en su ruta: lo que venda se descuenta de esta bodega.</p>
                                 </div>
                             )}
                         </div>
