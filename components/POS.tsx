@@ -772,7 +772,6 @@ const POS: React.FC = () => {
                                     // Los Decimal de Prisma llegan serializados como texto: se pasan
             // crudos a resolvePosCredit, que falla cerrado si son inválidos.
                             setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
-            })));
         } catch (error) {
             console.error('Failed to fetch customers', error);
         }
