@@ -91,6 +91,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
+import { resolvePosCredit, isUnverifiableCreditSale } from '../utils/posCredit';
 import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
@@ -769,6 +770,8 @@ const POS: React.FC = () => {
             const response = await fetch(`/api/customers?${params.toString()}`, { headers });
             if (!response.ok) return;
             const payload = await response.json();
+            // Los Decimal de Prisma llegan serializados como texto: se pasan
+            // crudos a resolvePosCredit, que falla cerrado si son inválidos.
             setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
         } catch (error) {
             console.error('Failed to fetch customers', error);
@@ -2819,27 +2822,12 @@ const POS: React.FC = () => {
     // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
     useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
 
-    // SMART CREDIT CHECK
-    const isCreditBlocked = useMemo(() => {
-        if (creditOverrideAuthorized) return false; // Owner override
-        if (!selectedCustomer) return true; // Cannot use credit without customer
-        if (selectedCustomer.isBlocked) return true;
-        if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
-        return false;
-    }, [selectedCustomer, grandTotal, creditOverrideAuthorized]);
-
-    // CREDIT THERMOMETER DATA
-    const creditInfo = useMemo(() => {
-        if (!selectedCustomer) return null;
-        const limit = selectedCustomer.creditLimit;
-        const currentDebt = selectedCustomer.currentDebt;
-        const debtPct = limit > 0 ? (currentDebt / limit) * 100 : 100;
-        const projectedDebt = currentDebt + grandTotal;
-        const projectedPct = limit > 0 ? (projectedDebt / limit) * 100 : 100;
-        const color = debtPct >= 80 || selectedCustomer.isBlocked ? 'red' : debtPct >= 50 ? 'yellow' : 'green';
-        const projectedColor = projectedPct >= 100 ? 'red' : projectedPct >= 80 ? 'yellow' : 'green';
-        return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
-    }, [selectedCustomer, grandTotal]);
+    // SMART CREDIT CHECK — usa el helper canónico del hotfix (Decimal, falla
+    // cerrado si el saldo es inválido: un saldo desconocido no habilita venta).
+    // Igual que C′: se evalúa sobre amountDueD (después del saldo a favor).
+    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, amountDueD), [selectedCustomer, amountDueD]);
+    const isCreditBlocked = !creditInfo || (!creditOverrideAuthorized &&
+        (!selectedCustomer || selectedCustomer.isBlocked || creditInfo.exceedsLimit));
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT') => {
         if (!currentShift) {
@@ -2901,6 +2889,14 @@ const POS: React.FC = () => {
         }
         setShowMobileCart(false);
         trackEvent('sale_checkout_started', { payment_method: method, cart_items: cart.length });
+
+        // Crédito no verificable: se rechaza antes del override y del panel.
+        // Igual que el hotfix C′: un override autoriza exceder el límite,
+        // nunca vender fiado sin números verificables.
+        if (isUnverifiableCreditSale(method, creditInfo)) {
+            showToast({ tone: 'error', title: 'No se pudo verificar el crédito', message: 'Volvé a seleccionar el cliente con conexión antes de venderle fiado.' });
+            return;
+        }
 
         // Front-end Block (skip if override authorized)
         if (method === 'CREDIT' && isCreditBlocked && !creditOverrideAuthorized) {
@@ -5545,7 +5541,7 @@ const POS: React.FC = () => {
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(grandTotal)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(amountDueD.toNumber())}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>
