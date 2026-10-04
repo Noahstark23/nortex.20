@@ -76,7 +76,7 @@ qa('ubicación física por producto: HTTP real y snapshot MySQL', () => {
             prisma.auditLog.count({ where: { tenantId: owner.tenantId } }),
         ]);
         expect(await read(owner, p.id)).toEqual({ status: 200, body: { success: true, data: {
-            productId: p.id, totalStock: '8.1250', unit: 'm', warehouses: [], hasMore: false, unlistedStock: '8.1250',
+            productId: p.id, totalStock: '8.1250', unit: 'm', warehouses: [], hasMore: false, unlistedStock: '8.1250', inactiveCount: 0,
         } } });
         expect(await prisma.$transaction([
             prisma.warehouse.count({ where: { tenantId: owner.tenantId } }),
@@ -90,7 +90,7 @@ qa('ubicación física por producto: HTTP real y snapshot MySQL', () => {
         const p = await product(owner, 3);
         const response = await read(bodeguero, p.id);
         expect(response.status).toBe(200);
-        expect(Object.keys(response.body.data).sort()).toEqual(['hasMore', 'productId', 'totalStock', 'unit', 'unlistedStock', 'warehouses']);
+        expect(Object.keys(response.body.data).sort()).toEqual(['hasMore', 'inactiveCount', 'productId', 'totalStock', 'unit', 'unlistedStock', 'warehouses']);
         expect(response.body.data.totalStock).toBe('3.0000');
         for (const field of ['price', 'cost', 'packPrice', 'wholesalePrice', 'tenantId', 'createdBy']) expect(JSON.stringify(response.body)).not.toContain(`"${field}"`);
         const mutation = await fetch(`${base}/api/warehouses`, { method: 'POST',
@@ -111,7 +111,7 @@ qa('ubicación física por producto: HTTP real y snapshot MySQL', () => {
         ] });
         const result = await read(owner, p.id);
         expect(result.status).toBe(200);
-        expect(result.body.data).toEqual({ productId: p.id, totalStock: '30.3000', unit: 'm', hasMore: false, unlistedStock: '5.0001', warehouses: [
+        expect(result.body.data).toEqual({ productId: p.id, totalStock: '30.3000', unit: 'm', hasMore: false, unlistedStock: '5.0001', inactiveCount: 1, warehouses: [
             { id: main.id, name: main.name, isDefault: true, isActive: true, stock: '15.1749', implicit: true },
             { id: other.id, name: other.name, isDefault: false, isActive: true, stock: '10.1250', implicit: false },
         ] });
@@ -183,6 +183,16 @@ qa('ubicación física por producto: HTTP real y snapshot MySQL', () => {
         expect(current.body.data.totalStock).toBe('20.0000');
         expect(current.body.data.warehouses.find((row: any) => row.isDefault).stock).toBe('12.0000');
         expect(current.body.data.warehouses.find((row: any) => row.id === secondary.id).stock).toBe('8.0000');
+    });
+
+    it('cuenta las bodegas desactivadas para que la ficha mande a reactivar', async () => {
+        const fresh = await actor();
+        await warehouse(fresh, 'Principal', { isDefault: true, isActive: false });
+        await warehouse(fresh, 'Depósito', { isActive: false });
+        const p = await product(fresh, 5);
+        const result = await read(fresh, p.id);
+        expect(result.status).toBe(200);
+        expect(result.body.data).toMatchObject({ productId: p.id, warehouses: [], inactiveCount: 2 });
     });
 
     it('acota a 100 ubicaciones activas y conserva fuera de lista la principal truncada e inactivas', async () => {
