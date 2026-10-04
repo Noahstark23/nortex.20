@@ -91,6 +91,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
+import { resolvePosCredit } from '../utils/posCredit';
 import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
@@ -769,7 +770,14 @@ const POS: React.FC = () => {
             const response = await fetch(`/api/customers?${params.toString()}`, { headers });
             if (!response.ok) return;
             const payload = await response.json();
-            setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
+            const raw = Array.isArray(payload) ? payload : (payload.customers ?? []);
+            // La API serializa los Decimal de Prisma como texto: normalizar a
+            // número para que la aritmética del POS no concatene ("900" + 1960).
+            setCustomerList(raw.map((c: any) => ({
+                ...c,
+                creditLimit: Number(c.creditLimit ?? 0),
+                currentDebt: Number(c.currentDebt ?? 0),
+            })));
         } catch (error) {
             console.error('Failed to fetch customers', error);
         }
@@ -2819,27 +2827,11 @@ const POS: React.FC = () => {
     // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
     useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
 
-    // SMART CREDIT CHECK
-    const isCreditBlocked = useMemo(() => {
-        if (creditOverrideAuthorized) return false; // Owner override
-        if (!selectedCustomer) return true; // Cannot use credit without customer
-        if (selectedCustomer.isBlocked) return true;
-        if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
-        return false;
-    }, [selectedCustomer, grandTotal, creditOverrideAuthorized]);
-
-    // CREDIT THERMOMETER DATA
-    const creditInfo = useMemo(() => {
-        if (!selectedCustomer) return null;
-        const limit = selectedCustomer.creditLimit;
-        const currentDebt = selectedCustomer.currentDebt;
-        const debtPct = limit > 0 ? (currentDebt / limit) * 100 : 100;
-        const projectedDebt = currentDebt + grandTotal;
-        const projectedPct = limit > 0 ? (projectedDebt / limit) * 100 : 100;
-        const color = debtPct >= 80 || selectedCustomer.isBlocked ? 'red' : debtPct >= 50 ? 'yellow' : 'green';
-        const projectedColor = projectedPct >= 100 ? 'red' : projectedPct >= 80 ? 'yellow' : 'green';
-        return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
-    }, [selectedCustomer, grandTotal]);
+    // SMART CREDIT CHECK — usa el helper canónico del hotfix (Decimal, falla
+    // cerrado si el saldo es inválido: un saldo desconocido no habilita venta).
+    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, grandTotal), [selectedCustomer, grandTotal]);
+    const isCreditBlocked = !creditInfo || (!creditOverrideAuthorized &&
+        (!selectedCustomer || selectedCustomer.isBlocked || creditInfo.exceedsLimit));
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT') => {
         if (!currentShift) {
