@@ -58,7 +58,8 @@ export const StockProductPane: React.FC<Props> = ({ product, revision, canReceiv
                     <span>{item.name}</span><strong>{formatQuantityValue(item.stock)} <small>{product.unit}</small></strong>
                     {warehouseId === item.id && <Check size={17} aria-hidden="true"/>}
                 </button>)}
-                {snapshot.data?.warehouses.length === 0 && <p>No hay bodegas activas. Creá una en Bodegas para recibir mercadería.</p>}
+                {snapshot.data?.warehouses.length === 0 && (snapshot.data?.inactiveCount ?? 0) === 0 && <p>No hay bodegas activas. Creá una en Bodegas para recibir mercadería.</p>}
+                {snapshot.data?.warehouses.length === 0 && (snapshot.data?.inactiveCount ?? 0) > 0 && <p>Tus bodegas están desactivadas. <button type="button" className="nx-fluid-press nx-stock-link" onClick={() => onNavigate('/app/warehouses')}>Reactivá una en Bodegas</button> para recibir mercadería.</p>}
                 {snapshot.data?.unlistedStock !== undefined && <p className="nx-stock-pane__notice">Existencias fuera de este desglose: {formatQuantityValue(snapshot.data.unlistedStock)} {product.unit}.</p>}
                 {snapshot.data?.hasMore && <button type="button" className="nx-fluid-press nx-stock-link" onClick={() => onNavigate('/app/warehouses')}>Ver todas las bodegas</button>}
                 {product.requiresBatchTracking && <p className="nx-stock-pane__notice">Existencias físicas. Revisá los lotes para conocer lo disponible para vender.</p>}
