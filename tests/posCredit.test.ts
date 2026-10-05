@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import Decimal from 'decimal.js';
-import { resolvePosCredit } from '../utils/posCredit';
+import { resolvePosCredit, isUnverifiableCreditSale } from '../utils/posCredit';
 
 const customer = (currentDebt: unknown = '900', creditLimit: unknown = '30000', isBlocked = false) => ({ currentDebt, creditLimit, isBlocked });
 

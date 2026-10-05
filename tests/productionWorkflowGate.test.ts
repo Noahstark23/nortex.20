@@ -59,6 +59,10 @@ const assertSeparatedPromotion = (ci: Workflow, production: Workflow) => {
         SOLE_OWNER_CONFIRMATION: soleOwnerConfirmation,
         NORTEX_PRODUCTION_DEPLOY_ENABLED: '$' + '{{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}',
         STAGING_URL: '$' + '{{ vars.STAGING_URL }}',
+        PROD_URL: '$' + '{{ vars.PROD_URL }}',
+        CREDIT_HOTFIX_20261001: '$' + '{{ inputs.credit_hotfix_20261001 }}',
+        CREDIT_HOTFIX_ACTION: '$' + '{{ inputs.credit_hotfix_action }}',
+        CREDIT_HOTFIX_PHASE: 'production',
     });
     const webhook = deploy.steps.find((step: Workflow) => step.env?.WEBHOOK === productionWebhook);
     assert.ok(webhook, 'webhook de producción requerido solo después de preflight');

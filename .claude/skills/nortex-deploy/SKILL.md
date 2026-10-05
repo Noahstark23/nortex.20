@@ -129,3 +129,7 @@ Registrar por separado código local, CI, staging, autorización, producción sa
 observación. Un rollback de aplicación conserva la migración aditiva: no borrar
 columnas para volver atrás. Los informes de `docs/releases/` son evidencia histórica;
 la receta vigente es `docs/runbooks/release-promotion.md`.
+
+## Excepción puntual autorizada de crédito — 2026-10-02
+
+Sólo el manifiesto docs/releases/credit-hotfix-20261001.json activo habilita C=d563c750dd62c9192df1d078c4c13308748f69bd sobre B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 y recuperación explícita a B. Consultar la sección ejecutable del runbook release-promotion. Se conservan los dos workflows, dispatch/environment desde main, controlador M confiable y vigente, CI M/C/B separados, dos confirmaciones, reviewer/bypass/flags, identidad/pin/AutoDeploy false y health. Probar C→B→C en staging y smoke/PWA/recuperación ordinaria antes de producción. La recuperación de C averiado exige recibo de solicitud C a la misma app, no salud ficticia. No pedir de nuevo la autorización genérica ya recibida; tampoco inventar una compuerta superada. No cambiar app/git_branch/ACL/secretos, aceptar data loss, ejecutar controles del candidato con secretos ni usar assets/SSH para eludir el proceso. La ruta normal main permanece intacta y la excepción se deshabilita por PR al cerrar.

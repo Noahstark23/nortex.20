@@ -39,6 +39,7 @@ export function WarehouseWorkspaceHeader(props: {
 export function WarehouseWorkspaceManagement({ open, busy, onClose, children }: { open: boolean; busy: boolean; onClose: () => void; children: React.ReactNode }) {
     return <FluidSheet open={open} onClose={onClose} labelledBy="warehouse-management-title" closeOnBackdrop={!busy} closeOnEscape={!busy} dragToDismiss={!busy} panelClassName="warehouse-management-sheet">
         <header className="stock-workspace-title"><h2 id="warehouse-management-title">Administrar bodegas</h2><button onClick={onClose} disabled={busy} aria-label="Cerrar administración de bodegas" className="stock-workspace-quiet nx-fluid-press"><X size={20}/></button></header>
+        <p className="warehouse-management-help">Una bodega es un lugar donde guardás tu mercadería: tu tienda, tu depósito, o la carga que un vendedor lleva en su ruta.</p>
         <div className="warehouse-management-body">{children}</div>
     </FluidSheet>;
 }

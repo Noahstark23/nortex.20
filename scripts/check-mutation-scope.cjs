@@ -129,6 +129,7 @@ const PISO_MUTANTES = {
     // Medido killed; el contrato AST también protege su firma y cuerpo completos.
     'backend/lib/shiftCloseReport.ts': 1,
     'backend/lib/reportMoney.ts': 73,
+    'backend/lib/quotationTotals.ts': 10,
     // Agrupación exacta de cantidades vendidas: 67/67.
     'backend/lib/salesQuantityReport.ts': 67,
     // Saldo recibido aún facturable por producto: 16/16.

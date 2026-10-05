@@ -92,6 +92,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
+import { resolvePosCredit, isUnverifiableCreditSale } from '../utils/posCredit';
 import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
@@ -770,6 +771,8 @@ const POS: React.FC = () => {
             const response = await fetch(`/api/customers?${params.toString()}`, { headers });
             if (!response.ok) return;
             const payload = await response.json();
+            // Los Decimal de Prisma llegan serializados como texto: se pasan
+            // crudos a resolvePosCredit, que falla cerrado si son inválidos.
             setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
         } catch (error) {
             console.error('Failed to fetch customers', error);
@@ -2885,7 +2888,10 @@ const POS: React.FC = () => {
         setShowMobileCart(false);
         trackEvent('sale_checkout_started', { payment_method: method, cart_items: cart.length });
 
-        if (method === 'CREDIT' && !creditInfo) {
+        // Crédito no verificable: se rechaza antes del override y del panel.
+        // Igual que el hotfix C′: un override autoriza exceder el límite,
+        // nunca vender fiado sin números verificables.
+        if (isUnverifiableCreditSale(method, creditInfo)) {
             showToast({ tone: 'error', title: 'No se pudo verificar el crédito', message: 'Volvé a seleccionar el cliente con conexión antes de venderle fiado.' });
             return;
         }
@@ -5533,7 +5539,7 @@ const POS: React.FC = () => {
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(amountDueD)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(amountDueD.toNumber())}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>

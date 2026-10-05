@@ -362,7 +362,7 @@ libro firmado de caja · keyring JWT rotable.
 La ruta vigente de promoción es `docs/runbooks/release-promotion.md`.
 Los expedientes de `docs/releases/` prueban su candidato y fecha, no habilitan
 una release nueva. CI de un PR y CI de main son evidencias distintas: la promoción
-exige el candidato exacto vigente de main y staging manual del mismo SHA.
+exige el candidato exacto vigente de main y staging manual del mismo SHA. La única excepción puntual autorizada es crédito20261001: main conserva el SHA de controles M y las protecciones; los workflows existentes pueden promover exclusivamente C=d563c750dd62c9192df1d078c4c13308748f69bd o recuperar B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 conforme al manifiesto y runbook, con revisión, CI separado, staging/drill/smoke y sin bypass. No es una ruta genérica de ramas ni permite assets directos.
 
 Actualizar las guías operativas al cambiar sus contratos, con propietario y
 referencias ejecutables; conservar resultados históricos fechados. El índice
@@ -370,3 +370,12 @@ referencias ejecutables; conservar resultados históricos fechados. El índice
 No declarar todos los documentos correctos por un barrido de texto ni por
 validación de enlaces. El equipo y reglas de ownership están en
 `docs/EQUIPO_DESARROLLO_NORTEX.md`.
+
+
+## WhatsApp comercial — C08/C10 local 2026-09-29
+
+Ferretería, búsqueda guiada, precio detalle y unidad base. Tenant de administración viene del JWT; canal firmado determina negocio receptor. El comprador no gana permisos administrativos por su teléfono. Cotización determinista no cobra, reserva stock ni registra venta. El modelo no confirma.
+
+Recepción enruta por canal: commerceEnabled o commercePolicyVersion>0 mantiene propiedad comercial aun pausada. WHATSAPP_COMMERCE_ENABLED controla ejecución del worker; nunca selecciona un handler global. Canales legacy activos conservan cola en memoria; drenar antes de adoptar política y no ejecutar ambos motores para el mismo tráfico. Inbox comercial commit antes de ACK; callbacks mixtos encolan legacy después del commit, sin prometer durabilidad legacy.
+
+Worker separado, heartbeat durable y estados de cola por tenant. Intento registrado antes de red; UNKNOWN no se reenvía ni resuelve por coincidencia aproximada. ID aceptado no demuestra entrega. SUPER_ADMIN tramita solicitudes versionadas; PREPARED no significa conectado. Runbook: docs/runbooks/whatsapp-commerce.md. Gates locales, CI, staging, recepción real y aceptación comercial son distintos. No activa producción ni acepta permisos nuevos.
