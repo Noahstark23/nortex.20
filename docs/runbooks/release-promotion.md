@@ -282,6 +282,39 @@ docs-only no puede crear ni ejecutar un job de staging o producción.
 
 ## Excepción puntual autorizada: crédito 2026-10-01 y recuperación
 
+### C′/B′ empaquetados: cadena fija acreditada el 4 de octubre
+
+Para los candidatos vigentes del manifiesto, C′=`df6fc095fe8da39b4829336e79b78e4454997046`
+y B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, la cadena ya acreditada es
+`37164392068 → 37165601168 → 37166458396`, intento 1, controlador productor
+`526fb15440d7a993da2862baa45baf7e4bf1cb92`. No repetirla porque main haya avanzado.
+Los valores C/B originales del texto histórico siguiente no son los candidatos
+de esta entrega; manda el manifiesto inmutable `credit-hotfix-20261001.json`.
+
+Si el ejecutor actual no tiene una cadena propia, producción puede verificar
+exclusivamente esos tres runs. El verificador fija controlador, digest del
+manifiesto, IDs y SHA-256 de los tres artifacts de salud, intento, destinos y
+enlaces; consulta procedencia y jobs del intento productor y conserva el orden
+temporal. No admite sustituir un artifact, cambiar esos valores por entorno ni
+usar otro recibo histórico. Un artifact ausente, expirado o adulterado bloquea.
+Una cadena propia presente pero inválida no se oculta con la excepción.
+
+El ejecutor sigue siendo el main actual y requiere su propio CI antes y después
+del environment. Los nuevos recibos productivos identifican a ese ejecutor.
+Recuperar B′ exige además la solicitud productiva de C′ de ese mismo ejecutor y
+app, enlazada exactamente al C′ final y al B′ de la cadena fija; se revalidan los
+tres artifacts. Para esa recuperación no se repite staging B′. Este caso acotado
+sustituye los pasos de repetición del drill y staging B del procedimiento original.
+
+No cambia la salud requerida, el pin de Coolify, la aprobación del environment,
+backup/restauración, persistencia, secretos, parada efectiva ni observación. El
+manifiesto, C′/B′ y su schema permanecen intactos. Integrar estos controles no
+autoriza ni dispara una promoción. Regresión específica:
+`tests/creditHotfixFixedStagingChain.test.ts`; fixtures saneados del API/ZIP de
+GitHub en `tests/fixtures/credit-hotfix-staging-chain-20261004/`.
+
+### Contrato y procedimiento originales
+
 Esta excepción se aprobó expresamente el 2026-10-02 para el arreglo y su recuperación. No convierte una autorización genérica en permiso para otros SHAs. Sólo existe mientras `docs/releases/credit-hotfix-20261001.json` tiene active=true. Las reglas anteriores siguen vigentes cuando `credit_hotfix_20261001=false`, valor por defecto.
 
 Identidades fijas: C=`d563c750dd62c9192df1d078c4c13308748f69bd`, B=`bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4`; C tiene un único padre B y árbol `8038a539d7b4479625f9eadfd7885c43a914a154`. El manifiesto registra exactamente las nueve fuentes de producto/QA y hashes, y conserva backend/schema/migraciones/lockfile/Docker/Compose/.github de B. Publicar C en `codex/hotfix-pos-credit-20261001` sin alterar el commit. Si se necesita CI nuevo de B, publicar B en `codex/credit-hotfix-recovery-20261001`. No integrar el árbol de producto C en main para desplegar luego los cambios ajenos de main.
