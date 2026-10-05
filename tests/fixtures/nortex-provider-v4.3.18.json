@@ -1,0 +1,206 @@
+{
+  "provider": "v4.3.18",
+  "sourceHashes": {
+    "ValidationPatterns.php": "3a8088b37c283aa142918e95589d8bfdf4cd75eef8ec2f876bbc4020411d9f98",
+    "docker.php": "2bf1efbece9aa696475647129376faa9280e1e69ebf4725c4bb217fa5038b0b9",
+    "ApplicationDeploymentJob.php": "9a78c9ab121ba13cbf4a2cb280d4754a140c3769c7f66ea82fe6413e1c857f45",
+    "parsers.php": "763ab0971ea3f6b3345c0e4b2a31b175997d695cd81a1f66aea3106c302c2c8a",
+    "General.php": "8061ad53fbbf49893ced13e6237dd3f3b2d155dd9220b34b3b3766f5f747ada9"
+  },
+  "scope": "Real validation/flags/build-args functions, exact ordered command branches mirrored locally; no full Laravel deployment or installed-provider attestation",
+  "positiveControl": "DOCKER_BUILDKIT=1 docker compose -f /artifacts/synthetic/docker-compose.yml --env-file /artifacts/build-time.env --project-directory /artifacts/synthetic build --build-arg SYNTHETIC_FLAG app",
+  "cases": [
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": false,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": false,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": true,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": true,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": false,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": false,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": true,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": true,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh staging prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh staging prepare"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "start",
+      "preserve": false,
+      "input": "sh scripts/nortex-release.sh staging start",
+      "output": "sh scripts/nortex-release.sh staging start"
+    },
+    {
+      "version": "v2",
+      "target": "staging",
+      "phase": "start",
+      "preserve": true,
+      "input": "sh scripts/nortex-release.sh staging start",
+      "output": "sh scripts/nortex-release.sh staging start"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": false,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": false,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": true,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": false,
+      "hasArgs": true,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": false,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": false,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": true,
+      "kit": false,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "prepare",
+      "secrets": true,
+      "hasArgs": true,
+      "kit": true,
+      "input": "sh scripts/nortex-release.sh production prepare",
+      "output": "DOCKER_BUILDKIT=1 sh scripts/nortex-release.sh production prepare"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "start",
+      "preserve": false,
+      "input": "sh scripts/nortex-release.sh production start",
+      "output": "sh scripts/nortex-release.sh production start"
+    },
+    {
+      "version": "v2",
+      "target": "production",
+      "phase": "start",
+      "preserve": true,
+      "input": "sh scripts/nortex-release.sh production start",
+      "output": "sh scripts/nortex-release.sh production start"
+    }
+  ]
+}
