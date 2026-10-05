@@ -18,6 +18,24 @@ const positiveId = value => Number.isSafeInteger(value) && value > 0;
 const paths = { staging: '.github/workflows/release-staging.yml', production: '.github/workflows/release-production.yml' };
 const artifactName = (phase, environment) => 'credit-hotfix-' + environment + '-' + (phase === 'requested' ? 'attempt' : 'health');
 
+// Única cadena histórica aprobada para C′/B′. No se configura por inputs/env ni
+// admite otros artifacts de ese controlador. El manifiesto original no cambia.
+const FIXED_STAGING = Object.freeze({
+    controller: '526fb15440d7a993da2862baa45baf7e4bf1cb92',
+    manifest: 'ceaa32441b04b2f97882623844e7ce4c2db1fa6b2672347b0c2555ffb63f105e',
+    runs: Object.freeze([
+        Object.freeze({ id: 37164392068, target: CREDIT_HOTFIX.candidate, artifact: 11289156496,
+            digest: 'sha256:294a29adf1b194782df36831070e2e18b69448bcad83c5b34b5fa2a35c91bef7',
+            previous: null, recovery: null }),
+        Object.freeze({ id: 37165601168, target: CREDIT_HOTFIX.base, artifact: 11288967947,
+            digest: 'sha256:fc0b06f315cc7092a84f8c6546a16b4574af05794f79c4f3626c52106a48bb54',
+            previous: 37164392068, recovery: null }),
+        Object.freeze({ id: 37166458396, target: CREDIT_HOTFIX.candidate, artifact: 11289344736,
+            digest: 'sha256:9a2eb61ffc425a83a59bf5e6b12d88bcc71790e1ed47dd9327db8a1c01fa1f02',
+            previous: null, recovery: 37165601168 }),
+    ]),
+});
+
 // Sólo GET por Octokit oficial, actions:read. No imprime respuestas, descarga
 // a disco ni sigue URLs proporcionadas por el contenido del artifact.
 const pages = async (method, args, field) => {
@@ -128,7 +146,7 @@ export const assessHotfixEvidence = ({ evidence, run, env, phase, environment, t
         || !bindingMatches(evidence.binding, env, environment)) fail('HOTFIX_EVIDENCE_INVALID');
     return evidence;
 };
-const readRunEvidence = async ({ github, env, run, phase, environment, target, optional = false }) => {
+const readRunEvidence = async ({ github, env, run, phase, environment, target, optional = false, fixed = null }) => {
     if (!manualControlRun(run, env, environment)) {
         if (optional) return null;
         fail('HOTFIX_RUN_PROVENANCE_INVALID');
@@ -142,6 +160,7 @@ const readRunEvidence = async ({ github, env, run, phase, environment, target, o
         || artifact.size_in_bytes > 131072 || artifact.workflow_run?.id !== run.id
         || artifact.workflow_run?.head_sha !== env.GITHUB_SHA || artifact.workflow_run?.head_branch !== 'main'
         || !/^sha256:[a-f0-9]{64}$/.test(artifact.digest || '')) fail('HOTFIX_ARTIFACT_METADATA_INVALID');
+    if (fixed && (artifact.id !== fixed.artifact || artifact.digest !== fixed.digest)) fail('HOTFIX_FIXED_STAGING_ARTIFACT_MISMATCH');
     const { data } = await safeRest(() => github.rest.actions.downloadArtifact({ ...REPO, artifact_id: artifact.id, archive_format: 'zip' }));
     if (!(data instanceof ArrayBuffer) && !ArrayBuffer.isView(data)) fail('HOTFIX_ARTIFACT_BYTES_INVALID');
     const bytes = Buffer.from(data instanceof ArrayBuffer ? data : data.buffer, data.byteOffset || 0, data.byteLength);
@@ -157,6 +176,9 @@ const readRunEvidence = async ({ github, env, run, phase, environment, target, o
     if (!manualControlRun(sourceRun, env, environment) || sourceRun.id !== run.id
         || sourceRun.run_attempt !== decoded.run_attempt) fail('HOTFIX_ATTEMPT_PROVENANCE_INVALID');
     const evidence = assessHotfixEvidence({ evidence: decoded, run: sourceRun, env, phase, environment, target: decoded.target });
+    if (fixed && (sourceRun.id !== fixed.id || sourceRun.run_attempt !== 1
+        || evidence.target !== fixed.target || evidence.previous_run_id !== fixed.previous
+        || evidence.recovery_run_id !== fixed.recovery)) fail('HOTFIX_FIXED_STAGING_CHAIN_MISMATCH');
     if (evidence.target !== target) {
         if (optional) return null;
         fail('HOTFIX_EVIDENCE_TARGET_MISMATCH');
@@ -181,10 +203,11 @@ const readRunEvidence = async ({ github, env, run, phase, environment, target, o
     }
     return { run: sourceRun, evidence };
 };
-const byId = async ({ github, env, id, phase = 'healthy', environment = 'staging', target }) => {
+const byId = async ({ github, env, id, phase = 'healthy', environment = 'staging', target, fixed = null }) => {
     if (!positiveId(id)) fail('HOTFIX_EVIDENCE_LINK_REQUIRED');
     const { data: run } = await safeRest(() => github.rest.actions.getWorkflowRun({ ...REPO, run_id: id }));
-    return readRunEvidence({ github, env, run, phase, environment, target });
+    if (fixed && !run) fail('HOTFIX_RELEASE_EVIDENCE_REQUIRED');
+    return readRunEvidence({ github, env, run, phase, environment, target, fixed });
 };
 const latest = async ({ github, env, phase = 'healthy', environment = 'staging', target, optional = false }) => {
     const workflow_id = environment === 'staging' ? 'release-staging.yml' : 'release-production.yml';
@@ -198,16 +221,33 @@ const latest = async ({ github, env, phase = 'healthy', environment = 'staging',
 };
 const ordered = (later, earlier) => later.run.id !== earlier.run.id
     && Date.parse(later.run.created_at) > Date.parse(earlier.run.created_at);
-const verifyRecoveryChain = async ({ github, env, final }) => {
-    const recovered = await byId({ github, env, id: final.evidence.recovery_run_id, target: CREDIT_HOTFIX.base });
-    const initial = await byId({ github, env, id: recovered.evidence.previous_run_id, target: CREDIT_HOTFIX.candidate });
+const requireRecoveryOrder = (final, recovered, initial) => {
     if (!ordered(final, recovered) || !ordered(recovered, initial)
         || JSON.stringify(final.evidence.binding) !== JSON.stringify(recovered.evidence.binding)
         || JSON.stringify(final.evidence.binding) !== JSON.stringify(initial.evidence.binding)) fail('HOTFIX_RECOVERY_ORDER_INVALID');
+};
+const verifyRecoveryChain = async ({ github, env, final }) => {
+    const recovered = await byId({ github, env, id: final.evidence.recovery_run_id, target: CREDIT_HOTFIX.base });
+    const initial = await byId({ github, env, id: recovered.evidence.previous_run_id, target: CREDIT_HOTFIX.candidate });
+    requireRecoveryOrder(final, recovered, initial);
     return recovered;
 };
 const stageEnv = env => ({ ...env, HOTFIX_APP_URL: env.STAGING_URL, HOTFIX_APP_UUID: env.COOLIFY_STAGING_APPLICATION_UUID });
 const productionEnv = env => ({ ...env, HOTFIX_APP_URL: env.PROD_URL, HOTFIX_APP_UUID: env.COOLIFY_PROD_APPLICATION_UUID });
+
+const fixedStagingChain = async ({ github, env }) => {
+    if (manifestDigest() !== FIXED_STAGING.manifest) fail('HOTFIX_FIXED_STAGING_MANIFEST_MISMATCH');
+    // Sólo las lecturas de estos tres runs usan su controlador productor. CI,
+    // main, contexto nuevo y recibos productivos conservan el ejecutor actual.
+    const historicalEnv = { ...stageEnv(env), GITHUB_SHA: FIXED_STAGING.controller };
+    const results = [];
+    for (const fixed of FIXED_STAGING.runs) {
+        results.push(await byId({ github, env: historicalEnv, id: fixed.id, target: fixed.target, fixed }));
+    }
+    const [initial, recovered, final] = results;
+    requireRecoveryOrder(final, recovered, initial);
+    return { final, recovered };
+};
 
 export const prepareHotfixReleaseEvidence = async ({ github, env = process.env, phase, contextPath = CONTEXT_PATH }) => {
     assessCreditHotfix(env);
@@ -233,17 +273,27 @@ export const prepareHotfixReleaseEvidence = async ({ github, env = process.env, 
     } else if (phase === 'production') {
         const boundStage = stageEnv(env);
         if (action === 'promote') {
-            const final = await latest({ github, env: boundStage, target: CREDIT_HOTFIX.candidate });
-            const recovered = await verifyRecoveryChain({ github, env: boundStage, final });
-            previous_run_id = final.run.id; recovery_run_id = recovered.run.id;
+            const current = await latest({ github, env: boundStage, target: CREDIT_HOTFIX.candidate, optional: true });
+            // Una cadena actual presente pero inválida bloquea: no se oculta con
+            // el histórico. Sólo la ausencia admite la excepción fija aprobada.
+            const chain = current ? { final: current, recovered: await verifyRecoveryChain({ github, env: boundStage, final: current }) }
+                : await fixedStagingChain({ github, env });
+            previous_run_id = chain.final.run.id; recovery_run_id = chain.recovered.run.id;
         } else {
             // La solicitud debe provenir del mismo controlador y app, y haber
             // pasado staging/recovery. No exige health sano del C averiado.
             const request = await latest({ github, env: productionEnv(env), phase: 'requested', environment: 'production', target: CREDIT_HOTFIX.candidate });
-            const final = await byId({ github, env: boundStage, id: request.evidence.previous_run_id, target: CREDIT_HOTFIX.candidate });
-            await verifyRecoveryChain({ github, env: boundStage, final });
-            const restoredStage = await latest({ github, env: boundStage, target: CREDIT_HOTFIX.base });
-            previous_run_id = request.run.id; recovery_run_id = restoredStage.run.id;
+            if (request.evidence.previous_run_id === FIXED_STAGING.runs[2].id) {
+                if (request.evidence.recovery_run_id !== FIXED_STAGING.runs[1].id) fail('HOTFIX_FIXED_STAGING_CHAIN_MISMATCH');
+                const chain = await fixedStagingChain({ github, env });
+                recovery_run_id = chain.recovered.run.id;
+            } else {
+                const final = await byId({ github, env: boundStage, id: request.evidence.previous_run_id, target: CREDIT_HOTFIX.candidate });
+                await verifyRecoveryChain({ github, env: boundStage, final });
+                const restoredStage = await latest({ github, env: boundStage, target: CREDIT_HOTFIX.base });
+                recovery_run_id = restoredStage.run.id;
+            }
+            previous_run_id = request.run.id;
         }
     } else fail('HOTFIX_PHASE_INVALID');
     const result = { controller: env.GITHUB_SHA, action, target: hotfixTarget(env), phase, previous_run_id, recovery_run_id };
