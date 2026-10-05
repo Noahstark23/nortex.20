@@ -4,7 +4,7 @@ import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
-import { resolvePosCredit } from '../utils/posCredit';
+
 import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
@@ -17,7 +17,7 @@ import { usePosSearchIndex } from '../hooks/usePosSearchIndex';
 import { usePosCatalog } from '../hooks/usePosCatalog';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
-    decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente,
+    decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente
     resumenGuardado, leerAparcados, serializarAparcados,
     claveCarritoLegacy, claveAparcadosLegacy, claveLineaCarrito,
     claveTraspasoCarrito, leerTraspasoCarrito, resolverIdentidadPersistencia,
