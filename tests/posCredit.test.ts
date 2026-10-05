@@ -51,3 +51,24 @@ describe('preview Decimal del crédito POS', () => {
         expect(resolvePosCredit(JSON.parse(JSON.stringify(customer('25', '2000'))), 1960)?.projectedDebt).toBe('1985');
     });
 });
+
+describe('invariante: crédito no verificable se rechaza siempre (N-REV-20261004-01 v2)', () => {
+    const valid = resolvePosCredit({ currentDebt: '900', creditLimit: '30000', isBlocked: false }, '1960');
+    it('CREDIT con datos inválidos (creditInfo null) se rechaza', () => {
+        expect(isUnverifiableCreditSale('CREDIT', null)).toBe(true);
+    });
+    it('CREDIT con datos inválidos se rechaza aunque el override/PIN esté autorizado', () => {
+        // El guard corre ANTES del override: la autorización de exceder el
+        // límite nunca habilita vender fiado sin números verificables.
+        expect(isUnverifiableCreditSale('CREDIT', null)).toBe(true);
+    });
+    it('CREDIT con datos verificables no lo rechaza este guard (lo decide el límite/override)', () => {
+        expect(valid).not.toBeNull();
+        expect(isUnverifiableCreditSale('CREDIT', valid)).toBe(false);
+    });
+    it('otros métodos no pasan por este guard aunque el crédito sea inválido', () => {
+        for (const method of ['CASH', 'CARD', 'QR', 'TRANSFER']) {
+            expect(isUnverifiableCreditSale(method, null)).toBe(false);
+        }
+    });
+});
