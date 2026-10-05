@@ -33,3 +33,15 @@ export const resolvePosCredit = (
         return null;
     }
 };
+
+/**
+ * Invariante del hotfix C′ (N-REV-20261004-01 v2): una operación a crédito con
+ * datos no verificables se rechaza SIEMPRE, incluso con override/PIN
+ * autorizado. El override solo autoriza exceder el límite, nunca vender fiado
+ * sin números verificables. Función pura para poder acreditar el invariante
+ * con tests sin montar el POS.
+ */
+export const isUnverifiableCreditSale = (
+    method: string,
+    creditInfo: ReturnType<typeof resolvePosCredit>,
+): boolean => method === 'CREDIT' && creditInfo === null;
