@@ -17,7 +17,7 @@ import { usePosSearchIndex } from '../hooks/usePosSearchIndex';
 import { usePosCatalog } from '../hooks/usePosCatalog';
 import {
     claveCarrito, claveAparcados, leerCarritoGuardado, serializarCarrito,
-    decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente
+    decidirRestauracion, decidirRestauracionAparcado, decidirRecuperacionPendiente,
     resumenGuardado, leerAparcados, serializarAparcados,
     claveCarritoLegacy, claveAparcadosLegacy, claveLineaCarrito,
     claveTraspasoCarrito, leerTraspasoCarrito, resolverIdentidadPersistencia,
