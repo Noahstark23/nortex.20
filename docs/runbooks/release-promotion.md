@@ -282,6 +282,13 @@ docs-only no puede crear ni ejecutar un job de staging o producción.
 
 ## Excepción puntual autorizada: crédito 2026-10-01 y recuperación
 
+El paquete integrado en main se documenta en
+[`deploy/nortex/README.md`](../../deploy/nortex/README.md). La excepción siguiente
+conserva los SHAs inmutables del hotfix; no promueve automáticamente el producto
+actual de main. Antes de elegir la ruta, consultar la
+[auditoría del 6 de octubre](../releases/2026-10-06-deployment-audit.md): CI histórico,
+contrato del cliente, schema remoto y build son evidencias distintas.
+
 ### C′/B′ empaquetados: cadena fija acreditada el 4 de octubre
 
 Para los candidatos vigentes del manifiesto, C′=`df6fc095fe8da39b4829336e79b78e4454997046`

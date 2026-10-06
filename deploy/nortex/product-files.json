@@ -1,11 +1,11 @@
 {
   "version": 1,
-  "origin": "ae8bed8fee5a57c9b274dac632a6e816c2b2c924",
+  "origin": "a0f05a0a36a5cac94adf6a828ca575d0146b8bca",
   "files": {
     "backend/server.ts": "ad12294bf2f854f04e3c6b7d1c3fdbba76cfd7629ac89a634b8f1d06f303e092",
     "backend/prisma/schema.prisma": "94d7cda7cb9d76c9819681729b84d947d23e8e48ed8d6bdf5223826dd67293a4",
-    "package.json": "49945b2a7ef10954c3e07fabe3f2e1519bb159392b10c7f4b973a0100360b2ed",
-    "package-lock.json": "d2ee4115a5672416f24f334d7f91c3b2537f86d5ee77a95b7c5df730c2eaa7ad",
+    "package.json": "3fed03d559c4d3245d6c1f64b024113227dc5388ac6355831ea2f693bda5655d",
+    "package-lock.json": "03ee0e6c1fdd0fbf428e41b0acd2bdddc366a18ea719325d1ab011bb2e78f942",
     "scripts/docker-entrypoint.sh": "148e44c6cd059ae8c82651de8c7e62d70edca10f83d2bbef4908aba0e14f725e",
     "components/POS.tsx": "91d83dc7cd6b2bc2056516e637dd5d86a94fceba01245a870ed249d10d4fc776",
     "utils/posCredit.ts": "d25be1b4fd29aed5efb87e583329a12b1b2435190282892343d141af98a6786a",
