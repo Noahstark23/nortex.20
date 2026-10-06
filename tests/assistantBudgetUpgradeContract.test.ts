@@ -5,10 +5,17 @@ const delta = (paths: string[]) => paths.map(path => `A\0${path}\0`).join('');
 const extra = 'backend/prisma/migrations/20260924010000_next_feature/migration.sql';
 
 describe('contrato del espejo completo de upgrade de presupuesto', () => {
-  it('fija el origen productivo y acredita los once SQL de este candidato', () => {
+  it('fija el origen productivo y acredita los doce SQL de este candidato', () => {
     expect(BASELINE_COMMIT).toBe('20fda8dc196b808b0508e53d1253510cacd7096b');
-    expect(MIGRATION_PATHS).toHaveLength(11);
+    expect(MIGRATION_PATHS).toHaveLength(12);
     expect(assertMigrationManifest(delta([...MIGRATION_PATHS].reverse()))).toEqual([...MIGRATION_PATHS].sort());
+  });
+
+  it('exige incluir la expansión del admin en el espejo, sin aceptar el manifiesto anterior', () => {
+    const admin = 'backend/prisma/migrations/202609300010_platform_admin_evidence/migration.sql';
+    expect(MIGRATION_PATHS).toContain(admin);
+    const previous = MIGRATION_PATHS.filter(path => path !== admin);
+    expect(() => assertMigrationManifest(delta(MIGRATION_PATHS), '', previous)).toThrow('TODOS');
   });
 
   it('rechaza el manifiesto antiguo de cuatro SQL aunque esos cuatro sean correctos', () => {
