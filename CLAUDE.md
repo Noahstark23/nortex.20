@@ -82,6 +82,9 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   schema y verifica compatibilidad sin DDL. El entrypoint histórico con `db push`
   queda fuera del CMD; una expansión exige preparación aditiva revisada y respaldo
   restaurable. Los backfills van en la aplicación con patrón perezoso.
+  Prepare valida también la imagen contra la base antes del corte; CI verify
+  ensaya Dockerfile/CMD y la migración comercial en MySQL sintético. El contrato
+  de producción describe el destino posterior a esa migración, no su ejecución.
   Prisma pinneado a **6.4.1** — correr
   `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
 - Auth: JWT. `authenticate` (`backend/middleware/auth.ts`) pone `req.tenantId`,

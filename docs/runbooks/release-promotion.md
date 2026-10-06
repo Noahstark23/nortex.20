@@ -30,6 +30,13 @@ La preparación local del 2026-09-19 y la última observación remota constan en
 son una fotografía fechada, no valores para copiar en una promoción futura.
 Preparar el expediente no autoriza ejecutar staging ni producción.
 
+El [diagnóstico de runtime del 6 de octubre](../releases/2026-10-06-runtime-repair.md)
+registra la expansión comercial pendiente de producción. CI verify debe ensayar
+la imagen y el CMD exactos; prepare ejecuta el gate antes de detener el stack.
+El contrato posterior a migración no acredita que la base real ya esté migrada.
+No promover hasta verificar respaldo restaurable, expansión autorizada y rollback
+compatible con el esquema expandido. Un rollback de código no revierte DDL.
+
 ## El contrato que evita una promoción accidental
 
 El incidente que motivó este cambio permitió que un push a `main`, incluso uno de

@@ -12,14 +12,14 @@ CI anterior del hotfix estuviera verde.
 conteos reales. CI también ejecuta el sellador sobre los assets y SEO construidos;
 un cliente o manifiesto desactualizado debe fallar antes de llegar a Coolify.
 
-Actualizar el contrato del cliente **no acredita la base remota**. Se mantienen
-sin cambios los fingerprints de staging y producción, la identidad, confirmación,
-preflight de sólo lectura y rechazo de DDL. El contrato histórico de producción
-no acredita las diez tablas comerciales que main ahora utiliza: antes de promover
-main se necesita comprobar la compatibilidad y, si falta esa expansión, preparar
-una migración aditiva con backup y restauración verificados. No cambiar hashes de
-la base ni quitar el gate para conseguir un arranque. Ver la
-[auditoría y evidencia](../../docs/releases/2026-10-06-deployment-audit.md).
+Actualizar el contrato del cliente **no acredita la base remota**. La lectura del
+6 de octubre confirmó producción sin las diez tablas comerciales ni tres columnas
+de canal requeridas. `production.contract.json` ahora describe el resultado
+ensayado de las tres migraciones existentes; registra el fingerprint anterior y
+los hashes SQL. Ese destino aún requiere migración autorizada y backup/restauración
+verificados. Staging conserva su fingerprint. No quitar el gate ni aceptar hashes
+observados sin ensayo y revisión. Ver el
+[diagnóstico y reparación de runtime](../../docs/releases/2026-10-06-runtime-repair.md).
 
 Preparación local: estos archivos no autorizan push, cambios del panel ni release.
 Los candidatos nuevos requieren revisión, CI propio y el controlador acotado nuevo.
@@ -47,6 +47,11 @@ que Coolify v4.3.18 agregue argumentos al encontrar ` build`; el wrapper mantien
 exactamente dos argumentos y ejecuta `docker compose build` internamente. Los nombres ARG del Dockerfile se
 resuelven desde el env-file por Compose, sin evaluar ni imprimir valores.
 La base Node 22.23.2 se fija por digest; npm usa el lockfile.
+El Compose generado también referencia `.env` como archivo del servicio. Si falta
+en prepare, el wrapper crea una copia temporal con modo 0600 desde el archivo
+del helper y la elimina al terminar, incluso ante fallo. Nunca sobrescribe un
+`.env` existente ni lo incluye en la imagen. Esto sustituye el workaround inline
+del panel; la variante inline previa sigue siendo compatible.
 
 Los identificadores públicos `NORTEX_ROLLBACK_DATABASE`, `NORTEX_ROLLBACK_MYSQL_UUID`
 y `NORTEX_ROLLBACK_CONFIRMATION` deben estar disponibles para resolver Compose en
@@ -65,7 +70,13 @@ El receipt es evidencia de construcción, no firma independiente ni aprobación.
 Antes de dispatch, el operador/owner debe acreditar backup vigente y restore
 aplicable (incluidos originales si existen), G efectivo y trabajo en vuelo,
 variables resolubles, mismas imágenes/volúmenes disponibles y Compose efectivo.
-Build inspecciona pins/volúmenes antes de que Coolify pueda limpiar contenedores.
+Prepare inspecciona pins/volúmenes, construye la imagen y ejecuta su gate de sólo
+lectura contra la base existente antes de que Coolify pueda limpiar contenedores.
+La ejecución usa `compose run --rm --no-deps --pull never`, sin puertos publicados,
+con Traefik deshabilitado para ese contenedor y entrypoint `node` directo al gate.
+Un fallo devuelve código no cero al proveedor y conserva la versión en servicio.
+Esto depende de conservar el orden build/limpieza del proveedor; comprobarlo al
+actualizar Coolify. El CMD vuelve a comprobar el contrato después del corte.
 Start exige volúmenes externos, no build/pull, y recrea sólo los servicios previstos.
 El volumen anónimo actual de backup se conserva por su nombre exacto externo.
 Estos pins son específicos de los dos recursos observados: una actualización
@@ -77,10 +88,17 @@ replay, assets/PWA y recuperación. Sólo después considerar producción y 30 m
 observación con autorización explícita para los nuevos SHAs. B′ recupera código;
 no restaura SQL. Si la integridad falla, parar y usar el restore acreditado.
 
-Persisten precondiciones no verificadas del servidor: código instalado/Compose
-efectivo, disponibilidad actual de imágenes/volúmenes, variables de build/runtime,
-backup/RPO/restauración, grace/inflight y capacidad. La terminal remota fue denegada;
-ninguna prueba local sustituye esas comprobaciones. No usar otro canal para eludirla.
+El 6 de octubre se pudo leer la terminal del recurso: staging pasó su gate actual,
+producción coincidió con el fingerprint anterior y su servicio backup registró
+respaldo off-site a las 09:15:14 UTC. Ese registro no acredita una restauración.
+Persisten verificaciones de Compose efectivo, pins/volúmenes, variables, restore,
+grace/inflight y capacidad para cada corte; ninguna prueba local las sustituye.
+
+CI `verify` ejecuta obligatoriamente `scripts/qa/release-runtime.py`: construye el
+Dockerfile del candidato, rechaza el esquema anterior de producción, ensaya las
+tres migraciones en MySQL descartable y exige CMD/health SHA/no-store en ambos
+perfiles. También comprueba fallo cerrado de prepare y un `compose run` real
+junto a un contenedor vivo. No reutiliza los SHAs históricos C′/B′ como candidato.
 
 ## Próximas entregas
 
