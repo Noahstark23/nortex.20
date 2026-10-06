@@ -28,6 +28,12 @@ todos los módulos ni autoriza producción.
    Reparación acotada: Android 6.2.2, compression 1.8.2, proxy-addr 2.0.8.
    La auditoría de producción posterior devuelve cero vulnerabilidades.
    Esto no cambia el lockfile de los candidatos históricos C′/B′.
+   La auditoría completa, incluyendo herramientas de desarrollo, aún reporta 16
+   paquetes afectados (1 crítico, 11 altos, 4 moderados). Incluye `tar` bajo
+   Capacitor CLI, el árbol de Tailwind 3 y dependencias de pruebas/build. No se
+   afirma cero vulnerabilidades globales: `npm audit fix --force` propone cambios
+   mayores de Capacitor y Tailwind que requieren una entrega y validación propias.
+   La imagen elimina devDependencies con `npm prune --omit=dev`.
 
 3. **P2 — Android intenta instalar un paquete retirado.**
    [37381305010](https://github.com/Noahstark23/nortex.20/actions/runs/37381305010)
