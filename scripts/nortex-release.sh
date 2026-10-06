@@ -84,7 +84,7 @@ if [ "$phase" = prepare ]; then
   # Nunca usar up aquí: tampoco ejecutar el servidor ni sus tareas de fondo.
   docker compose --project-name "$project" --project-directory "$PWD" \
     --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" \
-    run --rm --no-deps --pull never --no-tty --label traefik.enable=false --entrypoint node app scripts/nortex-schema-gate.mjs
+    run --rm --no-deps --pull never -T --label traefik.enable=false --entrypoint node app scripts/nortex-schema-gate.mjs
   exit 0
 fi
 

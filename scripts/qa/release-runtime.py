@@ -83,7 +83,7 @@ esac
                 assert len(runs) == (0 if build else 1)
                 if runs:
                     assert builds[0] < runs[0]
-                    assert calls[runs[0]].endswith('run --rm --no-deps --pull never --no-tty --label traefik.enable=false --entrypoint node app scripts/nortex-schema-gate.mjs')
+                    assert calls[runs[0]].endswith('run --rm --no-deps --pull never -T --label traefik.enable=false --entrypoint node app scripts/nortex-schema-gate.mjs')
                 checks.append({'check': 'prepare dispatch', 'profile': profile, 'buildExit': build, 'gateExit': gate, 'existingEnvPreserved': existing, 'status': 'PASS'})
 
 try:
@@ -138,7 +138,7 @@ try:
         sentinel_id = docker(['inspect', '--format', '{{.Id}}', sentinel])
         compose = E / (profile + '-synthetic-compose.json')
         compose.write_text(json.dumps({'services': {'db': {'image': 'mysql:8.0.43'}, 'app': {'image': image, 'environment': values, 'depends_on': ['db']}}, 'networks': {'default': {'external': True, 'name': net}}}))
-        command = ['docker', 'compose', '-p', prefix + '-' + profile, '-f', str(compose), 'run', '--rm', '--no-deps', '--pull', 'never', '--no-tty', '--label', 'traefik.enable=false', '--entrypoint', 'node', 'app', 'scripts/nortex-schema-gate.mjs']
+        command = ['docker', 'compose', '-p', prefix + '-' + profile, '-f', str(compose), 'run', '--rm', '--no-deps', '--pull', 'never', '-T', '--label', 'traefik.enable=false', '--entrypoint', 'node', 'app', 'scripts/nortex-schema-gate.mjs']
         start = sql('SELECT NOW(6)')
         gate = subprocess.run(command, capture_output=True, text=True, timeout=150)
         assert gate.returncode == 0, gate.stderr
