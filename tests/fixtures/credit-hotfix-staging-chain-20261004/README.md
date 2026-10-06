@@ -17,3 +17,8 @@ Sólo se conserva el job `deploy-staging` y el artifact de salud.
 Las pruebas usan copias en memoria para adulteraciones. No consultan red ni
 representan un despliegue nuevo. En ejecución real el controlador vuelve a leer
 los metadatos, descarga los artifacts y verifica sus bytes; no usa estos fixtures.
+
+`active-manifest.json` conserva los bytes del manifiesto antes de su cierre el
+2026-10-06. Sólo las suites históricas lo sustituyen en memoria al leer la ruta
+canónica; no se escribe sobre el manifiesto real ni se habilita la excepción.
+`creditHotfixClosed.test.ts` usa el manifiesto real y prueba el rechazo antes de red.
