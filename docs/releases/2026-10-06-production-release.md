@@ -1,10 +1,23 @@
 # Nortex: informe de despliegue y prevención — 6 de octubre de 2026
 
-Estado: candidato desplegado en producción y smoke aprobado. Observación de 30 minutos en curso desde 19:51:40 UTC; el cierre final se completará con esa evidencia.
+Estado: **VALIDADO_PRODUCCION**, SHA `67bc53092c21679565c0c62934d5de8f3b7bc51a`. Promoción y pruebas aprobadas; observación de 1800 segundos completada con 61 muestras correctas y ninguna fallida.
 
 ## Alcance autorizado
 
 El propietario autorizó integrar y desplegar la versión revisada y preparar este informe. PR #254 se integró a las 19:12:49 UTC: `67bc53092c21679565c0c62934d5de8f3b7bc51a`. Alcance: correcciones de crédito POS, alta rápida de existencias, bodegas, checkout móvil, código comercial de WhatsApp con envío apagado, dependencias y protección del despliegue. No se incluyen las demás PR abiertas ni capacidades nuevas de PayPal/Meta.
+
+## Qué cambió para quien usa Nortex
+
+| Área | Cambio desplegado |
+|---|---|
+| Crédito en POS | El semáforo y la deuda proyectada usan importes decimales y el total final a cobrar. Un saldo/límite no verificable bloquea la venta a crédito incluso si existe autorización por PIN. |
+| Alta rápida | La cantidad inicial queda visible sin abrir “Más opciones”; explica que las unidades se registran en la bodega principal. |
+| Bodegas | Distingue “no existen bodegas” de “hay bodegas desactivadas”, ofrece ir a reactivar y aclara la carga del vendedor. |
+| Catálogo en móvil | Carrito y formulario pueden desplazarse dentro del panel; nombres largos y autocompletado conservan legibilidad. |
+| WhatsApp comercial | Se entrega la infraestructura de conversaciones, cotizaciones, activación y soporte supervisado; procesamiento y envío comercial siguen apagados. |
+| Operación | Imagen y esquema se comprueban antes del corte; los comandos de Coolify y la identidad quedan alineados. |
+
+[Diferencia completa entre la versión productiva anterior y ésta](https://github.com/Noahstark23/nortex.20/compare/bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4...67bc53092c21679565c0c62934d5de8f3b7bc51a). La comparación contiene 138 archivos, incluyendo documentación y fixtures; no representa 138 funciones nuevas. El smoke de esta intervención acredita los siete recorridos indicados abajo, no una nueva prueba visual de cada pantalla ni dispositivos físicos.
 
 ## Por qué se acumuló el retraso
 
@@ -35,7 +48,7 @@ El propietario autorizó integrar y desplegar la versión revisada y preparar es
 - Recuperación ensayada: el código de producción anterior arrancó sobre la copia ampliada usando un adaptador con gate de solo lectura y sin `db push`; se conserva como imagen local para recuperación. No se desplegó ese adaptador a clientes.
 - [Staging del candidato](https://github.com/Noahstark23/nortex.20/actions/runs/37518794196): SUCCESS; health del SHA exacto, siete controles del smoke sintético y cinco comprobaciones públicas aprobados.
 - Producción: migraciones aplicadas entre 19:38:14 y 19:38:24 UTC, fingerprint final exacto. La aplicación anterior continuó respondiendo.
-- [Promoción productiva](https://github.com/Noahstark23/nortex.20/actions/runs/37520527985): SUCCESS a las 19:51:35 UTC; environment aprobado bajo la excepción de fundador único. Siete controles funcionales y cinco públicos aprobados en producción. Observación posterior en curso.
+- [Promoción productiva](https://github.com/Noahstark23/nortex.20/actions/runs/37520527985): SUCCESS a las 19:51:35 UTC; environment aprobado bajo la excepción de fundador único. Siete controles funcionales y cinco públicos aprobados en producción. Observación posterior completada: 30 minutos, SHA exacto, base disponible y `Cache-Control: no-store` en todas las muestras.
 
 La preparación productiva acreditó el gate a las 19:49:42 UTC antes de retirar los contenedores (19:49:45). El stack nuevo quedó sano a las 19:51:29. El reemplazo produjo una interrupción temporal observada durante el corte; no se midió su duración exacta ni se afirma cero downtime.
 
@@ -58,6 +71,8 @@ Objetivo operativo: cambios pequeños a producción en 24–48 horas desde que e
 | Producción | Backup/restauración cuando cambia schema, aprobación vigente, SHA/health, smoke y observación. | Responsable de release |
 
 Para PayPal y Meta: trabajar en incrementos independientes, demostrables y con flags; registrar para cada uno demo, aceptación, bloqueo y siguiente entrega. Este informe no certifica inscripciones, fechas límite ni funcionalidades de esos hackatones.
+
+El worker privado conserva la imagen auxiliar previamente fijada en el overlay. Su latido está vigente (`ok`) y la extracción permanece apagada; esa imagen no declara un commit de construcción en `.nortex-release.json`. Un latido que coincide con el entorno no acredita que sus bytes sean los de `67bc530`; esta entrega no certifica nuevas capacidades del worker ni del asistente privado.
 
 ## Límites que deben permanecer visibles
 
@@ -86,10 +101,12 @@ Ventana de intervención: sesión autorizada del 6 de octubre, desde la integrac
 - [Migraciones productivas](../evidence/release-20261006/migracion-produccion-20261006.json).
 - [Smoke funcional de staging](../evidence/release-20261006/staging-67bc530-functional-smoke.json).
 - [Páginas y assets de staging](../evidence/release-20261006/staging-67bc530-public-smoke.json).
-
 - [Promoción GitHub](../evidence/release-20261006/promocion-produccion-67bc530.json).
 - [Smoke funcional productivo](../evidence/release-20261006/production-67bc530-functional-smoke.json).
 - [Páginas y assets productivos](../evidence/release-20261006/production-67bc530-public-smoke.json).
+- [Respaldo posterior](../evidence/release-20261006/respaldo-posterior-20261006.json).
+- [Estado de servicios y flags](../evidence/release-20261006/runtime-produccion-67bc530.json).
+
 
 ## Trabajo que sigue abierto
 
@@ -104,11 +121,14 @@ Inventario fechado: [PR pendientes](../evidence/release-20261006/pr-pendientes-2
 
 Los runs también muestran advertencias de mantenimiento de `actions/checkout@v4` y `actions/setup-node@v4`, ejecutadas por GitHub sobre Node 24, y un aviso de cambio futuro de `ubuntu-latest`. La ejecución de hoy pasó; preparar una actualización independiente de Actions/runner con sus pruebas antes de la siguiente tanda grande. No se atribuyen estos avisos al runtime Node 22 de Nortex.
 
-- [Respaldo posterior](../evidence/release-20261006/respaldo-posterior-20261006.json).
-- [Estado de servicios y flags](../evidence/release-20261006/runtime-produccion-67bc530.json).
-
 ## Cierre del controlador histórico
 
 Esta PR desactiva `credit_hotfix_20261001` en el manifiesto. Los escenarios históricos siguen ejecutándose con una copia fija del manifiesto activo, disponible sólo en sus dos suites; el código de producción del verificador no cambia. Una prueba separada con el manifiesto real inactivo rechaza promover/recuperar antes de Git, HTTP o REST. La ruta normal de main conserva sus controles.
 
-Validación local del cierre: 408 pruebas en cinco suites aprobadas dentro de Docker con Node 22.23.2, sin red. La prueba nativa de macOS quedó impedida por la política de carga del binario Rollup; TypeScript en el contenedor local agotó memoria. El resultado integral se acreditará con el CI remoto del commit final, sin presentar estos intentos como aprobados.
+Validación del código de cierre `6bfa09a`: 408 pruebas locales en cinco suites dentro de Docker, sin red, y [CI remoto completo aprobado](https://github.com/Noahstark23/nortex.20/actions/runs/37522954774), con verify, esquema, respaldo e integración obligatoria. La ejecución remota acredita tipos/build que el entorno local no logró completar por restricciones de carga nativa y memoria. Los checks del commit final, incluida su documentación, quedan en [PR #255](https://github.com/Noahstark23/nortex.20/pull/255/checks). No se cuentan pruebas omitidas como aprobadas.
+
+## Observación posterior completada
+
+Desde 2026-10-06T19:51:40.431322+00:00 hasta 2026-10-06T20:21:40.466153+00:00: 61 muestras de `/api/health`, cero fallidas; mediana 257 ms, p95 303 ms y máximo 448 ms. Todas devolvieron HTTP 200, base disponible, SHA `67bc530` y `no-store`. Son muestras de salud cada ~30 segundos; no miden el porcentaje de errores de todo el tráfico ni sustituyen el smoke de negocio.
+
+[Registro completo](../evidence/release-20261006/observacion-produccion-67bc530.json) · [Resumen](../evidence/release-20261006/resumen-observacion-67bc530.json).

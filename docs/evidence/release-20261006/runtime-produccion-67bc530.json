@@ -22,5 +22,27 @@
   },
   "whatsappCommerceProcessing": false,
   "whatsappCommerceSending": false,
-  "scope": "Point-in-time inspection; backup and worker do not expose Docker health checks"
+  "scope": "Point-in-time inspection; backup and worker do not expose Docker health checks",
+  "assistantWorkerHeartbeat": {
+    "status": "ok",
+    "updatedAt": "2026-10-06T19:59:39.437Z",
+    "ageSeconds": 5
+  },
+  "assistantWorkerImage": "sha256:afd1dc8138f000bcbbd3a8c940e36b21d66b7876eb8cf8e4697ee1ef449d16c1",
+  "assistantWorkerImageRecordedCommit": null,
+  "assistantEnabled": true,
+  "assistantExtractionEnabled": false,
+  "finalInspection": {
+    "time": "2026-10-06T20:20:59Z",
+    "application": "running/healthy",
+    "mysql": "running/healthy",
+    "backup": "running; no Docker health check",
+    "assistantWorker": "running; no Docker health check",
+    "restartCounts": {
+      "application": 0,
+      "mysql": 0,
+      "backup": 0,
+      "assistantWorker": 0
+    }
+  }
 }

@@ -1,0 +1,557 @@
+{
+  "status": "PASS",
+  "origin": "https://somosnortex.com",
+  "expectedCommit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+  "durationSeconds": 1800,
+  "checks": [
+    {
+      "time": "2026-10-06T19:51:40.431322+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 183
+    },
+    {
+      "time": "2026-10-06T19:52:10.618163+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 209
+    },
+    {
+      "time": "2026-10-06T19:52:40.831081+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 272
+    },
+    {
+      "time": "2026-10-06T19:53:11.108052+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 275
+    },
+    {
+      "time": "2026-10-06T19:53:41.387339+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 203
+    },
+    {
+      "time": "2026-10-06T19:54:11.592636+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 267
+    },
+    {
+      "time": "2026-10-06T19:54:41.862869+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 215
+    },
+    {
+      "time": "2026-10-06T19:55:12.082210+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 178
+    },
+    {
+      "time": "2026-10-06T19:55:42.263242+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 180
+    },
+    {
+      "time": "2026-10-06T19:56:12.445529+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 286
+    },
+    {
+      "time": "2026-10-06T19:56:42.735774+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 187
+    },
+    {
+      "time": "2026-10-06T19:57:12.924091+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 288
+    },
+    {
+      "time": "2026-10-06T19:57:43.215143+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 181
+    },
+    {
+      "time": "2026-10-06T19:58:13.399020+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 226
+    },
+    {
+      "time": "2026-10-06T19:58:43.630446+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 448
+    },
+    {
+      "time": "2026-10-06T19:59:14.083288+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 185
+    },
+    {
+      "time": "2026-10-06T19:59:44.273150+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 271
+    },
+    {
+      "time": "2026-10-06T20:00:14.548358+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 223
+    },
+    {
+      "time": "2026-10-06T20:00:44.776771+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 244
+    },
+    {
+      "time": "2026-10-06T20:01:15.024402+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 182
+    },
+    {
+      "time": "2026-10-06T20:01:45.207074+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 269
+    },
+    {
+      "time": "2026-10-06T20:02:15.481346+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 320
+    },
+    {
+      "time": "2026-10-06T20:02:45.806735+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 276
+    },
+    {
+      "time": "2026-10-06T20:03:16.087352+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 286
+    },
+    {
+      "time": "2026-10-06T20:03:46.375624+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 248
+    },
+    {
+      "time": "2026-10-06T20:04:16.628972+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 253
+    },
+    {
+      "time": "2026-10-06T20:04:46.886641+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 251
+    },
+    {
+      "time": "2026-10-06T20:05:17.140668+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 272
+    },
+    {
+      "time": "2026-10-06T20:05:47.418083+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 324
+    },
+    {
+      "time": "2026-10-06T20:06:17.748156+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 267
+    },
+    {
+      "time": "2026-10-06T20:06:48.036419+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 296
+    },
+    {
+      "time": "2026-10-06T20:07:18.343334+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 267
+    },
+    {
+      "time": "2026-10-06T20:07:48.616997+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 274
+    },
+    {
+      "time": "2026-10-06T20:08:18.897639+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 263
+    },
+    {
+      "time": "2026-10-06T20:08:49.166618+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 277
+    },
+    {
+      "time": "2026-10-06T20:09:19.453143+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 255
+    },
+    {
+      "time": "2026-10-06T20:09:49.714100+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 263
+    },
+    {
+      "time": "2026-10-06T20:10:19.980160+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 263
+    },
+    {
+      "time": "2026-10-06T20:10:50.248806+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 250
+    },
+    {
+      "time": "2026-10-06T20:11:20.501793+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 193
+    },
+    {
+      "time": "2026-10-06T20:11:50.697823+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 302
+    },
+    {
+      "time": "2026-10-06T20:12:21.004483+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 214
+    },
+    {
+      "time": "2026-10-06T20:12:51.221773+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 275
+    },
+    {
+      "time": "2026-10-06T20:13:21.500760+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 249
+    },
+    {
+      "time": "2026-10-06T20:13:51.756667+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 257
+    },
+    {
+      "time": "2026-10-06T20:14:22.019514+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 276
+    },
+    {
+      "time": "2026-10-06T20:14:52.299977+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 198
+    },
+    {
+      "time": "2026-10-06T20:15:22.504270+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 251
+    },
+    {
+      "time": "2026-10-06T20:15:52.757753+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 244
+    },
+    {
+      "time": "2026-10-06T20:16:23.006092+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 252
+    },
+    {
+      "time": "2026-10-06T20:16:53.261046+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 190
+    },
+    {
+      "time": "2026-10-06T20:17:23.456066+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 265
+    },
+    {
+      "time": "2026-10-06T20:17:53.724970+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 259
+    },
+    {
+      "time": "2026-10-06T20:18:23.992154+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 207
+    },
+    {
+      "time": "2026-10-06T20:18:54.211016+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 263
+    },
+    {
+      "time": "2026-10-06T20:19:24.485659+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 290
+    },
+    {
+      "time": "2026-10-06T20:19:54.783991+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 198
+    },
+    {
+      "time": "2026-10-06T20:20:24.992104+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 224
+    },
+    {
+      "time": "2026-10-06T20:20:55.223135+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 303
+    },
+    {
+      "time": "2026-10-06T20:21:25.535609+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 186
+    },
+    {
+      "time": "2026-10-06T20:21:40.466153+00:00",
+      "status": 200,
+      "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+      "db": "up",
+      "cacheControl": "no-store, no-cache, max-age=0, must-revalidate",
+      "pass": true,
+      "latencyMs": 265
+    }
+  ]
+}

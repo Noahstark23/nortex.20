@@ -319,7 +319,12 @@ validar el candidato después de cada aprobación técnica. Cualquier cambio fut
 workflow, environment o runbook debe conservar un test negativo de que un push
 docs-only no puede crear ni ejecutar un job de staging o producción.
 
-## Excepción puntual autorizada: crédito 2026-10-01 y recuperación
+## Excepción histórica cerrada: crédito 2026-10-01 y recuperación
+
+**Estado al cierre del 2026-10-06: inactiva (`active=false`).** Los procedimientos
+y candidatos siguientes se conservan como historia; no deben ejecutarse para
+promover ni recuperar el esquema actual. La ruta vigente es la promoción normal
+de main descrita arriba. El cierre no elimina los controles de esa ruta.
 
 El paquete integrado en main se documenta en
 [`deploy/nortex/README.md`](../../deploy/nortex/README.md). La excepción siguiente
@@ -330,7 +335,7 @@ contrato del cliente, schema remoto y build son evidencias distintas.
 
 ### C′/B′ empaquetados: cadena fija acreditada el 4 de octubre
 
-Para los candidatos vigentes del manifiesto, C′=`df6fc095fe8da39b4829336e79b78e4454997046`
+Para los candidatos históricos del manifiesto, C′=`df6fc095fe8da39b4829336e79b78e4454997046`
 y B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, la cadena ya acreditada es
 `37164392068 → 37165601168 → 37166458396`, intento 1, controlador productor
 `526fb15440d7a993da2862baa45baf7e4bf1cb92`. No repetirla porque main haya avanzado.
