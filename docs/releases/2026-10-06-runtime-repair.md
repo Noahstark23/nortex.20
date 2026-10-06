@@ -40,6 +40,16 @@ La lectura por la terminal existente de Coolify confirmó:
 5. CI verify ejecuta el Dockerfile/CMD real del candidato en cada PR/push. El job
    histórico opcional C′/B′ sigue separado y no sirve como evidencia del main nuevo.
 
+El orden build → guardar variables runtime → retirar contenedores se verificó
+en el código público de Coolify v4.3.18,
+[`ApplicationDeploymentJob.php`](https://github.com/coollabsio/coolify/blob/v4.3.18/app/Jobs/ApplicationDeploymentJob.php#L744)
+(SHA-256 `9a78c9ab121ba13cbf4a2cb280d4754a140c3769c7f66ea82fe6413e1c857f45`).
+El contrato de `run`, puertos y `--no-deps` se contrastó con la
+[documentación de Docker](https://docs.docker.com/reference/cli/docker/compose/run/).
+La prueba local de Compose acredita el comando; no sustituye una ejecución completa
+del proveedor instalado. Las variables de identidad y conexión deben existir
+tanto en build como en runtime y seguir coincidiendo después del corte.
+
 ## Ensayo reproducible
 
 `python3 scripts/qa/release-runtime.py --evidence <directorio-temporal>`:

@@ -64,11 +64,18 @@ esac
 ''')
         mock.chmod(0o755)
         for profile, project in [('staging', 'jxzjinox4xrszsr2giwjxaky'), ('production', 'loksow84gw0wccs8ookkosw8')]:
-            for build, gate in [(0, 0), (7, 0), (0, 9)]:
+            for build, gate, existing in [(0, 0, False), (7, 0, False), (0, 9, False), (0, 0, True)]:
                 (f / 'calls.log').write_text('')
+                if existing:
+                    (f / '.env').write_text('# existing synthetic environment, preserve bytes\n')
+                    (f / '.env').chmod(0o600)
                 proc = subprocess.run(['docker', 'run', '--rm', '--network', 'none', '-v', folder + ':/qa', '-v', str(f / 'build-time.env') + ':/artifacts/build-time.env:ro', '-v', str(ROOT / 'scripts/nortex-release.sh') + ':/wrapper.sh:ro', '-w', '/qa', '-e', 'PATH=/qa:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', '-e', 'QA_PROJECT=' + project, '-e', 'QA_SHA=' + sha, '-e', 'QA_BUILD_STATUS=' + str(build), '-e', 'QA_GATE_STATUS=' + str(gate), 'alpine:3.22', 'sh', '/wrapper.sh', profile, 'prepare'], text=True, capture_output=True)
                 assert proc.returncode == (build or gate), proc.stderr
-                assert not (f / '.env').exists(), 'temporary environment file not cleaned'
+                if existing:
+                    assert (f / '.env').read_text() == '# existing synthetic environment, preserve bytes\n'
+                    (f / '.env').unlink()
+                else:
+                    assert not (f / '.env').exists(), 'temporary environment file not cleaned'
                 calls = (f / 'calls.log').read_text().splitlines()
                 builds = [i for i, call in enumerate(calls) if ' build ' in call]
                 runs = [i for i, call in enumerate(calls) if ' run ' in call]
@@ -77,7 +84,7 @@ esac
                 if runs:
                     assert builds[0] < runs[0]
                     assert calls[runs[0]].endswith('run --rm --no-deps --pull never --no-tty --label traefik.enable=false --entrypoint node app scripts/nortex-schema-gate.mjs')
-                checks.append({'check': 'prepare dispatch', 'profile': profile, 'buildExit': build, 'gateExit': gate, 'status': 'PASS'})
+                checks.append({'check': 'prepare dispatch', 'profile': profile, 'buildExit': build, 'gateExit': gate, 'existingEnvPreserved': existing, 'status': 'PASS'})
 
 try:
     docker(['pull', 'mysql:8.0.43'])
@@ -141,6 +148,7 @@ try:
         # Same guard must fail on a stale runtime SHA without touching the live container.
         stale = subprocess.run(command[:-2] + ['-e', 'SOURCE_COMMIT=' + 'f' * 40, *command[-2:]], capture_output=True, text=True, timeout=150)
         assert stale.returncode != 0 and 'ROLLBACK_SOURCE_COMMIT_MISMATCH' in stale.stderr
+        assert mutation_count(start) == 0
         assert docker(['inspect', '--format', '{{.Id}} {{.State.Running}}', sentinel]) == sentinel_id + ' true'
         checks.append({'check': 'Compose pre-cut gate and stale SHA rejection', 'profile': profile, 'liveContainerPreserved': True, 'mutations': 0, 'status': 'PASS'})
         app = prefix + '-app-' + profile
