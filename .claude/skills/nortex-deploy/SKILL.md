@@ -23,6 +23,11 @@ lectura y arranca la aplicación. No ejecuta DDL ni `db push`.
 
 Coolify debe usar `nortex-release.sh <staging|production> prepare/start` y los
 overlays versionados según [`deploy/nortex/README.md`](../../../deploy/nortex/README.md).
+Prepare comprueba el gate de la imagen nueva antes del corte, mediante un
+contenedor de sólo diagnóstico sin dependencias ni tráfico de Traefik. CI verify
+ensaya obligatoriamente el Dockerfile/CMD actual con MySQL sintético. Producción
+requiere la expansión comercial revisada en `production.contract.json`: su nuevo
+fingerprint es un destino ensayado, no una migración aplicada.
 El entrypoint anterior `scripts/docker-entrypoint.sh` conserva preflights y
 `db push`, pero queda fuera del CMD; no reactivarlo para evitar el gate. Un schema
 nuevo requiere preparación aditiva revisada y respaldo/restauración acreditados.

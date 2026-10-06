@@ -17,6 +17,9 @@
 > arranque sin DDL. No recrear los recursos ni usar el entrypoint histórico para
 > eludir ese contrato. La [auditoría del 6 de octubre](docs/releases/2026-10-06-deployment-audit.md)
 > distingue la preparación pendiente de producción y la excepción C′/B′ de main.
+> El [diagnóstico de runtime](docs/releases/2026-10-06-runtime-repair.md) confirma
+> la expansión comercial pendiente y documenta el gate antes del corte y el
+> ensayo obligatorio del CMD del candidato. El deploy sigue sin aplicar DDL.
 
 ---
 

@@ -2,12 +2,29 @@
   "prismaVersion": "6.4.1",
   "models": 153,
   "scalarColumns": 1855,
-  "expandedTables": [],
+  "expandedTables": [
+    "WaCommerceConversation",
+    "WaCommerceInbox",
+    "WaCommerceOutbox",
+    "WaCommerceReceipt",
+    "WaCommerceQuoteDraft",
+    "WaCommerceConsentEvent",
+    "WaCommercePolicyVersion",
+    "WaCommerceActivationRequest",
+    "WaCommerceWorkerHeartbeat",
+    "WaCommerceOutboxAttempt"
+  ],
   "expandedIndexes": [],
   "generatedSchemaSha256": "01ea9516c27d0cf279e539b44b6e28c9de82f32d3a652366e49c389412639da4",
-  "schemaFingerprintSha256": "65341b108be99cda2a06a2ce32660e3d48e4e1e33e89b4a89b596ee1b016870c",
+  "schemaFingerprintSha256": "7941abbd1ab5a72d5df3028c8ef755427bdf8e85042bff37bd224964502b8bb2",
   "provenance": {
     "receiptSha256": "9f0455ad187e5ddc6fec38e5e8a82c1f1ed6f1154043359a1c668f34fd48d2fd",
-    "scope": "Database fingerprint preserved from the reviewed receipt. Client regenerated from main schema on 2026-10-06; this does not attest database compatibility or authorize deployment."
+    "scope": "Target after the three existing additive WhatsApp migrations, reproduced on MySQL 8.0.43 from the production baseline. Remote baseline verified read-only on 2026-10-06; migration is not applied or authorized by this contract.",
+    "beforeSchemaFingerprintSha256": "65341b108be99cda2a06a2ce32660e3d48e4e1e33e89b4a89b596ee1b016870c",
+    "migrationFiles": {
+      "backend/prisma/migrations/202609290001_whatsapp_commerce/migration.sql": "5c56fa5883245b35aa649a0c1ebb7fe8c3cb78e7b14bf108d11dd9c345d07f1f",
+      "backend/prisma/migrations/202609290002_whatsapp_activation_request/migration.sql": "e822d72c0a96f715dcfd573d855b898b33f0ea9912724601109a03e7c643373f",
+      "backend/prisma/migrations/202609290004_whatsapp_operations/migration.sql": "0a8c1b23f962811982e41d41753235347ecdceb53047460961b090cc44a7ccda"
+    }
   }
 }

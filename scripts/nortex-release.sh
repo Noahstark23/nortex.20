@@ -18,6 +18,15 @@ case "$phase" in prepare|start) ;; *) echo 'NORTEX_PHASE_INVALID' >&2; exit 1 ;;
 # Resolver con el mismo env-file que el proveedor, sin leer/evaluar su contenido.
 if [ "$phase" = prepare ]; then env_file=/artifacts/build-time.env; else env_file=./.env; fi
 [ -f "$env_file" ] || { echo 'NORTEX_ENV_FILE_REQUIRED' >&2; exit 1; }
+# El Compose generado también declara env_file: .env. --env-file sólo resuelve
+# interpolación; no sustituye ese archivo del servicio. La copia vive sólo en
+# el helper y Dockerfile la excluye mediante .dockerignore.
+if [ "$phase" = prepare ] && [ ! -e ./.env ]; then
+  umask 077
+  (set -C; : > ./.env) || { echo 'NORTEX_TEMP_ENV_CREATE_FAILED' >&2; exit 1; }
+  trap 'rm -f ./.env' EXIT
+  cp "$env_file" ./.env
+fi
 # Coolify elimina .git antes del custom build. Su Compose generado vincula
 # app al SHA del checkout; no dependemos de Git ni Node dentro del helper.
 images=$(docker compose --project-name "$project" --project-directory "$PWD" \
@@ -66,8 +75,17 @@ if [ "$phase" = prepare ]; then
     case "$argument" in ''|[0-9]*|*[!a-zA-Z0-9_]*) echo 'NORTEX_BUILD_ARG_INVALID' >&2; exit 1 ;; esac
     set -- "$@" --build-arg "$argument"
   done
-  exec docker compose --project-name "$project" --project-directory "$PWD" \
+  docker compose --project-name "$project" --project-directory "$PWD" \
     --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" build "$@" app
+  # Coolify todavía conserva la versión anterior durante prepare. Verificar
+  # la imagen candidata contra la base existente antes de permitir el corte.
+  # run no publica puertos ni inicia dependencias; el entrypoint sólo lee SQL.
+  # La etiqueta impide que Traefik enrute tráfico al contenedor de diagnóstico.
+  # Nunca usar up aquí: tampoco ejecutar el servidor ni sus tareas de fondo.
+  docker compose --project-name "$project" --project-directory "$PWD" \
+    --env-file "$env_file" -f ./docker-compose.yml -f "./deploy/nortex/$target.yml" \
+    run --rm --no-deps --pull never --no-tty --label traefik.enable=false --entrypoint node app scripts/nortex-schema-gate.mjs
+  exit 0
 fi
 
 # Con Preserve repository=true, Coolify copia repo y .env al workdir del host;

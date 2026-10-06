@@ -77,6 +77,21 @@ try {
   }
   const schemaFingerprint = createHash('sha256').update(JSON.stringify(metadata)).digest('hex');
   if (schemaFingerprint !== receipt.schemaFingerprintSha256) fail('ROLLBACK_SCHEMA_MISMATCH');
+  // A historical DB fingerprint may be valid while the new client needs more
+  // tables/columns. Diagnose that before raw selects return opaque P2010 errors.
+  // metadata[1] is the fixed COLUMNS query above; it contains no business rows.
+  const schemaColumns = new Map();
+  for (const [table, column] of metadata[1]) {
+    if (!schemaColumns.has(table)) schemaColumns.set(table, new Set());
+    schemaColumns.get(table).add(column);
+  }
+  for (const model of Prisma.dmmf.datamodel.models) {
+    const available = schemaColumns.get(model.dbName ?? model.name);
+    if (!available) fail('ROLLBACK_CLIENT_TABLE_MISSING');
+    if (model.fields.some((field) => field.kind !== 'object' && !available.has(field.dbName ?? field.name))) {
+      fail('ROLLBACK_CLIENT_COLUMN_MISSING');
+    }
+  }
   // Reuse the immutable product preflight; every mutation is rejected before SQL.
   const { tsImport } = require('tsx/esm/api');
   const { applyDeploySchemaPreflight } = await tsImport(resolve('scripts/deploy-schema-preflight.ts'), import.meta.url);
