@@ -2,7 +2,7 @@
 
 > **Plataforma:** Coolify + Docker Compose  
 > **Autor:** DevOps Team — NORTEX Inc.  
-> **Última actualización:** 2026-09-05
+> **Última actualización:** 2026-10-06 (paquete y promoción)
 
 > **Límite de autorización.** Esta guía describe una preparación para un operador
 > ya autorizado; no autoriza DNS, Coolify, variables o secretos de GitHub,
@@ -10,6 +10,13 @@
 > debe tener una autorización explícita y separada con destino, SHA (si aplica),
 > responsable y rollback. La ruta vinculante de release es el
 > [runbook de promoción](docs/runbooks/release-promotion.md).
+
+> **Recursos existentes de Nortex.** Su empaquetado vigente está en
+> [`deploy/nortex/README.md`](deploy/nortex/README.md): comandos
+> `nortex-release.sh <entorno> prepare/start`, overlays, identidad de build y
+> arranque sin DDL. No recrear los recursos ni usar el entrypoint histórico para
+> eludir ese contrato. La [auditoría del 6 de octubre](docs/releases/2026-10-06-deployment-audit.md)
+> distingue la preparación pendiente de producción y la excepción C′/B′ de main.
 
 ---
 
@@ -165,10 +172,12 @@ del environment, y verifica que Coolify esté fijado al candidato. Para configur
    aplicación que Coolify identifica por UUID. Infraestructura debe aportar y
    registrar esa identidad pública↔Coolify de forma saneada antes de que un workflow
    pueda considerarse habilitado.
-8. **Endurecer GitHub antes de habilitar producción:** proteger `main` con PR y
-   checks requeridos; limitar el environment `production` a `main`, usar reviewer
-   independiente, activar `prevent-self-review` y desactivar bypass administrativo.
-   Sin esos controles, el estado correcto es bloqueado.
+8. **Verificar las protecciones de GitHub antes de producción:** proteger `main`
+   con PR y checks requeridos, limitar `production` a `main` y desactivar bypass
+   administrativo. El runbook contempla la excepción explícita de fundador único
+   Noahstark23, con `sole_owner_confirmation=SOLE_OWNER <SHA>` y autorización de
+   producto separada; iniciador y aprobador pueden coincidir, sin atribuir revisión
+   independiente. No cambiar las protecciones por inferencia de esta guía.
 9. **Promover solo con el runbook canónico:** tras CI del mismo SHA, un responsable
    inicia **Promote staging candidate** desde `main` con `STAGE <SHA>`. Producción
    requiere la procedencia de un staging manual exitoso para **ese mismo SHA** y
@@ -184,8 +193,9 @@ del environment, y verifica que Coolify esté fijado al candidato. Para configur
      `https://<origen-publico-produccion-verificado>/api/health` cada 5 min con alerta al correo. El
      endpoint devuelve 503 si la BD no responde, así que también avisa de una
      BD caída, no solo del proceso muerto.
-   - El contenedor ya trae `HEALTHCHECK` (Dockerfile): Coolify reinicia una
-     instancia enferma y no le enruta tráfico durante el deploy.
+   - Verificar el healthcheck efectivo del contenedor y el comportamiento de
+     reemplazo de Coolify. `Running (no healthcheck)` no prueba salud ni un deploy
+     sin interrupción; comprobar HTTP, BD y SHA mediante el verificador de release.
 
 ---
 

@@ -1,5 +1,26 @@
 # Release reproducible del hotfix de crédito
 
+## Estado del paquete en main — auditoría 2026-10-06
+
+Esta carpeta existe en main desde la integración del empaquetado. Los commits
+C′/B′ del hotfix conservan sus contratos inmutables de 143 modelos. El schema
+actual de main genera 153 modelos y 1.855 columnas escalares: sus contratos de
+cliente y el manifiesto de fuentes deben coincidir con ese checkout, aunque un
+CI anterior del hotfix estuviera verde.
+
+`tests/nortexDeployment.test.mjs` comprueba fuentes, cliente generado, versión y
+conteos reales. CI también ejecuta el sellador sobre los assets y SEO construidos;
+un cliente o manifiesto desactualizado debe fallar antes de llegar a Coolify.
+
+Actualizar el contrato del cliente **no acredita la base remota**. Se mantienen
+sin cambios los fingerprints de staging y producción, la identidad, confirmación,
+preflight de sólo lectura y rechazo de DDL. El contrato histórico de producción
+no acredita las diez tablas comerciales que main ahora utiliza: antes de promover
+main se necesita comprobar la compatibilidad y, si falta esa expansión, preparar
+una migración aditiva con backup y restauración verificados. No cambiar hashes de
+la base ni quitar el gate para conseguir un arranque. Ver la
+[auditoría y evidencia](../../docs/releases/2026-10-06-deployment-audit.md).
+
 Preparación local: estos archivos no autorizan push, cambios del panel ni release.
 Los candidatos nuevos requieren revisión, CI propio y el controlador acotado nuevo.
 No reutilizar el CI ni receipts de despliegue de C/B como evidencia de C′/B′.

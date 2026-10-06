@@ -15,15 +15,18 @@ candidato local en integración y lo realmente observado en los entornos.
 
 ## Imagen y arranque
 
-`Dockerfile`: `npm ci` → generar Prisma 6.4.1 con URL dummy → `npm run build:seo`
-→ `npm prune --omit=dev` → `sh scripts/docker-entrypoint.sh`.
-El runtime de desarrollo/CI se fija a Node 22.23.2; la imagen todavía declara
-`node:22-slim`, sin fijar el parche. No afirmar que esa imagen garantiza 22.23.2.
+Desde la integración del paquete, `Dockerfile` fija Node 22.23.2 por digest:
+`npm ci` → generar Prisma 6.4.1 con URL dummy → `npm run build:seo`
+→ `npm prune --omit=dev` → sellar fuentes, cliente y assets.
+El CMD vigente es `sh scripts/nortex-start.sh`: ejecuta el gate de schema de sólo
+lectura y arranca la aplicación. No ejecuta DDL ni `db push`.
 
-El entrypoint espera MySQL, ejecuta preflights DDL acotados y luego `db push
---skip-generate`; inicia el servidor solo si terminan correctamente. Actualmente
-usa `npx prisma`, resuelto desde las dependencias instaladas. Los comandos manuales
-de QA usan el binario local con `npx --no-install prisma`; nunca descargar otra versión.
+Coolify debe usar `nortex-release.sh <staging|production> prepare/start` y los
+overlays versionados según [`deploy/nortex/README.md`](../../../deploy/nortex/README.md).
+El entrypoint anterior `scripts/docker-entrypoint.sh` conserva preflights y
+`db push`, pero queda fuera del CMD; no reactivarlo para evitar el gate. Un schema
+nuevo requiere preparación aditiva revisada y respaldo/restauración acreditados.
+Los comandos manuales de QA usan `npx --no-install prisma`; nunca descargar otra versión.
 `db push` no ejecuta los archivos de migración ni sus backfills.
 
 Nunca usar `--accept-data-loss`. Preflight inseguro, timeout o warning destructivo

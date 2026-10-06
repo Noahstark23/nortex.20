@@ -64,8 +64,14 @@ jobs:
           name: mutation-report
           path: reports/mutation/
           retention-days: 7
-      - name: Build frontend
-        run: npm run build
+      - name: Build frontend y SEO
+        run: npm run build:seo
+      - name: Sellar el paquete real del candidato
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          node --input-type=module -e 'import { writeFileSync } from "node:fs"; writeFileSync(".nortex-build-source.json", JSON.stringify({ version: 1, commit: process.env.BUILD_COMMIT }));'
+          node scripts/nortex-seal-image.mjs
 
   deploy-schema-smoke:
     runs-on: ubuntu-latest

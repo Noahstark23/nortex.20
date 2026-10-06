@@ -6,7 +6,19 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'vitest';
-import { sealImage } from '../scripts/nortex-seal-image.mjs';
+import { sealImage, verifySourceContracts } from '../scripts/nortex-seal-image.mjs';
+
+test('los contratos versionados coinciden con las fuentes y el cliente Prisma del checkout real', async () => {
+  const { Prisma } = await import('@prisma/client');
+  const { contracts } = verifySourceContracts(new URL('..', import.meta.url).pathname);
+  const models = Prisma.dmmf.datamodel.models;
+  const columns = models.reduce((count, model) => count + model.fields.filter(field => field.kind !== 'object').length, 0);
+  for (const [profile, contract] of Object.entries(contracts)) {
+    assert.equal(contract.prismaVersion, Prisma.prismaVersion.client, `${profile}: versión Prisma`);
+    assert.equal(contract.models, models.length, `${profile}: modelos del cliente`);
+    assert.equal(contract.scalarColumns, columns, `${profile}: columnas del cliente`);
+  }
+});
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 function fixture() {
