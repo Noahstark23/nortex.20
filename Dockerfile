@@ -37,9 +37,8 @@ RUN node scripts/nortex-seal-image.mjs
 # 8. Puerto en el que corre la app
 EXPOSE 3000
 
-# 8b. Healthcheck del contenedor: Coolify lo usa para no enrutar tráfico a una
-#     instancia enferma y reiniciarla. start-period generoso: el entrypoint
-#     espera MySQL + aplica `db push`, que en un deploy con schema nuevo tarda.
+# 8b. Healthcheck HTTP; verificar su uso efectivo en el proveedor.
+#     El periodo inicial admite la espera del gate de sólo lectura, sin DDL.
 #     node:22-slim no trae curl/wget → el chequeo usa el fetch nativo de Node.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=180s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

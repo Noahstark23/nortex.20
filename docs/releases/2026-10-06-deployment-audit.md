@@ -44,6 +44,17 @@ todos los módulos ni autoriza producción.
    ni habilita DDL. La promoción de main requiere resolver esa compatibilidad,
    acreditar backup off-site/restauración y pasar staging y smoke del SHA exacto.
 
+5. **P1 — producción todavía usa los comandos anteriores al paquete.**
+   Coolify muestra `docker compose --profile assistant-worker build` y
+   `docker compose --profile assistant-worker up -d`. El Dockerfile actual exige
+   la identidad creada por `nortex-release.sh` y el overlay que conserva imágenes,
+   volúmenes y schema. Antes de promover un paquete hay que preparar los comandos
+   `sh scripts/nortex-release.sh production prepare` y
+   `sh scripts/nortex-release.sh production start`, comprobar variables/pins y
+   resolver la disponibilidad del env-file sin imprimirlo. El pin productivo sigue
+   en `bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4`; Auto Deploy está desactivado y
+   Source Commit está disponible durante build. No se modificó el panel.
+
 ## Estado vivo observado
 
 El 6 de octubre, ambos `/api/health` respondieron HTTP 200, `ok=true`, `db=up`
@@ -56,8 +67,16 @@ y `Cache-Control: no-store, no-cache, max-age=0, must-revalidate`.
 
 Esto acredita disponibilidad básica, no el smoke autenticado ni una release nueva.
 El main más reciente tiene CI histórico verde, pero no alcanzó staging.
-Coolify muestra cambios pendientes y un comando build que copia temporalmente el
-env-file del proveedor. No se guardó ni modificó esa configuración en esta auditoría.
+Staging en Coolify muestra cambios pendientes y un comando build que copia
+temporalmente el env-file del proveedor. No se guardó ni modificó esa configuración.
+La pantalla Storage backups de producción muestra cero programaciones y ejecuciones;
+eso no audita el servicio `backup` del Compose ni demuestra ausencia de copias S3.
+No se obtuvo evidencia actual de backup off-site/restauración real. El smoke de CI
+usa datos sintéticos y no sustituye esa evidencia.
+
+`DEPLOY_GUIDE.md`, `CLAUDE.md` y la skill de deploy contenían recetas anteriores al
+paquete (entrypoint con DDL y candidatos C/B originales). Se reconciliaron con el
+Dockerfile, el manifiesto C′/B′ y el runbook vigentes para evitar repetirlas.
 
 ## Cola de PR
 
