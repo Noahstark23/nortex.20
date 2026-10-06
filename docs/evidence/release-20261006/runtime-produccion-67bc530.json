@@ -1,0 +1,26 @@
+{
+  "recordedAt": "2026-10-06T19:57:22.267064+00:00",
+  "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+  "applicationImage": "sha256:3fc32a7506306d38822bbba47295593037764da93a7db61de878f9ea698164fe",
+  "services": {
+    "application": {
+      "state": "healthy",
+      "restarts": 0
+    },
+    "mysql": {
+      "state": "healthy",
+      "restarts": 0
+    },
+    "backup": {
+      "state": "running",
+      "restarts": 0
+    },
+    "assistantWorker": {
+      "state": "running",
+      "restarts": 0
+    }
+  },
+  "whatsappCommerceProcessing": false,
+  "whatsappCommerceSending": false,
+  "scope": "Point-in-time inspection; backup and worker do not expose Docker health checks"
+}

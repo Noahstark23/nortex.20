@@ -57,6 +57,9 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
   confirmación tipada y una autorización de producto que nombre alcance, ventana y
   rollback; ver `docs/runbooks/release-promotion.md`.
+- Cadencia operativa del 2026-10-06: incrementos pequeños, staging el mismo día,
+  objetivo de producción en 24–48 h desde candidato listo y escalamiento antes
+  de cinco días; ver el runbook. La urgencia no elimina compuertas ni aprobación.
 - La promoción requiere una API Coolify que exponga Auto Deploy explícitamente
   apagado; 4.1.2 omite ese campo y bloquea la compuerta. Los webhooks usan POST.
   Actualizar el panel requiere su propio respaldo y recuperación, separados de

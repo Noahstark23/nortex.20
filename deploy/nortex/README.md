@@ -12,12 +12,15 @@ CI anterior del hotfix estuviera verde.
 conteos reales. CI también ejecuta el sellador sobre los assets y SEO construidos;
 un cliente o manifiesto desactualizado debe fallar antes de llegar a Coolify.
 
-Actualizar el contrato del cliente **no acredita la base remota**. La lectura del
+Actualizar el contrato del cliente **no acredita la base remota**. La lectura inicial del
 6 de octubre confirmó producción sin las diez tablas comerciales ni tres columnas
 de canal requeridas. `production.contract.json` ahora describe el resultado
 ensayado de las tres migraciones existentes; registra el fingerprint anterior y
-los hashes SQL. Ese destino aún requiere migración autorizada y backup/restauración
-verificados. Staging conserva su fingerprint. No quitar el gate ni aceptar hashes
+los hashes SQL. La intervención posterior del mismo día acreditó backup/restauración y aplicó
+las tres migraciones autorizadas; ver el
+[cierre fechado de producción](../../docs/releases/2026-10-06-production-release.md).
+Eso no acredita una base futura ni sustituye comprobar el fingerprint. Staging
+conserva su fingerprint. No quitar el gate ni aceptar hashes
 observados sin ensayo y revisión. Ver el
 [diagnóstico y reparación de runtime](../../docs/releases/2026-10-06-runtime-repair.md).
 

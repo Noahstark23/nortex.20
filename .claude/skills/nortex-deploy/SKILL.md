@@ -27,7 +27,10 @@ Prepare comprueba el gate de la imagen nueva antes del corte, mediante un
 contenedor de sólo diagnóstico sin dependencias ni tráfico de Traefik. CI verify
 ensaya obligatoriamente el Dockerfile/CMD actual con MySQL sintético. Producción
 requiere la expansión comercial revisada en `production.contract.json`: su nuevo
-fingerprint es un destino ensayado, no una migración aplicada.
+fingerprint no acredita por sí solo una migración aplicada. El
+[cierre del 2026-10-06](../../../docs/releases/2026-10-06-production-release.md)
+registra el ensayo y la aplicación autorizada de ese día; revalidar la base en
+cada release. Seguir también la cadencia de entregas pequeñas del runbook.
 El entrypoint anterior `scripts/docker-entrypoint.sh` conserva preflights y
 `db push`, pero queda fuera del CMD; no reactivarlo para evitar el gate. Un schema
 nuevo requiere preparación aditiva revisada y respaldo/restauración acreditados.
@@ -138,6 +141,10 @@ observación. Un rollback de aplicación conserva la migración aditiva: no borr
 columnas para volver atrás. Los informes de `docs/releases/` son evidencia histórica;
 la receta vigente es `docs/runbooks/release-promotion.md`.
 
-## Excepción puntual autorizada de crédito — 2026-10-02
+## Excepción puntual de crédito — cerrada el 2026-10-06
+
+El manifiesto está inactivo tras la promoción por la ruta normal de main.
+La descripción siguiente conserva su alcance histórico, no una ruta habilitada.
+No reactivar sin una nueva decisión y revisión explícitas.
 
 Sólo el manifiesto docs/releases/credit-hotfix-20261001.json activo habilita C=d563c750dd62c9192df1d078c4c13308748f69bd sobre B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 y recuperación explícita a B. Consultar la sección ejecutable del runbook release-promotion. Se conservan los dos workflows, dispatch/environment desde main, controlador M confiable y vigente, CI M/C/B separados, dos confirmaciones, reviewer/bypass/flags, identidad/pin/AutoDeploy false y health. Probar C→B→C en staging y smoke/PWA/recuperación ordinaria antes de producción. La recuperación de C averiado exige recibo de solicitud C a la misma app, no salud ficticia. No pedir de nuevo la autorización genérica ya recibida; tampoco inventar una compuerta superada. No cambiar app/git_branch/ACL/secretos, aceptar data loss, ejecutar controles del candidato con secretos ni usar assets/SSH para eludir el proceso. La ruta normal main permanece intacta y la excepción se deshabilita por PR al cerrar.

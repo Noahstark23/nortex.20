@@ -31,11 +31,43 @@ son una fotografía fechada, no valores para copiar en una promoción futura.
 Preparar el expediente no autoriza ejecutar staging ni producción.
 
 El [diagnóstico de runtime del 6 de octubre](../releases/2026-10-06-runtime-repair.md)
-registra la expansión comercial pendiente de producción. CI verify debe ensayar
-la imagen y el CMD exactos; prepare ejecuta el gate antes de detener el stack.
+registró la expansión comercial entonces pendiente de producción. El
+[cierre de esa intervención](../releases/2026-10-06-production-release.md) conserva
+el SHA y la evidencia de ejecución; no es autorización para un candidato futuro.
+CI verify debe ensayar la imagen y el CMD exactos; prepare ejecuta el gate antes
+de detener el stack.
 El contrato posterior a migración no acredita que la base real ya esté migrada.
 No promover hasta verificar respaldo restaurable, expansión autorizada y rollback
 compatible con el esquema expandido. Un rollback de código no revierte DDL.
+
+La excepción `credit_hotfix_20261001` queda inactiva al cerrar este release por
+la ruta normal de main. Sus candidatos y recetas históricas no son una ruta de
+recuperación para el esquema ampliado.
+
+## Cadencia de entrega y diagnóstico
+
+Objetivo solicitado por el propietario el 2026-10-06: entregar incrementos pequeños
+sin acumular más de cinco días de bloqueo. Meta de operación: staging el mismo día
+que un candidato queda listo y producción en 24–48 horas, sujeta a las compuertas
+siguientes. El límite no autoriza omitir pruebas, restore o aprobación.
+
+- Una capacidad revisable por PR; identificar migración, flag, smoke y recuperación
+  al iniciar el trabajo. Separar correcciones de infraestructura de nuevas funciones.
+- Antes del dispatch, comparar en una sola ficha el SHA de main/CI/staging, pin
+  Coolify, SOURCE_COMMIT generado y confirmación de conservación del schema.
+  No mantener un SOURCE_COMMIT manual que compita con el generado por Coolify.
+- Conservar los comandos `nortex-release.sh <entorno> prepare/start`. Comprobar
+  antes del corte la salida del gate y las variables públicas requeridas; no
+  sustituirlo por recetas inline ni volver a ejecutar sin identificar el primer fallo.
+- A las 24 h bloqueado: registrar error reproducible, responsable y reparación.
+  A las 48 h: dividir el lote y entregar lo independiente que esté verificado.
+  Antes de cinco días: el propietario decide entrega acotada, reparación o reversión.
+- Cerrar cada release con SHA de producción, enlaces a runs, smoke, observación
+  y limitaciones. Health por sí solo no acredita una transacción de negocio.
+
+Esta cadencia define responsabilidades; no instala recordatorios, alertas ni
+promociones automáticas. Para PayPal/Meta usar incrementos demostrables y flags;
+la urgencia del evento no sustituye la aceptación del alcance de cada release.
 
 ## El contrato que evita una promoción accidental
 
