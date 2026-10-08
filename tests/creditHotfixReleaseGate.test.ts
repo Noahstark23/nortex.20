@@ -16,6 +16,19 @@ import {
     recordHotfixEvidence, verifyHotfixCi,
 } from '../scripts/verify-credit-hotfix-run-evidence.mjs';
 
+// La excepción productiva está cerrada. Estos escenarios conservan el manifiesto
+// activo histórico únicamente dentro del proceso de prueba, sin modificar el gate.
+vi.mock('node:fs', async importOriginal => {
+    const fs = await importOriginal<typeof import('node:fs')>();
+    const historicalManifest = fs.readFileSync(new URL('./fixtures/credit-hotfix-staging-chain-20261004/active-manifest.json', import.meta.url));
+    return { ...fs, readFileSync: (file: any, options?: any) => {
+        if (file instanceof URL && file.pathname.endsWith('/docs/releases/credit-hotfix-20261001.json')) {
+            return options === 'utf8' ? historicalManifest.toString('utf8') : Buffer.from(historicalManifest);
+        }
+        return fs.readFileSync(file, options);
+    } };
+});
+
 const M = 'a'.repeat(40);
 const env = {
     CREDIT_HOTFIX_20261001: 'true', CREDIT_HOTFIX_ACTION: 'promote', CREDIT_HOTFIX_PHASE: 'production',

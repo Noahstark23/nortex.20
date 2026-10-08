@@ -30,6 +30,45 @@ La preparación local del 2026-09-19 y la última observación remota constan en
 son una fotografía fechada, no valores para copiar en una promoción futura.
 Preparar el expediente no autoriza ejecutar staging ni producción.
 
+El [diagnóstico de runtime del 6 de octubre](../releases/2026-10-06-runtime-repair.md)
+registró la expansión comercial entonces pendiente de producción. El
+[cierre de esa intervención](../releases/2026-10-06-production-release.md) conserva
+el SHA y la evidencia de ejecución; no es autorización para un candidato futuro.
+CI verify debe ensayar la imagen y el CMD exactos; prepare ejecuta el gate antes
+de detener el stack.
+El contrato posterior a migración no acredita que la base real ya esté migrada.
+No promover hasta verificar respaldo restaurable, expansión autorizada y rollback
+compatible con el esquema expandido. Un rollback de código no revierte DDL.
+
+La excepción `credit_hotfix_20261001` queda inactiva al cerrar este release por
+la ruta normal de main. Sus candidatos y recetas históricas no son una ruta de
+recuperación para el esquema ampliado.
+
+## Cadencia de entrega y diagnóstico
+
+Objetivo solicitado por el propietario el 2026-10-06: entregar incrementos pequeños
+sin acumular más de cinco días de bloqueo. Meta de operación: staging el mismo día
+que un candidato queda listo y producción en 24–48 horas, sujeta a las compuertas
+siguientes. El límite no autoriza omitir pruebas, restore o aprobación.
+
+- Una capacidad revisable por PR; identificar migración, flag, smoke y recuperación
+  al iniciar el trabajo. Separar correcciones de infraestructura de nuevas funciones.
+- Antes del dispatch, comparar en una sola ficha el SHA de main/CI/staging, pin
+  Coolify, SOURCE_COMMIT generado y confirmación de conservación del schema.
+  No mantener un SOURCE_COMMIT manual que compita con el generado por Coolify.
+- Conservar los comandos `nortex-release.sh <entorno> prepare/start`. Comprobar
+  antes del corte la salida del gate y las variables públicas requeridas; no
+  sustituirlo por recetas inline ni volver a ejecutar sin identificar el primer fallo.
+- A las 24 h bloqueado: registrar error reproducible, responsable y reparación.
+  A las 48 h: dividir el lote y entregar lo independiente que esté verificado.
+  Antes de cinco días: el propietario decide entrega acotada, reparación o reversión.
+- Cerrar cada release con SHA de producción, enlaces a runs, smoke, observación
+  y limitaciones. Health por sí solo no acredita una transacción de negocio.
+
+Esta cadencia define responsabilidades; no instala recordatorios, alertas ni
+promociones automáticas. Para PayPal/Meta usar incrementos demostrables y flags;
+la urgencia del evento no sustituye la aceptación del alcance de cada release.
+
 ## El contrato que evita una promoción accidental
 
 El incidente que motivó este cambio permitió que un push a `main`, incluso uno de
@@ -280,7 +319,52 @@ validar el candidato después de cada aprobación técnica. Cualquier cambio fut
 workflow, environment o runbook debe conservar un test negativo de que un push
 docs-only no puede crear ni ejecutar un job de staging o producción.
 
-## Excepción puntual autorizada: crédito 2026-10-01 y recuperación
+## Excepción histórica cerrada: crédito 2026-10-01 y recuperación
+
+**Estado al cierre del 2026-10-06: inactiva (`active=false`).** Los procedimientos
+y candidatos siguientes se conservan como historia; no deben ejecutarse para
+promover ni recuperar el esquema actual. La ruta vigente es la promoción normal
+de main descrita arriba. El cierre no elimina los controles de esa ruta.
+
+El paquete integrado en main se documenta en
+[`deploy/nortex/README.md`](../../deploy/nortex/README.md). La excepción siguiente
+conserva los SHAs inmutables del hotfix; no promueve automáticamente el producto
+actual de main. Antes de elegir la ruta, consultar la
+[auditoría del 6 de octubre](../releases/2026-10-06-deployment-audit.md): CI histórico,
+contrato del cliente, schema remoto y build son evidencias distintas.
+
+### C′/B′ empaquetados: cadena fija acreditada el 4 de octubre
+
+Para los candidatos históricos del manifiesto, C′=`df6fc095fe8da39b4829336e79b78e4454997046`
+y B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, la cadena ya acreditada es
+`37164392068 → 37165601168 → 37166458396`, intento 1, controlador productor
+`526fb15440d7a993da2862baa45baf7e4bf1cb92`. No repetirla porque main haya avanzado.
+Los valores C/B originales del texto histórico siguiente no son los candidatos
+de esta entrega; manda el manifiesto inmutable `credit-hotfix-20261001.json`.
+
+Si el ejecutor actual no tiene una cadena propia, producción puede verificar
+exclusivamente esos tres runs. El verificador fija controlador, digest del
+manifiesto, IDs y SHA-256 de los tres artifacts de salud, intento, destinos y
+enlaces; consulta procedencia y jobs del intento productor y conserva el orden
+temporal. No admite sustituir un artifact, cambiar esos valores por entorno ni
+usar otro recibo histórico. Un artifact ausente, expirado o adulterado bloquea.
+Una cadena propia presente pero inválida no se oculta con la excepción.
+
+El ejecutor sigue siendo el main actual y requiere su propio CI antes y después
+del environment. Los nuevos recibos productivos identifican a ese ejecutor.
+Recuperar B′ exige además la solicitud productiva de C′ de ese mismo ejecutor y
+app, enlazada exactamente al C′ final y al B′ de la cadena fija; se revalidan los
+tres artifacts. Para esa recuperación no se repite staging B′. Este caso acotado
+sustituye los pasos de repetición del drill y staging B del procedimiento original.
+
+No cambia la salud requerida, el pin de Coolify, la aprobación del environment,
+backup/restauración, persistencia, secretos, parada efectiva ni observación. El
+manifiesto, C′/B′ y su schema permanecen intactos. Integrar estos controles no
+autoriza ni dispara una promoción. Regresión específica:
+`tests/creditHotfixFixedStagingChain.test.ts`; fixtures saneados del API/ZIP de
+GitHub en `tests/fixtures/credit-hotfix-staging-chain-20261004/`.
+
+### Contrato y procedimiento originales
 
 Esta excepción se aprobó expresamente el 2026-10-02 para el arreglo y su recuperación. No convierte una autorización genérica en permiso para otros SHAs. Sólo existe mientras `docs/releases/credit-hotfix-20261001.json` tiene active=true. Las reglas anteriores siguen vigentes cuando `credit_hotfix_20261001=false`, valor por defecto.
 

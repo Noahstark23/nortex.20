@@ -1,0 +1,24 @@
+{
+  "backupTimestamp": "2026-10-06T19:16:01Z",
+  "bytes": 2335409,
+  "sha256": "0ad13e035c7fc66395d282941f890241da87324e597aa9adaa32f5b8b7fef818",
+  "offsiteDownloadAndHash": "PASS",
+  "restore": "PASS",
+  "restoredTables": 143,
+  "restoredRows": 53698,
+  "isolatedMysqlNetwork": "none",
+  "sourceDatabaseUnchangedByRestore": true,
+  "migrationRehearsal": "PASS",
+  "originalCountsPreserved": true,
+  "expandedFingerprint": "7941abbd1ab5a72d5df3028c8ef755427bdf8e85042bff37bd224964502b8bb2",
+  "recovery": {
+    "status": "PASS",
+    "retainedProductCommit": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
+    "adapterImage": "sha256:38eff864084e56ef0edf561ecc447d7375c9af895a2d5c77d54174c4710bf62e",
+    "health": 200,
+    "database": "up",
+    "noStore": true,
+    "deploymentToCustomers": false
+  },
+  "evidenceSource": "Coolify authenticated server terminal, 2026-10-06; metadata only exported"
+}

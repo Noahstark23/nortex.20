@@ -1,6 +1,23 @@
 # Estado verificable de Nortex y sus agentes
 
-Corte: **2026-09-19**, preparación local solicitada. Existe un candidato reunido
+## Última evidencia de release — 2026-10-06
+
+La aplicación de staging y producción quedó en
+`67bc53092c21679565c0c62934d5de8f3b7bc51a` mediante los workflows manuales.
+El [informe fechado](releases/2026-10-06-production-release.md) registra CI,
+respaldo restaurado, expansión aditiva, pruebas sintéticas, observación y límites.
+El cierre retira la excepción histórica de crédito. La receta vigente y la
+cadencia de entregas pequeñas están en el [runbook](runbooks/release-promotion.md).
+
+Esto acredita el alcance del release, no todas las capacidades del asistente,
+las PR en borrador ni un piloto comercial. El worker privado conserva su imagen
+fijada; la extracción y el envío comercial de WhatsApp siguen apagados.
+
+**La fotografía del 2026-09-19 que sigue es histórica.** Sus SHAs, bloqueos y
+rutas locales no describen el estado remoto del 2026-10-06 ni son una receta para
+el próximo deploy. Se conserva para rastrear la preparación de aquellos agentes.
+
+Corte histórico: **2026-09-19**, preparación local solicitada. Existe un candidato reunido
 sobre `main`; todavía no está aprobado ni desplegado. La
 [entrega](NORTEXGPT_ENTREGA_PREPARACION_2026-09-19.md) y el
 [expediente de promoción](NORTEXGPT_PREPARACION_DEPLOY_2026-09-19.md) separan código,

@@ -38,6 +38,7 @@
   "cash_close_journal_mutate_comment": "PR-01 agrega tres rangos puros y deliberadamente acotados: journalPosting.ts:212-355 protege completa la normalizaci\u00f3n estricta, balance, orden can\u00f3nico y huella; legacyShiftCloseService.ts:96-106 deriva identidad/hash legacy; schemas.ts protege la intenci\u00f3n can\u00f3nica del cierre. Los pisos detectan cualquier desplazamiento.",
   "mutate": [
     "utils/money.ts",
+    "utils/posCredit.ts",
     "utils/calc-laborales.ts",
     "utils/pricing.ts",
     "utils/margen.ts",

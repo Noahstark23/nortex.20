@@ -57,6 +57,9 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
   confirmación tipada y una autorización de producto que nombre alcance, ventana y
   rollback; ver `docs/runbooks/release-promotion.md`.
+- Cadencia operativa del 2026-10-06: incrementos pequeños, staging el mismo día,
+  objetivo de producción en 24–48 h desde candidato listo y escalamiento antes
+  de cinco días; ver el runbook. La urgencia no elimina compuertas ni aprobación.
 - La promoción requiere una API Coolify que exponga Auto Deploy explícitamente
   apagado; 4.1.2 omite ese campo y bloquea la compuerta. Los webhooks usan POST.
   Actualizar el panel requiere su propio respaldo y recuperación, separados de
@@ -78,8 +81,14 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   superficie por token. Las islas oscuras reales cortan esa herencia con una
   clase semántica y prueba; no se arregla con selectores de subcadena ni
   excepciones por ruta.
-- Deploy: Docker + `prisma db push` (aplica **solo DDL**; los backfills de datos van
-  en la aplicación con patrón perezoso). Prisma pinneado a **6.4.1** — correr
+- Deploy: Docker + paquete de `deploy/nortex/README.md`; el CMD actual preserva
+  schema y verifica compatibilidad sin DDL. El entrypoint histórico con `db push`
+  queda fuera del CMD; una expansión exige preparación aditiva revisada y respaldo
+  restaurable. Los backfills van en la aplicación con patrón perezoso.
+  Prepare valida también la imagen contra la base antes del corte; CI verify
+  ensaya Dockerfile/CMD y la migración comercial en MySQL sintético. El contrato
+  de producción describe el destino posterior a esa migración, no su ejecución.
+  Prisma pinneado a **6.4.1** — correr
   `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
 - Auth: JWT. `authenticate` (`backend/middleware/auth.ts`) pone `req.tenantId`,
   `req.userId` y `req.role`. **Esa es la única fuente confiable del tenant** — nunca
@@ -254,9 +263,10 @@ la bomba (revisadas junto al Security Loop):
 7. **Estado en memoria = per-proceso.** Rate-limit, caché de paywall y colas NO se
    comparten entre instancias; no asumas multi-instancia sin store compartido
    (Redis/BullMQ).
-8. **Schema estrictamente aditivo.** El deploy corre `db push` **sin**
-   `--accept-data-loss`: un cambio no autorizado hace fallar el arranque en vez
-   de borrar datos de prod. Prisma también puede marcar un `UNIQUE` nuevo como
+8. **Schema estrictamente aditivo.** El paquete actual no aplica DDL al arrancar;
+   exige el contrato revisado y falla si no coincide. Una expansión se prepara por
+   separado con backup/restauración acreditados, nunca con `--accept-data-loss`.
+   Prisma también puede marcar un `UNIQUE` nuevo como
    data loss aunque sea expand-only; ese caso requiere preflight DDL state-based,
    validación con datos y re-ejecución idempotente. Nunca habilitar el flag global
    ni asumir que una instancia vieja seguirá disponible (SCALING_AUDIT C).
@@ -362,7 +372,13 @@ libro firmado de caja · keyring JWT rotable.
 La ruta vigente de promoción es `docs/runbooks/release-promotion.md`.
 Los expedientes de `docs/releases/` prueban su candidato y fecha, no habilitan
 una release nueva. CI de un PR y CI de main son evidencias distintas: la promoción
-exige el candidato exacto vigente de main y staging manual del mismo SHA. La única excepción puntual autorizada es crédito20261001: main conserva el SHA de controles M y las protecciones; los workflows existentes pueden promover exclusivamente C=d563c750dd62c9192df1d078c4c13308748f69bd o recuperar B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 conforme al manifiesto y runbook, con revisión, CI separado, staging/drill/smoke y sin bypass. No es una ruta genérica de ramas ni permite assets directos.
+exige el candidato exacto vigente de main y staging manual del mismo SHA. La excepción
+puntual crédito20261001 conserva el controlador M y las protecciones; los candidatos
+vigentes son C′=`df6fc095fe8da39b4829336e79b78e4454997046` y
+B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, fijados por
+`docs/releases/credit-hotfix-20261001.json`. El runbook distingue su cadena acreditada
+de los C/B originales históricos. Exige revisión, CI separado, staging/drill/smoke
+y autorización, sin bypass; no habilita otros SHAs ni assets directos.
 
 Actualizar las guías operativas al cambiar sus contratos, con propietario y
 referencias ejecutables; conservar resultados históricos fechados. El índice

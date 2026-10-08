@@ -86,7 +86,7 @@
   "branch": "codex/hotfix-pos-credit-packaged-20261002",
   "recovery_branch": "codex/credit-recovery-packaged-20261002",
   "base_tree": "b687bcd3cb27bfa0ca6adeca36ba80d7ca6d5364",
-  "active": false,
+  "active": true,
   "applications": {
     "staging": {
       "origin": "https://staging.somosnortex.com",

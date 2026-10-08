@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "sha": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+  "syntheticTenant": "release-qa-0a95eec2-ad09-4aa5-859a-a2a6bc60d75f",
+  "checks": [
+    "quick product initial stock",
+    "credit debt and stock",
+    "idempotent replay",
+    "credit excess rejected without effects",
+    "balanced accounting",
+    "warehouse stock API",
+    "synthetic shift closed"
+  ],
+  "cleanup": "Synthetic user disabled and tenant cancelled; audit records retained",
+  "scope": "HTTP on deployed application and database reconciliation scoped only to the synthetic tenant",
+  "environment": "production",
+  "observedAt": "2026-10-06T19:52:00Z"
+}
