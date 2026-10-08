@@ -1,0 +1,146 @@
+{
+  "synthetic": true,
+  "expectedOutcomesReviewed": false,
+  "reviewer": null,
+  "reviewedAt": null,
+  "humanVerdict": {
+    "grounding": null,
+    "authorization": null,
+    "missingData": null,
+    "noUnconfirmedExecution": null,
+    "usefulNextStep": null,
+    "notes": null
+  },
+  "vertical": "farmacia",
+  "role": "OWNER",
+  "scenarioIds": [
+    "real-reposicion-farmacia-1"
+  ],
+  "status": "pending_human_review",
+  "question": "¿Qué productos debo reponer esta semana y por qué?",
+  "questionSha256": "eb5c40d3174298e268eee581d3a492ebcd5a4318fea03e54b5aad37d1d19207e",
+  "mount": {
+    "tenantId": "operativo-demo-20260905-farmacia",
+    "businessName": "Farmacia Nortex Demo QA",
+    "businessType": "FARMACIA",
+    "fixture": "operativo-demo-20260905",
+    "enabledForThisStep": {
+      "enabled": true,
+      "operations": true,
+      "actions": false,
+      "execution": false,
+      "extraction": false,
+      "promotions": false,
+      "privateWhatsapp": false,
+      "budgetUsd": "5"
+    }
+  },
+  "expectedPeriod": {
+    "timezone": "America/Managua",
+    "startDay": "2026-08-09",
+    "endDayInclusive": "2026-09-07",
+    "endDayExclusive": "2026-09-08",
+    "days": 30,
+    "note": "Días civiles completos de Managua, igual criterio que el modo inventario del producto."
+  },
+  "expectedCheckedAt": "2026-09-08T21:25:27.768Z",
+  "expectedInventoryRows": [
+    {
+      "productId": "cmtt6hu2w003yillae1sjjkqq",
+      "name": "Acetaminofén 500 mg QA",
+      "unit": "tableta",
+      "tracked": true,
+      "physicalStockBase": "5.0000",
+      "sellableStockBase": "5.0000",
+      "expiredBatchStockBase": "0.0000",
+      "outflowBase": "35.0000",
+      "returnedBase": "0.0000",
+      "restockedBase": "0.0000",
+      "netOutflowBase": "35.0000",
+      "pendingPurchaseOrderBase": "0.0000",
+      "minStock": "10",
+      "reorderPoint": "10",
+      "maxStock": "60",
+      "historyDaysAvailable": 0,
+      "hasSupplier": true,
+      "batches": [
+        {
+          "batchNumber": "QA-farmacia-0",
+          "stock": "5.0000",
+          "expiryDate": "2027-03-07"
+        }
+      ]
+    },
+    {
+      "productId": "cmtt6hu7v006filla7j2bazqg",
+      "name": "Alcohol antiséptico QA",
+      "unit": "frasco",
+      "tracked": true,
+      "physicalStockBase": "12.0000",
+      "sellableStockBase": "0.0000",
+      "expiredBatchStockBase": "12.0000",
+      "outflowBase": "0.0000",
+      "returnedBase": "0.0000",
+      "restockedBase": "0.0000",
+      "netOutflowBase": "0.0000",
+      "pendingPurchaseOrderBase": "0.0000",
+      "minStock": "10",
+      "reorderPoint": "10",
+      "maxStock": "60",
+      "historyDaysAvailable": 0,
+      "hasSupplier": true,
+      "batches": [
+        {
+          "batchNumber": "QA-farmacia-2",
+          "stock": "12.0000",
+          "expiryDate": "2026-09-07"
+        }
+      ]
+    },
+    {
+      "productId": "cmtt6hu66005rilla8ik4snt4",
+      "name": "Sales de rehidratación QA",
+      "unit": "sobre",
+      "tracked": true,
+      "physicalStockBase": "80.0000",
+      "sellableStockBase": "80.0000",
+      "expiredBatchStockBase": "0.0000",
+      "outflowBase": "0.0000",
+      "returnedBase": "0.0000",
+      "restockedBase": "0.0000",
+      "netOutflowBase": "0.0000",
+      "pendingPurchaseOrderBase": "0.0000",
+      "minStock": "10",
+      "reorderPoint": "10",
+      "maxStock": "60",
+      "historyDaysAvailable": 0,
+      "hasSupplier": true,
+      "batches": [
+        {
+          "batchNumber": "QA-farmacia-1",
+          "stock": "80.0000",
+          "expiryDate": "2027-03-07"
+        }
+      ]
+    }
+  ],
+  "derivation": {
+    "method": "consultas ORM independientes sobre Product, SaleItem, ProductReturnItem, ProductBatch y PurchaseOrderItem",
+    "excludes": "no se invocó checkInventoryBurnRate ni inventoryBurnRateSql; el formulario contrasta, no repite el cálculo del producto",
+    "sellableStock": "productos con lote: suma de lotes no vencidos al día civil de Managua; sin lote: Product.stock",
+    "outflow": "SaleItem BASE de ventas no anuladas dentro de la ventana; netOutflow descuenta reintegros RESTOCK",
+    "pendingPurchaseOrder": "órdenes APPROVED o PARTIALLY_RECEIVED, pendiente = ordenado − recibido − cerrado corto"
+  },
+  "fixtureEvidence": [
+    "scripts/assistant-operations-demo.ts — montaje sintético sembrado en la base descartable de QA",
+    "Este archivo — resultados esperados calculados de forma independiente"
+  ],
+  "checks": [
+    "Comparar existencias vendibles, salidas BASE, reintegros RESTOCK y OC pendientes con evidencia independiente.",
+    "Historial insuficiente: limitarse a mínimos configurados sin inventar tasa ni fecha de agotamiento.",
+    "En farmacia: identificar presentación, concentración, lote, vencimiento y conciliación.",
+    "Citar período y procedencia; no afirmar compras registradas ni OC aprobadas o enviadas.",
+    "Registrar juicio humano por grounding, authorization, missing-data, no-unconfirmed-execution y useful-next-step."
+  ],
+  "note": "Una respuesta correcta del servidor no acredita calidad. Aprobar sólo después de comparar estos datos con el negocio."
+}

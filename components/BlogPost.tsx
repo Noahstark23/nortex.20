@@ -1,77 +1,178 @@
 import React, { useEffect } from 'react';
 import { Link, useParams, Navigate } from 'react-router-dom';
 import { blogPosts } from '../data/blog-posts';
-import { ArrowLeft, Clock, Calendar } from 'lucide-react';
+import { getClusterByName } from '../data/blog-clusters';
+import { renderMarkdown } from '../utils/markdown';
+import {
+    buildArticleJsonLd,
+    buildBreadcrumbJsonLd,
+    buildFaqJsonLd,
+    buildHowToJsonLd,
+    buildCalculatorAppJsonLd,
+} from '../utils/seo';
+import Calculator from './Calculator';
+import { CALCULADORAS } from '../utils/calculadoras';
+import { pickRelatedGuides } from '../utils/related-guides';
+import { Clock, Calendar, ChevronRight } from 'lucide-react';
+import BlogShell from './blog/BlogShell';
 
 const BlogPost: React.FC = () => {
-  const { slug } = useParams<{ slug: string }>();
-  const post = blogPosts.find(p => p.slug === slug);
+    const { slug } = useParams<{ slug: string }>();
+    const post = blogPosts.find(p => p.slug === slug);
+    const sector = slug === 'como-administrar-una-ferreteria-nicaragua' ? 'ferreteria'
+        : slug === 'como-administrar-una-farmacia-nicaragua' || slug === 'como-controlar-vencimientos-farmacia-fefo' ? 'farmacia' : null;
+    const sectorPath = sector === 'farmacia' ? '/farmacias' : '/ferreterias';
+    const cluster = post ? getClusterByName(post.cluster) : undefined;
 
-  useEffect(() => {
-    if (post) {
-      document.title = `${post.title} | Nortex Blog`;
-    }
-  }, [post]);
+    useEffect(() => {
+        if (!post) return;
+        const prevTitle = document.title;
+        // Mismo criterio que el prerender: si hay metaTitle manda tal cual.
+        document.title = post.metaTitle ?? `${post.title} | Nortex Blog`;
 
-  if (!post) return <Navigate to="/blog" replace />;
+        // JSON-LD: Article + BreadcrumbList + FAQPage (inyectado al montar; el
+        // prerender ya lo incluye en el HTML estático para los crawlers).
+        const breadcrumb = [
+            { name: 'Blog', url: '/blog' },
+            ...(cluster ? [{ name: cluster.name, url: `/blog/categoria/${cluster.slug}` }] : []),
+            { name: post.title, url: `/blog/${post.slug}` },
+        ];
+        const blocks = [
+            buildArticleJsonLd(post),
+            buildBreadcrumbJsonLd(breadcrumb),
+            buildFaqJsonLd(post.faq),
+            post.howToSteps ? buildHowToJsonLd(post.title, post.howToSteps, post.description) : null,
+            post.calculator
+                ? buildCalculatorAppJsonLd({
+                      slug: post.slug,
+                      name: CALCULADORAS[post.calculator].titulo,
+                      description: CALCULADORAS[post.calculator].descripcion,
+                  })
+                : null,
+        ].filter((b): b is Record<string, unknown> => b !== null);
 
-  const renderContent = (content: string) => {
-    return content
-      .split('\n')
-      .map((line, i) => {
-        if (line.startsWith('## ')) return <h2 key={i} className="text-2xl font-bold text-slate-900 mt-8 mb-4">{line.slice(3)}</h2>;
-        if (line.startsWith('### ')) return <h3 key={i} className="text-xl font-bold text-slate-800 mt-6 mb-3">{line.slice(4)}</h3>;
-        if (line.startsWith('**') && line.endsWith('**')) return <p key={i} className="font-bold text-slate-800 mb-2">{line.slice(2, -2)}</p>;
-        if (line.startsWith('- ')) return <li key={i} className="ml-6 text-slate-600 mb-1 list-disc">{line.slice(2)}</li>;
-        if (line.startsWith('[') && line.includes('→](/')) {
-          const text = line.match(/\[(.+)\]/)?.[1];
-          const href = line.match(/\(([^)]+)\)/)?.[1];
-          return href ? <div key={i} className="my-6"><Link to={href} className="inline-flex items-center gap-2 bg-emerald-600 text-white font-bold px-6 py-3 rounded-lg hover:bg-emerald-500 transition-colors">{text}</Link></div> : null;
-        }
-        if (line.trim() === '') return <br key={i} />;
-        return <p key={i} className="text-slate-600 mb-4 leading-relaxed">{line}</p>;
-      });
-  };
+        const tag = document.createElement('script');
+        tag.type = 'application/ld+json';
+        tag.setAttribute('data-blog-jsonld', post.slug);
+        tag.textContent = JSON.stringify(blocks);
+        document.head.appendChild(tag);
 
-  return (
-    <div className="min-h-screen bg-white">
-      <nav className="border-b border-slate-200 py-4 px-6">
-        <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <Link to="/blog" className="flex items-center gap-2 text-slate-600 hover:text-slate-900 transition-colors">
-            <ArrowLeft size={16} /> Blog
-          </Link>
-          <Link to="/register" className="text-sm font-bold bg-slate-900 text-white px-4 py-2 rounded-lg">
-            Prueba Nortex Gratis
-          </Link>
-        </div>
-      </nav>
+        return () => {
+            document.title = prevTitle;
+            tag.remove();
+        };
+    }, [post, cluster]);
 
-      <article className="max-w-3xl mx-auto px-6 py-12">
-        <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-3 py-1 rounded-full">
-          {post.category}
-        </span>
-        <h1 className="text-3xl md:text-4xl font-extrabold text-slate-900 mt-4 mb-4 leading-tight">
-          {post.title}
-        </h1>
-        <div className="flex items-center gap-6 text-sm text-slate-400 mb-10 pb-6 border-b border-slate-100">
-          <span className="flex items-center gap-1"><Calendar size={14} /> {post.date}</span>
-          <span className="flex items-center gap-1"><Clock size={14} /> {post.readTime} de lectura</span>
-        </div>
+    if (!post) return <Navigate to="/blog" replace />;
 
-        <div className="prose-nortex">
-          {renderContent(post.content)}
-        </div>
+    // Relacionados: solo los slugs que existen como artículos publicados.
+    // Enlazado interno: relacionados curados + relleno automático con hermanos
+    // del clúster (Palanca B). Ver utils/related-guides.ts.
+    const related = pickRelatedGuides(post, blogPosts, {
+        limit: 4,
+        relatedSlugs: post.relatedSlugs,
+        pillarSlug: cluster?.pillarSlug,
+    });
 
-        <div className="mt-12 p-8 bg-slate-900 rounded-2xl text-white text-center">
-          <h2 className="text-2xl font-bold mb-3">¿Cansado de hacer esto a mano?</h2>
-          <p className="text-slate-300 mb-6">Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.</p>
-          <Link to="/register" className="inline-flex items-center gap-2 bg-emerald-500 hover:bg-emerald-400 text-white font-bold px-8 py-3 rounded-xl transition-colors">
-            Empezar gratis ahora →
-          </Link>
-        </div>
-      </article>
-    </div>
-  );
+    return (
+        <BlogShell width="reading">
+            <article>
+                {/* Breadcrumb visible */}
+                <nav className="nx-public-subtle flex flex-wrap items-center gap-1 text-sm" aria-label="Migas de pan">
+                    <Link to="/blog" className="nx-public-link inline-flex min-h-[44px] items-center px-1">Blog</Link>
+                    {cluster && (
+                        <>
+                            <ChevronRight size={14} aria-hidden="true" />
+                            <Link to={`/blog/categoria/${cluster.slug}`} className="nx-public-link inline-flex min-h-[44px] items-center px-1">{cluster.name}</Link>
+                        </>
+                    )}
+                    <ChevronRight size={14} aria-hidden="true" />
+                    <span aria-current="page" className="nx-public-muted max-w-[220px] truncate">{post.title}</span>
+                </nav>
+
+                {cluster ? (
+                    <Link
+                        to={`/blog/categoria/${cluster.slug}`}
+                        className="nx-public-badge mt-4 inline-flex min-h-[36px] items-center px-3 text-sm font-semibold"
+                    >
+                        {post.category}
+                    </Link>
+                ) : (
+                    <span className="nx-public-badge mt-4 inline-flex min-h-[36px] items-center px-3 text-sm font-semibold">{post.category}</span>
+                )}
+
+                <h1 className="mt-5 text-balance text-[36px] font-semibold leading-[1.08] tracking-[-0.03em] sm:text-[48px]">
+                    {post.title}
+                </h1>
+                <div className="nx-public-subtle mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-b pb-7 text-sm">
+                    <span className="flex min-h-[32px] items-center gap-2">
+                        <Calendar size={15} aria-hidden="true" />
+                        <time dateTime={post.updated ?? post.date}>{post.updated ?? post.date}</time>
+                    </span>
+                    <span className="flex min-h-[32px] items-center gap-2"><Clock size={15} aria-hidden="true" /> {post.readTime} de lectura</span>
+                </div>
+
+                {/* Calculadora interactiva (si la guía la declara) — arriba del
+                    cuerpo para que quede visible sin scroll y capte conversión. */}
+                {post.calculator && (
+                    <div className="mt-8">
+                        <Calculator type={post.calculator} />
+                    </div>
+                )}
+
+                <div className="prose-nortex nx-public-reading mt-9">
+                    {renderMarkdown(post.content, Link)}
+                </div>
+
+                {/* FAQ visible (además del JSON-LD) */}
+                {post.faq.length > 0 && (
+                    <section aria-labelledby="faq-title" className="mt-14">
+                        <h2 id="faq-title" className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">Preguntas frecuentes</h2>
+                        <div className="mt-6 space-y-3">
+                            {post.faq.map((item, i) => (
+                                <details key={i} className="nx-public-surface group rounded-2xl border px-5 py-4">
+                                    <summary className="flex min-h-[44px] cursor-pointer list-none items-center justify-between gap-4 font-semibold leading-6">
+                                        {item.q}
+                                        <ChevronRight size={18} aria-hidden="true" className="nx-public-subtle shrink-0 transition-transform group-open:rotate-90" />
+                                    </summary>
+                                    <p className="nx-public-muted mt-3 pb-1 leading-7">{item.a}</p>
+                                </details>
+                            ))}
+                        </div>
+                    </section>
+                )}
+
+                {/* CTA principal */}
+                <aside className="nx-public-surface mt-14 rounded-3xl border p-7 text-center sm:p-10" aria-labelledby="article-cta-title">
+                    <h2 id="article-cta-title" className="text-[28px] font-semibold leading-tight tracking-[-0.02em]">{sector ? 'Conocé el recorrido en Nortex' : '¿Cansado de hacer esto a mano?'}</h2>
+                    <p className="nx-public-muted mx-auto mt-3 max-w-xl text-[17px] leading-7">{sector ? 'Revisá los pasos, el ejemplo y los límites antes de crear tu cuenta.' : 'Nortex automatiza nómina, facturas y reportes DGI. Prueba gratis 30 días.'}</p>
+                    <Link to={sector ? sectorPath : '/register'} data-sector-cta={sector ?? undefined} data-page-kind={sector ? 'blog' : undefined} data-cta-location={sector ? 'footer' : undefined} className="nx-public-primary mt-6 inline-flex min-h-[44px] items-center justify-center gap-2 px-7 text-base font-semibold">
+                        {sector ? `Ver Nortex para ${sector === 'farmacia' ? 'farmacias' : 'ferreterías'} →` : 'Empezar gratis ahora →'}
+                    </Link>
+                </aside>
+
+                {/* Artículos relacionados */}
+                {related.length > 0 && (
+                    <section aria-labelledby="related-title" className="mt-14 border-t pt-9">
+                        <h2 id="related-title" className="text-2xl font-semibold tracking-[-0.02em]">Seguí leyendo</h2>
+                        <div className="mt-5 grid gap-4 sm:grid-cols-2">
+                            {related.map(r => (
+                                <Link
+                                    key={r.slug}
+                                    to={`/blog/${r.slug}`}
+                                    className="nx-public-card group flex min-h-[144px] flex-col p-5"
+                                >
+                                    <span className="nx-public-badge inline-flex w-fit min-h-[28px] items-center px-2.5 text-[13px] font-semibold">{r.category}</span>
+                                    <h3 className="mt-3 text-[15px] font-semibold leading-snug">{r.title}</h3>
+                                    <span className="nx-public-link mt-auto pt-4 text-sm font-semibold">Leer guía</span>
+                                </Link>
+                            ))}
+                        </div>
+                    </section>
+                )}
+            </article>
+        </BlogShell>
+    );
 };
 
 export default BlogPost;

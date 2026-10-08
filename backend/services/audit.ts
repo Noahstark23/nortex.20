@@ -7,6 +7,7 @@
 
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
+import Decimal from 'decimal.js';
 
 const prisma = new PrismaClient();
 
@@ -180,6 +181,8 @@ export async function analyzeVoidedMovements(
 
     // Agrupar por usuario
     const byUser = new Map<string, VoidAnalysis>();
+    // Acumulador de montos en decimal.js (sin round-trip a Number hasta el final)
+    const amountAcc = new Map<string, Decimal>();
 
     for (const mov of voidedMovements as any[]) {
         const userId = mov.userId;
@@ -192,13 +195,15 @@ export async function analyzeVoidedMovements(
                 voids: [],
                 riskLevel: 'LOW',
             });
+            amountAcc.set(userId, new Decimal(0));
         }
         const entry = byUser.get(userId)!;
+        const movAmount = new Decimal(mov.amount).abs();
         entry.totalVoids++;
-        entry.totalAmountVoided += Math.abs(Number(mov.amount));
+        amountAcc.set(userId, amountAcc.get(userId)!.plus(movAmount));
         entry.voids.push({
             id: mov.id,
-            amount: Math.abs(Number(mov.amount)),
+            amount: movAmount.toNumber(),
             reason: mov.voidReason,
             category: mov.category,
             voidedAt: mov.voidedAt || mov.createdAt,
@@ -206,10 +211,12 @@ export async function analyzeVoidedMovements(
     }
 
     // Calcular riesgo por usuario
-    for (const entry of byUser.values()) {
-        if (entry.totalVoids >= 10 || entry.totalAmountVoided >= 5000) {
+    for (const [userId, entry] of byUser) {
+        const totalVoided = amountAcc.get(userId)!;
+        entry.totalAmountVoided = totalVoided.toNumber();
+        if (entry.totalVoids >= 10 || totalVoided.gte(5000)) {
             entry.riskLevel = 'HIGH';
-        } else if (entry.totalVoids >= 5 || entry.totalAmountVoided >= 2000) {
+        } else if (entry.totalVoids >= 5 || totalVoided.gte(2000)) {
             entry.riskLevel = 'MEDIUM';
         }
         // Truncar lista a los últimos 20
@@ -273,6 +280,8 @@ export async function analyzeDiscounts(
 
     // Agrupar por usuario
     const byUser = new Map<string, DiscountAnalysis>();
+    // Acumulador de descuentos en decimal.js (sin round-trip a Number hasta el final)
+    const discountAcc = new Map<string, Decimal>();
 
     for (const sale of sales as any[]) {
         const userId = sale.employeeId;
@@ -287,20 +296,23 @@ export async function analyzeDiscounts(
                 avgDiscountPercent: 0,
                 riskLevel: 'LOW',
             });
+            discountAcc.set(userId, new Decimal(0));
         }
         const entry = byUser.get(userId)!;
         entry.salesWithDiscount++;
-        entry.totalDiscountGiven += Number(sale.globalDiscount);
+        discountAcc.set(userId, discountAcc.get(userId)!.plus(new Decimal(sale.globalDiscount)));
     }
 
     // Calcular promedios y riesgo
-    for (const entry of byUser.values()) {
+    for (const [userId, entry] of byUser) {
+        const totalDiscount = discountAcc.get(userId)!;
+        entry.totalDiscountGiven = totalDiscount.toNumber();
         const discountRate = entry.totalSales > 0 ? (entry.salesWithDiscount / entry.totalSales) * 100 : 0;
         entry.avgDiscountPercent = Math.round(discountRate * 100) / 100;
 
-        if (discountRate > 30 || entry.totalDiscountGiven > 10000) {
+        if (discountRate > 30 || totalDiscount.gt(10000)) {
             entry.riskLevel = 'HIGH';
-        } else if (discountRate > 15 || entry.totalDiscountGiven > 3000) {
+        } else if (discountRate > 15 || totalDiscount.gt(3000)) {
             entry.riskLevel = 'MEDIUM';
         }
     }

@@ -1,0 +1,397 @@
+# CLAUDE.md — Guía para agentes en Nortex
+
+## Dirección vigente — 2026-09-19
+
+La [meta](docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md) es un equipo administrativo
+accesible de contabilidad, RRHH y finanzas. La unidad de avance es un trabajo
+comprobado: primero W01, revisión semanal de caja guardada, retomable y aceptada.
+El [roadmap](docs/ROADMAP_AGENTES_NORTEX.md) ordena A00–A07 y los pendientes H01/RAG;
+los planes y evidencias fechados de abajo conservan su alcance histórico.
+
+Aplicar [reglas de agentes](docs/REGLAS_AGENTES_NORTEX.md) y
+[arquitectura](docs/ARQUITECTURA_AGENTES_NORTEX.md). Separar conversación, encargo,
+run y propuesta/comprobante. Los agentes consultan/preparan; confirmación humana
+exacta y efectos permanecen en servicios de dominio. No ampliar monolitos.
+
+Política acordada: US$2 iniciales de IA por negocio/mes, ampliables por solicitud
+y aprobación de Nortex hasta US$10; techo conjunto US$20. El objetivo comercial
+de US$20 del servicio es distinto. El candidato reunido incorpora esa política;
+comprobar [fuente, QA y entorno](docs/ESTADO_ACTUAL_NORTEX.md) antes de habilitar
+gasto. No aumentar límites mediante una receta antigua.
+
+W01/W01B, biblioteca editorial, presupuesto y H01-1/2 están reunidos en el
+candidato identificado en el estado actual. A01.W01.1–2 incorpora guardado privado,
+notas, espera, reanudación y cancelación; faltan MySQL real, informe aceptado y
+encargo W01 completo. W02/W03 y MCP siguen pendientes. [H01](docs/CONTRATO_COMPRAS_CONVERSACIONALES_H01.md)
+registra A/B/C validados como conductas; la QA determinista local no acredita
+registro financiero, revisión/publicación de artículos ni calidad del modelo.
+
+
+> **Punto de entrada vigente:** [estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md),
+> [plan de estabilidad y RAG](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md)
+> y [equipo de desarrollo](docs/EQUIPO_DESARROLLO_NORTEX.md).
+> Los informes fechados conservan su corte histórico. Código, QA local, CI,
+> calidad de IA, piloto, staging y producción se acreditan por separado.
+> Antes de ejecutar una receta antigua, contrastarla con el runbook vigente y código.
+
+Nortex es un **ERP/POS multi-tenant** para PyMEs de Nicaragua (ferreterías, pulperías,
+farmacias, distribuidoras/misceláneas, prestamistas). Stack: **React + Vite** (SPA + PWA),
+**Express + Prisma** (backend, `backend/server.ts` + `backend/routes/*`), **MySQL 8**
+(InnoDB; migraciones con backticks — NO PostgreSQL), **TypeScript** con verificación de tipos; `tsconfig.json` aún no activa `strict`.
+Maneja **dinero e inventario reales** → la integridad y la seguridad no son negociables.
+
+## Estación local segura
+
+- Runtime canónico: Node `22.23.2` mediante `.mise.toml`; npm y `package-lock.json`.
+- Lee también `AGENTS.md`, que define preservación del worktree y límites operativos
+  comunes a Codex, Gemini, Claude y OpenCode.
+- Compuerta local sin deploy: `nortex check` o `sh scripts/ci-local-safe.sh`.
+- Backend local aislado: `nortex backend`; n8n dev: `nortex n8n-up`. Ambos se
+  publican solo en `127.0.0.1` y se administran desde `~/Developer/Nortex`.
+- `nortex app-up` conserva una integración Docker completa opcional; requiere memoria
+  libre suficiente en Colima y no es el flujo host predeterminado.
+- No iniciar jobs `deploy-*`, webhooks, backup remoto, push, merge o DNS sin una
+  autorización explícita y separada. No asumir nunca que el worktree está limpio.
+- CI, staging, aprobación del environment y producción son cuatro compuertas
+  diferentes. Un estado verde o una aprobación técnica no autoriza producción por
+  inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
+  confirmación tipada y una autorización de producto que nombre alcance, ventana y
+  rollback; ver `docs/runbooks/release-promotion.md`.
+- Cadencia operativa del 2026-10-06: incrementos pequeños, staging el mismo día,
+  objetivo de producción en 24–48 h desde candidato listo y escalamiento antes
+  de cinco días; ver el runbook. La urgencia no elimina compuertas ni aprobación.
+- La promoción requiere una API Coolify que exponga Auto Deploy explícitamente
+  apagado; 4.1.2 omite ese campo y bloquea la compuerta. Los webhooks usan POST.
+  Actualizar el panel requiere su propio respaldo y recuperación, separados de
+  MySQL de Nortex; ver `docs/releases/2026-09-08-coolify-compatibility.md`.
+
+- Backend: `tsx backend/server.ts` (sin build). Verificar con `npx tsc --noEmit`.
+- Frontend: `npm run build` (Vite + PWA). Producción usa `npm run build:seo`
+  (build + prerender por-ruta: 70+ HTML estáticos + sitemap — ver `scripts/prerender.ts`).
+- Contraste: los aliases Tailwind de color no representan una paleta independiente;
+  `blue`/`emerald` se remapean a marca y `orange`/`rose` a estados. Para un
+  relleno sólido con texto claro, medir estado base y hover, usar tinta
+  semántica AA y cubrirlo en `tests/frontendColorSemantics.test.ts`. Los guards
+  de compatibilidad en `index.css` deben usar clases exactas; no tocar fondos
+  translúcidos ni fusionar los tokens de estado con sus canales RGB. Si la
+  tinta vive en un descendiente, corregir y probar el par contenedor--hijo:
+  un selector que sólo coincide en el contenedor no protege el icono.
+- Bridge Día: si una utilidad de fondo se traduce a canvas claro, el
+  `text-white` o `text-slate-*` heredado debe tomar la tinta contextual de esa
+  superficie por token. Las islas oscuras reales cortan esa herencia con una
+  clase semántica y prueba; no se arregla con selectores de subcadena ni
+  excepciones por ruta.
+- Deploy: Docker + paquete de `deploy/nortex/README.md`; el CMD actual preserva
+  schema y verifica compatibilidad sin DDL. El entrypoint histórico con `db push`
+  queda fuera del CMD; una expansión exige preparación aditiva revisada y respaldo
+  restaurable. Los backfills van en la aplicación con patrón perezoso.
+  Prepare valida también la imagen contra la base antes del corte; CI verify
+  ensaya Dockerfile/CMD y la migración comercial en MySQL sintético. El contrato
+  de producción describe el destino posterior a esa migración, no su ejecución.
+  Prisma pinneado a **6.4.1** — correr
+  `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
+- Auth: JWT. `authenticate` (`backend/middleware/auth.ts`) pone `req.tenantId`,
+  `req.userId` y `req.role`. **Esa es la única fuente confiable del tenant** — nunca
+  tomarlo de `req.body`/query. La home `/` de producción se sirve desde
+  `public/landing.html` (estático), no desde el SPA.
+- Dinero: **`decimal.js`**, nunca `Number`/`parseFloat` para cálculos.
+- Stock: **siempre** vía `applyStockDelta` (`backend/services/stockService.ts`) —
+  UPDATE condicional atómico + Kardex; acepta `warehouseId` opcional (multi-bodega).
+
+---
+
+> **Revisión exigente posterior al rediseño:** las prioridades E01–E08 y su
+> evidencia están en [el plan de dirección](docs/PLAN_DIRECCION_UX_Y_VALIDACION_2026.md#0-ejecución-posterior-a-la-revisión-exigente).
+> La clasificación de pagos electrónicos fue reparada y se ejecutaron regresiones,
+> mutación dirigida y circuitos HTTP/MySQL por canal. Alcance y pendientes:
+> [verificación por módulo](docs/VERIFICACION_MODULOS_2026-09-04.md).
+> Mantener los estados y criterios de cierre de `AGENTS.md`.
+
+## 🧭 Método de trabajo (OBLIGATORIO)
+
+Toda implementación sigue la skill **`nortex-feature`**
+(`.claude/skills/nortex-feature/SKILL.md`): leer el código y el estado de Git,
+preservar cambios existentes, reproducir el fallo, editar un candidato aislado y
+probar las funciones importadas del producto. Para dinero e inventario se ejecutan
+además HTTP + MySQL reales con `npm run test:integration:required` contra una base
+local descartable. Un `describe.skip`, una réplica de la fórmula o una pantalla
+que abre no prueban el flujo. La entrega incluye diff, pruebas ejecutadas y límites.
+Commit, push, PR, merge y despliegue se realizan solo dentro del alcance autorizado;
+una reparación local no autoriza promoción a producción.
+
+Skills especializadas (en `.claude/skills/`): **nortex-qa** (rondas de QA sobre
+código existente/diffs) · **nortex-migration** (schema/BD: MySQL + db push aditivo)
+· **nortex-security-audit** (barrido por clases de bug reales, hallazgos S-n) ·
+**nortex-red-team** (cadenas de CAPTURA ofensivas: cross-tenant, forja JWT, minteo
+de dinero) · **nortex-blue-team** (adjudicar capturas con honestidad brutal:
+BLOCKED/EXPLOITABLE/PARTIAL + parche) · **nortex-seo** (landing/blog/prerender) ·
+**nortex-deploy** (release, env vars, smoke tests) · **nortex-rag** (ayuda de NortexGPT, herramientas autorizadas, evaluación y
+canales privado/comercial con contratos separados) ·
+**run-nortex** (levantar la app real y probarla).
+
+**Trabajo paralelo y límites de edición:** antes de repartir tareas, acordar el
+contrato entre módulos y la lista de archivos permitidos de cada agente. Cada dominio
+tiene un solo responsable de edición y cada archivo compartido un único integrador;
+las revisiones de otros agentes son de lectura hasta reasignar explícitamente el
+archivo. Aplicar las [reglas de coordinación](AGENTS.md#coordinación-y-modularidad).
+
+Los flujos nuevos se implementan fuera de `backend/server.ts` y `components/POS.tsx`;
+esos archivos componen rutas/servicios/componentes/hooks con contratos pequeños.
+Antes de mover un flujo, contar con una prueba conductual que detecte una regresión
+del contrato, incluyendo tenant/roles y errores cuando corresponda. Reportar el delta
+del origen, de los destinos y del conjunto afectado: bajar un archivo no prueba que
+bajó el código total. Nunca aumentar presupuestos ni excepciones para hacer pasar
+pruebas; al extraer, ajustar el trinquete hacia abajo en el mismo cambio.
+
+---
+
+## Bodega y catálogo — contrato del candidato local 2026-09-12
+
+Estas reglas describen el código del candidato; no acreditan despliegue ni
+reconciliación de datos históricos.
+
+- **Unidad base y cantidades:** usar `utils/productQuantityRules.ts` para nuevas
+  operaciones. `unidad`/`unidades`/`caja`/`cajas` sin modo ni paso configurados
+  usan enteros. `MEASURED` o un paso explícito prevalecen sobre el nombre; las
+  unidades desconocidas conservan el fallback fraccionario. El factor de empaque
+  convierte a unidad base. No reinterpretar snapshots de cotizaciones, pedidos
+  o recepciones históricas ni volver a aplicar un replay confirmado.
+- **Marca y cámara (candidato local):** `Product.brand` es opcional e independiente
+  del nombre; omitirla en importación conserva la existente. El lector óptico es
+  entrada, no una mutación de stock. POS conserva su router SKU/balanza; bodega
+  identifica antes de recibir, mover o contar. Una captura se acepta una vez y
+  se descarta si cambió la sesión. La validación de software no acredita cámara
+  física: ver [entrega de marca y cámara](docs/MARCAS_Y_LECTOR_CAMARA_2026-09-12.md).
+- **Importación:** `backend/services/productImportService.ts` confirma cada fila
+  en su propia transacción. Un SKU existente conserva los opcionales omitidos y
+  rechaza una existencia enviada por Excel: el stock se corrige por conteo o
+  ajuste en la bodega. Un producto nuevo admite existencia inicial; cuando hay
+  varias bodegas activas, esa entrada necesita ubicación explícita.
+- **Productos e historial:** `DELETE /api/products/:id` devuelve 409 para una ficha
+  propia existente mediante `productDeletionService.ts`. La ficha se conserva;
+  no hay archivado implementado. Ocultar del catálogo público no la archiva ni
+  la retira del inventario/POS.
+- **Ajustes físicos:** `inventoryAdjustmentService.ts` admite pérdida/sobrante
+  justificados. La UI conserva el UUID y el contenido ante un resultado incierto.
+  Sólo una confirmación exacta APPLIED o un rechazo durable REJECTED libera el
+  intento; un error sin ese comprobante no permite reemplazarlo. Un rechazo
+  durable impide que el UUID se aplique después y permite corregir con otro. Reclamo, stock, Kardex, asiento cuando tiene valor y
+  auditoría se confirman juntos. Una compra o devolución requiere su documento
+  y flujo correspondiente; los productos con lote/serie requieren identificar
+  las existencias afectadas. Clientes antiguos sin UUID no tienen esa garantía
+  de reintento idempotente.
+- **Captura decimal de compras:** `utils/bodegaReceivingInput.ts` acepta coma o
+  punto decimal sin borrar caracteres. Parciales y formatos ambiguos permanecen
+  visibles, pero no se envían. Cantidad, costo y abono conservan su precisión.
+- **Pago de compra CASH:** exige turno propio OPEN bajo lock; el preview aplica
+  la misma autoridad. El replay confirmado precede esa validación. Un traspaso
+  de turno calcula el corte después de obtener el lock y audita en la misma
+  transacción mediante `shiftHandoverService.ts`.
+- **Toma física:** `stockCountClosingSnapshot.ts` lee bajo lock el saldo de la
+  bodega y la captura guarda `bookStockAtCapture` con cuatro decimales. El cierre
+  compara ese saldo con el actual a la misma precisión; si cambió, exige volver
+  a contar y guardar, incluso si la cantidad física sigue siendo la misma.
+  Una captura histórica sin ese snapshot también necesita confirmación. `expected`
+  al abrir la toma no sustituye al saldo de captura para calcular el ajuste.
+
+---
+
+## 🔐 Security & Integrity Loop (OBLIGATORIO antes de entregar código)
+
+Antes de escribir, refactorizar o sugerir código/infra, revisar estas 6 capas
+con evidencia proporcional al cambio. Corregir incumplimientos dentro del alcance
+autorizado y reportar pruebas, fallos materiales, omisiones y pendientes con
+honestidad. Reservar `Security & Integrity Loop superado` para controles
+efectivamente comprobados y declarar su alcance; una revisión mental o un plan
+no certifican el sistema ni sustituyen verificaciones ejecutadas.
+
+**Datos y finanzas**
+1. **Aislamiento multi-tenant.** Toda query Prisma sobre datos de negocio incluye
+   `tenantId` (o el scoping correcto, p. ej. `lenderId`) tomado de `req.tenantId`
+   (JWT). Cuidado con `update/delete/findUnique` por `id` suelto: verificar
+   propiedad con `findFirst({ id, tenantId })` primero.
+2. **Persistencia segura.** Soft delete (`deletedAt`) para datos de negocio/históricos;
+   borrado físico SOLO para data efímera (caché, sesiones, colas temporales).
+3. **Inmutabilidad de auditoría.** Operación que mueve dinero o inventario →
+   `AuditLog` con `before`/`after`, `userId`, `tenantId`, **dentro de la misma
+   transacción**. Complementos: Kardex (`stockBefore/After` del read-back) y el
+   libro firmado (`backend/services/ledger.ts`) para movimientos de caja.
+4. **Precisión financiera.** Campos money nuevos en `Decimal`; código con `decimal.js`
+   estricto. `Product.price/cost/wholesale/pack` conservan Float legacy. Su transición
+   debe preservar un contrato coherente por agregado con expansión, backfill,
+   comparación y reconciliación; no perpetuar Float monetario en campos nuevos.
+
+**Seguridad y brechas**
+5. **Auth y entradas.** Validar `req.body` con **Zod** en rutas de dinero. Sin
+   secretos hardcodeados (JWT por keyring `JWT_SECRETS`, ver
+   `backend/services/secrets.ts`). Auth con **rate limit** (ya activo: login,
+   register, reset + limiter global — pero `MemoryStore`, per-proceso: no protege
+   con >1 instancia, ver `docs/SCALING_AUDIT.md` A1). Endpoints sensibles con
+   `authenticate` + `checkRole`.
+
+**DevOps y resiliencia**
+6. **Backups.** Si tocás config de BD/Docker/Coolify, garantizar **backup automático
+   diario a almacenamiento SEPARADO** del Droplet (`scripts/backup-db.sh`). Si no
+   está desplegado, alertar al CEO.
+
+---
+
+## 🚀 Escalabilidad — guardrails (OBLIGATORIO al tocar backend/BD)
+
+Nortex hoy corre como **UN proceso** (single instance): el rate-limit, el caché de
+paywall (`node-cache`) y la cola de WhatsApp (`InMemoryQueue`) viven en memoria y
+funcionan solo con 1 instancia. Detalle, ubicaciones y prioridades en
+`docs/SCALING_AUDIT.md`. Al escribir código nuevo, respetá estas reglas para no armar
+la bomba (revisadas junto al Security Loop):
+
+1. **Un solo cliente Prisma.** NO crear `new PrismaClient()` nuevos (en el corte 484f58a hay 10
+   construcciones runtime, incluida la compartida; 9 siguen fuera del singleton). Importar el cliente compartido.
+   Consolidación a `backend/lib/prisma.ts` pendiente (SCALING_AUDIT A2).
+2. **Listados con límite.** Prohibido `findMany` sin `take`/paginación sobre tablas de
+   negocio (`Sale`, `KardexMovement`, `AuditLog`, `Product`, `Payment`, `Expense`,
+   `JournalEntry`). Reportes/dashboards: agregá en la BD (`groupBy`/`aggregate`), NO
+   traigas filas y sumes en JS.
+3. **Índices con cada query.** Si agregás una query que filtra u ordena por un campo,
+   agregá el `@@index` (compuesto, p. ej. `[tenantId, createdAt]`) en el MISMO cambio.
+4. **Transacciones cortas.** Dentro de `$transaction`: nada de N+1 (usá `createMany`/
+   `updateMany` + lecturas consolidadas), no tomar el lock del correlativo/hot-row al
+   inicio de una tx larga, y CERO llamadas externas (LLM/email/Stripe) dentro de la tx.
+5. **Nada pesado síncrono en el handler.** XLSX/PDF/CSV grandes bloquean el event loop
+   → background/stream, nunca inline en la request.
+6. **No sembrar en lecturas.** Nada de `createMany`/seed en un endpoint GET (p. ej. el
+   catálogo contable) — amplificación de escritura.
+7. **Estado en memoria = per-proceso.** Rate-limit, caché de paywall y colas NO se
+   comparten entre instancias; no asumas multi-instancia sin store compartido
+   (Redis/BullMQ).
+8. **Schema estrictamente aditivo.** El paquete actual no aplica DDL al arrancar;
+   exige el contrato revisado y falla si no coincide. Una expansión se prepara por
+   separado con backup/restauración acreditados, nunca con `--accept-data-loss`.
+   Prisma también puede marcar un `UNIQUE` nuevo como
+   data loss aunque sea expand-only; ese caso requiere preflight DDL state-based,
+   validación con datos y re-ejecución idempotente. Nunca habilitar el flag global
+   ni asumir que una instancia vieja seguirá disponible (SCALING_AUDIT C).
+
+---
+
+## ⚠️ Estado actual (ver `docs/SECURITY_AUDIT.md` para seguridad S1–S28 · `docs/SCALING_AUDIT.md` para escalado)
+
+**Reparaciones registradas (verificar alcance antes de generalizar):** hotfixes cross-tenant (S1–S4) · Zod + rate-limits en
+rutas de dinero y auth · AuditLog before/after en los flujos revisados de dinero (S8–S12:
+préstamos, abonos, crédito A/R, precios) · concurrencia atómica de stock/wallet ·
+libro firmado de caja · keyring JWT rotable.
+
+**Gaps pendientes (NO asumir cumplimiento):**
+- Nómina legacy aún contiene una ruta que puede omitir el asiento; decisiones/pagos
+  concurrentes requieren reproducción y reparación específica. Las comprobaciones
+  generales no cierran este flujo. Consultar `nortex-rrhh` y el plan D11.
+- **Capa 2:** `Supplier` tiene `deletedAt`; otros agregados siguen pendientes.
+  El candidato de bodega bloquea DELETE de Product con 409; archivado e históricos siguen pendientes.
+- **Capa 4:** `Product.price/cost` (Float) y varios campos `Decimal(12,2)/(10,2)`;
+  la transición a tipos exactos por agregado sigue pendiente; requiere expansión,
+  backfill y reconciliación (los montos del Command Center ya están en 18,4).
+- **Escalabilidad (ver `docs/SCALING_AUDIT.md`):** hoy single-instance. Ya
+  corregido: `--accept-data-loss` fuera del deploy (el `db push` ahora falla ante
+  un cambio destructivo en vez de borrar prod) e índices compuestos B1 en
+  `Sale`/`AuditLog`/`KardexMovement`/`Expense`/`Purchase`/`Payment`/`StockTransfer`.
+  Pendientes: 9 construcciones runtime fuera del singleton (existe el singleton `backend/lib/prisma.ts`
+  pero falta migrar los módulos legacy), rate-limit/caché/cola en memoria, N+1 en la
+  venta, reportes/XLSX sin paginar. No asumir que escala horizontal sin estos arreglos.
+- Al tocar estas áreas: corregí lo que toques al estándar del loop, y no declares
+  "superado" a nivel sistema sin respaldo del informe de auditoría.
+
+---
+
+## 🗺️ Mapa de subsistemas (dónde vive cada cosa)
+
+| Subsistema | Dónde |
+|---|---|
+| Ventas/POS | `components/POS.tsx` (composición del POS; precios y cantidades en utilidades/servicios compartidos, con `basePrice` preservado y confirmación de total autoritativo) · `backend/services/salesService.ts` (`executeSale`: total autoritativo server-side, idempotencia por `offlineId`) |
+| Cola y avisos POS | `hooks/usePosOfflineQueue.ts` + `utils/offlineSyncTransport.ts`: mismo ID y snapshot; `OperationalNotifications` consulta causas actuales. No enviar metadatos de IndexedDB ni llamar confirmado a un pendiente. Ver [contratos y QA](docs/POS_Y_AVISOS_2026-09-04.md). |
+| Activación y catálogo POS | `components/activation/HomeSalesJourney.tsx` + `hooks/useActivationJourney.ts`; `components/pos/PosCatalogPane.tsx`; `GET /api/onboarding` en `backend/routes/onboarding.ts` + `backend/services/onboardingStatusService.ts`. Extracción local parcial; QA y alcance en el informe del 2026-09-04 |
+| Stock | `backend/services/stockService.ts` (atómico, multi-bodega con backfill perezoso) · Kardex · lotes FEFO (`ProductBatch`) · series (`/api/serials`) · conteos (`StockCount`) |
+| Compras | `backend/services/purchaseRegistrationService.ts` compartido por `/api/purchases` y NortexGPT: preview, idempotencia persistente y registro transaccional. `/api/purchase-orders` conserva la recepción SIN dinero; facturar lo recibido no vuelve a ingresar stock. |
+| Multi-bodega | `Warehouse`/`ProductStock` + `/api/warehouses`. `Product.stock` sigue siendo el agregado autoritativo; transferencias implementadas en `backend/routes/stockTransfers.ts` y `/api/stock-transfers`; validar cada flujo y despliegue |
+| Mayoreo | `Product.wholesalePrice/wholesaleMinQty` (+ empaques `packUnit/packSize/packPrice`) · `Customer.isWholesale` · regla pura en el POS |
+| Préstamos (LENDER) | `backend/routes/loans.ts` (motor dual francés/flat, plan de cuotas, mora; scoping por `lenderId`) |
+| WhatsApp/IA | `backend/services/whatsapp/*` — agente tool-use (Claude Haiku) con búsqueda de catálogo FULLTEXT (`rag.ts`) y memoria conversacional; tenant server-side en `ToolContext`. Identidad comercial verificada en `identity.ts`; el canal privado se compone aparte. Ese contexto no garantiza inmunidad a prompt injection |
+| NortexGPT interno | `components/assistant/*`, `hooks/useNortexAssistant.ts`, `backend/routes/assistant*.ts`, `backend/services/assistant/*`, `backend/workers/assistant.ts`. JWT vigente, conversaciones privadas por usuario/rol, ayuda versionada, métricas MySQL y propuestas independientes. Captura textual durable con fuente humana y comparación posterior con la factura; toda corrección invalida la revisión. El chat y el worker nunca confirman compras. El orquestador cerrado, propuestas OC/merma/devolución/promoción, cobro online y WhatsApp privado tienen contratos y pruebas en [la entrega operativa](docs/NORTEXGPT_OPERATIVO_2026-09-05.md). Ver [implementación y límites](docs/NORTEXGPT_IMPLEMENTACION_2026-09-05.md) y [conversación](docs/NORTEXGPT_CONVERSACION_2026-09-05.md). |
+| Admin | `components/SuperAdmin.tsx` + `/api/admin/*` (métricas con Decimal, SWR) — solo SUPER_ADMIN |
+| Contabilidad/fiscal | `backend/services/accounting.ts` (partida doble NIIF) · `nicaTax.ts` / `nicaLabor.ts` (DGI, Ley 185) · depreciación · cierres |
+| SEO/marketing | `public/landing.html` (home de prod) · `scripts/prerender.ts` (HTML por ruta + sitemap dinámico) · blog en `data/blog-posts.ts` + `data/blog-clusters.ts` (el `cluster` referencia por **name** exacto) |
+| Delivery | `backend/routes/pedidos|motorizados|driver` (Red Nortex; wallet del repartidor con libro firmado) |
+
+---
+
+## Convenciones del repo
+
+- Cantidades de venta y cotización: usar `resolveLegacySaleMode`, compartido por
+  POS, normalización de ventas y creación de cotizaciones. Cajas/unidades legacy
+  sin modo ni paso son enteras; preservar medidas explícitas e históricos.
+  PACK exige empaques completos. No truncar la entrada ni borrar pendientes.
+  Evidencia y límites: `docs/releases/2026-09-08-cajas-recuperacion.md`.
+- Una reparación pendiente no debe tener su única copia en `/tmp`: conservar
+  candidato y evidencia en ubicación persistente, sin alterar worktrees ajenos.
+
+- Ramas: una por feature (`claude/<feature>`) desde `origin/main`; PRs en **draft**;
+  fases grandes = PRs secuenciales (mergear la Fase A antes de construir la B).
+- Mensajes, UI y comentarios en **español** (variante nicaragüense; voseo en UI).
+- Verificación mínima antes de pushear: `npx tsc --noEmit` y (si tocaste frontend)
+  `npm run build`. Migración aditiva en `backend/prisma/migrations/` si tocaste el schema.
+- **Pruebas de mutación (`npm run test:mutation`, en CI).** Si tocás lógica de
+  **dinero pura** (`utils/calc-laborales`, `utils/pricing`, `services/loanMath`,
+  y las funciones puras de `nicaTax`/`stockService`/`accounting`), no alcanza con
+  que los tests pasen: tienen que **matar bugs**. Stryker inyecta fallas (invierte
+  comparaciones, cambia signos, vacía cuerpos) y falla el CI si el score baja del
+  umbral. Línea base histórica: **95.59%**. En el candidato integrado con main al 2026-09-04 el umbral configurado es **100%**;
+  no equivale a cobertura global ni a una ejecución actual. El umbral
+  (`stryker.config.json`) **solo sube**: si un cambio lo hunde, se arregla el test
+  —nunca se baja el umbral ni se debilita una aserción para pasar—. Al agregar una
+  función de dinero nueva, sumala al `mutate` (los archivos con Prisma se mutan
+  por rango de líneas, solo la parte pura).
+- **Presupuesto del POS (`tests/presupuestoPos.test.ts`, en CI).**
+  El corte de producto `484f58a` tiene 5.924 líneas y 96 referencias textuales
+  `useState` (no es un conteo AST). Los máximos vigentes se consultan en el test;
+  el servidor tiene su propio trinquete en `tests/presupuestoBackend.test.ts`.
+  Las cifras de entregas antiguas no sustituyen la medición del candidato actual:
+  cualquier `setState` re-ejecuta el cuerpo entero. Hay un trinquete con la
+  MISMA regla que el umbral de mutación — **el número solo baja**. Feature nueva
+  del POS ⇒ nace en `components/pos/<feature>.tsx`; adentro de `POS.tsx` se
+  compone, no se implementa. Si sacás una pieza, bajá el presupuesto en el mismo
+  commit. Nunca lo subas para que pase un PR.
+- **Conducta del POS: se prueba renderizando.** `tests/posVentaCritica.test.tsx`
+  caracteriza la venta (escanear → carrito → cobrar → vuelto → registrar) en
+  jsdom, sin aseverar estructura, para que mover código NO la rompa y cambiar la
+  conducta SÍ. La lista vigente de excepciones textuales está en
+  `tests/presupuestoPos.test.ts`; solo puede achicarse y no acredita conducta UI.
+- No introducir dependencias pesadas sin necesidad; el bundle del SPA ya roza el
+  límite de precache del PWA (SWR se eligió sobre react-query por esto).
+- Commits: `feat|fix(<área>): <qué>` con el porqué + resumen de QA en el cuerpo.
+
+## Publicación y mantenimiento de documentación
+
+La ruta vigente de promoción es `docs/runbooks/release-promotion.md`.
+Los expedientes de `docs/releases/` prueban su candidato y fecha, no habilitan
+una release nueva. CI de un PR y CI de main son evidencias distintas: la promoción
+exige el candidato exacto vigente de main y staging manual del mismo SHA. La excepción
+puntual crédito20261001 conserva el controlador M y las protecciones; los candidatos
+vigentes son C′=`df6fc095fe8da39b4829336e79b78e4454997046` y
+B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, fijados por
+`docs/releases/credit-hotfix-20261001.json`. El runbook distingue su cadena acreditada
+de los C/B originales históricos. Exige revisión, CI separado, staging/drill/smoke
+y autorización, sin bypass; no habilita otros SHAs ni assets directos.
+
+Actualizar las guías operativas al cambiar sus contratos, con propietario y
+referencias ejecutables; conservar resultados históricos fechados. El índice
+`docs/README.md` dirige al estado actual y clasifica los documentos anteriores.
+No declarar todos los documentos correctos por un barrido de texto ni por
+validación de enlaces. El equipo y reglas de ownership están en
+`docs/EQUIPO_DESARROLLO_NORTEX.md`.
+
+
+## WhatsApp comercial — C08/C10 local 2026-09-29
+
+Ferretería, búsqueda guiada, precio detalle y unidad base. Tenant de administración viene del JWT; canal firmado determina negocio receptor. El comprador no gana permisos administrativos por su teléfono. Cotización determinista no cobra, reserva stock ni registra venta. El modelo no confirma.
+
+Recepción enruta por canal: commerceEnabled o commercePolicyVersion>0 mantiene propiedad comercial aun pausada. WHATSAPP_COMMERCE_ENABLED controla ejecución del worker; nunca selecciona un handler global. Canales legacy activos conservan cola en memoria; drenar antes de adoptar política y no ejecutar ambos motores para el mismo tráfico. Inbox comercial commit antes de ACK; callbacks mixtos encolan legacy después del commit, sin prometer durabilidad legacy.
+
+Worker separado, heartbeat durable y estados de cola por tenant. Intento registrado antes de red; UNKNOWN no se reenvía ni resuelve por coincidencia aproximada. ID aceptado no demuestra entrega. SUPER_ADMIN tramita solicitudes versionadas; PREPARED no significa conectado. Runbook: docs/runbooks/whatsapp-commerce.md. Gates locales, CI, staging, recepción real y aceptación comercial son distintos. No activa producción ni acepta permisos nuevos.

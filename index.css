@@ -1,3 +1,14 @@
+/* Tipografía auto-hospedada. Va antes que nada: Vite la INLINEA en el bundle
+   de CSS, así que no agrega ni una petición y la declaración existe desde el
+   primer byte de estilos. El porqué (y por qué ya no la pedimos a Google) está
+   en el propio archivo. */
+@import './public/fonts/fuentes.css';
+
+/* Tokens de diseño — fuente única de color/radio/espaciado/altura.
+   Va PRIMERO: define las :root vars que consumen tanto las clases nx-*
+   como el mapeo de Tailwind (tailwind.config.js lee los canales -rgb). */
+@import './nortex-tokens.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -16,6 +27,10 @@
     visibility: visible;
     height: auto;
     overflow: visible;
+    /* El ticket vive con `opacity-0` mientras no se imprime. Esta regla por ID
+       es la garantía autoritativa de impresión: no depende del orden en que el
+       navegador aplique la utilidad Tailwind `print:opacity-100`. */
+    opacity: 1 !important;
     /* 🖨️ ANULAR EL TEMA OBSIDIAN: papel térmico = tinta negra sobre blanco.
        Sin fondos oscuros, sin sombras ni glows (no imprimen / arruinan el ticket). */
     background: transparent !important;
@@ -41,21 +56,32 @@
     box-shadow: none !important;
   }
   @page {
-    size: 80mm auto;
+    /* Fallback válido. El POS inyecta el alto exacto del ticket antes de
+       imprimir; los reportes largos continúan en páginas adicionales. */
+    size: 80mm 200mm;
     margin: 0mm;
   }
 }
 
 /* ==========================================
-   FUNDACIÓN GLOBAL — TEMA "OBSIDIAN"
+   FUNDACIÓN GLOBAL — SPATIAL COUNTER
    ========================================== */
 @layer base {
+  html,
   body {
-    @apply bg-surface-950 text-slate-100 antialiased selection:bg-brand selection:text-white;
+    /* La SPA es una superficie operativa: evita pull-to-refresh accidental
+       mientras una venta está en curso. Los contenedores internos conservan
+       su propio scroll. */
+    overscroll-behavior-y: none;
+  }
+
+  body {
+    @apply bg-surface-950 text-slate-100 antialiased selection:bg-brand selection:text-brand-on;
     /* Ligaduras y variantes que hacen ver "caro" al tipo de letra */
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
     /* ERP = números por todos lados: que SIEMPRE alineen en columna */
     font-variant-numeric: tabular-nums;
+    font-optical-sizing: auto;
   }
 
   /* Scrollbar fino y oscuro (el anterior era light y chocaba con la UI) */
@@ -87,16 +113,16 @@
     @apply bg-white rounded-2xl border border-slate-100 shadow-premium-light;
   }
 
-  /* Botón primario de marca — táctil (active:scale) y con glow al hover */
+  /* Botón primario de marca — CTA semántico con glow y transición específica. */
   .btn-primary {
-    @apply bg-brand text-white font-semibold px-4 py-2 rounded-xl
-           transition-all duration-200 active:scale-[0.98]
+    @apply bg-brand text-brand-on font-semibold px-4 py-2 rounded-xl
+           transition-colors duration-200
            hover:bg-brand-hover hover:shadow-glow shadow-brand/30
            border border-transparent focus:outline-none focus:ring-2 focus:ring-brand/40;
   }
   .btn-ghost {
     @apply text-slate-300 font-medium px-4 py-2 rounded-xl border border-white/[0.06]
-           transition-all duration-200 active:scale-[0.98] hover:bg-white/[0.04] hover:text-white;
+           transition-colors duration-200 hover:bg-white/[0.04] hover:text-white;
   }
 
   /* Input sin caja gris: línea base + foco de marca */
@@ -108,16 +134,35 @@
 
   /* Estados como badges suaves, nunca texto plano */
   .badge-soft-success {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
-           bg-emerald-500/10 text-emerald-400 border border-emerald-500/20;
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+    background: var(--nx-positive-bg);
+    color: var(--nx-positive);
+    border-color: var(--nx-positive-border);
   }
   .badge-soft-warning {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
-           bg-amber-500/10 text-amber-400 border border-amber-500/20;
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+    background: var(--nx-warning-bg);
+    color: var(--nx-warning);
+    border-color: var(--nx-warning-border);
   }
   .badge-soft-danger {
-    @apply inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium
-           bg-red-500/10 text-red-400 border border-red-500/20;
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium;
+    background: var(--nx-danger-bg);
+    color: var(--nx-danger);
+    border-color: var(--nx-danger-border);
+  }
+
+  /* ── Modal canónico (Fase 1 rediseño) ─────────────────────────────────
+     LA forma de todo modal nuevo (y destino de la migración de los ~70
+     existentes, que hoy tienen ~10 backdrops distintos):
+       <div class="modal-backdrop"><div class="modal-panel">…</div></div> */
+  .modal-backdrop {
+    @apply fixed inset-0 z-50 bg-black/70 backdrop-blur-sm
+           flex items-center justify-center p-4;
+  }
+  .modal-panel {
+    @apply bg-surface-900 border border-white/[0.08] rounded-2xl shadow-premium
+           w-full max-w-md max-h-[90dvh] overflow-y-auto;
   }
 
   /* Tablas densas: solo divisores horizontales tenues, números en mono */
@@ -130,4 +175,3220 @@
   .table-premium .num {
     @apply font-mono tabular-nums;
   }
+
+  /* ── Spatial Counter · opción visual 3 ────────────────────────────────
+     El chrome y el ticket son oscuros; el trabajo cotidiano vive en un
+     canvas claro. Estas clases son semánticas para poder migrar módulo por
+     módulo sin alterar permisos, consultas ni operaciones de negocio. */
+  .nx-app-shell {
+    background: var(--nx-canvas);
+    color: var(--nx-shell-text);
+    isolation: isolate;
+  }
+
+  /* App pública del repartidor: comparte los tokens Día/Noche del producto,
+     pero mantiene su preferencia aislada de la sesión ERP. El material usa
+     canvas y marca existentes; no introduce una tercera paleta. */
+  .nx-driver-workspace {
+    background:
+      radial-gradient(circle at 92% 0%, rgb(var(--nx-brand-rgb) / .10), transparent 32rem),
+      linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .44), transparent 28rem),
+      var(--nx-canvas);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-driver-card {
+    background:
+      linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .94), rgb(var(--nx-canvas-raised-rgb) / .84));
+    color: var(--nx-canvas-text);
+    border: 1px solid var(--nx-canvas-border);
+    box-shadow: var(--nx-shadow-subtle);
+    -webkit-backdrop-filter: blur(24px) saturate(145%);
+    backdrop-filter: blur(24px) saturate(145%);
+  }
+
+  .nx-driver-primary:disabled {
+    background: var(--nx-canvas-subtle);
+    color: var(--nx-canvas-muted);
+    border: 1px solid var(--nx-canvas-border);
+    box-shadow: none;
+    opacity: 1;
+  }
+
+  .nx-driver-chrome {
+    background:
+      radial-gradient(circle at top left, rgb(255 255 255 / .14), transparent 38%),
+      linear-gradient(180deg, var(--nx-shell-highlight), transparent 44%),
+      var(--nx-shell);
+    color: var(--nx-shell-text);
+    border: 1px solid var(--nx-shell-border);
+    box-shadow: var(--nx-shell-shadow);
+    -webkit-backdrop-filter: blur(28px) saturate(155%);
+    backdrop-filter: blur(28px) saturate(155%);
+  }
+
+  .nx-driver-dock {
+    background: linear-gradient(
+      to top,
+      var(--nx-canvas) 0%,
+      rgb(var(--nx-canvas-rgb) / .94) 68%,
+      transparent 100%
+    );
+  }
+
+  .nx-driver-wallet-sheet {
+    max-height: calc(100dvh - 1.5rem - env(safe-area-inset-top));
+  }
+
+  @media (max-width: 479px) {
+    .nx-driver-chrome .nx-theme-toggle {
+      width: var(--nx-tap-min);
+      padding-inline: 0;
+    }
+
+    .nx-driver-chrome .nx-theme-toggle-label {
+      display: none;
+    }
+  }
+
+  @media (prefers-reduced-transparency: reduce) {
+    .nx-driver-card {
+      background: var(--nx-canvas-raised);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+
+    .nx-driver-chrome {
+      background: var(--nx-shell-solid);
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+
+  .nx-sidebar {
+    background:
+      radial-gradient(circle at top left, rgb(255 255 255 / .18), transparent 34%),
+      radial-gradient(circle at 92% -8%, rgb(var(--nx-brand-rgb) / .16), transparent 30%),
+      linear-gradient(180deg, var(--nx-shell-highlight), transparent 36%),
+      var(--nx-shell);
+    border-color: var(--nx-shell-border);
+    box-shadow: var(--nx-shell-shadow);
+    -webkit-backdrop-filter: blur(32px) saturate(160%);
+    backdrop-filter: blur(32px) saturate(160%);
+  }
+
+  .nx-dark-chrome {
+    background:
+      radial-gradient(circle at top left, rgb(255 255 255 / .14), transparent 38%),
+      radial-gradient(circle at 88% -12%, rgb(var(--nx-brand-rgb) / .14), transparent 28%),
+      linear-gradient(180deg, var(--nx-shell-highlight), transparent 42%),
+      var(--nx-shell);
+    color: var(--nx-shell-text);
+    border-color: var(--nx-shell-border);
+    box-shadow: var(--nx-shell-shadow);
+    -webkit-backdrop-filter: blur(28px) saturate(155%);
+    backdrop-filter: blur(28px) saturate(155%);
+  }
+
+  .nx-workspace,
+  .nx-catalog-surface,
+  .nx-catalog-plane {
+    background: var(--nx-canvas);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-workspace {
+    scrollbar-color: rgb(var(--nx-canvas-faint-rgb) / .55) transparent;
+  }
+
+  .nx-module-header {
+    font-family: var(--nx-font-display);
+    letter-spacing: -.02em;
+    border-color: var(--nx-canvas-border);
+  }
+
+  .nx-module-header-sticky {
+    background: rgb(var(--nx-canvas-rgb) / .95);
+  }
+
+  .nx-module-header-icon,
+  .nx-module-context-link,
+  .nx-module-tab {
+    background: var(--nx-canvas-raised);
+    border-color: var(--nx-canvas-border);
+    color: var(--nx-canvas-muted);
+  }
+
+  .nx-module-context-link:hover,
+  .nx-module-tab:hover {
+    border-color: rgb(var(--nx-canvas-faint-rgb) / .72);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-module-tab-active,
+  .nx-module-tab-active:hover,
+  .nx-module-context-link[aria-current='page'],
+  .nx-module-context-link[aria-current='page']:hover {
+    background: var(--nx-positive-bg);
+    border-color: var(--nx-positive-border);
+    color: var(--nx-positive);
+  }
+
+  .nx-empty-state-icon {
+    background: var(--nx-positive-bg);
+    border-color: var(--nx-positive-border);
+    color: var(--nx-positive);
+  }
+
+  .nx-empty-action-secondary {
+    background: transparent;
+    border-color: var(--nx-canvas-border);
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-empty-action-secondary:hover {
+    background: var(--nx-canvas-subtle);
+  }
+
+  .nx-empty-link {
+    color: var(--nx-canvas-muted);
+  }
+
+  .nx-empty-link:hover {
+    color: var(--nx-canvas-text);
+  }
+
+  /* El POS conserva su plano operativo oscuro aunque la preferencia general
+     esté en Día. Los aliases locales evitan que primitivas semánticas como
+     nx-label hereden tinta oscura de un canvas claro. */
+  .nx-pos-workspace {
+    --nx-canvas: var(--nx-ticket);
+    --nx-canvas-raised: var(--nx-ticket-raised);
+    --nx-canvas-subtle: var(--nx-ticket-raised);
+    --nx-canvas-border: rgb(255 255 255 / .16);
+    --nx-canvas-text: var(--nx-ticket-text);
+    --nx-canvas-muted: var(--nx-ticket-muted);
+    --nx-canvas-faint: var(--nx-ticket-faint);
+    --nx-canvas-rgb: var(--nx-ticket-rgb);
+    --nx-canvas-raised-rgb: var(--nx-ticket-raised-rgb);
+    --nx-canvas-subtle-rgb: var(--nx-ticket-raised-rgb);
+    --nx-canvas-border-rgb: 76 88 106;
+    --nx-canvas-text-rgb: 244 246 249;
+    --nx-canvas-muted-rgb: 211 220 231;
+    --nx-canvas-faint-rgb: 183 194 207;
+    --nx-text: var(--nx-ticket-text);
+    --nx-text-muted: var(--nx-ticket-muted);
+    --nx-text-faint: var(--nx-ticket-faint);
+    --nx-positive: var(--nx-ticket-positive);
+    --nx-positive-bg: rgb(var(--nx-ticket-raised-rgb) / .86);
+    --nx-positive-border: rgb(108 233 166 / .34);
+    --nx-warning: var(--nx-ticket-warning);
+    --nx-info: var(--nx-ticket-info);
+    --nx-danger: var(--nx-ticket-danger);
+  }
+
+  .nx-canvas-card,
+  .nx-list-surface {
+    background: var(--nx-canvas-raised);
+    border: 1px solid var(--nx-canvas-border);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-canvas-card {
+    box-shadow: var(--nx-shadow-subtle);
+  }
+
+  .nx-list-surface {
+    box-shadow: 0 1px 2px rgb(15 18 23 / .035);
+  }
+
+  .nx-catalog-header {
+    color: var(--nx-canvas-text);
+  }
+
+  .nx-catalog-count {
+    color: var(--nx-canvas-muted);
+  }
+
+  .nx-catalog-tabs {
+    scrollbar-width: none;
+  }
+
+  .nx-catalog-tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .nx-catalog-tab,
+  .nx-catalog-more,
+  .nx-product-card,
+  .nx-catalog-card {
+    background: var(--nx-canvas-raised);
+    border-color: var(--nx-canvas-border);
+  }
+
+  .nx-product-card,
+  .nx-catalog-card {
+    box-shadow: 0 1px 3px rgb(15 18 23 / .06);
+  }
+
+  .nx-product-card:hover,
+  .nx-catalog-card:hover {
+    border-color: rgb(var(--nx-canvas-faint-rgb) / .72);
+    box-shadow: 0 10px 28px rgb(15 18 23 / .10), 0 2px 6px rgb(15 18 23 / .06);
+  }
+
+  .nx-product-card[data-selected='true'],
+  .nx-catalog-card[data-selected='true'] {
+    border-color: var(--nx-brand);
+    box-shadow: 0 0 0 2px var(--nx-brand-ring), var(--nx-shadow-subtle);
+  }
+
+  .nx-catalog-card-media {
+    overflow: hidden;
+    border-radius: var(--nx-r-control);
+  }
+
+  .nx-catalog-card-price {
+    font-family: var(--nx-font-display);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .nx-ticket-surface,
+  .nx-ticket-dock {
+    /* `nx-ticket-surface` es una isla oscura intencional (recibo, cobro o
+       diálogo operativo). Reasignar aquí los aliases del canvas hace que el
+       bridge Día/Noche traduzca las clases heredadas dentro del ticket sin
+       aclarar su fondo ni convertir texto blanco en blanco sobre blanco. */
+    --nx-canvas: var(--nx-ticket);
+    --nx-canvas-raised: var(--nx-ticket);
+    --nx-canvas-subtle: var(--nx-ticket-raised);
+    --nx-canvas-border: rgb(255 255 255 / .12);
+    --nx-canvas-text: var(--nx-ticket-text);
+    --nx-canvas-muted: var(--nx-ticket-muted);
+    --nx-canvas-faint: var(--nx-ticket-faint);
+    --nx-canvas-rgb: var(--nx-ticket-rgb);
+    --nx-canvas-raised-rgb: var(--nx-ticket-rgb);
+    --nx-canvas-subtle-rgb: var(--nx-ticket-raised-rgb);
+    --nx-canvas-border-rgb: 76 88 106;
+    --nx-canvas-text-rgb: 244 246 249;
+    --nx-canvas-muted-rgb: 211 220 231;
+    --nx-canvas-faint-rgb: 183 194 207;
+    --nx-positive: var(--nx-ticket-positive);
+    --nx-warning: var(--nx-ticket-warning);
+    --nx-info: var(--nx-ticket-info);
+    --nx-danger: var(--nx-ticket-danger);
+    --nx-shadow-subtle: var(--nx-shadow-float);
+    background: var(--nx-ticket);
+    color: rgb(var(--nx-neutral-100-rgb));
+    border-color: rgb(255 255 255 / .08);
+    box-shadow: var(--nx-shadow-float);
+  }
+
+  .nx-ticket-surface {
+    overflow: hidden;
+  }
+
+  .nx-ticket-checkout {
+    background: rgb(var(--nx-ticket-rgb) / .96);
+    border-color: rgb(255 255 255 / .08);
+  }
+
+  .nx-ticket-primary {
+    box-shadow: 0 8px 22px rgb(var(--nx-brand-rgb) / .18);
+  }
+
+  .nx-ticket-secondary,
+  .nx-ticket-cash-option,
+  .nx-ticket-cash-input {
+    border-color: rgb(255 255 255 / .10);
+  }
+
+  .nx-ticket-cash,
+  .nx-ticket-cash-status {
+    background: rgb(var(--nx-ticket-raised-rgb) / .72);
+  }
+
+  /* Cada lista/modal contiene su inercia. `custom-scrollbar` ya identifica
+     los scrolls operativos existentes, por lo que el arreglo cubre la app sin
+     obligar a reescribir cientos de nodos. */
+  .nx-scroll,
+  .nx-bottom-bar,
+  .nx-sheet,
+  .nx-pay-dock,
+  .custom-scrollbar,
+  .overflow-y-auto,
+  .overflow-auto,
+  [data-scroll-lock] {
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .overflow-x-auto {
+    overscroll-behavior-x: contain;
+  }
+
+  /* El dock de cobro conserva al menos su padding normal y crece cuando iOS
+     expone el home indicator mediante viewport-fit=cover. */
+  .nx-bottom-bar,
+  .nx-sheet,
+  .nx-pay-dock,
+  .nx-ticket-dock {
+    padding-bottom: max(var(--nx-3), env(safe-area-inset-bottom));
+  }
+
+  /* Fallback táctil universal: baja en el mismo pointerdown y vuelve con la
+     curva fluida. Los gestos continuos usan `nx-fluid-engine`, cuyo motor rAF
+     sigue siendo interrumpible desde el valor de presentación actual. */
+  .nx-fluid-press,
+  .btn-primary,
+  .btn-ghost {
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+    user-select: none;
+    transition-property: background-color, border-color, color, box-shadow, opacity, transform !important;
+    transition-duration: 120ms !important;
+    transition-timing-function: cubic-bezier(.2, 0, 0, 1) !important;
+  }
+
+  .nx-fluid-press:active:not(:disabled),
+  .btn-primary:active:not(:disabled),
+  .btn-ghost:active:not(:disabled) {
+    transform: scale(var(--nx-press-scale));
+    transition-duration: 0s !important;
+  }
+
+  /* Los controles conectados al motor rAF usan la propiedad individual
+     `scale`; el fallback CSS no debe componer una segunda escala encima. */
+  .nx-fluid-engine:active:not(:disabled) {
+    transform: none;
+  }
+
+  .nx-fluid-press:focus-visible {
+    outline: 2px solid var(--nx-brand-ring);
+    outline-offset: 2px;
+  }
+}
+
+/* ==========================================
+   CONTRATO DE APARIENCIA — SHELL Y TONOS
+   ==========================================
+   Estas primitivas viven fuera de las capas de Tailwind para que una utilidad
+   cromatica heredada no vuelva ilegible el texto al cambiar de apariencia.
+   Layout declara data-nx-theme; los componentes consumen intencion semantica. */
+.nx-shell-text { color: var(--nx-shell-text); }
+.nx-shell-muted { color: var(--nx-shell-muted); }
+.nx-shell-faint { color: var(--nx-shell-faint); }
+.nx-canvas-text { color: var(--nx-canvas-text); }
+.nx-canvas-muted { color: var(--nx-canvas-muted); }
+.nx-canvas-faint { color: var(--nx-canvas-faint); }
+
+.nx-pos-workspace [class~="text-slate-500"],
+.nx-pos-workspace [class~="text-slate-600"] {
+  color: var(--nx-ticket-faint);
+}
+
+/* CTA ámbar con tinta fija de alto contraste. No hereda el texto claro del
+   canvas nocturno, porque amarillo + blanco falla AA en botones pequeños. */
+.nx-warning-cta {
+  background: #FEC84B;
+  color: #1D2939;
+}
+
+.nx-warning-cta:hover {
+  background: #FEDF89;
+  color: #1D2939;
+}
+
+.nx-shell-border {
+  border-color: var(--nx-shell-border);
+}
+
+.nx-overlay-backdrop {
+  background: var(--nx-sheet-backdrop);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+}
+
+.nx-overlay-dialog {
+  background:
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .98), rgb(var(--nx-canvas-raised-rgb) / .92));
+  color: var(--nx-canvas-text);
+  border: 1px solid var(--nx-canvas-border);
+  box-shadow: var(--nx-shadow-float);
+}
+
+.nx-overlay-dialog-muted {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-overlay-dialog-secondary {
+  color: var(--nx-canvas-text);
+  background: rgb(var(--nx-canvas-subtle-rgb) / .88);
+  border: 1px solid var(--nx-canvas-border);
+}
+
+.nx-overlay-dialog-secondary:hover {
+  background: rgb(var(--nx-canvas-raised-rgb) / .98);
+}
+
+/* Hoja móvil continua: el transform y el backdrop los conduce FluidSheet con
+   el resorte rAF. CSS solo define material, geometría y preferencias visuales. */
+.nx-fluid-sheet-root {
+  position: fixed;
+  inset: 0;
+  z-index: var(--nx-z-modal);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  isolation: isolate;
+}
+
+.nx-fluid-sheet-backdrop {
+  position: absolute;
+  inset: 0;
+  background: var(--nx-sheet-backdrop);
+  -webkit-backdrop-filter: blur(12px) saturate(120%);
+  backdrop-filter: blur(12px) saturate(120%);
+  will-change: opacity;
+}
+
+.nx-fluid-sheet-panel {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: 100%;
+  max-height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+  flex-direction: column;
+  overflow: hidden;
+  padding-bottom: env(safe-area-inset-bottom);
+  border: 1px solid var(--nx-shell-border);
+  border-bottom: 0;
+  border-radius: var(--nx-r-sheet) var(--nx-r-sheet) 0 0;
+  background:
+    linear-gradient(180deg, var(--nx-shell-highlight), transparent 42%),
+    var(--nx-shell);
+  color: var(--nx-shell-text);
+  box-shadow: var(--nx-shell-shadow);
+  -webkit-backdrop-filter: blur(28px) saturate(150%);
+  backdrop-filter: blur(28px) saturate(150%);
+  will-change: transform;
+}
+
+.nx-fluid-sheet-panel[data-size='full'] {
+  height: calc(100dvh - max(12px, env(safe-area-inset-top)));
+}
+
+/* El POS conserva su ticket oscuro como superficie operativa. FluidSheet solo
+   aporta geometria y movimiento; esta clase restituye el material del ticket
+   por encima del material claro/oscuro del shell autenticado. */
+.nx-fluid-sheet-panel.nx-pos-ticket-sheet {
+  background: var(--nx-ticket);
+  color: rgb(var(--nx-neutral-100-rgb));
+  border-color: rgb(255 255 255 / .08);
+}
+
+.nx-fluid-sheet-panel.nx-mobile-menu-sheet {
+  background:
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .92) 0%, rgb(var(--nx-canvas-rgb) / .96) 100%);
+  color: var(--nx-canvas-text);
+  border-color: rgb(var(--nx-canvas-border-rgb) / .72);
+  box-shadow: var(--nx-shadow-float);
+}
+
+.nx-fluid-sheet-panel.nx-pos-payment-sheet {
+  background:
+    linear-gradient(180deg, rgb(255 255 255 / .035), transparent 42%),
+    var(--nx-ticket);
+  color: rgb(var(--nx-neutral-100-rgb));
+  border-color: rgb(255 255 255 / .08);
+}
+
+/* Registro de flota: la misma hoja fisica del shell, con material de canvas.
+   En movil nace desde abajo; en escritorio conserva la geometria de dialogo. */
+.nx-fluid-sheet-panel.nx-delivery-rider-sheet {
+  background:
+    linear-gradient(180deg, var(--nx-shell-highlight), transparent 42%),
+    var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-delivery-rider-sheet-content {
+  min-height: 0;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-pos-payment-sheet-content {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-pos-payment-sheet-content.nx-pos-cash-sheet-content {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.nx-pos-cash-sheet-scroll {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-pos-payment-sheet .nx-fluid-sheet-handle[data-drag-disabled] {
+  cursor: default;
+  touch-action: auto;
+  opacity: .42;
+}
+
+@media (min-width: 640px) {
+  .nx-pos-payment-sheet-root {
+    align-items: center;
+    padding: 1rem;
+  }
+
+  .nx-delivery-rider-sheet-root {
+    align-items: center;
+    padding: 1rem;
+  }
+
+  .nx-fluid-sheet-panel.nx-pos-payment-sheet {
+    width: 100%;
+    max-width: 24rem;
+    max-height: calc(100dvh - 2rem);
+    padding-bottom: 0;
+    border-bottom: 1px solid rgb(255 255 255 / .08);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-pos-payment-sheet > .nx-fluid-sheet-handle {
+    display: none;
+  }
+
+  .nx-fluid-sheet-panel.nx-delivery-rider-sheet {
+    width: 100%;
+    max-width: 24rem;
+    max-height: calc(100dvh - 2rem);
+    padding-bottom: 0;
+    border-bottom: 1px solid var(--nx-canvas-border);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-delivery-rider-sheet > .nx-fluid-sheet-handle {
+    display: none;
+  }
+}
+
+.nx-fluid-sheet-handle {
+  display: flex;
+  min-height: var(--nx-tap-min);
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-fluid-sheet-handle:active {
+  cursor: grabbing;
+}
+
+.nx-fluid-sheet-handle > span {
+  width: 36px;
+  height: 5px;
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-shell-faint);
+  opacity: .62;
+}
+
+.nx-shell-control,
+.nx-theme-toggle {
+  color: var(--nx-shell-text);
+  background: var(--nx-shell-raised);
+  border: 1px solid var(--nx-shell-border);
+  box-shadow: 0 8px 22px rgb(15 18 23 / .08), 0 1px 0 rgb(255 255 255 / .22);
+}
+
+.nx-shell-control:hover,
+.nx-theme-toggle:hover {
+  background: var(--nx-shell-hover);
+}
+
+.nx-shell-control:focus-visible,
+.nx-theme-toggle:focus-visible,
+.nx-shell-nav-item:focus-visible {
+  outline: 2px solid var(--nx-brand-ring);
+  outline-offset: 2px;
+}
+
+.nx-theme-toggle {
+  min-width: var(--nx-tap-min);
+  min-height: var(--nx-tap-min);
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  border-radius: var(--nx-r-pill);
+  padding: 0 .85rem;
+  font-weight: var(--nx-fw-semi);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+  transition: background var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-theme-toggle-label {
+  font-size: 12px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.nx-theme-toggle[aria-pressed='true'] {
+  color: var(--nx-shell-text);
+  background: var(--nx-shell-raised);
+  border-color: var(--nx-shell-border);
+  box-shadow: 0 8px 22px rgb(15 18 23 / .08), 0 1px 0 rgb(255 255 255 / .22);
+}
+
+.nx-shell-nav-item {
+  color: var(--nx-shell-muted);
+  background: linear-gradient(180deg, var(--nx-shell-item), transparent 130%);
+  border-color: var(--nx-shell-item-border);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .08);
+  transition: background var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-shell-nav-item :is(svg, span),
+.nx-shell-control > svg,
+.nx-theme-toggle > svg {
+  color: inherit;
+}
+
+.nx-shell-nav-item:hover {
+  color: var(--nx-shell-text);
+  background: linear-gradient(180deg, var(--nx-shell-hover), var(--nx-shell-item));
+  border-color: var(--nx-shell-border);
+}
+
+.nx-shell-nav-item[aria-current='page'],
+.nx-shell-nav-item-active {
+  color: var(--nx-positive);
+  background: var(--nx-shell-active);
+  border-color: var(--nx-positive-border);
+  box-shadow: 0 0 0 1px var(--nx-positive-border), 0 12px 24px rgb(var(--nx-brand-rgb) / .12), inset 0 1px 0 rgb(255 255 255 / .08);
+}
+
+.nx-mobile-menu-header,
+.nx-mobile-menu-footer {
+  background:
+    radial-gradient(circle at 100% 0%, rgb(var(--nx-brand-rgb) / .10), transparent 14rem),
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .94), rgb(var(--nx-canvas-raised-rgb) / .82));
+  color: var(--nx-canvas-text);
+}
+
+.nx-mobile-menu-item {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .86), rgb(var(--nx-canvas-raised-rgb) / .72));
+  border-color: rgb(var(--nx-canvas-border-rgb) / .86);
+  color: var(--nx-canvas-text);
+  box-shadow: 0 10px 28px rgb(15 18 23 / .08), 0 1px 2px rgb(15 18 23 / .04);
+}
+
+.nx-mobile-menu-item:hover {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .98), rgb(var(--nx-canvas-raised-rgb) / .82));
+  border-color: rgb(var(--nx-canvas-border-rgb) / 1);
+  color: var(--nx-canvas-text);
+}
+
+.nx-mobile-menu-item:not(.nx-shell-nav-item-active) {
+  color: var(--nx-canvas-text);
+}
+
+.nx-tone-positive { color: var(--nx-positive); }
+.nx-tone-warning { color: var(--nx-warning); }
+.nx-tone-info { color: var(--nx-info); }
+.nx-tone-danger { color: var(--nx-danger); }
+.nx-tone-neutral { color: var(--nx-neutral); }
+
+.nx-tone-positive-bg,
+.nx-tone-warning-bg,
+.nx-tone-info-bg,
+.nx-tone-danger-bg,
+.nx-tone-neutral-bg {
+  border: 1px solid;
+}
+
+.nx-tone-positive-bg { color: var(--nx-positive); background: var(--nx-positive-bg); border-color: var(--nx-positive-border); }
+.nx-tone-warning-bg { color: var(--nx-warning); background: var(--nx-warning-bg); border-color: var(--nx-warning-border); }
+.nx-tone-info-bg { color: var(--nx-info); background: var(--nx-info-bg); border-color: var(--nx-info-border); }
+.nx-tone-danger-bg { color: var(--nx-danger); background: var(--nx-danger-bg); border-color: var(--nx-danger-border); }
+.nx-tone-neutral-bg { color: var(--nx-neutral); background: var(--nx-neutral-bg); border-color: var(--nx-neutral-border); }
+
+.nx-tone-positive-border { border-color: var(--nx-positive-border); }
+.nx-tone-warning-border { border-color: var(--nx-warning-border); }
+.nx-tone-info-border { border-color: var(--nx-info-border); }
+.nx-tone-danger-border { border-color: var(--nx-danger-border); }
+.nx-tone-neutral-border { border-color: var(--nx-neutral-border); }
+
+/* Las primitivas de jerarquia pueden combinarse con un control sin que el
+   color base del control les gane por orden de cascada. */
+:is(.nx-shell-control, .nx-theme-toggle).nx-shell-text { color: var(--nx-shell-text); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-shell-muted { color: var(--nx-shell-muted); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-shell-faint { color: var(--nx-shell-faint); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-positive { color: var(--nx-positive); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-warning { color: var(--nx-warning); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-info { color: var(--nx-info); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-danger { color: var(--nx-danger); }
+:is(.nx-shell-control, .nx-theme-toggle).nx-tone-neutral { color: var(--nx-neutral); }
+
+/* Compatibilidad del shell mientras termina la adopcion de primitivas. El
+   scope es deliberadamente estrecho: nunca recolorea el canvas de trabajo ni
+   el texto sobre botones de negocio. */
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-white"],
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"]
+) {
+  color: var(--nx-shell-text);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-slate-300"],
+  [class~="text-slate-400"]
+) {
+  color: var(--nx-shell-muted);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) [class~="text-slate-500"] {
+  color: var(--nx-shell-faint);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-emerald-300"],
+  [class~="text-emerald-400"]
+) {
+  color: var(--nx-positive);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="text-red-300"],
+  [class~="text-red-400"]
+) {
+  color: var(--nx-danger);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="border-white/10"],
+  [class~="border-white/15"],
+  [class~="border-white/20"],
+  [class~="border-white/[0.04]"],
+  [class~="border-white/[0.06]"],
+  [class~="border-white/[0.07]"],
+  [class~="border-white/[0.08]"],
+  [class~="border-white/[0.10]"],
+  [class~="border-white/[0.12]"]
+) {
+  border-color: var(--nx-shell-border);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="bg-white/[0.03]"],
+  [class~="bg-white/[0.035]"],
+  [class~="bg-white/[0.04]"],
+  [class~="bg-white/[0.055]"],
+  [class~="bg-white/[0.06]"],
+  [class~="bg-white/[0.07]"],
+  [class~="bg-white/[0.08]"]
+) {
+  background-color: var(--nx-shell-raised);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) :is(
+  [class~="hover:bg-white/[0.035]"],
+  [class~="hover:bg-white/[0.04]"],
+  [class~="hover:bg-white/[0.055]"],
+  [class~="hover:bg-white/[0.06]"],
+  [class~="hover:bg-white/[0.07]"],
+  [class~="hover:bg-white/[0.08]"]
+):hover {
+  background-color: var(--nx-shell-hover);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) {
+  background:
+    radial-gradient(circle at top left, rgb(255 255 255 / .92), transparent 42%),
+    linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .92), rgb(var(--nx-canvas-rgb) / .88)),
+    var(--nx-shell);
+  box-shadow: 0 22px 52px rgb(15 23 42 / .10), inset 0 1px 0 rgb(255 255 255 / .88);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) .nx-shell-nav-item {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .84), rgb(var(--nx-canvas-rgb) / .76));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / .84);
+}
+
+[data-nx-theme='light'] :is(.nx-sidebar, .nx-dark-chrome):not(.nx-pos-workspace *) .nx-shell-nav-item:hover {
+  background: linear-gradient(180deg, rgb(var(--nx-canvas-raised-rgb) / .98), rgb(var(--nx-canvas-raised-rgb) / .86));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html:focus-within {
+    scroll-behavior: auto;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
+
+  .nx-fluid-press,
+  .btn-primary,
+  .btn-ghost,
+  .nx-theme-toggle,
+  .nx-shell-nav-item {
+    transition-duration: 0ms !important;
+  }
+
+  .nx-fluid-press:active:not(:disabled),
+  .btn-primary:active:not(:disabled),
+  .btn-ghost:active:not(:disabled) {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .nx-sidebar,
+  .nx-dark-chrome,
+  .nx-fluid-sheet-panel {
+    background: var(--nx-shell-solid);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .nx-fluid-sheet-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .nx-ticket-checkout {
+    background: var(--nx-ticket);
+  }
+
+  .nx-mobile-menu-header,
+  .nx-mobile-menu-footer,
+  .nx-mobile-menu-item,
+  .nx-fluid-sheet-panel.nx-mobile-menu-sheet {
+    background: var(--nx-shell-solid);
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nx-canvas-card,
+  .nx-list-surface,
+  .nx-product-card,
+  .nx-catalog-card {
+    border-color: var(--nx-canvas-muted);
+  }
+
+  .nx-sidebar,
+  .nx-dark-chrome,
+  .nx-ticket-surface,
+  .nx-ticket-dock {
+    border-color: var(--nx-shell-muted);
+  }
+
+  .nx-shell-control,
+  .nx-theme-toggle,
+  .nx-shell-nav-item {
+    border-color: currentColor;
+  }
+}
+
+/* ==========================================
+   CONTRATO VISUAL AUTENTICADO — APPLE/HIG LIGHT
+   ==========================================
+   El shell persistente usa material claro translucido y el trabajo operativo
+   un canvas calido/claro en TODAS las rutas autenticadas salvo POS, cuyo
+   ticket oscuro es una superficie funcional explicita. Esta capa traduce las
+   utilidades oscuras heredadas mientras cada módulo migra a las primitivas
+   semánticas `nx-workspace`, `nx-canvas-card` y `nx-list-surface`.
+
+   Importante: el puente vive en un único scope y no cambia marketing, páginas
+   públicas ni POS. No se deben añadir nuevas excepciones por pantalla. */
+.nx-apple-light-workspace {
+  color-scheme: light;
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+  /* Día parte del canvas claro. Las superficies semánticas y las islas
+     oscuras cambian estas tintas de forma explícita; no se agrega una
+     excepción visual por pantalla. */
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace .nx-dark-context:not(.nx-ticket-surface):not(.nx-ticket-dock) {
+  color-scheme: light;
+}
+
+/* Los tickets son islas oscuras deliberadas aun dentro del workspace Día.
+   Mantener el esquema oscuro evita controles nativos claros sobre su material. */
+.nx-apple-light-workspace :is(.nx-ticket-surface, .nx-ticket-dock).nx-dark-context {
+  color-scheme: dark;
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-surface-950"],
+  [class~="bg-surface-950/40"],
+  [class~="bg-surface-950/60"],
+  [class~="bg-surface-950/70"]
+) {
+  background-color: var(--nx-canvas);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-surface-900"],
+  [class~="bg-surface-900/60"],
+  [class~="bg-surface-900/70"],
+  [class~="bg-surface-900/80"],
+  [class~="bg-surface-900/90"],
+  [class~="bg-surface-900/95"]
+) {
+  background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-surface-800"],
+  [class~="bg-surface-800/40"],
+  [class~="bg-surface-800/60"],
+  [class~="bg-surface-700"],
+  [class~="bg-surface-700/60"]
+) {
+  background-color: var(--nx-canvas-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+/* Variantes slate heredadas. Un backdrop `fixed` conserva su oscuridad; los
+   paneles contenidos dentro de él sí se convierten a superficie clara. Cada
+   superficie traducida publica también sus tintas heredadas para texto e
+   iconos; no se mantiene una segunda lista de selectores. */
+.nx-apple-light-workspace :is(
+  [class~="bg-slate-950"],
+  [class~="bg-slate-900"],
+  [class~="bg-slate-900/40"],
+  [class~="bg-slate-900/45"],
+  [class~="bg-slate-900/50"],
+  [class~="bg-slate-900/55"],
+  [class~="bg-slate-900/60"],
+  [class~="bg-slate-900/80"],
+  [class~="bg-slate-900/95"]
+):not([class~="fixed"]) {
+  background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-slate-800"],
+  [class~="bg-slate-800/40"],
+  [class~="bg-slate-800/50"],
+  [class~="bg-slate-800/60"],
+  [class~="bg-slate-800/70"],
+  [class~="bg-slate-800/80"],
+  [class~="bg-slate-800/90"],
+  [class~="bg-slate-700"],
+  [class~="bg-slate-700/50"],
+  [class~="bg-slate-700/60"],
+  [class~="bg-slate-700/70"]
+) {
+  background-color: var(--nx-canvas-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-white/[0.02]"],
+  [class~="bg-white/[0.025]"],
+  [class~="bg-white/[0.03]"],
+  [class~="bg-white/[0.035]"],
+  [class~="bg-white/[0.04]"],
+  [class~="bg-white/[0.05]"],
+  [class~="bg-white/[0.06]"],
+  [class~="bg-white/[0.08]"],
+  [class~="bg-white/[0.10]"],
+  [class~="bg-white/[0.12]"]
+) {
+  background-color: var(--nx-canvas-raised);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+/* Los rellenos oscuros que pueden vivir dentro de una superficie traducida
+   vuelven a declarar su tinta. Las clases son intencionalmente exactas: no
+   convertir un nombre de Tailwind en una excepción global. */
+.nx-apple-light-workspace :is(
+  .nx-ticket-surface,
+  .nx-ticket-dock,
+  .nx-code-surface,
+  .nx-dark-island,
+  [class~="bg-black"],
+  [class~="bg-gray-700"],
+  [class~="bg-gray-800"],
+  [class~="bg-gray-900"],
+  [class~="bg-gray-950"],
+  [class~="bg-zinc-700"],
+  [class~="bg-zinc-800"],
+  [class~="bg-zinc-900"],
+  [class~="bg-zinc-950"],
+  [class~="bg-neutral-700"],
+  [class~="bg-neutral-800"],
+  [class~="bg-neutral-900"],
+  [class~="bg-neutral-950"],
+  [class~="bg-surface-600"],
+  [class~="bg-slate-600"],
+  [class~="bg-nortex-800"],
+  [class~="bg-nortex-900"],
+  [class~="bg-brand-800"],
+  [class~="bg-brand-900"],
+  [class~="bg-brand-950"],
+  [class~="bg-emerald-800"],
+  [class~="bg-emerald-900"],
+  [class~="bg-green-800"],
+  [class~="bg-green-900"],
+  [class~="bg-blue-800"],
+  [class~="bg-blue-900"],
+  [class~="bg-indigo-800"],
+  [class~="bg-indigo-900"],
+  [class~="bg-purple-800"],
+  [class~="bg-purple-900"],
+  [class~="bg-violet-800"],
+  [class~="bg-violet-900"],
+  [class~="bg-red-600"],
+  [class~="bg-red-600/90"],
+  [class~="bg-red-700"],
+  [class~="bg-red-800"],
+  [class~="bg-red-900"],
+  [class~="bg-rose-700"],
+  [class~="bg-rose-800"],
+  [class~="bg-rose-900"],
+  [class~="bg-orange-700"],
+  [class~="bg-orange-800"],
+  [class~="bg-orange-900"],
+  [class~="bg-amber-700"],
+  [class~="bg-amber-800"],
+  [class~="bg-amber-900"],
+  [class~="bg-sky-700"],
+  [class~="bg-sky-800"],
+  [class~="bg-sky-900"]
+) {
+  --nx-legacy-white-ink: var(--nx-ticket-text);
+  --nx-legacy-white-muted-ink: var(--nx-ticket-muted);
+  --nx-context-ink: var(--nx-ticket-text);
+  --nx-context-muted-ink: var(--nx-ticket-muted);
+  --nx-positive: var(--nx-ticket-positive);
+  --nx-warning: var(--nx-ticket-warning);
+  --nx-info: var(--nx-ticket-info);
+  --nx-danger: var(--nx-ticket-danger);
+}
+
+.nx-apple-light-workspace [class~="text-white"] {
+  color: var(--nx-legacy-white-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-legacy-white-muted-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-surface-950"]
+) {
+  color: var(--nx-context-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-slate-300"],
+  [class~="text-slate-400"],
+  [class~="text-slate-500"],
+  [class~="text-surface-300"],
+  [class~="text-surface-400"]
+) {
+  color: var(--nx-context-muted-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-surface-500"],
+  [class~="placeholder:text-slate-400"],
+  [class~="placeholder:text-slate-500"]
+) {
+  color: var(--nx-context-muted-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="placeholder:text-slate-400"],
+  [class~="placeholder:text-slate-500"]
+)::placeholder,
+.nx-apple-light-workspace .input-premium::placeholder {
+  color: var(--nx-context-muted-ink);
+  opacity: 1;
+}
+
+.nx-apple-light-workspace :is(.nx-label, .nx-sku, .nx-barcode) {
+  color: var(--nx-canvas-muted);
+}
+
+/* Los títulos heredados permanecen explícitos para la jerarquía tipográfica.
+   La tinta de cualquier `text-white` ya se deriva arriba de su superficie, y
+   el contrato de rellenos sólidos al final conserva las acciones semánticas. */
+.nx-apple-light-workspace :is(h1, h2, h3, h4, h5, h6)[class~="text-white"] {
+  color: var(--nx-legacy-white-ink);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="border-white"],
+  [class~="border-white/10"],
+  [class~="border-white/15"],
+  [class~="border-white/20"],
+  [class~="border-white/[0.03]"],
+  [class~="border-white/[0.04]"],
+  [class~="border-white/[0.05]"],
+  [class~="border-white/[0.06]"],
+  [class~="border-white/[0.07]"],
+  [class~="border-white/[0.08]"],
+  [class~="border-white/[0.10]"],
+  [class~="border-white/[0.12]"],
+  [class~="border-slate-700"],
+  [class~="border-slate-800"],
+  [class~="border-surface-700"]
+) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="divide-white/[0.04]"],
+  [class~="divide-white/[0.06]"],
+  [class~="divide-white/[0.08]"],
+  [class~="divide-slate-700"],
+  [class~="divide-slate-700/30"],
+  [class~="divide-slate-700/50"],
+  [class~="divide-slate-700/60"],
+  [class~="divide-slate-700/70"]
+) > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-light-workspace :is(.panel-premium, .modal-panel, .nx-ticket-surface, .nx-dark-chrome) {
+  background: var(--nx-canvas-raised);
+  border-color: var(--nx-canvas-border);
+  color: var(--nx-canvas-text);
+  box-shadow: var(--nx-shadow-subtle);
+  --nx-legacy-white-ink: var(--nx-canvas-text);
+  --nx-legacy-white-muted-ink: var(--nx-canvas-muted);
+  --nx-context-ink: var(--nx-canvas-text);
+  --nx-context-muted-ink: var(--nx-canvas-muted);
+}
+
+.nx-apple-light-workspace :is(input, textarea, select, .input-premium) {
+  border-color: var(--nx-canvas-border);
+  color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+}
+
+.nx-apple-light-workspace :is(input, textarea, select)::placeholder,
+.nx-apple-light-workspace .input-premium::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-apple-light-workspace :is(input, textarea, select):-webkit-autofill {
+  -webkit-text-fill-color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+  box-shadow: 0 0 0 1000px var(--nx-canvas-raised) inset;
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:bg-surface-800/40"],
+  [class~="hover:bg-surface-800"],
+  [class~="hover:bg-white/[0.02]"],
+  [class~="hover:bg-white/[0.03]"],
+  [class~="hover:bg-white/[0.04]"],
+  [class~="hover:bg-white/[0.05]"],
+  [class~="hover:bg-white/[0.06]"],
+  [class~="hover:bg-white/[0.07]"],
+  [class~="hover:bg-white/[0.08]"]
+):hover {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-white"],
+  [class~="hover:text-slate-100"],
+  [class~="hover:text-slate-200"],
+  [class~="hover:text-slate-300"]
+):hover {
+  color: var(--nx-legacy-white-ink);
+}
+
+/* Bloques oscuros de énfasis que se conservan dentro del workspace (p. ej.
+   un total de caja) mantienen contraste. No habilita rutas oscuras enteras. */
+.nx-apple-light-workspace [class~="bg-nortex-900"] :is(
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-slate-300"]
+) {
+  color: rgb(var(--nx-neutral-100-rgb));
+}
+
+/* Editor técnico explícito: una isla oscura por función (código), nunca el
+   fondo de una ruta ni una identidad cromática distinta. */
+.nx-apple-light-workspace .nx-code-surface {
+  background: var(--nx-chrome);
+  color: rgb(var(--nx-neutral-100-rgb));
+  color-scheme: dark;
+}
+
+.nx-apple-light-workspace .nx-code-surface :is(
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-slate-300"]
+) {
+  color: rgb(var(--nx-neutral-100-rgb));
+}
+
+.nx-apple-light-workspace :is(
+  [class~="bg-nortex-800/30"],
+  [class~="bg-nortex-800/50"],
+  [class~="bg-nortex-800/80"]
+) {
+  background-color: var(--nx-canvas-raised);
+}
+
+/* Contraste de estados heredados sobre canvas claro. Los tonos dejan de
+   depender de que emerald-300/amber-300 fueran visibles sobre negro. */
+.nx-apple-light-workspace :is(
+  [class~="text-emerald-100"],
+  [class~="text-emerald-200"],
+  [class~="text-emerald-300"],
+  [class~="text-emerald-400"],
+  [class~="text-emerald-500"],
+  [class~="text-emerald-600"],
+  [class~="text-emerald-700"],
+  [class~="text-emerald-800"],
+  [class~="text-emerald-900"],
+  [class~="text-emerald-950"],
+  [class~="text-emerald-100/80"],
+  [class~="text-green-100"],
+  [class~="text-green-200"],
+  [class~="text-green-300"],
+  [class~="text-green-400"],
+  [class~="text-green-500"],
+  [class~="text-green-600"],
+  [class~="text-green-700"],
+  [class~="text-green-800"],
+  [class~="text-green-900"],
+  [class~="text-green-950"]
+) { color: var(--nx-positive); }
+
+/* `brand` es el relleno del CTA. Como tinta pequena sobre blanco no alcanza
+   contraste; en el canvas Dia se traduce al positivo accesible. */
+.nx-apple-light-workspace [class~="text-brand"] {
+  color: var(--nx-positive);
+}
+
+.nx-apple-light-workspace [class~="hover:text-brand"]:hover {
+  color: var(--nx-positive);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="text-amber-100"],
+  [class~="text-amber-200"],
+  [class~="text-amber-300"],
+  [class~="text-amber-400"],
+  [class~="text-amber-500"],
+  [class~="text-amber-600"],
+  [class~="text-amber-700"],
+  [class~="text-amber-800"],
+  [class~="text-amber-900"],
+  [class~="text-amber-950"],
+  [class~="text-amber-100/80"],
+  [class~="text-amber-200/80"],
+  [class~="text-amber-300/80"],
+  [class~="text-amber-400/80"],
+  [class~="text-amber-400/90"],
+  [class~="text-yellow-100"],
+  [class~="text-yellow-200"],
+  [class~="text-yellow-300"],
+  [class~="text-yellow-400"],
+  [class~="text-yellow-500"],
+  [class~="text-yellow-600"],
+  [class~="text-yellow-700"],
+  [class~="text-yellow-800"],
+  [class~="text-yellow-900"],
+  [class~="text-yellow-950"],
+  [class~="text-orange-100"],
+  [class~="text-orange-200"],
+  [class~="text-orange-300"],
+  [class~="text-orange-400"],
+  [class~="text-orange-500"],
+  [class~="text-orange-600"],
+  [class~="text-orange-700"],
+  [class~="text-orange-800"],
+  [class~="text-orange-900"],
+  [class~="text-orange-950"],
+  [class~="text-orange-300/70"]
+) { color: var(--nx-warning); }
+
+.nx-apple-light-workspace :is(
+  [class~="text-sky-100"],
+  [class~="text-sky-200"],
+  [class~="text-sky-300"],
+  [class~="text-sky-400"],
+  [class~="text-sky-500"],
+  [class~="text-sky-600"],
+  [class~="text-sky-700"],
+  [class~="text-sky-800"],
+  [class~="text-sky-900"],
+  [class~="text-sky-950"],
+  [class~="text-blue-100"],
+  [class~="text-blue-200"],
+  [class~="text-blue-300"],
+  [class~="text-blue-400"],
+  [class~="text-blue-500"],
+  [class~="text-blue-600"],
+  [class~="text-blue-700"],
+  [class~="text-blue-800"],
+  [class~="text-blue-900"],
+  [class~="text-blue-950"],
+  [class~="text-blue-300/80"],
+  [class~="text-cyan-100"],
+  [class~="text-cyan-200"],
+  [class~="text-cyan-300"],
+  [class~="text-cyan-400"],
+  [class~="text-cyan-500"],
+  [class~="text-cyan-600"],
+  [class~="text-cyan-700"],
+  [class~="text-cyan-800"],
+  [class~="text-cyan-900"],
+  [class~="text-cyan-950"]
+) { color: var(--nx-info); }
+
+.nx-apple-light-workspace :is(
+  [class~="text-red-100"],
+  [class~="text-red-200"],
+  [class~="text-red-300"],
+  [class~="text-red-400"],
+  [class~="text-red-500"],
+  [class~="text-red-600"],
+  [class~="text-red-700"],
+  [class~="text-red-800"],
+  [class~="text-red-900"],
+  [class~="text-red-950"],
+  [class~="text-red-100/80"],
+  [class~="text-red-400/70"],
+  [class~="text-red-400/80"],
+  [class~="text-rose-100"],
+  [class~="text-rose-200"],
+  [class~="text-rose-300"],
+  [class~="text-rose-400"],
+  [class~="text-rose-500"],
+  [class~="text-rose-600"],
+  [class~="text-rose-700"],
+  [class~="text-rose-800"],
+  [class~="text-rose-900"],
+  [class~="text-rose-950"]
+) { color: var(--nx-danger); }
+
+/* Tailwind colapsa estos aliases fríos a la marca. En Día, sus rampas claras
+   no sirven como tinta sobre canvas o materiales suaves: se vuelven positivo
+   accesible. Las islas oscuras ya redefinen --nx-positive a tinta de ticket. */
+.nx-apple-light-workspace :is(
+  [class~="text-brand"],
+  [class~="text-brand-200"],
+  [class~="text-brand-300"],
+  [class~="text-brand-400"],
+  [class~="text-brand-700"],
+  [class~="text-brand-800"],
+  [class~="text-nortex-400"],
+  [class~="text-nortex-500"],
+  [class~="text-nortex-600"],
+  [class~="text-nortex-700"],
+  [class~="text-nortex-accent"],
+  [class~="text-blue-200"],
+  [class~="text-blue-300"],
+  [class~="text-blue-300/80"],
+  [class~="text-blue-400"],
+  [class~="text-blue-500"],
+  [class~="text-blue-600"],
+  [class~="text-blue-700"],
+  [class~="text-blue-800"],
+  [class~="text-indigo-300"],
+  [class~="text-indigo-400"],
+  [class~="text-indigo-500"],
+  [class~="text-cyan-100"],
+  [class~="text-cyan-200"],
+  [class~="text-cyan-300"],
+  [class~="text-cyan-400"],
+  [class~="text-violet-100"],
+  [class~="text-violet-300"],
+  [class~="text-violet-500"],
+  [class~="text-violet-700"],
+  [class~="text-purple-300"],
+  [class~="text-purple-400"],
+  [class~="text-purple-700"]
+) { color: var(--nx-positive); }
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-brand"],
+  [class~="hover:text-brand-200"],
+  [class~="hover:text-brand-800"],
+  [class~="hover:text-blue-300"],
+  [class~="hover:text-blue-600"],
+  [class~="hover:text-nortex-accent"],
+  [class~="hover:text-emerald-300"]
+):hover { color: var(--nx-positive); }
+
+.nx-apple-light-workspace .group:hover :is(
+  [class~="group-hover:text-blue-300"],
+  [class~="group-hover:text-nortex-accent"],
+  [class~="group-hover:text-emerald-700"]
+) { color: var(--nx-positive); }
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-amber-200"],
+  [class~="hover:text-amber-800"],
+  [class~="hover:text-amber-900"],
+  [class~="hover:text-orange-400"]
+):hover,
+.nx-apple-light-workspace .group:hover [class~="group-hover:text-orange-400"] {
+  color: var(--nx-warning);
+}
+
+.nx-apple-light-workspace :is(
+  [class~="hover:text-red-300"],
+  [class~="hover:text-red-400"],
+  [class~="hover:text-red-500"],
+  [class~="hover:text-red-700"]
+):hover { color: var(--nx-danger); }
+
+/* ==========================================
+   CONTRATO VISUAL AUTENTICADO — APPLE/HIG DARK
+   ==========================================
+   La noche no es un filtro ni una segunda coleccion de pantallas. Este puente
+   traduce las utilidades claras heredadas al mismo vocabulario semantico; las
+   fotos, la marca y las superficies de ticket conservan su significado. */
+.nx-apple-dark-workspace {
+  color-scheme: dark;
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-dark-workspace.nx-light-context,
+.nx-apple-dark-workspace .nx-light-context {
+  color-scheme: dark;
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-slate-50"],
+  [class~="bg-surface-950"],
+  [class~="bg-surface-950/40"],
+  [class~="bg-surface-950/60"],
+  [class~="bg-surface-950/70"]
+) {
+  background-color: var(--nx-canvas);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-white"],
+  [class~="bg-white/60"],
+  [class~="bg-white/80"],
+  [class~="bg-white/90"],
+  [class~="bg-white/95"],
+  [class~="bg-surface-900"],
+  [class~="bg-surface-900/60"],
+  [class~="bg-surface-900/70"],
+  [class~="bg-surface-900/80"],
+  [class~="bg-surface-900/90"],
+  [class~="bg-surface-900/95"]
+) {
+  background-color: var(--nx-canvas-raised);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-slate-100"],
+  [class~="bg-slate-200"],
+  [class~="bg-surface-800"],
+  [class~="bg-surface-800/40"],
+  [class~="bg-surface-800/60"],
+  [class~="bg-surface-700"],
+  [class~="bg-surface-700/60"],
+  [class~="bg-white/[0.02]"],
+  [class~="bg-white/[0.025]"],
+  [class~="bg-white/[0.03]"],
+  [class~="bg-white/[0.035]"],
+  [class~="bg-white/[0.04]"],
+  [class~="bg-white/[0.05]"],
+  [class~="bg-white/[0.06]"],
+  [class~="bg-white/[0.08]"],
+  [class~="bg-white/[0.10]"],
+  [class~="bg-white/[0.12]"]
+) {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="text-black"],
+  [class~="text-slate-950"],
+  [class~="text-slate-900"],
+  [class~="text-slate-800"],
+  [class~="text-slate-700"],
+  [class~="text-slate-50"],
+  [class~="text-slate-100"],
+  [class~="text-slate-200"],
+  [class~="text-surface-950"]
+) {
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="text-slate-300"],
+  [class~="text-slate-400"],
+  [class~="text-slate-500"],
+  [class~="text-surface-300"],
+  [class~="text-surface-400"]
+) {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="text-slate-600"],
+  [class~="text-surface-500"]
+) {
+  color: var(--nx-canvas-faint);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="placeholder:text-slate-400"],
+  [class~="placeholder:text-slate-500"],
+  [class~="placeholder:text-slate-600"]
+)::placeholder,
+.nx-apple-dark-workspace .input-premium::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-apple-dark-workspace :is(.nx-label, .nx-sku, .nx-barcode) {
+  color: var(--nx-canvas-muted);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="border-slate-100"],
+  [class~="border-slate-200"],
+  [class~="border-slate-300"],
+  [class~="border-white"],
+  [class~="border-white/10"],
+  [class~="border-white/15"],
+  [class~="border-white/20"],
+  [class~="border-white/[0.03]"],
+  [class~="border-white/[0.04]"],
+  [class~="border-white/[0.05]"],
+  [class~="border-white/[0.06]"],
+  [class~="border-white/[0.07]"],
+  [class~="border-white/[0.08]"],
+  [class~="border-white/[0.10]"],
+  [class~="border-white/[0.12]"],
+  [class~="border-surface-700"]
+) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="divide-slate-100"],
+  [class~="divide-slate-200"],
+  [class~="divide-slate-300"],
+  [class~="divide-white/[0.04]"],
+  [class~="divide-white/[0.06]"],
+  [class~="divide-white/[0.08]"]
+) > :not([hidden]) ~ :not([hidden]) {
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-dark-workspace :is(.panel-premium, .panel-premium-light, .modal-panel, .nx-canvas-card, .nx-list-surface) {
+  background: var(--nx-canvas-raised);
+  border-color: var(--nx-canvas-border);
+  color: var(--nx-canvas-text);
+  box-shadow: var(--nx-shadow-subtle);
+}
+
+.nx-apple-dark-workspace :is(input, textarea, select, .input-premium) {
+  color: var(--nx-canvas-text);
+  border-color: var(--nx-canvas-border);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="hover:bg-white"],
+  [class~="hover:bg-slate-50"],
+  [class~="hover:bg-slate-100"],
+  [class~="hover:bg-surface-800/40"],
+  [class~="hover:bg-surface-800"]
+):hover {
+  background-color: var(--nx-canvas-subtle);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="hover:text-slate-950"],
+  [class~="hover:text-slate-900"],
+  [class~="hover:text-slate-800"],
+  [class~="hover:text-white"]
+):hover {
+  color: var(--nx-canvas-text);
+}
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-emerald-50"],
+  [class~="bg-emerald-50/60"],
+  [class~="bg-emerald-50/70"],
+  [class~="bg-emerald-100"],
+  [class~="bg-green-50"],
+  [class~="bg-green-100"]
+) { background-color: var(--nx-positive-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-amber-50"],
+  [class~="bg-amber-50/60"],
+  [class~="bg-amber-50/70"],
+  [class~="bg-amber-100"],
+  [class~="bg-yellow-50"],
+  [class~="bg-yellow-100"]
+) { background-color: var(--nx-warning-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-sky-50"],
+  [class~="bg-sky-100"],
+  [class~="bg-blue-50"],
+  [class~="bg-blue-100"],
+  [class~="bg-cyan-50"],
+  [class~="bg-cyan-100"]
+) { background-color: var(--nx-info-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="bg-red-50"],
+  [class~="bg-red-50/60"],
+  [class~="bg-red-50/70"],
+  [class~="bg-red-100"]
+) { background-color: var(--nx-danger-bg); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-emerald-100"], [class~="border-emerald-200"],
+  [class~="border-green-100"], [class~="border-green-200"]
+) { border-color: var(--nx-positive-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-amber-100"], [class~="border-amber-200"],
+  [class~="border-yellow-100"], [class~="border-yellow-200"]
+) { border-color: var(--nx-warning-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-sky-100"], [class~="border-sky-200"],
+  [class~="border-blue-100"], [class~="border-blue-200"],
+  [class~="border-cyan-100"], [class~="border-cyan-200"]
+) { border-color: var(--nx-info-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="border-red-100"], [class~="border-red-200"]
+) { border-color: var(--nx-danger-border); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-emerald-300"], [class~="text-emerald-400"],
+  [class~="text-emerald-500"], [class~="text-emerald-600"],
+  [class~="text-emerald-700"], [class~="text-emerald-800"],
+  [class~="text-green-300"], [class~="text-green-400"],
+  [class~="text-green-500"], [class~="text-green-600"],
+  [class~="text-green-700"], [class~="text-green-800"]
+) { color: var(--nx-positive); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-amber-300"], [class~="text-amber-400"],
+  [class~="text-amber-500"], [class~="text-amber-600"],
+  [class~="text-amber-700"], [class~="text-amber-800"],
+  [class~="text-yellow-300"], [class~="text-yellow-400"],
+  [class~="text-yellow-500"], [class~="text-yellow-600"],
+  [class~="text-yellow-700"], [class~="text-yellow-800"]
+) { color: var(--nx-warning); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-sky-300"], [class~="text-sky-400"],
+  [class~="text-sky-500"], [class~="text-sky-600"],
+  [class~="text-sky-700"], [class~="text-sky-800"],
+  [class~="text-blue-300"], [class~="text-blue-400"],
+  [class~="text-blue-500"], [class~="text-blue-600"],
+  [class~="text-blue-700"], [class~="text-blue-800"],
+  [class~="text-cyan-300"], [class~="text-cyan-400"],
+  [class~="text-cyan-500"], [class~="text-cyan-600"],
+  [class~="text-cyan-700"], [class~="text-cyan-800"]
+) { color: var(--nx-info); }
+
+.nx-apple-dark-workspace :is(
+  [class~="text-red-300"], [class~="text-red-400"],
+  [class~="text-red-500"], [class~="text-red-600"],
+  [class~="text-red-700"], [class~="text-red-800"]
+) { color: var(--nx-danger); }
+
+/* ==========================================
+   AUTENTICACIÓN PÚBLICA · APPLE LIGHT/DARK
+   ========================================== */
+
+.nx-auth-shell {
+  --nx-auth-accent: var(--nx-info);
+  --nx-auth-on-accent: var(--nx-canvas-raised);
+  min-height: 100dvh;
+  background: var(--nx-canvas);
+  color: var(--nx-canvas-text);
+  color-scheme: light;
+  font-family: var(--nx-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.nx-auth-shell[data-nx-theme='dark'] {
+  color-scheme: dark;
+}
+
+.nx-auth-skip-link {
+  position: fixed;
+  inset-block-start: var(--nx-3);
+  inset-inline-start: var(--nx-3);
+  z-index: var(--nx-z-modal);
+  min-height: var(--nx-tap-min);
+  padding: var(--nx-3) var(--nx-4);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-canvas-text);
+  color: var(--nx-canvas-raised);
+  font-weight: var(--nx-fw-semi);
+  transform: translateY(calc(-100% - var(--nx-6)));
+  transition: transform var(--nx-t-fast);
+}
+
+.nx-auth-skip-link:focus {
+  transform: translateY(0);
+}
+
+.nx-auth-nav {
+  position: sticky;
+  inset-block-start: 0;
+  z-index: var(--nx-z-sticky);
+  min-height: var(--nx-tap-min);
+  border-bottom: 1px solid var(--nx-canvas-border);
+  background: rgb(var(--nx-canvas-raised-rgb) / .84);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.nx-auth-nav-inner {
+  width: min(100%, 980px);
+  min-height: var(--nx-tap-min);
+  margin-inline: auto;
+  padding-inline: var(--nx-6);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--nx-4);
+}
+
+.nx-auth-wordmark {
+  min-height: var(--nx-tap-min);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nx-2);
+  color: var(--nx-canvas-text);
+  font-family: var(--nx-font-display);
+  font-size: 19px;
+  font-weight: var(--nx-fw-semi);
+  letter-spacing: -.02em;
+  text-decoration: none;
+}
+
+.nx-auth-wordmark-mark {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--nx-r-control);
+  background: var(--nx-canvas-text);
+  color: var(--nx-canvas-raised);
+  font-size: var(--nx-fs-sm);
+  line-height: 1;
+}
+
+.nx-auth-theme-toggle {
+  min-width: var(--nx-tap-min);
+  min-height: var(--nx-tap-min);
+  padding-inline: var(--nx-4);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nx-2);
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-canvas-text-rgb) / .06);
+  font-size: var(--nx-fs-sm);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1;
+  touch-action: manipulation;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-auth-stage {
+  min-height: calc(100dvh - var(--nx-tap-min));
+  padding: clamp(32px, 6vw, 72px) var(--nx-6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nx-auth-card {
+  width: min(100%, 420px);
+  padding: clamp(24px, 5vw, 36px);
+  border: 1px solid rgb(var(--nx-canvas-text-rgb) / .12);
+  border-radius: var(--nx-r-sheet);
+  background: var(--nx-canvas-raised);
+  box-shadow: var(--nx-shadow-subtle);
+}
+
+.nx-auth-card-regular {
+  width: min(100%, 520px);
+}
+
+.nx-auth-heading {
+  margin-bottom: var(--nx-8);
+  text-align: center;
+}
+
+.nx-auth-heading-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto var(--nx-4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-canvas-text);
+  color: var(--nx-canvas-raised);
+  font-family: var(--nx-font-display);
+  font-size: 20px;
+  font-weight: var(--nx-fw-bold);
+}
+
+.nx-auth-heading-icon-neutral {
+  border: 1px solid var(--nx-canvas-border);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-text);
+}
+
+.nx-auth-heading-icon-success {
+  border: 1px solid var(--nx-positive-border);
+  background: var(--nx-positive-bg);
+  color: var(--nx-positive);
+}
+
+.nx-auth-heading-icon-danger {
+  border: 1px solid var(--nx-danger-border);
+  background: var(--nx-danger-bg);
+  color: var(--nx-danger);
+}
+
+.nx-auth-heading h1 {
+  margin: 0;
+  color: var(--nx-canvas-text);
+  font-family: var(--nx-font-display);
+  font-size: clamp(28px, 5vw, 36px);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.nx-auth-heading p {
+  max-width: 36ch;
+  margin: var(--nx-3) auto 0;
+  color: var(--nx-canvas-muted);
+  font-size: 15px;
+  line-height: 1.5;
+  text-wrap: pretty;
+}
+
+.nx-auth-heading strong,
+.nx-auth-state strong {
+  color: var(--nx-canvas-text);
+  font-weight: var(--nx-fw-semi);
+}
+
+.nx-auth-form {
+  display: grid;
+  gap: 18px;
+}
+
+.nx-auth-field-group {
+  display: grid;
+  gap: var(--nx-2);
+}
+
+.nx-auth-field-group > label {
+  color: var(--nx-canvas-text);
+  font-size: var(--nx-fs-sm);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.3;
+}
+
+.nx-auth-label-optional,
+.nx-auth-field-hint,
+.nx-auth-help {
+  color: var(--nx-canvas-muted);
+  font-weight: var(--nx-fw-regular);
+}
+
+.nx-auth-field-hint,
+.nx-auth-field-error {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.nx-auth-field-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--nx-1);
+}
+
+.nx-auth-field-error {
+  color: var(--nx-danger);
+}
+
+.nx-auth-field-valid {
+  color: var(--nx-positive);
+}
+
+.nx-auth-control-wrap {
+  position: relative;
+}
+
+.nx-auth-control {
+  width: 100%;
+  min-height: 48px;
+  padding: var(--nx-3) var(--nx-4);
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-control);
+  outline: none;
+  background: var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1.35;
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast), background-color var(--nx-t-fast);
+}
+
+.nx-auth-control-with-icon {
+  padding-inline-start: 44px;
+}
+
+.nx-auth-control-with-action {
+  padding-inline-end: 52px;
+}
+
+.nx-auth-control-icon {
+  position: absolute;
+  inset-inline-start: var(--nx-4);
+  inset-block-start: 50%;
+  z-index: 1;
+  color: var(--nx-canvas-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.nx-auth-control-action {
+  position: absolute;
+  inset-inline-end: 2px;
+  inset-block-start: 50%;
+  width: var(--nx-tap-min);
+  height: var(--nx-tap-min);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--nx-r-control);
+  background: transparent;
+  color: var(--nx-canvas-muted);
+  transform: translateY(-50%);
+}
+
+.nx-auth-control::placeholder,
+.nx-auth-shell textarea::placeholder {
+  color: var(--nx-canvas-faint);
+  opacity: 1;
+}
+
+.nx-auth-shell :is(input, textarea, select):-webkit-autofill,
+.nx-auth-shell :is(input, textarea, select):-webkit-autofill:hover,
+.nx-auth-shell :is(input, textarea, select):-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--nx-canvas-text);
+  caret-color: var(--nx-canvas-text);
+  box-shadow: 0 0 0 1000px var(--nx-canvas-raised) inset;
+}
+
+.nx-auth-control:focus,
+.nx-auth-control-wrap:focus-within .nx-auth-control {
+  border-color: var(--nx-auth-accent);
+  box-shadow: 0 0 0 3px rgb(var(--nx-canvas-text-rgb) / .12);
+}
+
+.nx-auth-control-wrap:focus-within .nx-auth-control-icon {
+  color: var(--nx-auth-accent);
+}
+
+.nx-auth-control-invalid,
+.nx-auth-control-invalid:focus {
+  border-color: var(--nx-danger);
+}
+
+.nx-auth-control-valid {
+  border-color: var(--nx-positive-border);
+}
+
+.nx-auth-control-readonly {
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-muted);
+  cursor: not-allowed;
+}
+
+.nx-auth-primary,
+.nx-auth-secondary,
+.nx-auth-back-link {
+  min-height: var(--nx-tap-min);
+  padding: 10px 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nx-2);
+  border-radius: var(--nx-r-pill);
+  font-size: 15px;
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  touch-action: manipulation;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast), opacity var(--nx-t-fast);
+}
+
+.nx-auth-primary {
+  width: 100%;
+  border: 1px solid var(--nx-auth-accent);
+  background: var(--nx-auth-accent);
+  color: var(--nx-auth-on-accent);
+  box-shadow: 0 1px 2px rgb(var(--nx-canvas-text-rgb) / .12);
+}
+
+.nx-auth-secondary {
+  width: 100%;
+  border: 1px solid var(--nx-canvas-border);
+  background: var(--nx-canvas-raised);
+  color: var(--nx-canvas-text);
+}
+
+.nx-auth-back-link {
+  width: 100%;
+  padding-block: var(--nx-2);
+  color: var(--nx-canvas-muted);
+}
+
+.nx-auth-primary:disabled {
+  border-color: var(--nx-canvas-border);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-faint);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.nx-auth-alert {
+  min-height: var(--nx-tap-min);
+  margin-bottom: var(--nx-6);
+  padding: var(--nx-3) var(--nx-4);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nx-2);
+  border: 1px solid;
+  border-radius: var(--nx-r-control);
+  font-size: var(--nx-fs-sm);
+  line-height: 1.45;
+}
+
+.nx-auth-alert > svg {
+  flex: 0 0 auto;
+  margin-top: 2px;
+}
+
+.nx-auth-alert-danger {
+  border-color: var(--nx-danger-border);
+  background: var(--nx-danger-bg);
+  color: var(--nx-danger);
+}
+
+.nx-auth-alert-warning {
+  border-color: var(--nx-warning-border);
+  background: var(--nx-warning-bg);
+  color: var(--nx-warning);
+}
+
+.nx-auth-form-link-row {
+  min-height: var(--nx-tap-min);
+  margin-block: calc(var(--nx-2) * -1);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.nx-auth-link {
+  color: var(--nx-auth-accent);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-decoration-color: transparent;
+  text-underline-offset: .2em;
+  transition: color var(--nx-t-fast), text-decoration-color var(--nx-t-fast);
+}
+
+.nx-auth-form-link-row .nx-auth-link,
+.nx-auth-link-prominent {
+  min-height: var(--nx-tap-min);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--nx-1);
+}
+
+.nx-auth-footer {
+  margin-top: var(--nx-8);
+  padding-top: var(--nx-6);
+  border-top: 1px solid var(--nx-canvas-border);
+  color: var(--nx-canvas-muted);
+  font-size: var(--nx-fs-sm);
+  text-align: center;
+}
+
+.nx-auth-footer p {
+  margin: 0;
+}
+
+.nx-auth-footer-inline {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--nx-2);
+}
+
+.nx-auth-legal {
+  margin: 0;
+  color: var(--nx-canvas-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.nx-auth-details {
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-card);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-text);
+  font-size: var(--nx-fs-sm);
+}
+
+.nx-auth-details summary {
+  min-height: var(--nx-tap-min);
+  padding: var(--nx-3) var(--nx-4);
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+  font-weight: var(--nx-fw-semi);
+  user-select: none;
+}
+
+.nx-auth-details fieldset {
+  margin: 0;
+  padding: var(--nx-4);
+  border: 0;
+  border-top: 1px solid var(--nx-canvas-border);
+}
+
+.nx-auth-help {
+  margin: 0 0 var(--nx-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.nx-auth-capability-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--nx-2);
+}
+
+.nx-auth-check-row {
+  min-height: var(--nx-tap-min);
+  display: flex;
+  align-items: flex-start;
+  gap: var(--nx-2);
+  color: var(--nx-canvas-muted);
+  cursor: pointer;
+  font-size: var(--nx-fs-sm);
+  line-height: 1.4;
+}
+
+.nx-auth-check-row input {
+  width: 20px;
+  height: 20px;
+  margin-top: 1px;
+  flex: 0 0 auto;
+  accent-color: var(--nx-auth-accent);
+}
+
+.nx-auth-state {
+  display: grid;
+  gap: var(--nx-4);
+  color: var(--nx-canvas-muted);
+  font-size: 15px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.nx-auth-state p,
+.nx-auth-state-message {
+  margin: 0;
+}
+
+.nx-auth-state-message {
+  color: var(--nx-canvas-muted);
+  font-size: 15px;
+  text-align: center;
+}
+
+.nx-auth-note {
+  padding: var(--nx-3) var(--nx-4);
+  border: 1px solid var(--nx-canvas-border);
+  border-radius: var(--nx-r-control);
+  background: var(--nx-canvas-subtle);
+  color: var(--nx-canvas-muted);
+  font-size: 12px;
+}
+
+:where(
+  .nx-auth-skip-link,
+  .nx-auth-wordmark,
+  .nx-auth-theme-toggle,
+  .nx-auth-control-action,
+  .nx-auth-primary,
+  .nx-auth-secondary,
+  .nx-auth-back-link,
+  .nx-auth-link,
+  .nx-auth-details summary,
+  .nx-auth-check-row input
+):focus-visible {
+  outline: 3px solid var(--nx-auth-accent);
+  outline-offset: 3px;
+}
+
+@media (hover: hover) {
+  .nx-auth-theme-toggle:hover,
+  .nx-auth-secondary:hover {
+    background: var(--nx-canvas-subtle);
+  }
+
+  .nx-auth-primary:hover {
+    filter: brightness(.94);
+  }
+
+  .nx-auth-back-link:hover,
+  .nx-auth-link:hover {
+    color: var(--nx-canvas-text);
+    text-decoration-color: currentColor;
+  }
+}
+
+@media (max-width: 640px) {
+  .nx-auth-nav-inner {
+    padding-inline: var(--nx-4);
+  }
+
+  .nx-auth-stage {
+    min-height: calc(100dvh - var(--nx-tap-min));
+    padding: var(--nx-6) var(--nx-4) max(var(--nx-6), env(safe-area-inset-bottom));
+    align-items: flex-start;
+  }
+
+  .nx-auth-card {
+    padding: var(--nx-6) var(--nx-4);
+    border-radius: var(--nx-r-card);
+  }
+
+  .nx-auth-heading {
+    margin-bottom: var(--nx-6);
+  }
+
+  .nx-auth-capability-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .nx-auth-footer-inline {
+    flex-direction: column;
+    gap: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-auth-shell *,
+  .nx-auth-shell *::before,
+  .nx-auth-shell *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ==========================================
+   EXPERIENCIA PÚBLICA · LECTURA EDITORIAL
+   ==========================================
+   El renderer Markdown emite clases semánticas tanto para React como para el
+   HTML SEO. `.prose-nortex` solo declara contexto: nunca selecciona enlaces ni
+   botones descendientes, evitando la regresión de texto verde sobre CTA verde. */
+
+.nx-public-page {
+  min-height: 100dvh;
+  min-height: 100dvh;
+  color-scheme: light;
+  background: var(--nx-public-canvas);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.nx-public-page[data-nx-theme='dark'] {
+  color-scheme: dark;
+}
+
+.nx-public-page::selection,
+.nx-public-reading::selection,
+.prose-nortex::selection {
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-text);
+}
+
+.nx-public-nav {
+  color: var(--nx-public-text);
+  background: rgb(var(--nx-public-surface-rgb) / .9);
+  border-color: rgb(var(--nx-public-text-rgb) / .12);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+}
+
+.nx-public-surface {
+  background: var(--nx-public-surface);
+  color: var(--nx-public-text);
+  border-color: var(--nx-public-border);
+}
+
+.nx-public-card {
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .12);
+  border-radius: var(--nx-r-card);
+  box-shadow: var(--nx-public-shadow);
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-public-reading,
+.prose-nortex {
+  color: var(--nx-public-text-secondary);
+  font-family: var(--nx-font);
+  font-size: clamp(1rem, .98rem + .15vw, 1.0625rem);
+  line-height: 1.76;
+  letter-spacing: -.008em;
+  text-wrap: pretty;
+}
+
+.nx-public-muted {
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-public-subtle {
+  color: var(--nx-public-text-subtle);
+}
+
+.nx-public-link {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-decoration-color: rgb(var(--nx-public-accent-rgb) / .42);
+  text-decoration-thickness: .08em;
+  text-underline-offset: .2em;
+  transition: color var(--nx-t-fast), text-decoration-color var(--nx-t-fast);
+}
+
+.nx-public-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 1px solid rgb(var(--nx-public-accent-rgb) / .22);
+  border-radius: var(--nx-r-pill);
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-accent-text);
+  font-size: var(--nx-fs-label);
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+}
+
+.nx-public-primary,
+.nx-public-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--nx-tap-min);
+  padding: 10px 18px;
+  border-radius: var(--nx-r-control);
+  font-family: var(--nx-font);
+  font-size: .9375rem;
+  font-weight: var(--nx-fw-semi);
+  line-height: 1.2;
+  text-align: center;
+  text-decoration: none;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast);
+}
+
+.nx-public-primary {
+  border: 1px solid rgb(var(--nx-public-primary-rgb) / .3);
+  background: var(--nx-public-primary-fill);
+  color: var(--nx-public-on-primary);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .14);
+}
+
+.nx-public-secondary {
+  border: 1px solid var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .05);
+}
+
+/* La calculadora vive dentro de los artículos, por lo que comparte el mismo
+   canvas y evita reintroducir controles blancos con texto gris tenue. */
+.nx-public-calculator {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface);
+  color: var(--nx-public-text);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .04);
+}
+
+.nx-public-calculator-icon {
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-accent-text);
+}
+
+.nx-public-field {
+  min-height: 48px;
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+  color: var(--nx-public-text);
+  caret-color: var(--nx-public-text);
+  font-size: 16px;
+  transition: border-color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+}
+
+.nx-public-field::placeholder,
+.nx-public-field input::placeholder {
+  color: var(--nx-public-text-subtle);
+  opacity: 1;
+}
+
+.nx-public-field:focus,
+.nx-public-field:focus-within {
+  border-color: var(--nx-public-accent-text);
+  box-shadow: 0 0 0 3px rgb(var(--nx-public-primary-rgb) / .22);
+}
+
+.nx-public-field:-webkit-autofill,
+.nx-public-field:-webkit-autofill:hover,
+.nx-public-field:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--nx-public-text);
+  caret-color: var(--nx-public-text);
+  box-shadow: 0 0 0 1000px var(--nx-public-surface-raised) inset;
+}
+
+.nx-public-calculator-results {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-surface-raised);
+}
+
+.nx-public-calculator-result + .nx-public-calculator-result {
+  border-top: 1px solid rgb(var(--nx-public-text-rgb) / .1);
+}
+
+.nx-public-calculator-result-strong {
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text);
+}
+
+:where(.nx-public-link, .nx-public-primary, .nx-public-secondary):focus-visible {
+  outline: 3px solid rgb(var(--nx-public-primary-rgb) / .62);
+  outline-offset: 3px;
+}
+
+.nx-public-brand:focus-visible,
+.nx-public-theme-toggle:focus-visible,
+.nx-public-field:focus-visible {
+  outline: 3px solid rgb(var(--nx-public-primary-rgb) / .62);
+  outline-offset: 3px;
+}
+
+.nx-public-card:focus-visible,
+.nx-prose-table-wrap:focus-visible {
+  outline: 3px solid rgb(var(--nx-public-primary-rgb) / .62);
+  outline-offset: 3px;
+}
+
+.nx-public-primary:disabled,
+.nx-public-secondary:disabled {
+  border-color: var(--nx-public-border);
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text-subtle);
+  box-shadow: none;
+  opacity: 1;
+  cursor: not-allowed;
+}
+
+.nx-public-theme-toggle {
+  display: inline-flex;
+  min-height: var(--nx-tap-min);
+  min-width: var(--nx-tap-min);
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: .5rem;
+  padding: 0 .85rem;
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .14);
+  border-radius: var(--nx-r-pill);
+  background: rgb(var(--nx-public-surface-raised-rgb) / .88);
+  color: var(--nx-public-text);
+  box-shadow: var(--nx-public-shadow);
+  cursor: pointer;
+  transition: background-color var(--nx-t-fast), border-color var(--nx-t-fast), color var(--nx-t-fast), box-shadow var(--nx-t-fast);
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+
+.nx-public-theme-toggle-label {
+  font-size: 12px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.nx-public-preview-card {
+  border-color: rgb(var(--nx-public-text-rgb) / .1);
+  background: rgb(var(--nx-public-canvas-rgb) / .62);
+}
+
+.nx-public-preview-header {
+  border-color: rgb(var(--nx-public-text-rgb) / .1);
+}
+
+@media (hover: hover) {
+  .nx-public-card:hover {
+    border-color: rgb(var(--nx-public-accent-rgb) / .28);
+    box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .05), 0 14px 38px rgb(var(--nx-public-accent-rgb) / .08);
+  }
+
+  .nx-public-link:hover {
+    color: var(--nx-public-accent-hover);
+    text-decoration-color: currentColor;
+  }
+
+  .nx-public-primary:hover {
+    background: var(--nx-public-primary-hover);
+    color: var(--nx-public-on-primary);
+  }
+
+  .nx-public-secondary:hover {
+    border-color: rgb(var(--nx-public-text-rgb) / .24);
+    background: var(--nx-public-surface);
+    color: var(--nx-public-text);
+  }
+
+  .nx-public-theme-toggle:hover {
+    border-color: rgb(var(--nx-public-text-rgb) / .24);
+    background: var(--nx-public-surface);
+  }
+}
+
+@media (max-width: 520px) {
+  .nx-public-theme-toggle-label {
+    display: none;
+  }
+}
+
+@media (max-width: 360px) {
+  .nx-public-brand-wordmark {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nx-public-page *,
+  .nx-public-page *::before,
+  .nx-public-page *::after {
+    scroll-behavior: auto !important;
+    transition-duration: .01ms !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* El fallback lazy y el HTML SEO tienen el mismo canvas que la ruta hidratada;
+   no hay fogonazo blanco ni salto al fondo oscuro durante la navegación. */
+.nx-public-loading,
+.nx-public-prerender {
+  box-sizing: border-box;
+  min-height: 100dvh;
+  background: var(--nx-public-canvas);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font);
+}
+
+.nx-public-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px;
+  color: var(--nx-public-text-secondary);
+  font-weight: var(--nx-fw-medium);
+}
+
+.nx-public-prerender {
+  width: 100%;
+  padding-block: clamp(32px, 7vw, 72px);
+  padding-inline: max(24px, calc((100vw - 820px) / 2));
+  font-size: 1rem;
+  line-height: 1.72;
+}
+
+/* Algunos hubs SEO aún contienen nodos crudos. Solo se seleccionan nodos SIN
+   clase: el renderer Markdown y los CTAs semánticos quedan fuera por contrato. */
+.nx-public-prerender :where(h1:not([class])) {
+  margin: 0 0 24px;
+  color: var(--nx-public-text);
+  font-size: clamp(2rem, 5vw, 3rem);
+  font-weight: var(--nx-fw-bold);
+  line-height: 1.08;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+
+.nx-public-prerender :where(h2:not([class])) {
+  margin: 36px 0 14px;
+  color: var(--nx-public-text);
+  font-size: 1.5rem;
+  line-height: 1.25;
+}
+
+.nx-public-prerender :where(p:not([class]), li:not([class])) {
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-public-prerender :where(ul:not([class]), ol:not([class])) {
+  margin: 0 0 24px;
+  padding-left: 24px;
+}
+
+.nx-public-prerender :where(li:not([class])) {
+  margin-bottom: 8px;
+}
+
+.nx-public-prerender :where(a:not([class])) {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+  text-decoration: underline;
+  text-underline-offset: .2em;
+}
+
+.nx-public-prerender :where(nav:not([class])) {
+  margin-top: 48px;
+  padding-top: 28px;
+  border-top: 1px solid var(--nx-public-border);
+}
+
+/* Jerarquía única del cuerpo del post, compartida por React y prerender. */
+.nx-prose-heading {
+  scroll-margin-top: 96px;
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-bold);
+  letter-spacing: -.025em;
+  text-wrap: balance;
+}
+
+.nx-prose-heading-2 {
+  margin: 40px 0 16px;
+  font-size: clamp(1.5rem, 1.35rem + .6vw, 1.8rem);
+  line-height: 1.22;
+}
+
+.nx-prose-heading-3 {
+  margin: 28px 0 12px;
+  font-size: clamp(1.2rem, 1.12rem + .3vw, 1.35rem);
+  line-height: 1.3;
+}
+
+.nx-prose-paragraph {
+  margin: 0 0 18px;
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-prose-strong {
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-bold);
+}
+
+.nx-prose-code {
+  padding: 2px 6px;
+  border: 1px solid rgb(var(--nx-public-text-rgb) / .1);
+  border-radius: 6px;
+  background: var(--nx-public-canvas-alt);
+  color: var(--nx-public-text);
+  font-family: var(--nx-font-mono);
+  font-size: .875em;
+}
+
+.nx-prose-list {
+  margin: 0 0 20px;
+  padding-left: 24px;
+  color: var(--nx-public-text-secondary);
+}
+
+.nx-prose-list-unordered {
+  list-style: disc;
+}
+
+.nx-prose-list-ordered {
+  list-style: decimal;
+}
+
+.nx-prose-list-item {
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
+.nx-prose-list-item::marker {
+  color: var(--nx-public-accent-text);
+  font-weight: var(--nx-fw-semi);
+}
+
+.nx-prose-quote {
+  margin: 24px 0;
+  padding: 16px 18px;
+  border-inline-start: 4px solid var(--nx-public-accent-text);
+  border-radius: 0 var(--nx-r-control) var(--nx-r-control) 0;
+  background: var(--nx-public-accent-soft);
+  color: var(--nx-public-text-secondary);
+  font-style: normal;
+}
+
+.nx-prose-table-wrap {
+  max-width: 100%;
+  margin: 24px 0;
+  overflow-x: auto;
+  border: 1px solid var(--nx-public-border);
+  border-radius: var(--nx-r-card);
+  background: var(--nx-public-surface-raised);
+  box-shadow: 0 1px 2px rgb(var(--nx-public-text-rgb) / .04);
+  -webkit-overflow-scrolling: touch;
+}
+
+.nx-prose-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: .925rem;
+}
+
+.nx-prose-table-head {
+  background: var(--nx-public-surface);
+}
+
+.nx-prose-table-heading {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--nx-public-border);
+  color: var(--nx-public-text);
+  font-weight: var(--nx-fw-semi);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.nx-prose-table-row-alt {
+  background: rgb(var(--nx-public-canvas-rgb) / .52);
+}
+
+.nx-prose-table-cell {
+  padding: 12px 16px;
+  border-bottom: 1px solid rgb(var(--nx-public-text-rgb) / .08);
+  color: var(--nx-public-text-secondary);
+  text-align: left;
+  vertical-align: top;
+}
+
+.nx-prose-table tbody tr:last-child .nx-prose-table-cell {
+  border-bottom: 0;
+}
+
+.nx-prose-cta {
+  margin: 28px 0;
+}
+
+@media (max-width: 640px) {
+  .nx-public-prerender {
+    padding-inline: 20px;
+  }
+
+  .nx-prose-cta .nx-public-primary {
+    width: 100%;
+  }
+
+  .nx-prose-table-heading,
+  .nx-prose-table-cell {
+    min-width: 148px;
+    padding: 10px 12px;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .nx-public-card,
+  .nx-public-surface,
+  .nx-prose-table-wrap {
+    border-color: var(--nx-public-text-subtle);
+  }
+}
+
+/* ==========================================
+   CONTRATO DE CONTRASTE — RELLENOS SÓLIDOS
+   ==========================================
+   Tailwind conserva nombres heredados, pero varios aliases (`blue`,
+   `emerald`, `orange`, `rose`) se resuelven a las rampas semánticas de
+   Nortex. Blanco sobre sus tonos claros no alcanza AA. Estas reglas usan
+   selectores exactos y sólo para rellenos opacos: no modifican fondos con
+   `/opacidad`, superficies oscuras ni tarjetas. Además producen la tinta que
+   el bridge Día hereda a un icono o texto hijo del mismo control.
+
+   Cuando se agregue una combinación nueva de relleno + `text-white`, medirla
+   y sumarla al contrato o usar desde el componente la tinta semántica
+   correspondiente. La prueba frontendColorSemantics mantiene la matriz. */
+
+/* Útil para iconos hijos de un relleno ámbar cuando el color vive en el SVG
+   y no en el botón/contenedor que recibe `bg-amber-*`. */
+.nx-on-warning-solid {
+  color: var(--nx-on-warning-solid);
+}
+
+/* La variable hace que un SVG o span hijo no vuelva a heredar blanco dentro
+   de un relleno semántico. El color directo sigue protegido abajo con
+   `!important` frente a las utilidades heredadas de Tailwind. */
+.nx-apple-light-workspace :where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-brand);
+  --nx-legacy-white-muted-ink: var(--nx-on-brand);
+  --nx-context-ink: var(--nx-on-brand);
+  --nx-context-muted-ink: var(--nx-on-brand);
+}
+
+.nx-apple-light-workspace :where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-danger-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-danger-solid);
+  --nx-context-ink: var(--nx-on-danger-solid);
+  --nx-context-muted-ink: var(--nx-on-danger-solid);
+}
+
+.nx-apple-light-workspace :where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+) {
+  --nx-legacy-white-ink: var(--nx-on-warning-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-warning-solid);
+  --nx-context-ink: var(--nx-on-warning-solid);
+  --nx-context-muted-ink: var(--nx-on-warning-solid);
+}
+
+.nx-apple-light-workspace [class~="bg-sky-600"] {
+  --nx-legacy-white-ink: var(--nx-on-info-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-info-solid);
+  --nx-context-ink: var(--nx-on-info-solid);
+  --nx-context-muted-ink: var(--nx-on-info-solid);
+}
+
+/* Marca, aliases verdes y WhatsApp: el 700 todavía requiere tinta oscura. */
+:where(
+  [class~="bg-brand"],
+  [class~="bg-brand-600"],
+  [class~="bg-brand-700"],
+  [class~="bg-emerald-400"],
+  [class~="bg-emerald-500"],
+  [class~="bg-emerald-600"],
+  [class~="bg-emerald-700"],
+  [class~="bg-green-500"],
+  [class~="bg-green-600"],
+  [class~="bg-blue-500"],
+  [class~="bg-blue-600"],
+  [class~="bg-blue-700"],
+  [class~="bg-indigo-600"],
+  [class~="bg-indigo-700"],
+  [class~="bg-purple-400"],
+  [class~="bg-purple-500"],
+  [class~="bg-violet-500"],
+  [class~="bg-nortex-accent"],
+  [class~="bg-whatsapp"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+/* Destructivo: rojo canónico 500 y aliases danger/rose. */
+:where(
+  [class~="bg-danger"],
+  [class~="bg-rose-500"],
+  [class~="bg-rose-600"],
+  [class~="bg-red-500"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+/* Atención: amber canónico claro y aliases warning/orange. */
+:where(
+  [class~="bg-warning"],
+  [class~="bg-orange-500"],
+  [class~="bg-orange-600"],
+  [class~="bg-amber-500"],
+  [class~="bg-amber-600"]
+):is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Info conserva sky separado de blue: sky-600 aún necesita tinta oscura. */
+[class~="bg-sky-600"]:is(
+  [class~="text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-info-solid) !important;
+}
+
+/* El estado hover puede cruzar de un tono seguro a uno claro, o viceversa. */
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-brand);
+  --nx-legacy-white-muted-ink: var(--nx-on-brand);
+  --nx-context-ink: var(--nx-on-brand);
+  --nx-context-muted-ink: var(--nx-on-brand);
+}
+
+:where(
+  [class~="hover:bg-brand"],
+  [class~="hover:bg-brand-700"],
+  [class~="hover:bg-emerald-400"],
+  [class~="hover:bg-emerald-500"],
+  [class~="hover:bg-emerald-600"],
+  [class~="hover:bg-emerald-700"],
+  [class~="hover:bg-green-500"],
+  [class~="hover:bg-green-600"],
+  [class~="hover:bg-blue-500"],
+  [class~="hover:bg-blue-700"],
+  [class~="hover:bg-indigo-600"],
+  [class~="hover:bg-indigo-700"],
+  [class~="hover:bg-purple-400"],
+  [class~="hover:bg-purple-500"],
+  [class~="hover:bg-whatsapp-hover"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-brand) !important;
+}
+
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-danger-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-danger-solid);
+  --nx-context-ink: var(--nx-on-danger-solid);
+  --nx-context-muted-ink: var(--nx-on-danger-solid);
+}
+
+:where(
+  [class~="hover:bg-rose-500"],
+  [class~="hover:bg-rose-600"],
+  [class~="hover:bg-red-500"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-danger-solid) !important;
+}
+
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-on-warning-solid);
+  --nx-legacy-white-muted-ink: var(--nx-on-warning-solid);
+  --nx-context-ink: var(--nx-on-warning-solid);
+  --nx-context-muted-ink: var(--nx-on-warning-solid);
+}
+
+:where(
+  [class~="hover:bg-orange-400"],
+  [class~="hover:bg-orange-500"],
+  [class~="hover:bg-amber-500"],
+  [class~="hover:bg-amber-600"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: var(--nx-on-warning-solid) !important;
+}
+
+/* Estos hover pasan a un tono oscuro y recuperan tinta blanca. */
+.nx-apple-light-workspace :where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover {
+  --nx-legacy-white-ink: var(--nx-ticket-text);
+  --nx-legacy-white-muted-ink: var(--nx-ticket-muted);
+  --nx-context-ink: var(--nx-ticket-text);
+  --nx-context-muted-ink: var(--nx-ticket-muted);
+}
+
+:where(
+  [class~="hover:bg-amber-700"],
+  [class~="hover:bg-green-800"],
+  [class~="hover:bg-green-900"],
+  [class~="hover:bg-nortex-800"],
+  [class~="hover:bg-red-600"],
+  [class~="hover:bg-red-700"],
+  [class~="hover:bg-red-800"],
+  [class~="hover:bg-sky-700"],
+  [class~="hover:bg-sky-800"]
+):hover:is(
+  [class~="text-white"],
+  [class~="hover:text-white"],
+  [class~="text-white/60"],
+  [class~="text-white/80"]
+) {
+  color: #FFFFFF !important;
 }

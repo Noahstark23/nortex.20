@@ -1,0 +1,159 @@
+{
+  "status": "local_implementation_verified_pilot_not_run",
+  "sourceSnapshotSha256": "c2fc06b29e2caaa50aab1d338f8e0c1998916f2e4cb6c75e3d8d5737af1f1fe2",
+  "sourceSnapshotDefinition": "SHA-256 of compact JSON [{path,sha256}] sorted by path for copied source snapshot plus delivered delta, excluding docs to avoid evidence self-reference.",
+  "verifiedSnapshotFiles": 1092,
+  "unit": {
+    "passed": 4072,
+    "failed": 0,
+    "omitted": 140,
+    "success": true
+  },
+  "mysqlIntegration": {
+    "passed": true,
+    "suites": [
+      {
+        "suite": "tests/journalSingleConnection.mysql.test.ts",
+        "passed": 1
+      },
+      {
+        "suite": "tests/whatsappIdentity.mysql.test.ts",
+        "passed": 22
+      },
+      {
+        "suite": "tests/cashCloseJournal.mysql.test.ts",
+        "passed": 6
+      },
+      {
+        "suite": "tests/posIntegrity.integration.test.ts",
+        "passed": 13
+      },
+      {
+        "suite": "tests/customerFlow.integration.test.ts",
+        "passed": 6
+      },
+      {
+        "suite": "tests/hrAccess.integration.test.ts",
+        "passed": 3
+      },
+      {
+        "suite": "tests/productRefresh.integration.test.ts",
+        "passed": 12
+      },
+      {
+        "suite": "tests/fiscalFlow.integration.test.ts",
+        "passed": 8
+      },
+      {
+        "suite": "tests/inventoryAdjust.integration.test.ts",
+        "passed": 3
+      },
+      {
+        "suite": "tests/batchWarehouseManualMovements.test.ts",
+        "passed": 16
+      },
+      {
+        "suite": "tests/purchaseFlow.integration.test.ts",
+        "passed": 10
+      },
+      {
+        "suite": "tests/purchaseRegistration.integration.test.ts",
+        "passed": 6
+      },
+      {
+        "suite": "tests/assistantFlow.integration.test.ts",
+        "passed": 18
+      },
+      {
+        "suite": "tests/assistantWorkerRecovery.integration.test.ts",
+        "passed": 1
+      },
+      {
+        "suite": "tests/procurementPhaseOne.integration.test.ts",
+        "passed": 6
+      },
+      {
+        "suite": "tests/procurementPhaseTwo.integration.test.ts",
+        "passed": 10
+      },
+      {
+        "suite": "tests/procurementPhaseTwoB.integration.test.ts",
+        "passed": 8
+      },
+      {
+        "suite": "tests/returnIdempotency.integration.test.ts",
+        "passed": 2
+      },
+      {
+        "suite": "tests/stockCountWarehouse.integration.test.ts",
+        "passed": 2
+      },
+      {
+        "suite": "tests/delivery.mysql.integration.test.ts",
+        "passed": 1
+      }
+    ],
+    "total": 154
+  },
+  "prismaGenerate": "passed_6.4.1",
+  "prismaValidate": "passed",
+  "typescriptCandidate": "passed",
+  "typescriptIntegratedWorkspace": "passed",
+  "design": {
+    "status": "passed",
+    "files": 88,
+    "violations": 0
+  },
+  "build": "passed",
+  "corpus": {
+    "documents": 100,
+    "hardware": 50,
+    "pharmacy": 50,
+    "integrity": "passed",
+    "providerEvaluation": "not_run",
+    "humanReview": "pending"
+  },
+  "paidProviderCalls": 0,
+  "migration": "See migration.json",
+  "workerRecovery": "See worker-recovery.md",
+  "privateStorageRestore": "See storage-restore.json",
+  "ui": "See panel.md",
+  "productionDeployment": "not_run",
+  "remoteCi": "not_run",
+  "staging": "not_run",
+  "recordedAt": "2026-09-05T21:13:42.260196+00:00",
+  "globalMutation": {
+    "passed": true,
+    "scorePercent": 99.88356297302542,
+    "thresholdPercent": 99.85,
+    "modules": 49,
+    "statuses": {
+      "Ignored": 20,
+      "Killed": 5143,
+      "Survived": 6,
+      "Timeout": 4
+    },
+    "scopeFloorCheck": "passed",
+    "newFinancialScope": {
+      "backend/services/assistant/budget.ts": {
+        "Killed": 15
+      },
+      "backend/services/assistant/proposalValidation.ts": {
+        "Killed": 14
+      },
+      "backend/services/purchaseRegistrationAuthority.ts": {
+        "Killed": 26
+      }
+    },
+    "ignoredNote": "20 pre-existing ignored mutants; no new exclusions."
+  },
+  "worktreePreservation": {
+    "existingFilesMatchedBeforeCopy": true,
+    "sourceBranchUnchanged": true,
+    "branch": "codex/caja-nica-retention",
+    "baselineAndDeliveredFilesVerified": 1092
+  },
+  "dependencyManifestsIdenticalToCandidate": true,
+  "generatedClient": "Prisma 6.4.1 generated in verified candidate and synchronized to workspace; no production connection.",
+  "sourceManifest": "source-manifest.json"
+}

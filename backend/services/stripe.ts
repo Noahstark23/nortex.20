@@ -1,12 +1,70 @@
 /**
  * NORTEX - Servicio de Stripe (Pasarela de Pagos)
- * Maneja suscripciones mensuales de $25 USD.
+ * Maneja suscripciones mensuales de $20 USD (el monto real vive en el Price
+ * de Stripe apuntado por STRIPE_PRICE_ID — verificar que diga $20 al activar).
  */
 import Stripe from 'stripe';
+import Decimal from 'decimal.js';
 // @ts-ignore
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
+
+/**
+ * Precio público del plan, en USD. Tiene que coincidir con el PLAN_PRICE de
+ * components/Billing.tsx, con la landing y con el Price de Stripe.
+ *
+ * Vive acá —y no como número suelto— porque la aprobación de pagos manuales lo
+ * necesita para detectar un pago corto: antes se otorgaban 30 días con cualquier
+ * monto reportado. En Nicaragua el rail principal NO es Stripe (no soporta el
+ * país como comercio), es depósito con comprobante, así que esta constante es la
+ * única referencia de "cuánto debería haber entrado".
+ */
+export const PLAN_PRICE_USD = 20;
+
+/**
+ * ¿Este pago manual queda por debajo del plan y hay que confirmarlo a mano?
+ *
+ * Antes la aprobación otorgaba 30 días con CUALQUIER monto reportado: un pago de
+ * $1 activaba el mes completo. No se bloquea de plano porque hay pagos en
+ * córdobas (tipo de cambio variable), parciales y acuerdos puntuales — pero un
+ * pago en dólares por debajo del precio exige un clic deliberado del admin.
+ *
+ * Pura y sin Prisma a propósito: es la regla que decide si entra dinero.
+ */
+export function requiereConfirmacionDePagoCorto(
+    amount: Decimal.Value,
+    currency: string,
+    planPriceUsd: number = PLAN_PRICE_USD,
+): boolean {
+    if (currency !== 'USD') return false;   // otras monedas las juzga el humano
+    const pagado = new Decimal(amount ?? 0);
+    if (!pagado.isFinite()) return true;    // dato corrupto → que lo mire alguien
+    return pagado.lessThan(planPriceUsd);
+}
+
+/**
+ * Nueva fecha de vencimiento al acreditar un mes.
+ *
+ * Se extiende desde el vencimiento VIGENTE si todavía no pasó: antes se sumaban
+ * 30 días a `now`, así que quien renovaba anticipado perdía los días que le
+ * quedaban — un castigo por pagar temprano.
+ */
+export function calcularNuevoVencimiento(
+    vencimientoActual: Date | null | undefined,
+    ahora: Date,
+    dias = 30,
+): Date {
+    // Se toma el mayor de los dos instantes en vez de comparar con `>`: así no
+    // queda un caso límite (vencimiento EXACTAMENTE igual a ahora) en el que las
+    // dos ramas devuelven lo mismo y ninguna prueba puede distinguirlas.
+    // Una fecha corrupta (NaN) se descarta: nunca debe producir un Invalid Date.
+    const vencMs = vencimientoActual?.getTime() ?? 0;
+    const desdeMs = Math.max(Number.isFinite(vencMs) ? vencMs : 0, ahora.getTime());
+    const nuevo = new Date(desdeMs);
+    nuevo.setDate(nuevo.getDate() + dias);
+    return nuevo;
+}
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_PRICE_ID = process.env.STRIPE_PRICE_ID || '';
@@ -133,15 +191,43 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
                 const endsAt = new Date();
                 endsAt.setDate(endsAt.getDate() + 30);
 
-                await prisma.tenant.update({
+                // Leer estado previo para el asiento de auditoría (before/after)
+                const before = await prisma.tenant.findUnique({
                     where: { id: tenantId },
-                    data: {
-                        subscriptionStatus: 'ACTIVE',
-                        stripeSubscriptionId: session.subscription as string,
-                        subscriptionEndsAt: endsAt,
-                    },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
-                console.log(`✅ Tenant ${tenantId} ACTIVADO via Stripe Checkout`);
+
+                if (before) {
+                    const subscriptionId = session.subscription as string;
+                    const auditUserId = before.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenantId },
+                            data: {
+                                subscriptionStatus: 'ACTIVE',
+                                stripeSubscriptionId: subscriptionId,
+                                subscriptionEndsAt: endsAt,
+                            },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_ACTIVATED',
+                                details: `Stripe checkout.session.completed (event ${event.id}). ` +
+                                    `subscriptionStatus: ${before.subscriptionStatus} -> ACTIVE. ` +
+                                    `stripeSubscriptionId: ${before.stripeSubscriptionId ?? 'null'} -> ${subscriptionId}. ` +
+                                    `subscriptionEndsAt: ${before.subscriptionEndsAt?.toISOString() ?? 'null'} -> ${endsAt.toISOString()}.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenantId} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
+                    console.log(`✅ Tenant ${tenantId} ACTIVADO via Stripe Checkout`);
+                }
             }
             break;
         }
@@ -153,19 +239,38 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
             if (subscriptionId) {
                 const tenant = await prisma.tenant.findFirst({
                     where: { stripeSubscriptionId: subscriptionId },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
 
                 if (tenant) {
                     const endsAt = new Date();
                     endsAt.setDate(endsAt.getDate() + 30);
 
-                    await prisma.tenant.update({
-                        where: { id: tenant.id },
-                        data: {
-                            subscriptionStatus: 'ACTIVE',
-                            subscriptionEndsAt: endsAt,
-                        },
-                    });
+                    const auditUserId = tenant.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenant.id },
+                            data: {
+                                subscriptionStatus: 'ACTIVE',
+                                subscriptionEndsAt: endsAt,
+                            },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId: tenant.id,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_RENEWED',
+                                details: `Stripe invoice.paid (event ${event.id}). ` +
+                                    `subscriptionStatus: ${tenant.subscriptionStatus} -> ACTIVE. ` +
+                                    `subscriptionEndsAt: ${tenant.subscriptionEndsAt?.toISOString() ?? 'null'} -> ${endsAt.toISOString()}.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenant.id} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
                     console.log(`💰 Invoice paid - Tenant ${tenant.id} renovado hasta ${endsAt.toISOString()}`);
                 }
             }
@@ -177,14 +282,40 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
             const tenantId = subscription.metadata?.tenantId;
 
             if (tenantId) {
-                await prisma.tenant.update({
+                // Leer estado previo para el asiento de auditoría (before/after)
+                const before = await prisma.tenant.findUnique({
                     where: { id: tenantId },
-                    data: {
-                        subscriptionStatus: 'CANCELLED',
-                        stripeSubscriptionId: null,
-                    },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
-                console.log(`🚫 Tenant ${tenantId} CANCELADO - Suscripción eliminada`);
+
+                if (before) {
+                    const auditUserId = before.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenantId },
+                            data: {
+                                subscriptionStatus: 'CANCELLED',
+                                stripeSubscriptionId: null,
+                            },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_CANCELLED',
+                                details: `Stripe customer.subscription.deleted (event ${event.id}). ` +
+                                    `subscriptionStatus: ${before.subscriptionStatus} -> CANCELLED. ` +
+                                    `stripeSubscriptionId: ${before.stripeSubscriptionId ?? 'null'} -> null.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenantId} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
+                    console.log(`🚫 Tenant ${tenantId} CANCELADO - Suscripción eliminada`);
+                }
             }
             break;
         }
@@ -196,13 +327,31 @@ export async function handleWebhookEvent(event: Stripe.Event): Promise<void> {
             if (subscriptionId) {
                 const tenant = await prisma.tenant.findFirst({
                     where: { stripeSubscriptionId: subscriptionId },
+                    include: { users: { take: 1, orderBy: { createdAt: 'asc' } } },
                 });
 
                 if (tenant) {
-                    await prisma.tenant.update({
-                        where: { id: tenant.id },
-                        data: { subscriptionStatus: 'PAST_DUE' },
-                    });
+                    const auditUserId = tenant.users[0]?.id;
+                    const ops: any[] = [
+                        prisma.tenant.update({
+                            where: { id: tenant.id },
+                            data: { subscriptionStatus: 'PAST_DUE' },
+                        }),
+                    ];
+                    if (auditUserId) {
+                        ops.push(prisma.auditLog.create({
+                            data: {
+                                tenantId: tenant.id,
+                                userId: auditUserId,
+                                action: 'SUBSCRIPTION_PAST_DUE',
+                                details: `Stripe invoice.payment_failed (event ${event.id}). ` +
+                                    `subscriptionStatus: ${tenant.subscriptionStatus} -> PAST_DUE.`,
+                            },
+                        }));
+                    } else {
+                        console.warn(`⚠️ AuditLog omitido: tenant ${tenant.id} sin usuario para atribuir el asiento`);
+                    }
+                    await prisma.$transaction(ops);
                     console.log(`⚠️ Pago fallido - Tenant ${tenant.id} marcado como PAST_DUE`);
                 }
             }

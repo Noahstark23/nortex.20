@@ -1,0 +1,82 @@
+{
+  "status": "verified_and_integrated_locally",
+  "recordedAt": "2026-09-05T22:04:22.057108+00:00",
+  "candidate": "/tmp/nortexgpt-conversation-20260905",
+  "sourceManifest": "conversation-source-manifest.json",
+  "sourceDigest": "392d09a1fdd85b6b87cc4b17944b264c48a822ad530b39cc97cc58448eb9b6f9",
+  "toolchain": {
+    "node": "22.23.2",
+    "packageManager": "npm",
+    "prisma": "6.4.1",
+    "database": "MySQL 8 disposable"
+  },
+  "prismaGenerate": "passed",
+  "prismaValidate": "passed",
+  "typescript": "passed",
+  "design": "passed",
+  "build": "passed",
+  "whitespace": "passed_on_all_46_changed_or_added_files",
+  "unit": {
+    "passed": 4222,
+    "failed": 0,
+    "skippedNotApproved": 150,
+    "report": "/tmp/nortexgpt-conversation-20260905/reports/conversation/vitest-approved.json"
+  },
+  "integration": {
+    "passed": 164,
+    "requiredSuites": 21,
+    "failed": 0,
+    "skipped": 0,
+    "report": "/tmp/nortexgpt-conversation-20260905/reports/quality-integration/summary.json"
+  },
+  "mutation": {
+    "status": "passed",
+    "score": 99.88356297302542,
+    "requiredThreshold": 99.85,
+    "instrumented": 5173,
+    "statuses": {
+      "Ignored": 20,
+      "Killed": 5143,
+      "Survived": 6,
+      "Timeout": 4
+    },
+    "noCoverage": 0,
+    "historicalSurvivorsUnchanged": true,
+    "scopeFiles": 49,
+    "scopeGuard": "passed",
+    "report": "/tmp/nortexgpt-conversation-20260905/reports/mutation/mutation.json",
+    "note": "Alcance monetario vigente; las nuevas conversaciones se verifican con pruebas deterministas y HTTP/MySQL."
+  },
+  "visual": {
+    "status": "passed_for_recorded_scenarios",
+    "evidence": [
+      "conversation-panel.md",
+      "conversation-visual-persistence.json"
+    ],
+    "purchaseCommitted": false
+  },
+  "migration": "conversation-migration.json",
+  "originalCheckout": {
+    "integration": "passed",
+    "filesCopied": 46,
+    "newFiles": 19,
+    "originalConflicts": 0,
+    "typescript": "passed",
+    "sourceHashesMatched": 36,
+    "branchPreserved": "codex/caja-nica-retention",
+    "protectedMonolithsAndBudgetsUnchanged": true
+  },
+  "external": {
+    "paidCalls": 0,
+    "privateWhatsappConnected": false,
+    "pilot": false,
+    "ciRemote": false,
+    "staging": false,
+    "production": false
+  },
+  "iterations": [
+    "La expectativa de intención anterior se corrigió a purchase_intake y se repitió la suite.",
+    "Una corrida intermedia de mutación se interrumpió por defectos visuales reproducidos.",
+    "El candidato reparado completó la compuerta sin cambiar umbrales ni exclusiones."
+  ]
+}

@@ -8,13 +8,25 @@
  * Precisión numérica: Decimal.js — NIIF exige mínimo 4 d.p. internos, 2 al persistir.
  */
 
-import { PrismaClient } from '@prisma/client';
 import Decimal from 'decimal.js';
+import { Prisma } from '@prisma/client';
+import { generateMonthlyReport, desglosarVentaConExoneracion, fiscalMonthRange } from './nicaTax';
+import prisma from '../lib/prisma';
+import { settledPaymentAccount } from '../lib/paymentAccounts';
+import {
+    FISCAL_REGIME_GENERAL,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../../utils/fiscalRegime';
+import {
+    PURCHASE_FISCAL_STATUSES,
+    normalizeSupplierPaymentAmount,
+    normalizeSupplierPaymentMethod,
+    type SupplierPaymentMethod,
+} from '../lib/supplierPayments';
 
 // Configuración global: 20 dígitos significativos, redondeo HALF_UP (DGI)
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
-
-const prisma = new PrismaClient();
 
 // ==========================================
 // CATÁLOGO DE CUENTAS ESTÁNDAR (NIIF PyMES Nicaragua)
@@ -28,6 +40,12 @@ const CHART_OF_ACCOUNTS = [
     { code: '1.1.4', name: 'Inventario de Mercancías', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.5', name: 'IVA Crédito Fiscal', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.1.6', name: 'Anticipo IR (Retenciones Sufridas)', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Agente bancario (corresponsalía): comisiones devengadas que el banco/red
+    // liquida después (típicamente mensual) — ver docs/PLAN_AGENTE_BANCARIO.md.
+    { code: '1.1.7', name: 'Comisiones por Cobrar Corresponsalía', type: 'ASSET', subtype: 'CURRENT_ASSET' },
+    // Fase D: dólares físicos en gaveta, valuados en C$ al tipo de cambio de
+    // cada transacción (moneda funcional = córdoba, NIIF Nicaragua).
+    { code: '1.1.8', name: 'Caja Moneda Extranjera', type: 'ASSET', subtype: 'CURRENT_ASSET' },
     { code: '1.2.1', name: 'Mobiliario y Equipo', type: 'ASSET', subtype: 'FIXED_ASSET' },
     { code: '1.2.2', name: 'Depreciación Acumulada', type: 'ASSET', subtype: 'FIXED_ASSET' },
     // PASIVOS (2.x.x)
@@ -42,6 +60,11 @@ const CHART_OF_ACCOUNTS = [
     { code: '2.1.9', name: 'Aguinaldo por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.10', name: 'Vacaciones por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     { code: '2.1.11', name: 'Indemnización por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    // Agente bancario: efectivo captado por cuenta del banco (depósitos, pagos
+    // de servicios...) — es del banco, NO ingreso del negocio.
+    { code: '2.1.12', name: 'Corresponsalía Bancaria por Liquidar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.13', name: 'Reembolsos a Clientes por Pagar', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
+    { code: '2.1.14', name: 'Saldos a Favor de Clientes', type: 'LIABILITY', subtype: 'CURRENT_LIABILITY' },
     // CAPITAL (3.x.x)
     { code: '3.1.1', name: 'Capital Social', type: 'EQUITY', subtype: null },
     { code: '3.1.2', name: 'Utilidades Retenidas', type: 'EQUITY', subtype: null },
@@ -50,9 +73,12 @@ const CHART_OF_ACCOUNTS = [
     { code: '4.1.1', name: 'Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.2', name: 'Devoluciones sobre Ventas', type: 'REVENUE', subtype: null },
     { code: '4.1.3', name: 'Sobrantes de Inventario', type: 'REVENUE', subtype: null },
+    // Agente bancario: la comisión SÍ es ingreso del negocio (el monto principal no).
+    { code: '4.1.4', name: 'Comisiones por Corresponsalía', type: 'REVENUE', subtype: null },
     // GASTOS (5.x.x)
     { code: '5.1.1', name: 'Costo de Ventas', type: 'EXPENSE', subtype: null },
     { code: '5.1.2', name: 'Pérdida por Merma de Inventario', type: 'EXPENSE', subtype: null },
+    { code: '5.1.3', name: 'Variación de Precio/Costo de Compra', type: 'EXPENSE', subtype: null },
     { code: '5.2.1', name: 'Gastos Operativos', type: 'EXPENSE', subtype: null },
     { code: '5.2.2', name: 'Gastos de Nómina', type: 'EXPENSE', subtype: null },
     { code: '5.2.3', name: 'INSS Patronal (Gasto)', type: 'EXPENSE', subtype: null },
@@ -66,11 +92,11 @@ const CHART_OF_ACCOUNTS = [
 // SEED: Crear catálogo automáticamente para un tenant
 // ==========================================
 
-export async function seedChartOfAccounts(tenantId: string): Promise<void> {
+export async function seedChartOfAccounts(tenantId: string, client: Pick<Prisma.TransactionClient, 'account'> = prisma): Promise<void> {
     // Idempotente y AUTO-SANABLE: createMany skipDuplicates agrega solo las
     // cuentas faltantes (el @@unique(tenantId,code) las dedupe). Así un tenant
     // ya sembrado recibe cuentas NUEVAS del catálogo (ej. 1.1.6) sin migración.
-    const result = await prisma.account.createMany({
+    const result = await client.account.createMany({
         data: CHART_OF_ACCOUNTS.map(a => ({
             tenantId,
             code: a.code,
@@ -91,14 +117,14 @@ export async function seedChartOfAccounts(tenantId: string): Promise<void> {
 // HELPERS
 // ==========================================
 
-async function getAccount(tenantId: string, code: string) {
-    const account = await prisma.account.findUnique({
+async function getAccount(tx: Pick<Prisma.TransactionClient, 'account'>, tenantId: string, code: string) {
+    const account = await tx.account.findUnique({
         where: { tenantId_code: { tenantId, code } }
     });
     if (!account) {
         // Auto-seed if missing
-        await seedChartOfAccounts(tenantId);
-        return prisma.account.findUnique({
+        await seedChartOfAccounts(tenantId, tx);
+        return tx.account.findUnique({
             where: { tenantId_code: { tenantId, code } }
         });
     }
@@ -115,6 +141,21 @@ export class PeriodLockedError extends Error {
         super(`PERÍODO CERRADO: el período ${period} ya fue cerrado fiscalmente. Reábrelo para registrar movimientos con esa fecha.`);
         this.name = 'PeriodLockedError';
     }
+}
+
+/**
+ * Orden único de locks del mayor. Los callers conservan el orden visual de sus
+ * JournalLine, pero ninguna transacción puede tomar Caja→Inventario mientras
+ * otra toma Inventario→Caja. Se deduplica por id porque una cuenta puede
+ * aparecer más de una vez dentro del mismo asiento.
+ */
+export function canonicalJournalAccountLockOrder<T extends { id: string; code: string }>(
+    accounts: readonly T[],
+): T[] {
+    const uniqueById = new Map<string, T>();
+    for (const account of accounts) uniqueById.set(account.id, account);
+    return [...uniqueById.values()].sort((left, right) =>
+        left.code.localeCompare(right.code) || left.id.localeCompare(right.id));
 }
 
 /**
@@ -142,25 +183,72 @@ export async function createJournalEntry(
     referenceType: string,
     userId: string,
     lines: { accountCode: string; debit: number; credit: number }[],
-    opts?: { isAutomatic?: boolean; date?: Date }
+    opts?: { isAutomatic?: boolean; date?: Date; allowClosedPeriod?: boolean }
 ): Promise<void> {
     const date = opts?.date ?? new Date();
     const isAutomatic = opts?.isAutomatic ?? true;
 
     // A3: ningún asiento entra en un período cerrado (cubre TODO el motor).
-    await assertPeriodOpen(tx, tenantId, date);
-
-    // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
-    const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
-    const totalCredit = lines.reduce((sum, l) => new Decimal(sum).plus(l.credit).toNumber(), 0);
-    if (new Decimal(totalDebit).minus(totalCredit).abs().greaterThan('0.01')) {
-        throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(2)} Haber=${new Decimal(totalCredit).toFixed(2)}`);
+    // Excepción: el ASIENTO DE CIERRE ANUAL (E4) es, por definición, el último
+    // asiento del período que se está cerrando → se le permite explícitamente
+    // (allowClosedPeriod). Solo lo usa `cierreAnual`, nunca un flujo de negocio.
+    if (!opts?.allowClosedPeriod) {
+        await assertPeriodOpen(tx, tenantId, date);
     }
 
-    // Resolve account IDs
-    const accounts = await Promise.all(
-        lines.map(l => getAccount(tenantId, l.accountCode))
+    // Validate: Sum of debits must equal sum of credits (Decimal para evitar 0.1+0.2 != 0.3)
+    // A3: tolerancia 0.0001 (antes 0.01). Un centavo de descuadre POR ASIENTO se
+    // acumulaba en silencio y desviaba el mayor. Todos los flujos del motor
+    // construyen la contrapartida por COMPLEMENTO (iva = gravado − neto, etc.),
+    // así que cuadran exacto en Decimal; la tolerancia solo absorbe ruido de
+    // float (~1e-12) de callers que suman en Number antes de llamar.
+    const totalDebit = lines.reduce((sum, l) => new Decimal(sum).plus(l.debit).toNumber(), 0);
+    const totalCredit = lines.reduce((sum, l) => new Decimal(sum).plus(l.credit).toNumber(), 0);
+    if (new Decimal(totalDebit).minus(totalCredit).abs().greaterThan('0.0001')) {
+        throw new Error(`ASIENTO DESCUADRADO: Debe=${new Decimal(totalDebit).toFixed(4)} Haber=${new Decimal(totalCredit).toFixed(4)}`);
+    }
+
+    // Resolve account IDs — SECUENCIAL a propósito: getAccount auto-siembra el
+    // catálogo cuando falta una cuenta, y dos seedChartOfAccounts (createMany
+    // skipDuplicates) concurrentes sobre el mismo tenant se deadlockean (P2034).
+    // Con 2+ cuentas nuevas del catálogo en un MISMO asiento, el Promise.all
+    // anterior disparaba esos seeds en paralelo y el asiento moría.
+    const accounts: Awaited<ReturnType<typeof getAccount>>[] = [];
+    for (const l of lines) {
+        accounts.push(await getAccount(tx, tenantId, l.accountCode));
+    }
+
+    // A4: si algún código NO existe en el catálogo (ni tras el auto-seed), se
+    // ABORTA ANTES de crear el asiento. Antes la línea se saltaba en silencio
+    // (`continue`) DESPUÉS de crear el header: quedaba persistido un asiento
+    // descuadrado (pasó la validación con N líneas pero se asentaron N−1) y la
+    // cuenta contrapartida se movía sin su contraparte. La tx revierte todo.
+    const codigosInexistentes = lines
+        .filter((_, i) => !accounts[i])
+        .map(l => l.accountCode);
+    if (codigosInexistentes.length > 0) {
+        throw new Error(`CUENTA_INEXISTENTE: ${[...new Set(codigosInexistentes)].join(', ')} no existe(n) en el catálogo — asiento abortado.`);
+    }
+
+    // Prebloquear todas las cuentas en el mismo orden antes de insertar líneas
+    // o actualizar saldos. Los SELECT son individuales para que el optimizador
+    // de MySQL no pueda elegir un orden distinto para un IN (...).
+    const resolvedAccounts = accounts.filter(
+        (account): account is NonNullable<typeof account> => account !== null,
     );
+    for (const account of canonicalJournalAccountLockOrder(resolvedAccounts)) {
+        const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+            SELECT \`id\`
+            FROM \`Account\`
+            WHERE \`tenantId\` = ${tenantId}
+              AND \`id\` = ${account.id}
+            LIMIT 1
+            FOR UPDATE
+        `);
+        if (locked.length !== 1) {
+            throw new Error(`CUENTA_INEXISTENTE: ${account.code} no existe en el tenant — asiento abortado.`);
+        }
+    }
 
     const entry = await tx.journalEntry.create({
         data: {
@@ -176,6 +264,7 @@ export async function createJournalEntry(
 
     for (let i = 0; i < lines.length; i++) {
         const account = accounts[i];
+        // Inalcanzable tras el guard A4 de arriba — queda solo para el narrowing de TS.
         if (!account) continue;
 
         await tx.journalLine.create({
@@ -207,6 +296,83 @@ export async function createJournalEntry(
 // ==========================================
 
 /**
+ * Líneas del asiento de una VENTA — función PURA (testeable sin DB).
+ *   Debe: Caja/CxC (total) + Costo de Ventas (costo)
+ *   Haber: Ventas (ingreso neto) + IVA por Pagar (iva) + Inventario (costo)
+ * Por construcción Σdebe == Σhaber: `total = ingresoNeto + iva` (identidad del
+ * desglose) y el costo se netea (Debe 5.1.1 == Haber 1.1.4). El IVA solo grava
+ * la parte NO exonerada (canasta básica/medicinas quedan sin IVA que separar).
+ */
+export function buildSaleJournalLines(
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
+    paymentMethod: string,
+    exemptTotal?: Decimal.Value | null,
+    fiscalSnapshot: {
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+        storeCreditApplied?: Decimal.Value | null;
+    } = {},
+): { accountCode: string; debit: number; credit: number }[] {
+    const desglose = desglosarVentaConExoneracion(saleTotal, exemptTotal ?? 0);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        saleTotal,
+        fiscalSnapshot.vatAmount ?? desglose.iva,
+        fiscalSnapshot.fiscalRegime ?? FISCAL_REGIME_GENERAL,
+    );
+    const normalizedTotal = fiscalAmounts.netRevenue.plus(fiscalAmounts.vatAmount);
+    const normalizedCost = new Decimal(costTotal).toDecimalPlaces(4);
+    if (!normalizedCost.isFinite() || normalizedCost.isNegative()) {
+        throw new Error('El costo de venta debe ser finito y no negativo');
+    }
+    const storeCreditApplied = new Decimal(fiscalSnapshot.storeCreditApplied ?? 0).toDecimalPlaces(4);
+    if (!storeCreditApplied.isFinite() || storeCreditApplied.isNegative() || storeCreditApplied.greaterThan(normalizedTotal)) {
+        throw new Error('El saldo a favor aplicado debe estar entre cero y el total de la venta');
+    }
+    const tenderAmount = normalizedTotal.minus(storeCreditApplied);
+    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : settledPaymentAccount(paymentMethod);
+    return [
+        ...(tenderAmount.greaterThan(0)
+            ? [{ accountCode: cashAccount, debit: tenderAmount.toNumber(), credit: 0 }]
+            : []),
+        ...(storeCreditApplied.greaterThan(0)
+            ? [{ accountCode: '2.1.14', debit: storeCreditApplied.toNumber(), credit: 0 }]
+            : []),
+        { accountCode: '4.1.1', debit: 0, credit: fiscalAmounts.netRevenue.toNumber() },
+        { accountCode: '2.1.2', debit: 0, credit: fiscalAmounts.vatAmount.toNumber() },
+        { accountCode: '5.1.1', debit: normalizedCost.toNumber(), credit: 0 },
+        { accountCode: '1.1.4', debit: 0, credit: normalizedCost.toNumber() },
+    ];
+}
+
+/** Contrato puro usado por recordSale; mantiene fecha economica online/offline. */
+export function buildSaleJournalRequest(
+    saleId: string,
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
+    paymentMethod: string,
+    exemptTotal?: Decimal.Value | null,
+    opts?: {
+        date?: Date;
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+        storeCreditApplied?: Decimal.Value | null;
+    },
+) {
+    return {
+        description: paymentMethod === 'CREDIT'
+            ? `Venta a crédito #${saleId.slice(0, 8)}`
+            : `Venta de contado #${saleId.slice(0, 8)}`,
+        lines: buildSaleJournalLines(saleTotal, costTotal, paymentMethod, exemptTotal, {
+            fiscalRegime: opts?.fiscalRegime,
+            vatAmount: opts?.vatAmount,
+            storeCreditApplied: opts?.storeCreditApplied,
+        }),
+        entryOptions: opts?.date ? { date: opts.date } : undefined,
+    };
+}
+
+/**
  * VENTA EN EFECTIVO:
  *   Debe: Caja (1.1.1) + Costo de Ventas (5.1.1)
  *   Haber: Ventas (4.1.1) + Inventario (1.1.4) + IVA por Pagar (2.1.2)
@@ -216,32 +382,66 @@ export async function recordSale(
     tenantId: string,
     userId: string,
     saleId: string,
-    saleTotal: number,
-    costTotal: number,
-    paymentMethod: string
+    saleTotal: Decimal.Value,
+    costTotal: Decimal.Value,
+    paymentMethod: string,
+    // T2 — porción EXONERADA del total (canasta básica, medicamentos…). Opcional:
+    // si no viene (o es null), la venta se trata como 100% GRAVADA, que es el
+    // comportamiento histórico. Así las llamadas viejas siguen funcionando igual.
+    exemptTotal?: Decimal.Value | null,
+    opts?: {
+        date?: Date;
+        fiscalRegime?: FiscalRegime | string | null;
+        vatAmount?: Decimal.Value | null;
+        storeCreditApplied?: Decimal.Value | null;
+    },
 ) {
-    // IVA Nicaragua 15%: total = neto * 1.15  →  neto = total / 1.15
-    const dTotal = new Decimal(saleTotal);
-    const salesNeto = dTotal.dividedBy('1.15').toDecimalPlaces(4);
-    const ivaAmount = dTotal.minus(salesNeto).toDecimalPlaces(4);
+    // IVA Nicaragua 15% SOLO sobre la parte gravada (misma función pura que usa
+    // la declaración mensual → el mayor y el VET no pueden discrepar). Antes se
+    // dividía el total ENTERO, así que una pulpería que vende canasta básica
+    // acreditaba IVA por Pagar (2.1.2) que jamás le cobró al cliente.
+    const journal = buildSaleJournalRequest(
+        saleId,
+        saleTotal,
+        costTotal,
+        paymentMethod,
+        exemptTotal,
+        opts,
+    );
 
-    const cashAccount = paymentMethod === 'CREDIT' ? '1.1.3' : '1.1.1'; // CxC vs Caja
-    const description = paymentMethod === 'CREDIT'
-        ? `Venta a crédito #${saleId.slice(0, 8)}`
-        : `Venta de contado #${saleId.slice(0, 8)}`;
+    await createJournalEntry(
+        tx, tenantId, journal.description, saleId, 'SALE', userId,
+        journal.lines,
+        journal.entryOptions,
+    );
+}
 
-    await createJournalEntry(tx, tenantId, description, saleId, 'SALE', userId, [
-        { accountCode: cashAccount, debit: saleTotal, credit: 0 },
-        { accountCode: '4.1.1', debit: 0, credit: salesNeto.toNumber() },
-        { accountCode: '2.1.2', debit: 0, credit: ivaAmount.toNumber() },
-        { accountCode: '5.1.1', debit: costTotal, credit: 0 },
-        { accountCode: '1.1.4', debit: 0, credit: costTotal },
-    ]);
+export type CustomerPaymentMethod = 'CASH' | 'CARD' | 'TRANSFER' | 'QR';
+
+/** Construye el asiento del abono sin confundir cobros bancarios con efectivo. */
+export function buildPaymentJournalLines(amount: Decimal.Value, paymentMethod: CustomerPaymentMethod = 'CASH') {
+    let normalizedAmount: Decimal;
+    try {
+        normalizedAmount = new Decimal(amount);
+    } catch {
+        throw new Error('amount no es un monto decimal válido');
+    }
+    if (!normalizedAmount.isFinite() || !normalizedAmount.greaterThan(0)) {
+        throw new Error('amount debe ser finito y mayor que cero');
+    }
+    if (normalizedAmount.decimalPlaces() > 2 || normalizedAmount.greaterThan('99999999.99')) {
+        throw new Error('amount no cabe en el rango monetario permitido');
+    }
+    const settlementAccount = settledPaymentAccount(paymentMethod);
+    return [
+        { accountCode: settlementAccount, debit: normalizedAmount.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: normalizedAmount.toNumber() },
+    ];
 }
 
 /**
  * PAGO DE CLIENTE (abono a crédito):
- *   Debe: Caja (1.1.1)
+ *   Debe: Caja (1.1.1) si es efectivo; Bancos (1.1.2) para tarjeta/transferencia/QR.
  *   Haber: Cuentas por Cobrar (1.1.3)
  */
 export async function recordPayment(
@@ -249,12 +449,105 @@ export async function recordPayment(
     tenantId: string,
     userId: string,
     paymentId: string,
-    amount: number
+    amount: number,
+    paymentMethod: CustomerPaymentMethod = 'CASH',
 ) {
     await createJournalEntry(tx, tenantId, `Abono a crédito #${paymentId.slice(0, 8)}`, paymentId, 'PAYMENT', userId, [
-        { accountCode: '1.1.1', debit: amount, credit: 0 },
-        { accountCode: '1.1.3', debit: 0, credit: amount },
+        ...buildPaymentJournalLines(amount, paymentMethod),
     ]);
+}
+
+/**
+ * PAGO A PROVEEDOR:
+ *   Debe: Cuentas por Pagar Proveedores (2.1.1)
+ *   Haber: Caja (1.1.1) si es efectivo; Bancos (1.1.2) para los demás canales.
+ */
+export function buildSupplierPaymentJournalLines(
+    amount: Decimal.Value,
+    paymentMethod: SupplierPaymentMethod = 'CASH',
+): { accountCode: string; debit: number; credit: number }[] {
+    const normalizedAmount = normalizeSupplierPaymentAmount(amount);
+    const normalizedMethod = normalizeSupplierPaymentMethod(paymentMethod);
+    const settlementAccount = normalizedMethod === 'CASH' ? '1.1.1' : '1.1.2';
+    return [
+        { accountCode: '2.1.1', debit: normalizedAmount.toNumber(), credit: 0 },
+        { accountCode: settlementAccount, debit: 0, credit: normalizedAmount.toNumber() },
+    ];
+}
+
+export async function recordSupplierPayment(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    paymentId: string,
+    amount: Decimal.Value,
+    paymentMethod: SupplierPaymentMethod = 'CASH',
+    date: Date = new Date(),
+): Promise<void> {
+    await createJournalEntry(
+        tx,
+        tenantId,
+        `Pago a proveedor #${paymentId.slice(0, 8)}`,
+        paymentId,
+        'SUPPLIER_PAYMENT',
+        userId,
+        buildSupplierPaymentJournalLines(amount, paymentMethod),
+        { date },
+    );
+}
+
+function normalizeSupplierCreditNoteJournalAmount(
+    value: Decimal.Value,
+    field: string,
+): Decimal {
+    const amount = new Decimal(value);
+    if (
+        !amount.isFinite()
+        || amount.isNegative()
+        || amount.decimalPlaces() > 2
+        || amount.greaterThan('999999999999.99')
+    ) {
+        throw new Error(`${field} de la nota de crédito excede Decimal(14,2)`);
+    }
+    return amount;
+}
+
+export function buildSupplierCreditNoteJournalLines(
+    lines: ReadonlyArray<{
+        accountCode: '1.1.4' | '1.1.5' | '2.1.1' | '5.1.3';
+        debit: Decimal.Value;
+        credit: Decimal.Value;
+    }>,
+): { accountCode: string; debit: number; credit: number }[] {
+    return lines.map((line) => ({
+        accountCode: line.accountCode,
+        debit: normalizeSupplierCreditNoteJournalAmount(line.debit, 'debit').toNumber(),
+        credit: normalizeSupplierCreditNoteJournalAmount(line.credit, 'credit').toNumber(),
+    }));
+}
+
+export async function recordSupplierCreditNote(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    creditNoteId: string,
+    journalLines: ReadonlyArray<{
+        accountCode: '1.1.4' | '1.1.5' | '2.1.1' | '5.1.3';
+        debit: Decimal.Value;
+        credit: Decimal.Value;
+    }>,
+    date: Date = new Date(),
+): Promise<void> {
+    await createJournalEntry(
+        tx,
+        tenantId,
+        `Nota crédito proveedor #${creditNoteId.slice(0, 8)}`,
+        creditNoteId,
+        'SUPPLIER_CREDIT_NOTE',
+        userId,
+        buildSupplierCreditNoteJournalLines(journalLines),
+        { date },
+    );
 }
 
 /**
@@ -267,21 +560,126 @@ export async function recordPurchase(
     tenantId: string,
     userId: string,
     purchaseId: string,
-    total: number,
-    tax: number,
-    paymentMethod: string
+    total: Decimal.Value,
+    tax: Decimal.Value,
+    paymentMethod: string,
+    creditableTax?: Decimal.Value | null,
+    postingDate: Date = new Date(),
+    expectedInventoryCost?: Decimal.Value | null,
 ) {
-    const subtotal = total - tax;
-    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
     const description = paymentMethod === 'CREDIT'
         ? `Compra a crédito #${purchaseId.slice(0, 8)}`
         : `Compra de contado #${purchaseId.slice(0, 8)}`;
 
-    await createJournalEntry(tx, tenantId, description, purchaseId, 'PURCHASE', userId, [
-        { accountCode: '1.1.4', debit: subtotal, credit: 0 },       // Inventario ↑
-        { accountCode: '1.1.5', debit: tax, credit: 0 },            // IVA Crédito ↑
-        { accountCode: creditAccount, debit: 0, credit: total },     // Caja ↓ o CxP ↑
-    ]);
+    await createJournalEntry(
+        tx,
+        tenantId,
+        description,
+        purchaseId,
+        'PURCHASE',
+        userId,
+        buildPurchaseJournalLines(
+            total,
+            tax,
+            paymentMethod,
+            creditableTax,
+            expectedInventoryCost,
+        ),
+        { date: postingDate },
+    );
+}
+
+/**
+ * Líneas puras de compra. `creditableTax == null` conserva el contrato legacy:
+ * todo `tax` es crédito fiscal. En compra directa, CUOTA_FIJA pasa cero y el
+ * impuesto se capitaliza en Inventario. Con OC, `expectedInventoryCost` fija el
+ * costo estándar recibido y toda diferencia queda separada como PPV.
+ */
+export function buildPurchaseJournalLines(
+    total: Decimal.Value,
+    tax: Decimal.Value,
+    paymentMethod: string,
+    creditableTax?: Decimal.Value | null,
+    expectedInventoryCost?: Decimal.Value | null,
+): { accountCode: string; debit: number; credit: number }[] {
+    const rawTotal = new Decimal(total);
+    const rawTax = new Decimal(tax);
+    const rawCreditableTax = new Decimal(creditableTax == null ? rawTax : creditableTax);
+    if (!rawTotal.isFinite() || rawTotal.isNegative()) {
+        throw new Error('El total de compra debe ser finito y no negativo');
+    }
+    if (
+        !rawTax.isFinite()
+        || rawTax.isNegative()
+        || rawTax.greaterThan(rawTotal)
+    ) {
+        throw new Error('El IVA de compra debe estar entre cero y el total de compra');
+    }
+    if (
+        !rawCreditableTax.isFinite()
+        || rawCreditableTax.isNegative()
+        || rawCreditableTax.greaterThan(rawTax)
+    ) {
+        throw new Error('El crédito fiscal debe estar entre cero y el IVA de compra');
+    }
+
+    // JournalLine/Account y la factura se liquidan a centavos. No permitir que
+    // una entrada 4dp cree un subledger distinto al valor que MySQL posteará.
+    const normalizedTotal = rawTotal.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const normalizedTax = rawTax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const effectiveCreditableTax = rawCreditableTax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+
+    const inventoryCost = normalizedTotal.minus(effectiveCreditableTax);
+    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
+    if (expectedInventoryCost != null) {
+        const rawExpectedInventoryCost = new Decimal(expectedInventoryCost);
+        if (!rawExpectedInventoryCost.isFinite() || rawExpectedInventoryCost.isNegative()) {
+            throw new Error('El costo esperado de inventario debe ser finito y no negativo');
+        }
+        const normalizedExpectedInventoryCost = rawExpectedInventoryCost
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        const purchasePriceVariance = inventoryCost.minus(normalizedExpectedInventoryCost);
+        const lines = [
+            {
+                accountCode: '1.1.4',
+                debit: normalizedExpectedInventoryCost.toNumber(),
+                credit: 0,
+            },
+            {
+                accountCode: '1.1.5',
+                debit: effectiveCreditableTax.toNumber(),
+                credit: 0,
+            },
+        ];
+        // PPV desfavorable aumenta gasto; una variación favorable lo acredita.
+        // En CUOTA_FIJA el IVA no acreditable forma parte de `inventoryCost` y,
+        // por decisión de F2, queda visible en PPV para que Inventario coincida
+        // exactamente con la valoración física a costo estándar de la OC.
+        if (purchasePriceVariance.greaterThan(0)) {
+            lines.push({
+                accountCode: '5.1.3',
+                debit: purchasePriceVariance.toNumber(),
+                credit: 0,
+            });
+        } else if (purchasePriceVariance.lessThan(0)) {
+            lines.push({
+                accountCode: '5.1.3',
+                debit: 0,
+                credit: purchasePriceVariance.abs().toNumber(),
+            });
+        }
+        lines.push({
+            accountCode: creditAccount,
+            debit: 0,
+            credit: normalizedTotal.toNumber(),
+        });
+        return lines;
+    }
+    return [
+        { accountCode: '1.1.4', debit: inventoryCost.toNumber(), credit: 0 },
+        { accountCode: '1.1.5', debit: effectiveCreditableTax.toNumber(), credit: 0 },
+        { accountCode: creditAccount, debit: 0, credit: normalizedTotal.toNumber() },
+    ];
 }
 
 /**
@@ -304,6 +702,113 @@ export async function recordExpense(
 }
 
 /**
+ * ADQUISICIÓN DE ACTIVO FIJO (capitalización) — E1:
+ *   Debe: Mobiliario y Equipo (1.2.1)
+ *   Haber: Caja (1.1.1) o CxP Proveedores (2.1.1)
+ *
+ * Sin este asiento, 1.2.1 nunca se debita: la depreciación (Haber 1.2.2) dejaba
+ * el PP&E NETO en NEGATIVO, y la baja (Haber 1.2.1 por el costo) lo hundía aún
+ * más inventando una "pérdida" por un valor en libros que nunca se capitalizó.
+ */
+export async function recordFixedAssetAcquisition(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    assetId: string,
+    assetName: string,
+    costo: number,
+    paymentMethod: string,
+    date: Date
+) {
+    const creditAccount = paymentMethod === 'CREDIT' ? '2.1.1' : '1.1.1';
+    await createJournalEntry(
+        tx, tenantId, `Compra de activo fijo — ${assetName}`, assetId, 'FIXED_ASSET_ACQUISITION', userId,
+        [
+            { accountCode: '1.2.1', debit: costo, credit: 0 },
+            { accountCode: creditAccount, debit: 0, credit: costo },
+        ],
+        { date }
+    );
+}
+
+/**
+ * Mapeo CATEGORÍA de movimiento de caja → líneas del asiento (función PURA).
+ *
+ * Devuelve `null` cuando el movimiento NO es un evento económico contabilizable
+ * y por lo tanto NO debe generar asiento:
+ *  - `CAMBIO`: cambiar un billete no altera el patrimonio (entra y sale el mismo
+ *    valor); asentarlo inflaría Caja contra una contrapartida inexistente.
+ *  - `AJUSTE`: sobrante/faltante de arqueo. Requiere decidir la cuenta de
+ *    sobrante/faltante de CAJA (4.1.3 es de INVENTARIO, no sirve) — queda
+ *    pendiente de definición contable en vez de asentarlo mal.
+ *  - `AGENTE_BANCARIO`: la corresponsalía YA postea su propio asiento en
+ *    `recordAgentTransaction`; asentarlo aquí lo DUPLICARÍA.
+ *
+ * Ojo `PAGO_PROVEEDOR`: es cancelar una CxP (Debe 2.1.1), NO un gasto. Mandarlo
+ * a 5.2.1 duplicaría el costo, que ya entró como Inventario en la compra.
+ */
+export function cashMovementJournalLines(
+    type: 'IN' | 'OUT',
+    category: string,
+    amount: number
+): { accountCode: string; debit: number; credit: number }[] | null {
+    const CAJA = '1.1.1';
+    if (type === 'IN') {
+        switch (category) {
+            case 'INYECCION_CAPITAL':
+                return [
+                    { accountCode: CAJA, debit: amount, credit: 0 },
+                    { accountCode: '3.1.1', debit: 0, credit: amount },   // Capital Social ↑
+                ];
+            default:
+                return null;
+        }
+    }
+    switch (category) {
+        case 'GASTO_OPERATIVO':
+            return [
+                { accountCode: '5.2.1', debit: amount, credit: 0 },       // Gasto ↑
+                { accountCode: CAJA, debit: 0, credit: amount },
+            ];
+        case 'PAGO_PROVEEDOR':
+            return [
+                { accountCode: '2.1.1', debit: amount, credit: 0 },       // CxP ↓ (no es gasto)
+                { accountCode: CAJA, debit: 0, credit: amount },
+            ];
+        case 'RETIRO_PERSONAL':
+            return [
+                { accountCode: '3.1.1', debit: amount, credit: 0 },       // Patrimonio ↓ (retiro del dueño)
+                { accountCode: CAJA, debit: 0, credit: amount },
+            ];
+        default:
+            return null;
+    }
+}
+
+/**
+ * MOVIMIENTO DE CAJA (entrada/salida) → asiento, según `cashMovementJournalLines`.
+ * No hace nada si la categoría no es contabilizable (ver doc de la función pura).
+ */
+export async function recordCashMovement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    movementId: string,
+    type: 'IN' | 'OUT',
+    category: string,
+    amount: number,
+    description: string
+) {
+    const lines = cashMovementJournalLines(type, category, amount);
+    if (!lines) return;
+    const prefix = type === 'IN' ? 'Entrada' : 'Salida';
+    await createJournalEntry(
+        tx, tenantId, `${prefix} de caja (${category}): ${description}`,
+        movementId, type === 'IN' ? 'CASH_IN' : 'CASH_OUT', userId, lines
+    );
+}
+
+/**
  * ENTRADA DE EFECTIVO (inyección de capital):
  *   Debe: Caja (1.1.1)
  *   Haber: Capital Social (3.1.1)
@@ -323,9 +828,191 @@ export async function recordCashIn(
 }
 
 /**
+ * OPERACIÓN DE AGENTE BANCARIO (corresponsalía) — un solo asiento balanceado.
+ * El monto principal NO es ingreso (es efectivo por cuenta del banco):
+ *   IN  (depósito/pago servicio/remesa enviada):  Debe Caja (1.1.1) / Haber Corresponsalía por Liquidar (2.1.12)
+ *   OUT (retiro/remesa pagada):                   Debe 2.1.12 / Haber Caja (1.1.1)
+ * La comisión SÍ es ingreso, devengada (el banco la paga después):
+ *   Debe Comisiones por Cobrar (1.1.7) / Haber Comisiones por Corresponsalía (4.1.4)
+ * Ver docs/PLAN_AGENTE_BANCARIO.md.
+ */
+export async function recordAgentTransaction(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    direction: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string,
+    // Fase D: operaciones en USD mueven '1.1.8 Caja Moneda Extranjera' (los
+    // montos ya vienen en C$ al tipo de cambio de la transacción).
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
+) {
+    const lines = direction === 'IN'
+        ? [
+            { accountCode: cashAccount, debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '1.1.7', debit: commission, credit: 0 },
+            { accountCode: '4.1.4', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Agente bancario: ${description}`, agentTxId, 'AGENT_TX', userId, lines);
+}
+
+/**
+ * REVERSA de una operación de agente (Fase B): asiento espejo exacto del
+ * original — deshace el movimiento principal Y la comisión devengada.
+ * `direction` es la dirección de la operación ORIGINAL.
+ */
+export async function recordAgentReversal(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agentTxId: string,
+    originalDirection: 'IN' | 'OUT',
+    amount: number,
+    commission: number,
+    description: string,
+    cashAccount: '1.1.1' | '1.1.8' = '1.1.1'
+) {
+    // Espejo: si el original fue IN (Debe Caja / Haber 2.1.12), la reversa es
+    // Debe 2.1.12 / Haber Caja — y viceversa. Misma cuenta de caja (y mismo
+    // tipo de cambio implícito: montos C$ del registro original).
+    const lines = originalDirection === 'IN'
+        ? [
+            { accountCode: '2.1.12', debit: amount, credit: 0 },
+            { accountCode: cashAccount, debit: 0, credit: amount },
+        ]
+        : [
+            { accountCode: cashAccount, debit: amount, credit: 0 },
+            { accountCode: '2.1.12', debit: 0, credit: amount },
+        ];
+    if (commission > 0) {
+        lines.push(
+            { accountCode: '4.1.4', debit: commission, credit: 0 },
+            { accountCode: '1.1.7', debit: 0, credit: commission },
+        );
+    }
+    await createJournalEntry(tx, tenantId, `Reversa agente: ${description}`, agentTxId, 'AGENT_TX_REVERSAL', userId, lines);
+}
+
+/**
+ * LIQUIDACIÓN DE COMISIONES (Fase B): el banco/red paga a la cuenta bancaria
+ * del negocio las comisiones devengadas.
+ *   Debe: Bancos (1.1.2) / Haber: Comisiones por Cobrar Corresponsalía (1.1.7)
+ * No toca la gaveta (va a cuenta bancaria, no a efectivo).
+ */
+export async function recordAgentCommissionSettlement(
+    tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    tenantId: string,
+    userId: string,
+    agreementId: string,
+    amount: number,
+    description: string
+) {
+    await createJournalEntry(tx, tenantId, `Liquidación comisiones: ${description}`, agreementId, 'AGENT_COMMISSION_SETTLEMENT', userId, [
+        { accountCode: '1.1.2', debit: amount, credit: 0 },
+        { accountCode: '1.1.7', debit: 0, credit: amount },
+    ]);
+}
+
+export interface ReturnJournalInput {
+    total: Decimal.Value;
+    costTotal: Decimal.Value;
+    /** Porción del reembolso correspondiente a líneas exoneradas de IVA. */
+    exemptTotal?: Decimal.Value | null;
+    /** Foto del régimen de la venta original; ausente = GENERAL legacy. */
+    fiscalRegime?: FiscalRegime | string | null;
+    /** Saldo pendiente que se cancela contra Cuentas por Cobrar. */
+    creditReduction: Decimal.Value;
+    /** Importe ya cobrado que se devuelve por el canal de liquidación. */
+    settledRefund: Decimal.Value;
+    /** Porción que repone saldo a favor consumido en la venta original. */
+    storeCreditRestoration?: Decimal.Value;
+    refundMethod: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'STORE_CREDIT';
+    /** Un canal externo todavía no comprobado acredita el pasivo, no Bancos. */
+    refundPending?: boolean;
+}
+
+export interface ReturnJournalLine {
+    accountCode: string;
+    debit: number;
+    credit: number;
+}
+
+const returnMoney = (value: Decimal.Value, field: string): Decimal => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        throw new Error(`${field} no es un monto decimal válido`);
+    }
+    if (!parsed.isFinite() || parsed.isNegative()) {
+        throw new Error(`${field} debe ser finito y no negativo`);
+    }
+    return parsed;
+};
+
+/**
+ * Líneas puras de una devolución. La contrapartida conserva cómo está
+ * económicamente la venta AL DEVOLVER: primero cancela el saldo todavía en CxC
+ * y solo el importe ya cobrado acredita Caja. El desglose fiscal usa la foto
+ * exonerada de las líneas devueltas, igual que recordSale.
+ */
+export function buildReturnJournalLines(input: ReturnJournalInput): ReturnJournalLine[] {
+    const total = returnMoney(input.total, 'total');
+    const costTotal = returnMoney(input.costTotal, 'costTotal');
+    const exemptTotal = returnMoney(input.exemptTotal ?? 0, 'exemptTotal');
+    const creditReduction = returnMoney(input.creditReduction, 'creditReduction');
+    const settledRefund = returnMoney(input.settledRefund, 'settledRefund');
+    const storeCreditRestoration = returnMoney(input.storeCreditRestoration ?? 0, 'storeCreditRestoration');
+
+    if (exemptTotal.greaterThan(total)) {
+        throw new Error('exemptTotal no puede superar el total de la devolución');
+    }
+    if (!creditReduction.plus(settledRefund).plus(storeCreditRestoration).equals(total)) {
+        throw new Error('creditReduction + settledRefund + storeCreditRestoration debe reconstruir exactamente el total de la devolución');
+    }
+
+    const desglose = desglosarVentaConExoneracion(total, exemptTotal);
+    const fiscalAmounts = resolveSaleFiscalAmounts(
+        total,
+        desglose.iva,
+        input.fiscalRegime ?? FISCAL_REGIME_GENERAL,
+    );
+    const settlementAccount = input.refundMethod === 'STORE_CREDIT'
+        ? '2.1.14'
+        : input.refundPending
+        ? '2.1.13'
+        : settledPaymentAccount(input.refundMethod);
+    return [
+        { accountCode: '4.1.2', debit: fiscalAmounts.netRevenue.toNumber(), credit: 0 },
+        { accountCode: '2.1.2', debit: fiscalAmounts.vatAmount.toNumber(), credit: 0 },
+        { accountCode: '1.1.4', debit: costTotal.toNumber(), credit: 0 },
+        { accountCode: '1.1.3', debit: 0, credit: creditReduction.toNumber() },
+        { accountCode: settlementAccount, debit: 0, credit: settledRefund.toNumber() },
+        ...(storeCreditRestoration.greaterThan(0)
+            ? [{ accountCode: '2.1.14', debit: 0, credit: storeCreditRestoration.toNumber() }]
+            : []),
+        { accountCode: '5.1.1', debit: 0, credit: costTotal.toNumber() },
+    ];
+}
+
+/**
  * DEVOLUCIÓN:
- *   Debe: Devoluciones sobre Ventas (4.1.2) + Inventario (1.1.4)
- *   Haber: Caja (1.1.1) + Costo de Ventas (5.1.1)
+ *   Debe: Devoluciones sobre Ventas (4.1.2) + IVA por Pagar (2.1.2) + Inventario (1.1.4)
+ *   Haber: CxC (1.1.3) y/o Caja (1.1.1) + Costo de Ventas (5.1.1)
+ *
+ * `options` es opcional para mantener compatibles los callers históricos: sin
+ * split explícito se interpreta como una devolución totalmente en efectivo.
  */
 export async function recordReturn(
     tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
@@ -333,19 +1020,46 @@ export async function recordReturn(
     userId: string,
     returnId: string,
     total: number,
-    costTotal: number
+    costTotal: number,
+    options: {
+        exemptTotal?: Decimal.Value | null;
+        fiscalRegime?: FiscalRegime | string | null;
+        creditReduction?: Decimal.Value;
+        settledRefund?: Decimal.Value;
+        storeCreditRestoration?: Decimal.Value;
+        refundMethod?: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'STORE_CREDIT';
+        refundPending?: boolean;
+        /** @deprecated alias legacy: solo representa CASH. */
+        cashRefund?: Decimal.Value;
+    } = {},
 ) {
-    const dTotal = new Decimal(total);
-    const salesNeto = dTotal.dividedBy('1.15').toDecimalPlaces(4);
-    const ivaAmount = dTotal.minus(salesNeto).toDecimalPlaces(4);
+    const dTotal = returnMoney(total, 'total');
+    const creditReduction = options.creditReduction ?? 0;
+    const settledRefund = options.settledRefund
+        ?? options.cashRefund
+        ?? dTotal.minus(new Decimal(creditReduction));
+    const refundMethod = options.refundMethod ?? 'CASH';
+    const lines = buildReturnJournalLines({
+        total: dTotal,
+        costTotal,
+        exemptTotal: options.exemptTotal,
+        fiscalRegime: options.fiscalRegime,
+        creditReduction,
+        settledRefund,
+        storeCreditRestoration: options.storeCreditRestoration,
+        refundMethod,
+        refundPending: options.refundPending,
+    });
 
-    await createJournalEntry(tx, tenantId, `Devolución #${returnId.slice(0, 8)}`, returnId, 'RETURN', userId, [
-        { accountCode: '4.1.2', debit: salesNeto.toNumber(), credit: 0 },
-        { accountCode: '2.1.2', debit: ivaAmount.toNumber(), credit: 0 },
-        { accountCode: '1.1.4', debit: costTotal, credit: 0 },
-        { accountCode: '1.1.1', debit: 0, credit: total },
-        { accountCode: '5.1.1', debit: 0, credit: costTotal },
-    ]);
+    await createJournalEntry(
+        tx,
+        tenantId,
+        `Devolución #${returnId.slice(0, 8)}`,
+        returnId,
+        'RETURN',
+        userId,
+        lines,
+    );
 }
 
 /**
@@ -359,7 +1073,7 @@ export async function recordBadDebt(
     tenantId: string,
     userId: string,
     saleId: string,
-    amount: number
+    amount: Decimal.Value
 ) {
     const amt = new Decimal(amount).toDecimalPlaces(2);
     if (amt.lessThanOrEqualTo(0)) return;
@@ -536,28 +1250,33 @@ export async function getBalanceGeneral(tenantId: string) {
     const liabilities = accounts.filter(a => a.type === 'LIABILITY');
     const equity = accounts.filter(a => a.type === 'EQUITY');
 
-    const totalAssets = assets.reduce((sum, a) => sum + Number(a.balance), 0);
-    const totalLiabilities = liabilities.reduce((sum, a) => sum + Number(a.balance), 0);
-    const totalEquity = equity.reduce((sum, a) => sum + Number(a.balance), 0);
+    // Estado financiero NIIF: acumular y cuadrar con Decimal.js (cero float nativo).
+    const sumBalances = (accs: typeof accounts) =>
+        accs.reduce((sum, a) => sum.plus(a.balance.toString()), new Decimal(0));
+
+    const totalAssets = sumBalances(assets);
+    const totalLiabilities = sumBalances(liabilities);
+    const totalEquity = sumBalances(equity);
 
     // Add net income to equity for balance
     const revenue = accounts.filter(a => a.type === 'REVENUE');
     const expenses = accounts.filter(a => a.type === 'EXPENSE');
-    const totalRevenue = revenue.reduce((sum, a) => sum + Number(a.balance), 0);
-    const totalExpenses = expenses.reduce((sum, a) => sum + Number(a.balance), 0);
-    const netIncome = totalRevenue - totalExpenses;
+    const totalRevenue = sumBalances(revenue);
+    const totalExpenses = sumBalances(expenses);
+    const netIncome = totalRevenue.minus(totalExpenses);
+    const equityPlusIncome = totalEquity.plus(netIncome);
 
     return {
         assets: assets.map(a => ({ code: a.code, name: a.name, balance: Number(a.balance) })),
         liabilities: liabilities.map(a => ({ code: a.code, name: a.name, balance: Number(a.balance) })),
         equity: equity.map(a => ({ code: a.code, name: a.name, balance: Number(a.balance) })),
         totals: {
-            assets: totalAssets,
-            liabilities: totalLiabilities,
-            equity: totalEquity,
-            netIncome,
-            equityPlusIncome: totalEquity + netIncome,
-            isBalanced: Math.abs(totalAssets - (totalLiabilities + totalEquity + netIncome)) < 0.01,
+            assets: totalAssets.toNumber(),
+            liabilities: totalLiabilities.toNumber(),
+            equity: totalEquity.toNumber(),
+            netIncome: netIncome.toNumber(),
+            equityPlusIncome: equityPlusIncome.toNumber(),
+            isBalanced: totalAssets.minus(totalLiabilities.plus(equityPlusIncome)).abs().lessThan('0.01'),
         }
     };
 }
@@ -570,9 +1289,14 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
     if (month && year) {
         const startDate = new Date(year, month - 1, 1);
         const endDate = new Date(year, month, 0, 23, 59, 59);
-        // Get journal entries for this period
+        // Get journal entries for this period.
+        // E4: se EXCLUYE el asiento de CIERRE ANUAL — está fechado 31-dic y, de
+        // incluirse, restaría todo el ingreso/gasto del año del P&L de diciembre
+        // (o de cualquier rango que cubra esa fecha). El P&L es operativo; el
+        // cierre no es una operación. (Prisma incluye filas con referenceType NULL
+        // en un filtro `not`, así que los asientos manuales sin tipo se conservan.)
         const entries = await prisma.journalEntry.findMany({
-            where: { tenantId, date: { gte: startDate, lte: endDate } },
+            where: { tenantId, date: { gte: startDate, lte: endDate }, referenceType: { not: 'ANNUAL_CLOSE' } },
             include: { lines: { include: { account: true } } }
         });
 
@@ -590,9 +1314,17 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
                     revenueLines.push({ account: line.account.name, amount: amount.toNumber() });
                 } else if (line.account.type === 'EXPENSE') {
                     const amount = new Decimal(line.debit.toString()).minus(line.credit.toString());
-                    if (line.account.code === '5.1.1') totalCOGS = totalCOGS.plus(amount);
-                    else totalExpenses = totalExpenses.plus(amount);
-                    expenseLines.push({ account: line.account.name, amount: amount.toNumber() });
+                    // E2: el Costo de Ventas (5.1.1) se reporta aparte en `costOfSales`
+                    // y se resta en `grossProfit`. NO debe además aparecer en el
+                    // desglose de gastos operativos (`operatingExpenses.lines`), o el
+                    // P&L lo muestra dos veces. La rama "Acumulado" ya lo excluye
+                    // (opExpenses filtra 5.1.1); acá se alinea el mismo criterio.
+                    if (line.account.code === '5.1.1') {
+                        totalCOGS = totalCOGS.plus(amount);
+                    } else {
+                        totalExpenses = totalExpenses.plus(amount);
+                        expenseLines.push({ account: line.account.name, amount: amount.toNumber() });
+                    }
                 }
             }
         }
@@ -607,22 +1339,24 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
         };
     }
 
-    // All-time from account balances
+    // All-time from account balances — acumular con Decimal.js (cero float nativo),
+    // igual que la rama con periodo, para un estado financiero NIIF consistente.
     const accounts = await prisma.account.findMany({ where: { tenantId }, orderBy: { code: 'asc' } });
     const revenue = accounts.filter(a => a.type === 'REVENUE');
     const expenses = accounts.filter(a => a.type === 'EXPENSE');
-    const totalRevenue = revenue.reduce((sum, a) => sum + Number(a.balance), 0);
+    const opExpenses = expenses.filter(a => a.code !== '5.1.1');
+    const totalRevenue = revenue.reduce((sum, a) => sum.plus(a.balance.toString()), new Decimal(0));
     const cogsAccount = accounts.find(a => a.code === '5.1.1');
-    const totalCOGS = cogsAccount ? Number(cogsAccount.balance) : 0;
-    const totalExpenses = expenses.filter(a => a.code !== '5.1.1').reduce((sum, a) => sum + Number(a.balance), 0);
+    const totalCOGS = cogsAccount ? new Decimal(cogsAccount.balance.toString()) : new Decimal(0);
+    const totalExpenses = opExpenses.reduce((sum, a) => sum.plus(a.balance.toString()), new Decimal(0));
 
     return {
         period: 'Acumulado',
-        revenue: { total: totalRevenue, lines: revenue.map(a => ({ account: a.name, amount: Number(a.balance) })) },
-        costOfSales: totalCOGS,
-        grossProfit: totalRevenue - totalCOGS,
-        operatingExpenses: { total: totalExpenses, lines: expenses.filter(a => a.code !== '5.1.1').map(a => ({ account: a.name, amount: Number(a.balance) })) },
-        netIncome: totalRevenue - totalCOGS - totalExpenses,
+        revenue: { total: totalRevenue.toNumber(), lines: revenue.map(a => ({ account: a.name, amount: Number(a.balance) })) },
+        costOfSales: totalCOGS.toNumber(),
+        grossProfit: totalRevenue.minus(totalCOGS).toNumber(),
+        operatingExpenses: { total: totalExpenses.toNumber(), lines: opExpenses.map(a => ({ account: a.name, amount: Number(a.balance) })) },
+        netIncome: totalRevenue.minus(totalCOGS).minus(totalExpenses).toNumber(),
     };
 }
 
@@ -633,29 +1367,41 @@ export async function getEstadoResultados(tenantId: string, month?: number, year
 const IR_RETENTION_RATE = 0.02;   // 2% sobre compras de bienes/servicios
 const IMI_RETENTION_RATE = 0.01;  // 1% impuesto municipal
 const IVA_RETENTION_RATE = 0.15;  // 15% IVA retenido (gran contribuyente)
-
 /**
  * Genera retenciones fiscales del periodo desde las compras registradas.
  * Crea registros en FiscalRetention para cada tipo.
  */
-export async function generateRetentions(tenantId: string, month: number, year: number) {
+export async function generateRetentions(tenantId: string, month: number, year: number, tx: AnyTx) {
     const period = `${year}-${String(month).padStart(2, '0')}`;
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 0, 23, 59, 59);
+    const { start: startDate, end: endDate } = fiscalMonthRange(month, year);
 
-    // Verificar si ya se generaron para este periodo
-    const existing = await prisma.fiscalRetention.count({
-        where: { tenantId, period }
-    });
-    if (existing > 0) {
-        return { message: `Retenciones ya generadas para ${period}`, existing: true };
+    // Todas las regeneraciones del tenant se serializan sobre una fila estable.
+    // El template tag de Prisma parametriza tenantId; no se concatena SQL.
+    const lockedTenant = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM \`Tenant\`
+        WHERE id = ${tenantId}
+        FOR UPDATE
+    `;
+    if (lockedTenant.length !== 1) {
+        throw new Error('Tenant no encontrado al generar retenciones');
     }
 
+    // FiscalRetention no pasa por createJournalEntry, por lo que debe aplicar
+    // explicitamente la misma frontera de periodos cerrados antes de borrar o
+    // recrear filas. El primer dia evita ambiguedad de zona y conserva el mes.
+    await assertPeriodOpen(tx, tenantId, new Date(Date.UTC(year, month - 1, 1, 12)));
+
     // Obtener compras del periodo
-    const purchases = await prisma.purchase.findMany({
+    const purchases = await tx.purchase.findMany({
         where: {
             tenantId,
-            date: { gte: startDate, lte: endDate },
+            date: { gte: startDate, lt: endDate },
+            documentStatus: 'POSTED',
+            // Mantener el mismo universo fiscal que nicaTax/Libro de Compras:
+            // contado completado y crédito pendiente de pago. Cualquier estado
+            // operativo/anulado queda fuera de las retenciones DGI.
+            status: { in: [...PURCHASE_FISCAL_STATUSES] },
         },
         include: {
             supplier: { select: { id: true, name: true } },
@@ -721,14 +1467,20 @@ export async function generateRetentions(tenantId: string, month: number, year: 
         }
     }
 
-    // Guardar todas las retenciones
+    // Reemplazo determinista dentro de la transacción del caller. El lock evita
+    // que dos generadores intercalen delete/create y el delete autocura cualquier
+    // conjunto parcial previo del periodo.
+    const replaced = await tx.fiscalRetention.deleteMany({
+        where: { tenantId, period },
+    });
     if (retentions.length > 0) {
-        await prisma.fiscalRetention.createMany({ data: retentions });
+        await tx.fiscalRetention.createMany({ data: retentions });
     }
 
     return {
         period,
         existing: false,
+        replacedRetentions: replaced.count,
         purchasesProcessed: purchases.length,
         retentions: {
             ir2pct: { count: purchases.length, total: totalIR.toNumber() },
@@ -750,49 +1502,79 @@ export async function fiscalClose(tenantId: string, month: number, year: number,
     const balance = await getBalanceGeneral(tenantId);
     const estado = await getEstadoResultados(tenantId, month, year);
 
-    // Generar retenciones si no existen
-    const retentions = await generateRetentions(tenantId, month, year);
-
-    // Guardar o actualizar TaxReport como snapshot del cierre
-    const existingReport = await prisma.taxReport.findFirst({
-        where: { tenantId, month, year }
-    });
-
-    const dRevenue = new Decimal(estado.revenue.total);
-    const ivaCollected = dRevenue.mul('0.15').dividedBy('1.15').toDecimalPlaces(4);
-    const anticipoIR = dRevenue.mul('0.01').toDecimalPlaces(4);
-    const imiAlcaldia = dRevenue.mul('0.01').toDecimalPlaces(4);
+    // Reporte fiscal REAL del mes (IVA pagado, IVA neto y total a pagar netos de
+    // retenciones sufridas). Reutiliza el motor DGI de nicaTax en vez de fijar
+    // ceros que pisarían la fila que saveMonthlyReport ya calcula correctamente.
+    const monthly = await generateMonthlyReport(tenantId, month, year);
 
     const reportData = {
         tenantId,
         month,
         year,
-        totalSales: estado.revenue.total,
-        totalIVACollected: ivaCollected.toNumber(),
-        totalCompras: estado.costOfSales,
-        totalIVAPaid: 0,
-        ivaNeto: 0,
-        anticipoIR: anticipoIR.toNumber(),
-        imiAlcaldia: imiAlcaldia.toNumber(),
-        totalToPay: 0,
+        totalSales: monthly.totalSales,
+        totalIVACollected: monthly.totalIVACollected,
+        totalIVAPaid: monthly.totalIVAPaid,
+        ivaNeto: monthly.ivaNeto,
+        anticipoIR: monthly.anticipoIR,
+        imiAlcaldia: monthly.imiAlcaldia,
+        totalToPay: monthly.totalToPay,
     };
 
-    reportData.ivaNeto = Decimal.max(0, new Decimal(reportData.totalIVACollected).minus(reportData.totalIVAPaid)).toNumber();
+    // Snapshot ANTES del cierre (para el AuditLog inmutable before/after).
+    const [existingReport, existingPeriod] = await Promise.all([
+        prisma.taxReport.findFirst({ where: { tenantId, month, year } }),
+        prisma.fiscalPeriod.findUnique({ where: { tenantId_year_month: { tenantId, year, month } } }),
+    ]);
 
-    if (existingReport) {
-        await prisma.taxReport.update({
-            where: { id: existingReport.id },
-            data: reportData,
+    // Atomicidad del cierre: retenciones + TaxReport + FiscalPeriod + AuditLog en
+    // una sola transacción, para no dejar estado parcial ante un fallo intermedio.
+    let retentions!: Awaited<ReturnType<typeof generateRetentions>>;
+    await prisma.$transaction(async (tx) => {
+        // Generar retenciones si no existen (idempotente por conteo del período).
+        retentions = await generateRetentions(tenantId, month, year, tx);
+
+        // Guardar o actualizar TaxReport como snapshot del cierre.
+        if (existingReport) {
+            await tx.taxReport.update({ where: { id: existingReport.id }, data: reportData });
+        } else {
+            await tx.taxReport.create({ data: reportData });
+        }
+
+        // A3: CERRAR el período → ningún asiento futuro puede caer en este mes.
+        await tx.fiscalPeriod.upsert({
+            where: { tenantId_year_month: { tenantId, year, month } },
+            create: { tenantId, year, month, status: 'CLOSED', closedBy, closedAt: new Date() },
+            update: { status: 'CLOSED', closedBy, closedAt: new Date(), reopenedBy: null, reopenedAt: null, reopenReason: null },
         });
-    } else {
-        await prisma.taxReport.create({ data: reportData });
-    }
 
-    // A3: CERRAR el período → ningún asiento futuro puede caer en este mes.
-    await prisma.fiscalPeriod.upsert({
-        where: { tenantId_year_month: { tenantId, year, month } },
-        create: { tenantId, year, month, status: 'CLOSED', closedBy, closedAt: new Date() },
-        update: { status: 'CLOSED', closedBy, closedAt: new Date(), reopenedBy: null, reopenedAt: null, reopenReason: null },
+        // Traza forense inmutable del cierre (análoga al AuditLog del reopen).
+        await tx.auditLog.create({
+            data: {
+                tenantId,
+                userId: closedBy,
+                action: 'FISCAL_CLOSE',
+                details: JSON.stringify({
+                    period,
+                    month,
+                    year,
+                    before: {
+                        periodStatus: existingPeriod?.status ?? 'OPEN',
+                        taxReport: existingReport
+                            ? {
+                                totalSales: Number(existingReport.totalSales),
+                                totalIVACollected: Number(existingReport.totalIVACollected),
+                                totalIVAPaid: Number(existingReport.totalIVAPaid),
+                                ivaNeto: Number(existingReport.ivaNeto),
+                                anticipoIR: Number(existingReport.anticipoIR),
+                                imiAlcaldia: Number(existingReport.imiAlcaldia),
+                                totalToPay: Number(existingReport.totalToPay),
+                            }
+                            : null,
+                    },
+                    after: { periodStatus: 'CLOSED', taxReport: reportData },
+                }),
+            },
+        });
     });
 
     return {
@@ -809,4 +1591,134 @@ export async function fiscalClose(tenantId: string, month: number, year: number,
         retentions: retentions.existing ? 'Ya generadas' : retentions.retentions,
         taxes: reportData,
     };
+}
+
+/**
+ * CIERRE ANUAL (E4) — asiento de cierre que salda el Estado de Resultados.
+ *
+ * Problema que corrige: los ingresos (4.x) y gastos (5.x) NUNCA se saldaban a
+ * cero, así que `getBalanceGeneral` derivaba la "Utilidad del Ejercicio" como
+ * `Σingresos − Σgastos` sobre TODA la vida del negocio, y Utilidades Retenidas
+ * (3.1.2) quedaba permanentemente en 0. El Balance cuadraba, pero presentaba la
+ * utilidad ACUMULADA DE POR VIDA en vez de la del ejercicio (defecto NIIF).
+ *
+ * Qué hace: postea UN asiento (fechado 31-dic del año) que:
+ *   - Debita cada cuenta de INGRESO por su saldo (la lleva a 0; el ingreso es de
+ *     naturaleza acreedora, así que un débito por el saldo la cancela).
+ *   - Acredita cada cuenta de GASTO por su saldo (la lleva a 0).
+ *   - Lleva el RESULTADO NETO a Utilidades Retenidas (3.1.2): Haber si hubo
+ *     utilidad, Debe si hubo pérdida.
+ * Resultado: 4.x y 5.x quedan en 0 (el año siguiente arranca limpio), el
+ * resultado del ejercicio se "realiza" en el patrimonio (3.1.2), y el Balance
+ * sigue cuadrando (Σdebe == Σhaber por construcción).
+ *
+ * Idempotente: si ya existe un asiento ANNUAL_CLOSE para ese año, no re-cierra.
+ * Es el único asiento autorizado a caer en un período cerrado (allowClosedPeriod).
+ */
+export async function cierreAnual(tenantId: string, year: number, closedBy: string = 'SYSTEM') {
+    await seedChartOfAccounts(tenantId);
+
+    return prisma.$transaction(async (tx) => {
+        // Idempotencia: un año se cierra UNA sola vez (re-cerrar duplicaría el
+        // traslado a 3.1.2). Guard por asiento existente + lock implícito de la tx.
+        const yaCerrado = await tx.journalEntry.findFirst({
+            where: { tenantId, referenceType: 'ANNUAL_CLOSE', referenceId: String(year) },
+            select: { id: true },
+        });
+        if (yaCerrado) {
+            throw new Error(`AÑO_YA_CERRADO: el ejercicio ${year} ya tiene su asiento de cierre.`);
+        }
+
+        // Saldos vivos de ingresos y gastos (los que hay que saldar).
+        const cuentas = await tx.account.findMany({
+            where: { tenantId, type: { in: ['REVENUE', 'EXPENSE'] } },
+            select: { code: true, type: true, balance: true },
+        });
+
+        const lines: { accountCode: string; debit: number; credit: number }[] = [];
+        let totalIngresos = new Decimal(0);
+        let totalGastos = new Decimal(0);
+
+        for (const c of cuentas) {
+            const saldo = new Decimal(c.balance.toString());
+            if (saldo.isZero()) continue;
+            if (c.type === 'REVENUE') {
+                totalIngresos = totalIngresos.plus(saldo);
+                // Ingreso (acreedor): se DEBITA por su saldo para dejarlo en 0.
+                // Robusto ante saldo negativo (p. ej. devoluciones > ventas): se
+                // acredita el valor absoluto para no meter un débito negativo que
+                // empujaría el saldo en sentido contrario.
+                if (saldo.greaterThan(0)) {
+                    lines.push({ accountCode: c.code, debit: saldo.toNumber(), credit: 0 });
+                } else {
+                    lines.push({ accountCode: c.code, debit: 0, credit: saldo.abs().toNumber() });
+                }
+            } else {
+                totalGastos = totalGastos.plus(saldo);
+                // Gasto (deudor): se ACREDITA por su saldo para dejarlo en 0
+                // (mismo cuidado con saldos negativos por reversas de gasto).
+                if (saldo.greaterThan(0)) {
+                    lines.push({ accountCode: c.code, debit: 0, credit: saldo.toNumber() });
+                } else {
+                    lines.push({ accountCode: c.code, debit: saldo.abs().toNumber(), credit: 0 });
+                }
+            }
+        }
+
+        const resultado = totalIngresos.minus(totalGastos).toDecimalPlaces(4); // + utilidad / − pérdida
+
+        if (lines.length === 0) {
+            throw new Error('SIN_MOVIMIENTOS: no hay ingresos ni gastos que cerrar en el ejercicio.');
+        }
+
+        // Contrapartida a Utilidades Retenidas (3.1.2): la utilidad ACREDITA
+        // patrimonio; la pérdida lo DEBITA. Por construcción Σdebe == Σhaber:
+        //   utilidad → Debe Σingresos ; Haber Σgastos + resultado (= Σingresos)
+        //   pérdida  → Debe Σingresos + |resultado| (= Σgastos) ; Haber Σgastos
+        if (resultado.greaterThan(0)) {
+            lines.push({ accountCode: '3.1.2', debit: 0, credit: resultado.toNumber() });
+        } else if (resultado.lessThan(0)) {
+            lines.push({ accountCode: '3.1.2', debit: resultado.abs().toNumber(), credit: 0 });
+        }
+        // resultado == 0 (ingresos == gastos): el asiento ya cuadra sin tocar 3.1.2.
+
+        // Fecha: último instante del ejercicio. Se permite en período cerrado
+        // porque ES el asiento de cierre del propio período.
+        const fecha = new Date(year, 11, 31, 23, 59, 59);
+        await createJournalEntry(
+            tx as Parameters<typeof createJournalEntry>[0],
+            tenantId,
+            `Cierre anual del ejercicio ${year}`,
+            String(year),
+            'ANNUAL_CLOSE',
+            closedBy,
+            lines,
+            { isAutomatic: false, date: fecha, allowClosedPeriod: true }
+        );
+
+        await tx.auditLog.create({
+            data: {
+                tenantId,
+                userId: closedBy,
+                action: 'ANNUAL_CLOSE',
+                details: JSON.stringify({
+                    year,
+                    totalIngresos: totalIngresos.toNumber(),
+                    totalGastos: totalGastos.toNumber(),
+                    resultado: resultado.toNumber(),
+                    tipo: resultado.greaterThanOrEqualTo(0) ? 'UTILIDAD' : 'PERDIDA',
+                    cuentasSaldadas: lines.length - (resultado.isZero() ? 0 : 1),
+                }),
+            },
+        });
+
+        return {
+            year,
+            totalIngresos: totalIngresos.toNumber(),
+            totalGastos: totalGastos.toNumber(),
+            resultado: resultado.toNumber(),
+            tipo: resultado.greaterThanOrEqualTo(0) ? 'UTILIDAD' : 'PERDIDA',
+            trasladadoAUtilidadesRetenidas: resultado.toNumber(),
+        };
+    });
 }

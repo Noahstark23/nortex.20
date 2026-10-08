@@ -1,0 +1,55 @@
+{
+  "checkedAt": "2026-09-08T21:29:19.905Z",
+  "tenantId": "operativo-demo-20260905-ferreteria",
+  "runId": "cmtt6jexc002jil44pccq4bvu",
+  "runStatus": "SUCCEEDED",
+  "degraded": true,
+  "providerIterations": 0,
+  "usageRowsForDemoTenants": 0,
+  "paidCalls": 0,
+  "amounts": {
+    "salesTotal": "2650",
+    "salesCount": "1",
+    "returnsTotal": "0",
+    "netSalesTotal": "2650",
+    "salesVat": "345.6522",
+    "returnsVat": "0",
+    "netSalesExVat": "2304.3478",
+    "averageTicket": "2650",
+    "netCostOfGoods": "2000",
+    "grossMargin": "304.3478",
+    "grossMarginPercent": "13.21",
+    "expensesTotal": "0"
+  },
+  "stock": [
+    {
+      "name": "Cemento Holcim 42.5",
+      "stock": "5"
+    },
+    {
+      "name": "Tornillos galvanizados",
+      "stock": "250"
+    },
+    {
+      "name": "Pintura látex blanca QA",
+      "stock": "12"
+    }
+  ],
+  "purchaseCount": 3,
+  "conversationId": "cmtt6jc3x002dil44sejdbudi",
+  "messages": 10,
+  "observedUi": [
+    "login succeeded after QA CORS configuration",
+    "one cement bag in cart: C$265",
+    "capture 50 cement bags",
+    "operational query preserves pending capture",
+    "correction to 60 retained",
+    "F9 did not open checkout behind panel",
+    "page reload preserved cart and conversation",
+    "catalog product and BASE/PACK choice requested",
+    "320px mobile and 1440px desktop inspected"
+  ],
+  "physicalScanner": "not_tested",
+  "liveProvider": "not_run",
+  "humanReview": "pending"
+}

@@ -1,0 +1,190 @@
+{
+  "passed": true,
+  "suites": [
+    {
+      "suite": "tests/journalSingleConnection.mysql.test.ts",
+      "passed": 1
+    },
+    {
+      "suite": "tests/whatsappIdentity.mysql.test.ts",
+      "passed": 22
+    },
+    {
+      "suite": "tests/cashCloseJournal.mysql.test.ts",
+      "passed": 6
+    },
+    {
+      "suite": "tests/posIntegrity.integration.test.ts",
+      "passed": 19
+    },
+    {
+      "suite": "tests/manualCashMovementVoid.integration.test.ts",
+      "passed": 12
+    },
+    {
+      "suite": "tests/customerFlow.integration.test.ts",
+      "passed": 12
+    },
+    {
+      "suite": "tests/hrAccess.integration.test.ts",
+      "passed": 3
+    },
+    {
+      "suite": "tests/productRefresh.integration.test.ts",
+      "passed": 12
+    },
+    {
+      "suite": "tests/fiscalFlow.integration.test.ts",
+      "passed": 8
+    },
+    {
+      "suite": "tests/inventoryAdjust.integration.test.ts",
+      "passed": 3
+    },
+    {
+      "suite": "tests/bodegaAdjustment.integration.test.ts",
+      "passed": 17
+    },
+    {
+      "suite": "tests/bodegaReorder.integration.test.ts",
+      "passed": 6
+    },
+    {
+      "suite": "tests/productImport.integration.test.ts",
+      "passed": 13
+    },
+    {
+      "suite": "tests/productDeletion.integration.test.ts",
+      "passed": 8
+    },
+    {
+      "suite": "tests/warehouseTopology.integration.test.ts",
+      "passed": 7
+    },
+    {
+      "suite": "tests/bodegaStockCountHistory.integration.test.ts",
+      "passed": 2
+    },
+    {
+      "suite": "tests/bodegaPurchaseCashAuthority.integration.test.ts",
+      "passed": 13
+    },
+    {
+      "suite": "tests/batchWarehouseManualMovements.test.ts",
+      "passed": 16
+    },
+    {
+      "suite": "tests/purchaseFlow.integration.test.ts",
+      "passed": 12
+    },
+    {
+      "suite": "tests/purchaseRegistration.integration.test.ts",
+      "passed": 7
+    },
+    {
+      "suite": "tests/assistantFlow.integration.test.ts",
+      "passed": 18
+    },
+    {
+      "suite": "tests/assistantTextPurchase.integration.test.ts",
+      "passed": 10
+    },
+    {
+      "suite": "tests/assistantWorkerRecovery.integration.test.ts",
+      "passed": 1
+    },
+    {
+      "suite": "tests/assistantAnalytics.integration.test.ts",
+      "passed": 9
+    },
+    {
+      "suite": "tests/assistantInventory.integration.test.ts",
+      "passed": 15
+    },
+    {
+      "suite": "tests/assistantCatalog.integration.test.ts",
+      "passed": 10
+    },
+    {
+      "suite": "tests/assistantRuns.integration.test.ts",
+      "passed": 16
+    },
+    {
+      "suite": "tests/assistantStatus.integration.test.ts",
+      "passed": 6
+    },
+    {
+      "suite": "tests/assistantActions.integration.test.ts",
+      "passed": 9
+    },
+    {
+      "suite": "tests/assistantActionsHttp.integration.test.ts",
+      "passed": 8
+    },
+    {
+      "suite": "tests/assistantOperationsRetention.integration.test.ts",
+      "passed": 3
+    },
+    {
+      "suite": "tests/purchaseOrderDraft.integration.test.ts",
+      "passed": 7
+    },
+    {
+      "suite": "tests/promotions.integration.test.ts",
+      "passed": 15
+    },
+    {
+      "suite": "tests/promotionsFlow.integration.test.ts",
+      "passed": 6
+    },
+    {
+      "suite": "tests/promotionsShiftClose.integration.test.ts",
+      "passed": 4
+    },
+    {
+      "suite": "tests/assistantPrivateWhatsapp.integration.test.ts",
+      "passed": 18
+    },
+    {
+      "suite": "tests/productBulkEdit.integration.test.ts",
+      "passed": 10
+    },
+    {
+      "suite": "tests/purchaseSalePrice.integration.test.ts",
+      "passed": 5
+    },
+    {
+      "suite": "tests/procurementPhaseOne.integration.test.ts",
+      "passed": 6
+    },
+    {
+      "suite": "tests/procurementPhaseTwo.integration.test.ts",
+      "passed": 11
+    },
+    {
+      "suite": "tests/procurementPhaseTwoB.integration.test.ts",
+      "passed": 8
+    },
+    {
+      "suite": "tests/returnIdempotency.integration.test.ts",
+      "passed": 2
+    },
+    {
+      "suite": "tests/stockCountWarehouse.integration.test.ts",
+      "passed": 2
+    },
+    {
+      "suite": "tests/productWarehouseSnapshot.integration.test.ts",
+      "passed": 9
+    },
+    {
+      "suite": "tests/productBrandCamera.integration.test.ts",
+      "passed": 6
+    },
+    {
+      "suite": "tests/delivery.mysql.integration.test.ts",
+      "passed": 1
+    }
+  ],
+  "total": 414
+}

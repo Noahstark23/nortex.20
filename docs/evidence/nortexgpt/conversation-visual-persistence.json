@@ -1,0 +1,77 @@
+{
+  "recordedAt": "2026-09-05T21:57:44.631Z",
+  "status": "passed",
+  "candidate": "/tmp/nortexgpt-conversation-20260905",
+  "databaseOrigin": "disposable_synthetic_only",
+  "checkMode": "read_only_repeatable_read_transaction",
+  "proposal": {
+    "id": "dda7ed42-16f3-4d48-a6a0-7a54fe3e4140",
+    "version": 3,
+    "status": "READY",
+    "invoiceNumber": "QA-VISUAL-0905",
+    "source": "MANUAL",
+    "quantity": "50",
+    "unitCost": "5",
+    "paymentMethod": "CREDIT",
+    "paymentConfirmed": false,
+    "receivedConfirmed": true,
+    "hasPreviewHash": true,
+    "result": null,
+    "operationId": null
+  },
+  "previewOnly": {
+    "subtotal": "250.00",
+    "tax": "37.50",
+    "total": "287.50",
+    "payable": "287.50",
+    "cashOut": "0.00"
+  },
+  "persistedBusinessEffects": {
+    "purchasesForInvoice": 0,
+    "purchasesInSyntheticTenant": 0,
+    "commandsInSyntheticTenant": 0,
+    "purchaseKardexForProduct": 0,
+    "purchaseAuditsInSyntheticTenant": 0,
+    "currentProductStock": 10,
+    "currentAccountsPayable": "0.00",
+    "openDrawerInitialCash": "500.00",
+    "cashMovementsInSyntheticTenant": 0,
+    "calculatedCashFromStoredOpeningAndMovements": "500.00"
+  },
+  "visualEvidenceAttribution": {
+    "observedBy": "/root/implement_assistant_ui",
+    "browserWorkflow": "captura→revisión→READY sin confirmar",
+    "reportedCart": {
+      "items": 1,
+      "total": "20.00",
+      "source": "browser_report_not_database"
+    },
+    "reportedViewports": [
+      "1280 desktop",
+      "320 mobile"
+    ],
+    "noHorizontalOverflow": "reported_by_ui_agent"
+  },
+  "limitations": [
+    "El carrito es estado del navegador y no se acredita consultando MySQL.",
+    "Los importes de deuda/caja de la propuesta son una vista previa; no son movimientos registrados.",
+    "Sin confirmación en navegador, proveedor pagado, staging o producción."
+  ],
+  "demoRestart": {
+    "recordedAt": "2026-09-05T21:58:22.084Z",
+    "backendPort": 60099,
+    "frontendPort": 60100,
+    "health": {
+      "ok": true,
+      "db": "up",
+      "uptimeSeconds": 29,
+      "commit": "nortexgpt-conversation-demo"
+    },
+    "changedBusinessData": false,
+    "sourceSha256": {
+      "backend/services/assistant/conversations.ts": "050eb830a9959c3c884b1c90c87d6c768ffdcbe564950424b4a27449abab93fd",
+      "backend/services/assistant/purchaseIntake.ts": "ca62e7063dbc5886a06f5d34365d13aa375eed7f8e74235ad8a962acd5b00e2a",
+      "backend/services/assistant/proposals.ts": "9288d1c10c931bebe9e919840d87c60fd43a57285f1bee644794efca3806c12f"
+    }
+  }
+}

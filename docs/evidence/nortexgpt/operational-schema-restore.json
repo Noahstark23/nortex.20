@@ -1,0 +1,12 @@
+{
+  "passed": true,
+  "upgrade": true,
+  "schemaMatches": true,
+  "oldSalePreserved": true,
+  "oldPurchasePreserved": true,
+  "restore": true,
+  "privateAttachment": true,
+  "newTables": 15,
+  "cleanupComplete": true,
+  "cleanupFailures": []
+}

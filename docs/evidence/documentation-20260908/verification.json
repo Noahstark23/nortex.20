@@ -1,0 +1,110 @@
+{
+  "productCandidate": "484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b",
+  "skills": [
+    {
+      "path": ".claude/skills/frontend-design/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-backup-recovery/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-blue-team/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-clean-code/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-contador/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-deploy/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-feature/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-migration/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-qa/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-rag/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-red-team/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-rrhh/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-security-audit/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex-seo/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/nortex.20/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    },
+    {
+      "path": ".claude/skills/run-nortex/SKILL.md",
+      "passed": true,
+      "result": "Skill is valid!"
+    }
+  ],
+  "contractTests": {
+    "numPassedTests": 167,
+    "numFailedTests": 0,
+    "numPendingTests": 0,
+    "success": true
+  },
+  "testReportSha256": "e6ec24e3866a1c342fd438d4578db7c6d22cc632ec780971bb5f89ff66aca0a3",
+  "productFilesMatchQaManifest": 1083,
+  "independentReview": "Four scenarios reviewed; both RAG smoke/QA instructions corrected and independently rechecked against sim.ts and smoke.sh.",
+  "notProven": [
+    "all historical documents semantically verified",
+    "new profiles loaded by running app",
+    "real AI quality",
+    "real backup restoration",
+    "staging",
+    "production"
+  ],
+  "codexProfiles": {
+    "total": 10,
+    "new": 7,
+    "tomlAndPaths": "passed",
+    "maxThreads": 6,
+    "maxDepth": 1,
+    "runtimeActivation": "requires session to reload configuration"
+  }
+}

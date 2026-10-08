@@ -1,0 +1,56 @@
+{
+  "createdAt": "2026-09-08T21:39:50.303121+00:00",
+  "candidate": "/tmp/nortex-qa-live-20260908",
+  "files": [
+    {
+      "path": "components/notifications/OperationalNotifications.tsx",
+      "sha256": "3c7c16a8a9527a967580eda5152af5d794b7eabfe94e695ad0687cec19de69ae",
+      "lines": 135
+    },
+    {
+      "path": "components/assistant/NortexAssistantLauncher.tsx",
+      "sha256": "7395ef52db08f351103e4bc9e3229f640e0c6af5cfbfe7caf058487915398419",
+      "lines": 39
+    },
+    {
+      "path": "tests/operationalNotifications.test.tsx",
+      "sha256": "1d246f9b3a358ed844cca309070f1a98a275191c539547e7e305c8fa432d8c53",
+      "lines": 131
+    },
+    {
+      "path": "components/assistant/assistantOpenEvent.ts",
+      "sha256": "9c9ce515466fdad6ed3710c970b572a798549568001ad077c8b2414e104eeb3b",
+      "lines": 2
+    },
+    {
+      "path": "components/notifications/NortexAssistantNotice.tsx",
+      "sha256": "02799b19ea4fbd7b0609c66154e4ac87d217211e6ddc77115b8e1ea0bc82c519",
+      "lines": 38
+    },
+    {
+      "path": "tests/assistantNotice.test.tsx",
+      "sha256": "71ef600289e3b6da4d3b36a73cbe14e0b22fa1f2ebcb73d844fdc8417752325f",
+      "lines": 61
+    }
+  ],
+  "tests": {
+    "focused": 61,
+    "generalPassed": 4821,
+    "generalSkipped": 286,
+    "typescript": "passed",
+    "prismaGenerate": "passed",
+    "design": "passed",
+    "build": "passed"
+  },
+  "browser": {
+    "url": "http://127.0.0.1:44174/app/pos",
+    "noticeVisible": true,
+    "opensAssistant": true,
+    "cartPreserved": "1 bolsa de cemento; C$265",
+    "notificationIssueCountUnchanged": 2
+  },
+  "paidCalls": 0,
+  "deployed": false,
+  "remoteNotificationPublished": false,
+  "financialIntegration": "No se repitió: este cambio solo introduce UI informativa y consultas de capacidades."
+}

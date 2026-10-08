@@ -1,0 +1,76 @@
+#:schema https://developers.openai.com/codex/config-schema.json
+
+# ECC Tools generated Codex baseline
+approval_policy = "on-request"
+sandbox_mode = "workspace-write"
+web_search = "live"
+
+[mcp_servers.github]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+
+[mcp_servers.context7]
+command = "npx"
+args = ["-y", "@upstash/context7-mcp@latest"]
+
+[mcp_servers.exa]
+url = "https://mcp.exa.ai/mcp"
+
+[mcp_servers.memory]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-memory"]
+
+[mcp_servers.playwright]
+command = "npx"
+args = ["-y", "@playwright/mcp@latest", "--extension"]
+
+[mcp_servers.sequential-thinking]
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-sequential-thinking"]
+
+[features]
+multi_agent = true
+
+[agents]
+max_threads = 6
+max_depth = 1
+
+[agents.explorer]
+description = "Read-only codebase explorer for gathering evidence before changes are proposed."
+config_file = "agents/explorer.toml"
+
+[agents.reviewer]
+description = "PR reviewer focused on correctness, security, and missing tests."
+config_file = "agents/reviewer.toml"
+
+[agents.docs_researcher]
+description = "Documentation specialist that verifies APIs, framework behavior, and release notes."
+config_file = "agents/docs-researcher.toml"
+
+[agents.nortex_integrator]
+description = "Integra contratos, cambios compartidos y evidencia del candidato."
+config_file = "agents/nortex-integrator.toml"
+
+[agents.nortex_finance]
+description = "Implementa compras, ventas, caja, stock y contabilidad con integridad transaccional."
+config_file = "agents/nortex-finance.toml"
+
+[agents.nortex_platform]
+description = "Trabaja en persistencia, workers, capacidad, observabilidad y recuperación."
+config_file = "agents/nortex-platform.toml"
+
+[agents.nortex_pos]
+description = "Implementa experiencia POS, accesibilidad y extracción de componentes conservando el cobro."
+config_file = "agents/nortex-pos.toml"
+
+[agents.nortex_intelligence]
+description = "Desarrolla RAG, orquestación, evaluación y canales privados autorizados."
+config_file = "agents/nortex-intelligence.toml"
+
+[agents.nortex_qa]
+description = "Verifica resultados independientes, regresión y límites de cada entrega."
+config_file = "agents/nortex-qa.toml"
+
+[agents.nortex_clean_code]
+description = "Reduce acoplamiento y tamaño por dominios con pruebas de conducta previas."
+config_file = "agents/nortex-clean-code.toml"

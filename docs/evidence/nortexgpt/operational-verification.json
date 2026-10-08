@@ -1,0 +1,555 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-09-08T02:29:35.783827+00:00",
+  "candidate": "/tmp/nortexgpt-operativo-20260905",
+  "destination": "/Users/stark/Documents/GitHub/nortex.20",
+  "branch": "codex/caja-nica-retention",
+  "toolchain": {
+    "node": "22.23.2",
+    "prisma": "6.4.1",
+    "database": "MySQL8.0 disposable",
+    "packageManager": "npm"
+  },
+  "implementation": "LOCAL",
+  "deployment": "NOT_RUN",
+  "remoteCi": "NOT_RUN",
+  "staging": "NOT_RUN",
+  "production": "NOT_RUN",
+  "modelEvaluation": "NOT_RUN",
+  "humanExpectedReview": "PENDING",
+  "forecastBacktest": "NOT_RUN",
+  "pilot": "NOT_RUN",
+  "paidModelCalls": 0,
+  "checks": {
+    "prismaGenerate": {
+      "exitCode": 0,
+      "schemaSha256": "cedbda5ebed2557d49dbabaf040ffec3e9969281a6f2c65f80bf1e61d4cb5dd1"
+    },
+    "prismaValidate": {
+      "exitCode": 0
+    },
+    "typescript": {
+      "exitCode": 0
+    },
+    "design": {
+      "exitCode": 0,
+      "files": 97,
+      "violations": 0
+    },
+    "build": {
+      "exitCode": 0,
+      "existingChunkSizeWarning": true
+    },
+    "generalVitest": {
+      "numTotalTests": 5036,
+      "numPassedTests": 4752,
+      "numFailedTests": 0,
+      "numPendingTests": 284,
+      "success": true
+    },
+    "requiredMysql": {
+      "passed": true,
+      "suites": [
+        {
+          "suite": "tests/journalSingleConnection.mysql.test.ts",
+          "passed": 1
+        },
+        {
+          "suite": "tests/whatsappIdentity.mysql.test.ts",
+          "passed": 22
+        },
+        {
+          "suite": "tests/cashCloseJournal.mysql.test.ts",
+          "passed": 6
+        },
+        {
+          "suite": "tests/posIntegrity.integration.test.ts",
+          "passed": 13
+        },
+        {
+          "suite": "tests/customerFlow.integration.test.ts",
+          "passed": 6
+        },
+        {
+          "suite": "tests/hrAccess.integration.test.ts",
+          "passed": 3
+        },
+        {
+          "suite": "tests/productRefresh.integration.test.ts",
+          "passed": 12
+        },
+        {
+          "suite": "tests/fiscalFlow.integration.test.ts",
+          "passed": 8
+        },
+        {
+          "suite": "tests/inventoryAdjust.integration.test.ts",
+          "passed": 3
+        },
+        {
+          "suite": "tests/batchWarehouseManualMovements.test.ts",
+          "passed": 16
+        },
+        {
+          "suite": "tests/purchaseFlow.integration.test.ts",
+          "passed": 10
+        },
+        {
+          "suite": "tests/purchaseRegistration.integration.test.ts",
+          "passed": 6
+        },
+        {
+          "suite": "tests/assistantFlow.integration.test.ts",
+          "passed": 18
+        },
+        {
+          "suite": "tests/assistantTextPurchase.integration.test.ts",
+          "passed": 10
+        },
+        {
+          "suite": "tests/assistantWorkerRecovery.integration.test.ts",
+          "passed": 1
+        },
+        {
+          "suite": "tests/assistantAnalytics.integration.test.ts",
+          "passed": 9
+        },
+        {
+          "suite": "tests/assistantInventory.integration.test.ts",
+          "passed": 15
+        },
+        {
+          "suite": "tests/assistantCatalog.integration.test.ts",
+          "passed": 10
+        },
+        {
+          "suite": "tests/assistantRuns.integration.test.ts",
+          "passed": 14
+        },
+        {
+          "suite": "tests/assistantStatus.integration.test.ts",
+          "passed": 6
+        },
+        {
+          "suite": "tests/assistantActions.integration.test.ts",
+          "passed": 9
+        },
+        {
+          "suite": "tests/assistantActionsHttp.integration.test.ts",
+          "passed": 8
+        },
+        {
+          "suite": "tests/assistantOperationsRetention.integration.test.ts",
+          "passed": 3
+        },
+        {
+          "suite": "tests/purchaseOrderDraft.integration.test.ts",
+          "passed": 7
+        },
+        {
+          "suite": "tests/promotions.integration.test.ts",
+          "passed": 15
+        },
+        {
+          "suite": "tests/promotionsFlow.integration.test.ts",
+          "passed": 6
+        },
+        {
+          "suite": "tests/promotionsShiftClose.integration.test.ts",
+          "passed": 4
+        },
+        {
+          "suite": "tests/assistantPrivateWhatsapp.integration.test.ts",
+          "passed": 18
+        },
+        {
+          "suite": "tests/productBulkEdit.integration.test.ts",
+          "passed": 10
+        },
+        {
+          "suite": "tests/procurementPhaseOne.integration.test.ts",
+          "passed": 6
+        },
+        {
+          "suite": "tests/procurementPhaseTwo.integration.test.ts",
+          "passed": 10
+        },
+        {
+          "suite": "tests/procurementPhaseTwoB.integration.test.ts",
+          "passed": 8
+        },
+        {
+          "suite": "tests/returnIdempotency.integration.test.ts",
+          "passed": 2
+        },
+        {
+          "suite": "tests/stockCountWarehouse.integration.test.ts",
+          "passed": 2
+        },
+        {
+          "suite": "tests/delivery.mysql.integration.test.ts",
+          "passed": 1
+        }
+      ],
+      "total": 298,
+      "omitted": 0,
+      "failed": 0
+    },
+    "mutation": {
+      "exitCode": 0,
+      "score": 99.8841027622175,
+      "threshold": 99.85,
+      "statuses": {
+        "Ignored": 20,
+        "Killed": 5167,
+        "Survived": 6,
+        "Timeout": 4
+      },
+      "instrumented": 5197,
+      "scored": 5177,
+      "sourceMismatches": [],
+      "files": [
+        {
+          "path": "backend/services/nicaLabor.ts",
+          "sha256": "843caf714ea8efab89a45e45fa537d6c2a6a1f94f5cf34b1224d16c19872c44c",
+          "mutants": 132
+        },
+        {
+          "path": "backend/lib/batchWarehouseLedger.ts",
+          "sha256": "c2ac2b82443f065dbf1ffa59635a978289981b9135cf5fe61f65a10aa7d8b272",
+          "mutants": 165
+        },
+        {
+          "path": "backend/lib/batchWarehouseReadiness.ts",
+          "sha256": "5fc589fac53dbcf60502859debe6f3e025df42748186678a3289134a970d9d69",
+          "mutants": 496
+        },
+        {
+          "path": "backend/lib/htmlSecurity.ts",
+          "sha256": "8757bf76253bd7243f7a70aef63ff66dd45678366094bb7891707dff59213f7e",
+          "mutants": 27
+        },
+        {
+          "path": "backend/lib/manualBatchMovements.ts",
+          "sha256": "aaabe7f5d4be66850ff18d389b35a45b0b4075fba08cd829b5f11f52a4b67508",
+          "mutants": 112
+        },
+        {
+          "path": "backend/lib/offlineSaleReplay.ts",
+          "sha256": "20d50cdea8de1375c605094a5870b9cf3a53e926f5ddb0dcadcec3f893861246",
+          "mutants": 58
+        },
+        {
+          "path": "backend/lib/paymentAccounts.ts",
+          "sha256": "064c6ce0502789c4c24e319eb20986636d773cb025dae63c85543f7ed412529a",
+          "mutants": 11
+        },
+        {
+          "path": "backend/lib/procurementMatch.ts",
+          "sha256": "02ec45d5c5e0cf4ee2b0c53d47b326806759f1cb743d30ab576ec9e150bc6599",
+          "mutants": 310
+        },
+        {
+          "path": "backend/lib/procurementReceipts.ts",
+          "sha256": "e1444df9e3f8adb17e3f5658338a8656a6fe5bdd3428c5b27fd0c8c058391fa0",
+          "mutants": 269
+        },
+        {
+          "path": "backend/lib/purchaseMoney.ts",
+          "sha256": "cd428dd9ad327fe96a4a4b64ae614f78854fc372db3b5257008fb91cf52647b7",
+          "mutants": 21
+        },
+        {
+          "path": "backend/lib/purchaseOrderAvailability.ts",
+          "sha256": "09e8e8fbcfeb519122be80a0a4ea767c245c8230e2a3847f0c6d4097ba62a819",
+          "mutants": 16
+        },
+        {
+          "path": "backend/lib/purchaseOrderCloseShort.ts",
+          "sha256": "6ee34c6d08158c198bf127b31c4601ba6d923b408d96b4cae2dfb76fc26b53c9",
+          "mutants": 157
+        },
+        {
+          "path": "backend/lib/salesQuantityReport.ts",
+          "sha256": "e84fa3a193572890b66b174d4258c9ae63640b81d9e41a3e2fa8780d66a37911",
+          "mutants": 67
+        },
+        {
+          "path": "backend/lib/scaleLabelTelemetry.ts",
+          "sha256": "56e94fe358acbea730068ad2625aeea9041791c12e521aec040f0dfdb37be6a2",
+          "mutants": 31
+        },
+        {
+          "path": "backend/lib/stockTransferCommand.ts",
+          "sha256": "b75a5098d3b1474c0c05b662ddd12cf60a6e4e2fd90431882ce66bec7c9cd16b",
+          "mutants": 160
+        },
+        {
+          "path": "backend/lib/supplierPayments.ts",
+          "sha256": "f31a9631c9afb9a031f38fe3e661107532d1cabf1ea4cd904cf537c9ae6bf4a4",
+          "mutants": 156
+        },
+        {
+          "path": "backend/services/accounting.ts",
+          "sha256": "c05778d537bb0b8a3d19174abb5fb6cffda31bf86b52c659ca31dbb53ef8ddeb",
+          "mutants": 189
+        },
+        {
+          "path": "backend/services/assistant/budget.ts",
+          "sha256": "f97ea23e5a32a1c677f008a05d34b83a49ffee6c98e2c26844dbb60c876a00e4",
+          "mutants": 15
+        },
+        {
+          "path": "backend/services/assistant/proposalValidation.ts",
+          "sha256": "18e9b85108fe64faac5433ccf397d922fa7ee3919a8e3039b936a8f2aeac2f22",
+          "mutants": 14
+        },
+        {
+          "path": "backend/services/batchWriteoffValue.ts",
+          "sha256": "51f595d000c5f9eae581f8098e904fc7d3a5ad0b367c6f0a2f619c5716d147f4",
+          "mutants": 13
+        },
+        {
+          "path": "backend/services/journalPosting.ts",
+          "sha256": "b5667a5abc7685300c62260bc2386729ce6de014589c59c1dc073176d0f98eba",
+          "mutants": 175
+        },
+        {
+          "path": "backend/services/loanMath.ts",
+          "sha256": "7fbbfa3c30cf9aca1949a3d12ced412a2e460225e4107270eb69fd0bf6d148f4",
+          "mutants": 12
+        },
+        {
+          "path": "backend/services/nicaTax.ts",
+          "sha256": "b825c29ec8aa7446b2a01854b0651388dbe1b590bf6885eb118b73b0ca37c870",
+          "mutants": 7
+        },
+        {
+          "path": "backend/services/pedidoTrackingService.ts",
+          "sha256": "e16cb2c5646c85f588eb74728b558507b774ac7993c26d432508edcc3946f7bf",
+          "mutants": 5
+        },
+        {
+          "path": "backend/services/productBulkEditPrice.ts",
+          "sha256": "3d00bba6d6af72b2167a6087c7448d24798b0c7b777848d6f2934c8247c07daf",
+          "mutants": 5
+        },
+        {
+          "path": "backend/services/promotions/totals.ts",
+          "sha256": "189ef4049917a4673b062e90fab694da1529ea5ca3f7b6bd4c860c15f29b4670",
+          "mutants": 5
+        },
+        {
+          "path": "backend/services/purchaseRegistrationAuthority.ts",
+          "sha256": "2f747fe783579f65a7bf8cc2dc9ce05114a4d1ecc0627f277cb3698e4699071e",
+          "mutants": 26
+        },
+        {
+          "path": "backend/services/returnService.ts",
+          "sha256": "53fff695852b994918b90ece92125b4dae8e2cfec2a77b312357e19358d8cc58",
+          "mutants": 260
+        },
+        {
+          "path": "backend/services/saleCancellation.ts",
+          "sha256": "8cdd123426d852abea280cafd9bdacc37e2f2ee731deedb3bc40ddb4f24b8336",
+          "mutants": 73
+        },
+        {
+          "path": "backend/services/sellerReport.ts",
+          "sha256": "e891f79959537da44a925353638a103cc718f2064a8beedf5a44a2cdf3acc845",
+          "mutants": 59
+        },
+        {
+          "path": "backend/services/shiftCloseService.ts",
+          "sha256": "92b481dc12c28806d8d2bd98998f24e1b5f92ae6f25867217ebe28bcae740fab",
+          "mutants": 9
+        },
+        {
+          "path": "backend/services/shiftIdentity.ts",
+          "sha256": "e5b0be271a8d988ade285c85b4b220d64bf4e3e6acc3fd51962664de12419682",
+          "mutants": 68
+        },
+        {
+          "path": "backend/services/stockService.ts",
+          "sha256": "649368f790b12c60835aed05ba917e2be53ddf7d960ae9b9c8d87266500c7e7a",
+          "mutants": 5
+        },
+        {
+          "path": "backend/services/stripe.ts",
+          "sha256": "892c2b06e55925fc2e8d6d16e9c9bc36c90e61c7ca9adb646761d6eb2b52bc70",
+          "mutants": 13
+        },
+        {
+          "path": "backend/validation/schemas.ts",
+          "sha256": "682956bd42d17dcf1c4ccaac4fc6acf521ca30cce40264240ef86aacd7573af6",
+          "mutants": 8
+        },
+        {
+          "path": "utils/calc-laborales.ts",
+          "sha256": "905f0df917fe8008c3c2a89fcf3ca739ff107f32fd7f4bc402d9ca92420c9231",
+          "mutants": 88
+        },
+        {
+          "path": "utils/cartPersistence.ts",
+          "sha256": "02ab77fb1cc0c7648677d40cf11b56b658d2fc2ea073704d33efd8df3567977b",
+          "mutants": 337
+        },
+        {
+          "path": "utils/fiscalRegime.ts",
+          "sha256": "b9dbb4a61dc4f4bc45be1994a9ed407f69ef28051f91f24fc4b5d32f82f8a437",
+          "mutants": 73
+        },
+        {
+          "path": "utils/margen.ts",
+          "sha256": "372374f1457534265e9dfcc0f6cdf76cea9a6895d3901e77503e020c868a0ee3",
+          "mutants": 70
+        },
+        {
+          "path": "utils/measuredReportExport.ts",
+          "sha256": "f35ce43910567fd09f67feabbb07f40751012a96dc67cc8d80ca5af77a67e024",
+          "mutants": 3
+        },
+        {
+          "path": "utils/money.ts",
+          "sha256": "70bce75ec9bae14f7a9423add66e2cecfd02a4616579a5f1c3930da28d64463c",
+          "mutants": 60
+        },
+        {
+          "path": "utils/posActivation.ts",
+          "sha256": "66d861f595e84219b548a7ab8d77efebeb0e00571c421a62fa6684b3b7804adc",
+          "mutants": 223
+        },
+        {
+          "path": "utils/posCash.ts",
+          "sha256": "d1f9b46436c791903d4cc3985538def5ef2b702b435d7044fea1987983b289bf",
+          "mutants": 99
+        },
+        {
+          "path": "utils/posSearch.ts",
+          "sha256": "1d2b0433e8d9d947a1663534b457df6436428fd38763d52888de239674e6e1ef",
+          "mutants": 103
+        },
+        {
+          "path": "utils/postSalePrintCash.ts",
+          "sha256": "6a90c26920b44b6aaea40ebee61fbe6c301c8955cba746cf0ee57adb6616ba82",
+          "mutants": 23
+        },
+        {
+          "path": "utils/pricing.ts",
+          "sha256": "fc0794bd6d5747bc9b96033a5c93e01daf9325cb8ba135db70a6c9a9ac5a7bfb",
+          "mutants": 51
+        },
+        {
+          "path": "utils/productFamilyPresets.ts",
+          "sha256": "5409b52ea1d4dd4485d68000be94bac748ac21644e5a7dcbb657753f4d3a6855",
+          "mutants": 45
+        },
+        {
+          "path": "utils/purchasePackaging.ts",
+          "sha256": "a2baf4fabe8da80dc77bf8e2fd16a189016003fbcd629d4f4fc8d4438d71c3dc",
+          "mutants": 117
+        },
+        {
+          "path": "utils/quantity.ts",
+          "sha256": "340aee6e2dc177fe94806eddfa6fe20bce90ce75063bf74411e524c88f1d40dd",
+          "mutants": 257
+        },
+        {
+          "path": "utils/scaleLabels.ts",
+          "sha256": "e046ce3ba38fbb5b9c25ce02ba72567cb4fa6d4cb1787120fc0d7b4b15cfe15a",
+          "mutants": 370
+        },
+        {
+          "path": "utils/stockAlert.ts",
+          "sha256": "b6fd9e6fa446e28d113e00337eb653e611622fc712274f8888d320a83a0bd96f",
+          "mutants": 110
+        },
+        {
+          "path": "utils/stockTransferQuantity.ts",
+          "sha256": "a0090ac4e2c962ab5eb84f22c325ef934d4b7ccab96c8ea2da7089a015b038d7",
+          "mutants": 18
+        },
+        {
+          "path": "backend/services/promotions/pricing.ts",
+          "sha256": "9f84a28fc7018143fdff27e26bdf56df589fd6c2e8b2c47c5c92d9334ff3eb2b",
+          "mutants": 1
+        }
+      ]
+    },
+    "migrationAndRestore": {
+      "passed": true,
+      "upgrade": true,
+      "schemaMatches": true,
+      "oldSalePreserved": true,
+      "oldPurchasePreserved": true,
+      "restore": true,
+      "privateAttachment": true,
+      "newTables": 15,
+      "cleanupComplete": true,
+      "cleanupFailures": []
+    },
+    "corpus": {
+      "passed": 120,
+      "failed": 0,
+      "humanReview": "PENDING",
+      "reservedRealQueries": 60,
+      "pilotTasks": 60,
+      "preexistingInvoices": 100
+    }
+  },
+  "logs": [
+    {
+      "path": "reports/operational-prisma-validate-final.log",
+      "sha256": "90583799a8ea8e4709943e438b724fa5163329fd98e9248e31f58a9bbc3f5bc1"
+    },
+    {
+      "path": "reports/schema-final-generate.log",
+      "sha256": "28c07996f3d9453be8c41c4e524fb04268b739e3aebe88204ff97ac712c82fcc"
+    },
+    {
+      "path": "reports/operational-types-final.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "reports/operational-design-final.log",
+      "sha256": "ee76e9bef9faa2470b781d328598c295c9ceeb5f3d40e6e7b808e4fc171075c3"
+    },
+    {
+      "path": "reports/operational-build-final.log",
+      "sha256": "0b6b59847733a27bcfa3ad17e9abe4e717f5d88dce00c3bef8d9e599b19a3877"
+    },
+    {
+      "path": "reports/operational-full-vitest-final.log",
+      "sha256": "67da61f6dea5be81311574b9b3d9d1d8c4697e1c4c13c6558fb6a394ebce32cf"
+    },
+    {
+      "path": "reports/operational-required-final.log",
+      "sha256": "032afa8a00ba23d62cec0e225f5aef3b0f4f1609cdada742ff747b06769e6cee"
+    },
+    {
+      "path": "reports/operational-mutation-final.log",
+      "sha256": "10219242c3c0bb954b01ac5d6be979a6f4aae14036146b9cb4c93a7e761c6f4b"
+    }
+  ],
+  "limits": [
+    "General-suite skipped tests are not approvals; required MySQL accepts no omissions.",
+    "Mutation files were verified unchanged after the final inventory/UI adjustments.",
+    "Browser evidence is synthetic/emulated; final row warnings have semantic-render evidence.",
+    "History age is not proof of imported-data completeness or predictive accuracy.",
+    "No deployed application, production database, external messages or paid AI calls were used."
+  ],
+  "integration": {
+    "completedAt": "2026-09-08T02:33:47.134763+00:00",
+    "files": 178,
+    "baselineFilesChecked": 1113,
+    "unrelatedChangesPreserved": true,
+    "branchChanged": false,
+    "gitDiffCheckExitCode": 0,
+    "typescriptInOriginalExitCode": 0,
+    "prismaClientInOriginalGenerated": true,
+    "productionDatabaseTouched": false,
+    "postTestFormattingOnly": [
+      "backend/server.ts: removed trailing whitespace on two lines"
+    ]
+  }
+}

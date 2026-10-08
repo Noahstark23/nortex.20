@@ -1,0 +1,162 @@
+{
+  "checkedAt": "2026-09-08T21:56:24.360672+00:00",
+  "kind": "read_only_code_review",
+  "branch": "codex/caja-nica-retention",
+  "baseCommit": "d326c589a756db7977d14c94a625b6c895cb3313",
+  "dirtyCandidate": true,
+  "newProductTestsRun": false,
+  "paidCalls": 0,
+  "deployed": false,
+  "files": [
+    {
+      "path": "backend/services/assistant/knowledge.ts",
+      "sha256": "bb3be11b573aa6811669d810724d4ca2600157e34aed54400a0ee621304d338b",
+      "lines": 74
+    },
+    {
+      "path": "backend/services/assistant/access.ts",
+      "sha256": "c90a8ca59d9324c607e76c68caf81ee57affda026c36c0e62fda27b822f500e9",
+      "lines": 89
+    },
+    {
+      "path": "backend/services/assistant/conversations.ts",
+      "sha256": "b346e93b6c266c52e61fc4d9b203565e242b74fe29e911cc1bc93c98a1561c87",
+      "lines": 263
+    },
+    {
+      "path": "backend/services/assistant/budget.ts",
+      "sha256": "6ee979be94bbbf9943a42aae62e2c7a1b3dd89499b677c23353efb91ee305dc5",
+      "lines": 86
+    },
+    {
+      "path": "backend/services/assistant/operations/tools.ts",
+      "sha256": "573a2f17f60c779170c42df2b1a38acbe329bbe017ea0c10fb4e61513a6b92f1",
+      "lines": 50
+    },
+    {
+      "path": "backend/services/assistant/operations/orchestrator.ts",
+      "sha256": "354bd2fa9bba5b0333eaa06af3541fcf2226775246a1e21ee1afafd59ffe6352",
+      "lines": 138
+    },
+    {
+      "path": "backend/services/assistant/operations/runService.ts",
+      "sha256": "0b556490489bc0b621aa202079db2465442bd026a9f89c500816b946f15e8757",
+      "lines": 148
+    },
+    {
+      "path": "backend/services/assistant/operations/catalogSearch.ts",
+      "sha256": "841b7836c69f4e80afc42633f4c283ccf36400ad051ebfbaef8b5ae6c73fe990",
+      "lines": 109
+    },
+    {
+      "path": "backend/services/assistant/operations/healthStatus.ts",
+      "sha256": "9006e0f0753eb4f293b28a7d73f981ac6c672758b51e8ffe8421fa37bd5105ab",
+      "lines": 115
+    },
+    {
+      "path": "backend/services/whatsapp/brain.claude.ts",
+      "sha256": "03c9cec0d71f3076e2897383535b8950b62ee5b8846d9018bbeb89b77515caa0",
+      "lines": 105
+    },
+    {
+      "path": "backend/services/whatsapp/webhook.ts",
+      "sha256": "1b4c2a3ea3bdb47a96780b44b8588ddb8b0340eba96f77b9cdf869abca95bd24",
+      "lines": 101
+    },
+    {
+      "path": "backend/services/whatsapp/queue.ts",
+      "sha256": "498b414d65a8e3f7e2e5d92088a714a6fa1ae8a2c50678477543f979277f600d",
+      "lines": 64
+    },
+    {
+      "path": "backend/services/whatsapp/inbound.ts",
+      "sha256": "f96331e85d1b326b5fc6374caa17eae6fdfde277ae8369534d39e44627730090",
+      "lines": 136
+    },
+    {
+      "path": "backend/services/whatsapp/rag.ts",
+      "sha256": "5e2659445c47b87ed7b9a09cffa6c9742dc80f7a9160050366f2499469107c33",
+      "lines": 158
+    },
+    {
+      "path": "backend/services/whatsapp/tools.ts",
+      "sha256": "8f871405d31d32828e8d61009ea0312744eec3221c8770a9f5ac803fceded4f0",
+      "lines": 105
+    },
+    {
+      "path": "backend/routes/assistantPrivateWhatsapp.ts",
+      "sha256": "7d7e1328c0dc84157002418879ac1ec9c6d387e16afb38429ed7fbe06d3410f8",
+      "lines": 41
+    },
+    {
+      "path": "backend/routes/hr.ts",
+      "sha256": "6c3368c765f71fdbee3fa145e3270b6a8dea63333b7789e7ee54a6f2447691fe",
+      "lines": 777
+    },
+    {
+      "path": "backend/routes/serials.ts",
+      "sha256": "988ca1602a7ec3c5c81f4640c6dc19316fc794e27ba27547a8f09c0bb7d182dd",
+      "lines": 177
+    },
+    {
+      "path": "backend/routes/agentBanking.ts",
+      "sha256": "637f148240063912ec91d8f9205f7548cc70dbf643aedd07d553bf9dae81ba53",
+      "lines": 873
+    },
+    {
+      "path": "backend/lib/prisma.ts",
+      "sha256": "103e16efadf3cfba99d42baefa7a8d1cff7e584446aa7b5a04b0e472f22bf181",
+      "lines": 22
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "cbdf23a99dd6af1945eeb6da900483aae9a587726740dac73ff804f4db0e6531",
+      "lines": 3637
+    },
+    {
+      "path": "backend/server.ts",
+      "sha256": "1fc2aaf82c532776244f396c2579700548c33bdeb6cfa1c02660cff9bcbd474b",
+      "lines": 14266
+    },
+    {
+      "path": "components/POS.tsx",
+      "sha256": "485e1637c424a9c149e5b62ae6b8078b02e1849d85e110ee2165be3f78b90cff",
+      "lines": 6892
+    },
+    {
+      "path": "components/assistant/AssistantOperationalEvidence.tsx",
+      "sha256": "b0c1763b23aa7be31cbbf70f7234af91b7b2d5d9ac0a032c83c1cc0faa4551f4",
+      "lines": 61
+    },
+    {
+      "path": "shared/assistant.ts",
+      "sha256": "807fd8a5db8fbd94c34233b9c15b49a9c05ad19c7332045b1ab31e636ad9badf",
+      "lines": 55
+    },
+    {
+      "path": "docker-compose.yml",
+      "sha256": "ed99376e9f6608f3ab5aec010850e4858461787a5f09c3ff735fd67ed63d9021",
+      "lines": 118
+    },
+    {
+      "path": "scripts/docker-entrypoint.sh",
+      "sha256": "148e44c6cd059ae8c82651de8c7e62d70edca10f83d2bbef4908aba0e14f725e",
+      "lines": 131
+    },
+    {
+      "path": "scripts/backup-db.sh",
+      "sha256": "e8e58f0395ac7729fa322dd1a4f5908995a0915155df1f0d902737a8a2277e57",
+      "lines": 156
+    },
+    {
+      "path": "scripts/verify-backup-restore.sh",
+      "sha256": "5d6c1b89cdcb7b406d44990fb0f082225a3566febaa70bdc798fe11fff758d4c",
+      "lines": 115
+    },
+    {
+      "path": "tests/assistantKnowledge.test.ts",
+      "sha256": "1231b16132e9257850835223c162579ea68b8bfcabe4c428240d2aa68d1c5ab0",
+      "lines": 48
+    }
+  ]
+}

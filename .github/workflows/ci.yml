@@ -1,0 +1,392 @@
+# NORTEX — CI: tipos + tests + build y smoke del upgrade de schema con MySQL 8.
+# El job verify conserva lógica pura; deploy-schema-smoke reproduce una BD
+# poblada anterior a PR #158 y exige upgrade/idempotencia/fallo cerrado reales.
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Reejecuta únicamente las verificaciones. Un dispatch de CI no puede tocar
+  # staging ni producción: las promociones tienen flujos y contratos propios.
+  workflow_dispatch:
+
+# CI solo lee el repositorio. Declararlo evita heredar un GITHUB_TOKEN más
+# amplio de una configuración de organización o repositorio.
+permissions:
+  contents: read
+
+# Un push nuevo invalida una verificación anterior del mismo ref. La promoción
+# de producción tiene concurrencia independiente y nunca nace desde este flujo.
+concurrency:
+  group: nortex-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: npm
+      - run: npm ci
+      - name: Auditoría de dependencias de producción
+        run: npm audit --omit=dev --audit-level=moderate
+      - name: Prisma generate (URL dummy — solo tipos)
+        run: DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+      - name: Typecheck
+        run: npx --no-install tsc --noEmit
+      - name: Tests (vitest)
+        run: npm test
+
+      # Sistema de diseño: cero hex fuera de los tokens, cero símbolo de moneda
+      # escrito a mano, solo los 3 radios, nada flotante sobre la zona de cobro.
+      # Sin este chequeo el rediseño se deshace solo, un "#8B5CF6 nada más para
+      # este badge" a la vez.
+      - name: Sistema de diseño
+        run: npm run check:design
+
+      # Mutación se solicita de forma explícita para cambios de lógica monetaria
+      # pura. El scope actual contiene 5,694 mutantes y tarda horas: ejecutarlo
+      # en cada cambio visual/documental haría que CI deje de ser una compuerta
+      # útil. Un push o PR jamás puede activarlo por accidente.
+      - name: Mutación (Stryker — módulos de dinero)
+        if: github.event_name == 'workflow_dispatch' && vars.NORTEX_CI_MUTATION == 'true'
+        run: npm run test:mutation
+
+      # Si el score cae, el reporte HTML dice QUÉ mutante sobrevivió y dónde.
+      # Sin esto muere con el runner y hay que reproducir a ciegas en local.
+      - name: Reporte de mutación (si falla)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutation-report
+          path: reports/mutation/
+          retention-days: 7
+      - name: Build frontend y SEO
+        run: npm run build:seo
+      - name: Sellar el paquete real del candidato
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          node --input-type=module -e 'import { writeFileSync } from "node:fs"; writeFileSync(".nortex-build-source.json", JSON.stringify({ version: 1, commit: process.env.BUILD_COMMIT }));'
+          node scripts/nortex-seal-image.mjs
+      - name: Arranque de la imagen candidata y ensayo de migración sin datos reales
+        run: python3 scripts/qa/release-runtime.py --evidence "$RUNNER_TEMP/nortex-runtime-evidence"
+      - name: Evidencia del arranque real del candidato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-runtime
+          path: ${{ runner.temp }}/nortex-runtime-evidence/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  deploy-schema-smoke:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: nortex_deploy_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: npm
+      - run: npm ci
+      - name: Prisma generate
+        run: DATABASE_URL="$DATABASE_URL" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
+      - name: Preparar schema anterior a PR 158
+        run: git show afe5ca71aa74f458950acd52b504ecd2701e5a56:backend/prisma/schema.prisma > "$RUNNER_TEMP/schema-before-pr158.prisma"
+      - name: Smoke de upgrade con MySQL 8 y datos existentes
+        run: scripts/test-deploy-schema-upgrade.sh
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
+          LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
+          NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
+
+      # db push no ejecuta los SQL versionados. Verificar también su equivalencia
+      # completa y la recuperación desde estados parciales en otra BD efímera.
+      - name: Presupuesto y espejo SQL del asistente con MySQL 8
+        run: node scripts/qa/test-assistant-budget-upgrade.mjs
+
+      - name: Evidencia del upgrade del asistente
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-budget-upgrade
+          path: reports/assistant-budget-upgrade/
+          retention-days: 7
+
+  # ── DGI-4 · El backup se PRUEBA, no se supone ────────────────────────────────
+  # "Un backup no probado no existe": este job genera un dump real contra MySQL 8,
+  # lo restaura en una base desechable y exige que tablas, conteos y acentos
+  # coincidan con el origen. Incluye el caso NEGATIVO (un dump truncado debe ser
+  # rechazado): sin él, la verificación podría estar pasando por vacía.
+  backup-restore-smoke:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: nortex_backup_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      # La contraseña es HOSTIL a propósito: `p#a"ss w@rd` (percent-encoded en la
+      # URL, como exige Prisma). Con `root:root` este job pasaba aunque el option
+      # file [client] estuviera mal armado, porque ninguna de esas ocho letras
+      # toca un caso límite del parser de MySQL. Cada carácter de acá cubre un
+      # bug que YA ocurrió o que estaba latente:
+      #   `#`  → MySQL lo trata como comienzo de comentario: sin comillas, la
+      #          contraseña llegaba TRUNCADA y el backup moría todas las noches.
+      #   `"`  → hay que escaparlo dentro del valor citado. Es el único caso que
+      #          no se podía verificar sin un MySQL de verdad; ahora el CI lo
+      #          prueba en cada corrida.
+      #   ` `  → sin comillas MySQL RECORTA los espacios del borde.
+      #   `@`  → el parseo de la URL cortaba por el PRIMER `@` y dejaba el host
+      #          en basura.
+      SOURCE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_test
+      RESTORE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_restore_test
+      BACKUP_DIR: ${{ github.workspace }}/tmp-backups
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.2
+          cache: npm
+      - run: npm ci
+
+      - name: Cliente MySQL (mysqldump + mysql)
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mysql-client
+
+      # El usuario con el que corre el respaldo. Se crea acá y no en el servicio
+      # porque la contraseña hostil rompería el `health-cmd` del contenedor, que
+      # es una sola línea sin forma cómoda de citarla. El heredoc va con `'SQL'`
+      # entre comillas: así bash NO expande nada y el `#`, el `"` y el espacio
+      # llegan literales a MySQL.
+      - name: Usuario de respaldo con contraseña hostil
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot <<'SQL'
+          CREATE USER 'respaldo'@'%' IDENTIFIED BY 'p#a"ss w@rd';
+          GRANT ALL PRIVILEGES ON *.* TO 'respaldo'@'%' WITH GRANT OPTION;
+          FLUSH PRIVILEGES;
+          SQL
+
+      - name: Crear el schema real en la BD de origen
+        run: |
+          npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+
+      # Tabla de control: prueba que viajan los DATOS (no solo el DDL) y que el
+      # utf8mb4 sobrevive. Un dump con charset mal puesto restaura conteos
+      # idénticos pero con los acentos rotos — y eso no se nota hasta que un
+      # cliente ve su razón social destrozada.
+      - name: Sembrar filas de control
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot nortex_backup_test -e "
+            CREATE TABLE _backup_smoke (id INT PRIMARY KEY, nota VARCHAR(64)) DEFAULT CHARSET=utf8mb4;
+            INSERT INTO _backup_smoke VALUES (1,'fila uno'),(2,'fila dos'),(3,'acentos: ñandú áéíóú');"
+
+      - name: Generar el backup (modo local, sin subir)
+        run: bash scripts/backup-db.sh
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          BACKUP_LOCAL_ONLY: '1'
+
+      - name: El latido de evidencia quedó escrito
+        run: |
+          test -f "$BACKUP_DIR/last-backup.json" || { echo "::error::No se escribió last-backup.json"; exit 1; }
+          cat "$BACKUP_DIR/last-backup.json"
+          node -e "const h=require('$BACKUP_DIR/last-backup.json'); if(!h.verificado||h.tablas<10||h.bytes<1024) throw new Error('latido inconsistente: '+JSON.stringify(h));"
+
+      - name: Restaurar y comparar contra el origen
+        run: bash scripts/verify-backup-restore.sh "$(ls -t "$BACKUP_DIR"/nortex-*.sql.gz | head -1)"
+
+      - name: Los acentos sobrevivieron al viaje
+        run: |
+          OBTENIDO="$(mysql -h 127.0.0.1 -P 3306 -uroot -proot -N -B \
+            -e "SELECT nota FROM nortex_backup_restore_test._backup_smoke WHERE id=3;")"
+          ESPERADO='acentos: ñandú áéíóú'
+          test "$OBTENIDO" = "$ESPERADO" || { echo "::error::utf8 corrupto tras restaurar: '$OBTENIDO' != '$ESPERADO'"; exit 1; }
+          echo "✓ $OBTENIDO"
+
+      - name: Sembrar un original permanente sintético para el respaldo conjunto
+        run: |
+          mkdir -m 700 "$NORTEX_ASSISTANT_STORAGE_DIR"
+          node --import tsx scripts/qa/seed-assistant-backup-ci.ts
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          NORTEX_QA_DATABASE_ACK: disposable-database
+          NORTEX_ASSISTANT_STORAGE_DIR: ${{ runner.temp }}/assistant-source-originals
+
+      - name: Generar respaldo conjunto local de SQL y original
+        run: bash scripts/backup-db.sh
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          BACKUP_DIR: ${{ runner.temp }}/assistant-backups
+          BACKUP_LOCAL_ONLY: '1'
+          BACKUP_ASSISTANT_ORIGINALS_ENABLED: 'true'
+          ASSISTANT_ORIGINALS_DIR: ${{ runner.temp }}/assistant-source-originals
+
+      - name: Restaurar SQL y original en un destino descartable
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const dir = process.env.BACKUP_DIR;
+          const h = JSON.parse(fs.readFileSync(path.join(dir, 'last-backup.json'), 'utf8'));
+          const check = (name, expected) => {
+            if (path.basename(name) !== name) throw new Error('nombre de archivo inseguro');
+            const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, name))).digest('hex');
+            if (actual !== expected) throw new Error('hash de respaldo distinto');
+          };
+          if (!h.verificado || h.assistantOriginals?.count !== 1) throw new Error('latido conjunto incompleto');
+          check(h.archivo, h.sha256);
+          check(h.assistantOriginals.archivo, h.assistantOriginals.sha256);
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'assistant-backup-names'), `${h.archivo}\n${h.assistantOriginals.archivo}\n`, { mode: 0o600 });
+          NODE
+          mapfile -t BACKUP_NAMES < "$RUNNER_TEMP/assistant-backup-names"
+          ASSISTANT_DUMP="$BACKUP_DIR/${BACKUP_NAMES[0]}"
+          ASSISTANT_ARCHIVE="$BACKUP_DIR/${BACKUP_NAMES[1]}"
+          bash scripts/verify-backup-restore.sh "$ASSISTANT_DUMP"
+          mkdir -m 700 "$NORTEX_ASSISTANT_STORAGE_DIR"
+          tar -xf "$ASSISTANT_ARCHIVE" -C "$NORTEX_ASSISTANT_STORAGE_DIR" --strip-components=1 files
+          node --import tsx scripts/qa/verify-assistant-originals-restore.ts > "$RUNNER_TEMP/assistant-restore-result.json"
+          node -e "const r=require(process.env.RUNNER_TEMP+'/assistant-restore-result.json'); if(r.status!=='ok'||r.checked!==1||r.proposalReferencesChecked!==1||r.brokenProposalReferences!==0) throw new Error('restauración conjunta incompleta');"
+          echo '✓ SQL, original y referencia de propuesta restaurados.'
+        env:
+          BACKUP_DIR: ${{ runner.temp }}/assistant-backups
+          RESTORE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_restore_assistant_test
+          NORTEX_ASSISTANT_STORAGE_DIR: ${{ runner.temp }}/assistant-restored-originals
+
+      # Caso NEGATIVO: la verificación tiene que RECHAZAR un dump cortado. Si
+      # este paso "pasara", el chequeo de integridad no estaría chequeando nada.
+      - name: Un dump truncado debe ser rechazado
+        run: |
+          BUENO="$(ls -t "$BACKUP_DIR"/nortex-*.sql.gz | head -1)"
+          gzip -cd "$BUENO" | head -c 20000 | gzip > "$RUNNER_TEMP/truncado.sql.gz"
+          if bash scripts/verify-dump-file.sh "$RUNNER_TEMP/truncado.sql.gz"; then
+            echo "::error::La verificación aceptó un dump truncado"; exit 1
+          fi
+          : > "$RUNNER_TEMP/vacio.sql.gz"
+          if bash scripts/verify-dump-file.sh "$RUNNER_TEMP/vacio.sql.gz"; then
+            echo "::error::La verificación aceptó un dump vacío"; exit 1
+          fi
+          echo "✓ Dumps truncado y vacío rechazados."
+
+      # El servicio `backup` del compose tiene que CONSTRUIR. Un Dockerfile roto
+      # se descubriría en el deploy, con la app ya desplegada y sin respaldo.
+      - name: La imagen del servicio de backup construye
+        run: docker build -f Dockerfile.backup -t nortex-backup:ci .
+
+      # Se EJECUTAN, no solo se busca el binario: un `COPY --from` con la ruta
+      # equivocada deja un symlink colgante que `command -v` no distingue de uno
+      # bueno, y el backup fallaría recién en producción al querer subir el dump.
+      - name: Las herramientas de la imagen realmente funcionan
+        run: |
+          docker run --rm --entrypoint bash nortex-backup:ci -lc \
+            'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
+
+      # El mismo MySQL 8 sirve para comprobar el control del piloto en una BD
+      # nueva; no se mezcla con el origen ni el destino del restore de backup.
+      - name: Schema descartable del piloto
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \
+            'CREATE DATABASE nortex_quality_pilot CHARACTER SET utf8mb4;'
+          npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+      - name: Identidad, límite, auditoría y revocación entre dos negocios
+        run: node --import tsx scripts/qa/test-nortexgpt-pilot.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          NORTEX_QA_DATABASE_ACK: disposable-database
+      - name: Panel del piloto limitado a dos identidades
+        run: node --import tsx scripts/qa/test-nortexgpt-pilot-admin.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          NORTEX_QA_DATABASE_ACK: disposable-database
+      - name: Schema editorial descartable e independiente
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \
+            'CREATE DATABASE nortex_quality_help CHARACTER SET utf8mb4;'
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_help
+      - name: Borrador editorial exacto y visibilidad de fuentes en MySQL QA
+        run: node --import tsx scripts/qa/test-nortexgpt-help-release.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_help
+          NORTEX_QA_DATABASE_ACK: disposable-database
+
+  # Esta compuerta arranca su propia base MySQL 8 efímera y backend loopback.
+  # La imagen se obtiene únicamente en CI; el script local falla cerrado si no
+  # fue obtenida de forma explícita por la persona que ejecuta la verificación.
+  integration-required:
+    name: integration-required
+    needs: [verify]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: jdx/mise-action@v4
+      - run: npm ci
+      - name: Preparar MySQL 8 solo para la compuerta CI
+        run: docker pull mysql:8.0
+      - name: Integración obligatoria de dinero e inventario
+        run: npm run test:integration:required
+
+  app-image-amd64:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Preparar ruta efímera del ensayo
+        run: echo "NORTEX_IMAGE_QA_ROOT=$RUNNER_TEMP/nortex-credit-image-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Dockerfile real, SHAs exactos y MySQL efímero en AMD64 nativo
+        run: python3 scripts/qa/credit-image/prepare-ci.py
+      - name: CMD real, health por SHA y recuperación sintética C-B-C
+        run: python3 scripts/qa/credit-image/runtime-check.py
+      - name: Evidencia de imágenes y runtime AMD64
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: credit-app-image-amd64
+          path: ${{ env.NORTEX_IMAGE_QA_ROOT }}/evidence/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Limpiar sólo los recursos sintéticos de este intento
+        if: always()
+        run: python3 scripts/qa/credit-image/prepare-ci.py cleanup

@@ -1,8 +1,14 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-    Zap, Loader2, AlertTriangle, ShoppingCart, Check, RefreshCw, Truck, Package, X, TrendingDown
+    Zap, Loader2, AlertTriangle, ShoppingCart, Check, RefreshCw, Truck, X
 } from 'lucide-react';
-import { sanitizeDecimalInput } from '../utils/money';
+import Decimal from 'decimal.js';
+import { bodegaReceivingAttempt, readBodegaReceivingDraft, writeBodegaReceivingDraft, type BodegaReceivingAttempt } from '../utils/bodegaReceivingDraft';
+import { formatMoney } from '../utils/money';
+import { BODEGA_DECIMAL_HINT, normalizeBodegaDecimalInput, parseBodegaDecimalInput } from '../utils/bodegaReceivingInput';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { purchaseOrderRulesForProduct } from '../utils/purchaseOrderQuantities';
+import { ToastViewport, useToast } from './ui/Toast';
 
 // ==========================================
 // TYPES
@@ -14,6 +20,8 @@ interface ReorderItem {
     sku: string;
     category: string | null;
     currentStock: number;
+    incomingQuantity?: string | number;
+    projectedStock?: string | number;
     reorderPoint: number;
     maxStock: number;
     cost: number;
@@ -22,15 +30,37 @@ interface ReorderItem {
     vpd: number;
     daysRemaining: number | null;
     reason: 'BOTH' | 'REORDER_POINT' | 'VELOCITY';
-    suggestedQty: number;
+    suggestedQty: string | number;
     suggestedCost: number;
+    unit: string;
+    saleMode: string | null;
+    quantityStep: string | number | null;
 }
 
 interface Supplier { id: string; name: string; }
 
-interface RowEdit { selected: boolean; qty: string; cost: string; supplierId: string; }
+type EditableValue = 'qty' | 'cost' | 'supplierId';
+interface RowEdit { selected: boolean; qty: string; cost: string; supplierId: string; dirty?: Partial<Record<EditableValue, boolean>>; }
 
-const formatCurrency = (n: number) => `C$ ${n.toLocaleString('es-NI', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const formatCurrency = (n: number) => formatMoney(n);
+
+const decimalOrZero = (value: string | number): Decimal => {
+    try {
+        const parsed = parseBodegaDecimalInput(value);
+        return parsed.isFinite() ? parsed : new Decimal(0);
+    } catch {
+        return new Decimal(0);
+    }
+};
+
+const validReorderQuantity = (item: ReorderItem, value: string): boolean => {
+    try {
+        validateQuantity(parseBodegaDecimalInput(value).toString(), purchaseOrderRulesForProduct(item));
+        return true;
+    } catch {
+        return false;
+    }
+};
 
 const REASON_META: Record<string, { label: string; color: string }> = {
     BOTH: { label: 'Reorden + Rotación', color: 'bg-red-900/50 text-red-300 border-red-700' },
@@ -39,27 +69,46 @@ const REASON_META: Record<string, { label: string; color: string }> = {
 };
 
 export default function SmartPurchases() {
+    const [initialDraft] = useState(() => readBodegaReceivingDraft<{ edits: Record<string, RowEdit>; attempts: Record<string, BodegaReceivingAttempt> }>('reorder'));
+    const attempts = useRef<Record<string, BodegaReceivingAttempt>>(initialDraft?.attempts ?? {});
     const [items, setItems] = useState<ReorderItem[]>([]);
-    const [edits, setEdits] = useState<Record<string, RowEdit>>({});
+    const [edits, setEdits] = useState<Record<string, RowEdit>>(initialDraft?.edits ?? {});
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
     const [loading, setLoading] = useState(true);
-    const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'CREDIT'>('CREDIT');
+    const [page, setPage] = useState(1);
+    const [totalSuggestions, setTotalSuggestions] = useState(0);
+    const [hasMore, setHasMore] = useState(false);
+    const requestSequence = useRef(0);
+    const [loadError, setLoadError] = useState('');
+    useEffect(() => { writeBodegaReceivingDraft('reorder', { edits, attempts: attempts.current }); }, [edits]);
     const [showConfirm, setShowConfirm] = useState(false);
     const [generating, setGenerating] = useState(false);
+    const generationInFlight = useRef(false);
+    const { toast, showToast, dismissToast } = useToast();
 
     const token = localStorage.getItem('nortex_token');
     const headers = useMemo(() => ({ 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` }), [token]);
 
     const fetchReorder = useCallback(async () => {
+        const requestId = ++requestSequence.current;
         setLoading(true);
+        setLoadError('');
+        const controller = new AbortController();
+        const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
         try {
             const [r1, r2] = await Promise.all([
-                fetch('/api/inventory/reorder', { headers }),
-                fetch('/api/suppliers', { headers }),
+                fetch(`/api/inventory/reorder?page=${page}&pageSize=100`, { headers, signal: controller.signal }),
+                fetch('/api/suppliers', { headers, signal: controller.signal }),
             ]);
+            if (requestId !== requestSequence.current) return;
             if (r1.ok) {
                 const data = await r1.json();
+                if (requestId !== requestSequence.current) return;
                 const list: ReorderItem[] = data.items || [];
+                const total = Number.isFinite(data.total) ? data.total : list.length;
+                setTotalSuggestions(total);
+                setHasMore(Boolean(data.hasMore));
+                if (list.length === 0 && page > 1) { setPage(Math.max(1, Math.ceil(total / 100))); return; }
                 setItems(list);
                 const init: Record<string, RowEdit> = {};
                 for (const it of list) {
@@ -68,34 +117,87 @@ export default function SmartPurchases() {
                         qty: String(it.suggestedQty),
                         cost: String(it.cost),
                         supplierId: it.supplierId || '',
+                        dirty: {},
                     };
                 }
-                setEdits(init);
+                // Un cálculo nuevo actualiza valores automáticos. Un intento sin
+                // confirmar conserva su contenido para que el reintento sea idéntico.
+                const uncertainProducts = new Set<string>();
+                for (const attempt of Object.values<BodegaReceivingAttempt>(attempts.current)) {
+                    try {
+                        const payload = JSON.parse(attempt.payload);
+                        for (const row of payload.items ?? []) uncertainProducts.add(row.productId);
+                    } catch { /* Un borrador inválido no decide las sugerencias. */ }
+                }
+                setEdits(previous => {
+                    const next = { ...previous };
+                    for (const item of list) {
+                        const old = previous[item.productId];
+                        if (!old) { next[item.productId] = init[item.productId]; continue; }
+                        // Antes de registrar dirty no se distinguían cambios humanos:
+                        // conservamos esos borradores existentes por precaución.
+                        if (!old.dirty || uncertainProducts.has(item.productId)) continue;
+                        next[item.productId] = { ...old,
+                            qty: old.dirty.qty ? old.qty : init[item.productId].qty,
+                            cost: old.dirty.cost ? old.cost : init[item.productId].cost,
+                            supplierId: old.dirty.supplierId ? old.supplierId : init[item.productId].supplierId,
+                        };
+                    }
+                    return next;
+                });
             }
             if (r2.ok) setSuppliers(await r2.json());
-        } catch (e) {
+            if (!r1.ok || !r2.ok) {
+                setLoadError(!r1.ok ? 'No se pudo calcular qué productos reponer.' : 'No se pudieron cargar los proveedores.');
+                showToast({
+                    tone: 'warning',
+                    title: 'La reposición no está completa',
+                    message: !r1.ok ? 'No se pudo calcular qué productos reponer.' : 'No se pudieron cargar los proveedores.',
+                });
+            }
+        } catch (e: any) {
+            if (requestId !== requestSequence.current) return;
+            setLoadError('No pudimos cargar la reposición. Tus correcciones se conservan.');
             console.error('Error fetching reorder:', e);
+            showToast({
+                tone: 'error',
+                title: e?.name === 'AbortError' ? 'La carga tardó demasiado' : 'No pudimos calcular la reposición',
+                message: 'Revisá tu conexión e intentá de nuevo.',
+            });
         } finally {
-            setLoading(false);
+            window.clearTimeout(timeoutId);
+            if (requestId === requestSequence.current) setLoading(false);
         }
-    }, [headers]);
+    }, [headers, showToast, page]);
 
     useEffect(() => { fetchReorder(); }, [fetchReorder]);
 
-    const setEdit = (productId: string, patch: Partial<RowEdit>) =>
-        setEdits(prev => ({ ...prev, [productId]: { ...prev[productId], ...patch } }));
+    const setEdit = (productId: string, patch: Partial<RowEdit>) => {
+        if (generationInFlight.current) return;
+        setEdits(prev => {
+            const current = prev[productId];
+            const dirty = { ...(current.dirty ?? { qty: true, cost: true, supplierId: true }) };
+            for (const field of ['qty', 'cost', 'supplierId'] as const) {
+                if (patch[field] !== undefined && patch[field] !== current[field]) dirty[field] = true;
+            }
+            return { ...prev, [productId]: { ...current, ...patch, dirty } };
+        });
+    };
+
+    const closeConfirmation = () => {
+        if (!generationInFlight.current) setShowConfirm(false);
+    };
 
     // ==========================================
     // DERIVED
     // ==========================================
-    // Una fila marcada está LISTA para ordenar si tiene cantidad entera ≥ 1,
-    // costo > 0 y proveedor (POST /api/purchases exige int positivo y costo > 0).
+    // Una fila marcada está lista si respeta modo/paso (hasta 4 decimales),
+    // costo > 0 y proveedor. El servidor vuelve a validar todo con su Product.
     const rowReady = (it: ReorderItem) => {
         const e = edits[it.productId];
         if (!e || !e.selected) return false;
-        const q = parseInt(e.qty, 10);
-        const c = parseFloat(e.cost);
-        return q >= 1 && c > 0 && !!e.supplierId;
+        const c = decimalOrZero(e.cost);
+        return validReorderQuantity(it, e.qty) && c.greaterThan(0) && c.decimalPlaces() <= 6 && !!e.supplierId;
     };
 
     const checkedRows = useMemo(() => items.filter(it => edits[it.productId]?.selected), [items, edits]);
@@ -104,8 +206,8 @@ export default function SmartPurchases() {
 
     const totalSelected = useMemo(() => validRows.reduce((s, it) => {
         const e = edits[it.productId];
-        return s + (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
-    }, 0), [validRows, edits]);
+        return s.plus(decimalOrZero(e.qty).times(decimalOrZero(e.cost)));
+    }, new Decimal(0)).toNumber(), [validRows, edits]);
 
     // Agrupado por proveedor para el modal de confirmación (solo filas listas)
     const groups = useMemo(() => {
@@ -118,49 +220,74 @@ export default function SmartPurchases() {
                 map[sid] = { supplierId: sid, supplierName: sup?.name || it.supplierName || 'Proveedor', rows: [], total: 0 };
             }
             map[sid].rows.push(it);
-            map[sid].total += (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
+            map[sid].total = new Decimal(map[sid].total)
+                .plus(decimalOrZero(e.qty).times(decimalOrZero(e.cost)))
+                .toNumber();
         }
         return Object.values(map);
     }, [validRows, edits, suppliers]);
 
     // ==========================================
-    // GENERAR ÓRDENES → POST /api/purchases por proveedor
+    // GENERAR BORRADORES DE OC → la recepción posterior es la única que mueve stock.
     // ==========================================
     const generateOrders = async () => {
+        if (generating || generationInFlight.current) return;
+        generationInFlight.current = true;
         setGenerating(true);
-        // Sello con milisegundos + sufijo aleatorio → evita choque de nº de orden
-        // si se genera dos veces en el mismo segundo (p. ej. reintento).
-        const stamp = new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 17);
-        const rnd = Math.random().toString(36).slice(2, 5).toUpperCase();
         let ok = 0, fail = 0;
         const errors: string[] = [];
         try {
-            for (let i = 0; i < groups.length; i++) {
-                const g = groups[i];
+            for (const g of groups) {
                 const body = {
                     supplierId: g.supplierId,
-                    invoiceNumber: `OC-${stamp}-${rnd}-${i + 1}`,
-                    paymentMethod,
-                    notes: 'Orden generada por reposición inteligente',
+                    notes: 'Borrador generado por reposición inteligente',
                     items: g.rows.map(it => {
                         const e = edits[it.productId];
-                        return { productId: it.productId, quantity: parseInt(e.qty, 10), unitCost: parseFloat(e.cost) };
+                        return { productId: it.productId, quantity: e.qty, unitCost: e.cost };
                     }),
                 };
                 try {
-                    const res = await fetch('/api/purchases', { method: 'POST', headers, body: JSON.stringify(body) });
-                    if (res.ok) ok++;
+                    const controller = new AbortController();
+                    const timeoutId = window.setTimeout(() => controller.abort(), 15_000);
+                    const payload = JSON.stringify(body);
+                    const attempt = bodegaReceivingAttempt(payload, attempts.current[g.supplierId]);
+                    attempts.current[g.supplierId] = attempt;
+                    writeBodegaReceivingDraft('reorder', { edits, attempts: attempts.current });
+                    const res = await fetch('/api/purchase-orders', {
+                        method: 'POST',
+                        headers: { ...headers, 'Idempotency-Key': attempt.key },
+                        signal: controller.signal,
+                        body: payload,
+                    }).finally(() => window.clearTimeout(timeoutId));
+                    if (res.ok) {
+                        ok++;
+                        delete attempts.current[g.supplierId];
+                        setEdits(previous => {
+                            const next = { ...previous };
+                            for (const item of g.rows) next[item.productId] = { ...next[item.productId], selected: false };
+                            writeBodegaReceivingDraft('reorder', { edits: next, attempts: attempts.current });
+                            return next;
+                        });
+                    }
                     else { fail++; const d = await res.json().catch(() => ({})); errors.push(`${g.supplierName}: ${d.error || res.status}`); }
                 } catch {
                     fail++; errors.push(`${g.supplierName}: error de red`);
                 }
             }
             setShowConfirm(false);
-            let msg = `${ok} orden(es) de compra creada(s).`;
-            if (fail > 0) msg += `\n${fail} fallaron:\n${errors.join('\n')}`;
-            alert(msg);
-            fetchReorder();
+            showToast({
+                tone: fail === 0 ? 'success' : ok > 0 ? 'warning' : 'error',
+                title: fail === 0
+                    ? `${ok} orden${ok === 1 ? '' : 'es'} creada${ok === 1 ? '' : 's'}`
+                    : `${ok} creada${ok === 1 ? '' : 's'} · ${fail} con error`,
+                message: errors.length > 0
+                    ? errors.join(' · ')
+                    : 'Quedaron como borradores: todavía no movieron inventario ni dinero.',
+                durationMs: fail > 0 ? 10_000 : undefined,
+            });
+            void fetchReorder();
         } finally {
+            generationInFlight.current = false;
             setGenerating(false);
         }
     };
@@ -170,6 +297,7 @@ export default function SmartPurchases() {
     // ==========================================
     return (
         <div className="p-4 sm:p-6 max-w-6xl mx-auto">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
                 <div>
                     <h1 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -177,7 +305,7 @@ export default function SmartPurchases() {
                     </h1>
                     <p className="text-sm text-slate-400 mt-1">¿Qué reponer? Combina tu punto de reorden con la velocidad de venta y arma la orden de compra por proveedor.</p>
                 </div>
-                <button onClick={fetchReorder} className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600">
+                <button onClick={fetchReorder} disabled={loading || generating} className="bg-slate-700 hover:bg-slate-600 text-white px-3 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors border border-slate-600">
                     <RefreshCw size={15} /> Actualizar
                 </button>
             </div>
@@ -187,6 +315,10 @@ export default function SmartPurchases() {
                     <Loader2 className="animate-spin mb-3" size={28} />
                     Analizando inventario...
                 </div>
+            ) : loadError ? (
+                <div role="alert" className="rounded-xl border border-red-500/30 bg-red-500/10 p-5 text-red-200">
+                    <p>{loadError}</p><button type="button" onClick={() => void fetchReorder()} className="mt-3 min-h-11 font-semibold underline">Reintentar carga</button>
+                </div>
             ) : items.length === 0 ? (
                 <div className="bg-slate-800/60 rounded-xl border border-slate-700 p-12 text-center">
                     <Check size={40} className="text-emerald-400 opacity-60 mx-auto mb-3" />
@@ -195,7 +327,15 @@ export default function SmartPurchases() {
                 </div>
             ) : (
                 <>
+                    <div className="mb-3 flex flex-wrap items-center justify-between gap-3 text-sm text-slate-400">
+                        <p>{items.length} de {totalSuggestions} productos por reponer · Página {page}. Las órdenes incluyen los seleccionados de esta página.</p>
+                        <div className="flex gap-2">
+                            <button type="button" disabled={page === 1 || loading || generating} onClick={() => setPage(current => current - 1)} className="min-h-11 rounded-lg border border-slate-600 px-3 disabled:opacity-40">Anterior</button>
+                            <button type="button" disabled={!hasMore || loading || generating} onClick={() => setPage(current => current + 1)} className="min-h-11 rounded-lg border border-slate-600 px-3 disabled:opacity-40">Siguiente</button>
+                        </div>
+                    </div>
                     <div className="bg-slate-800/60 rounded-xl border border-slate-700 overflow-hidden mb-4">
+                        <p className="px-3 py-2 text-xs text-slate-400">{BODEGA_DECIMAL_HINT}</p>
                         <div className="overflow-x-auto">
                             <table className="w-full">
                                 <thead>
@@ -215,14 +355,15 @@ export default function SmartPurchases() {
                                     {items.map((it) => {
                                         const e = edits[it.productId];
                                         if (!e) return null;
-                                        const subtotal = (parseInt(e.qty, 10) || 0) * (parseFloat(e.cost) || 0);
-                                        const badQty = e.selected && !(parseInt(e.qty, 10) >= 1);
-                                        const badCost = e.selected && !(parseFloat(e.cost) > 0);
+                                        const subtotal = decimalOrZero(e.qty).times(decimalOrZero(e.cost)).toNumber();
+                                        const badQty = e.selected && !validReorderQuantity(it, e.qty);
+                                        const parsedCost = decimalOrZero(e.cost);
+                                        const badCost = e.selected && (!parsedCost.greaterThan(0) || parsedCost.decimalPlaces() > 6);
                                         const noSupplier = e.selected && !e.supplierId;
                                         return (
                                             <tr key={it.productId} className={`transition-colors ${e.selected ? 'bg-slate-800/40' : 'opacity-60'} hover:bg-slate-700/20`}>
                                                 <td className="px-3 py-3 text-center">
-                                                    <input type="checkbox" checked={e.selected} onChange={(ev) => setEdit(it.productId, { selected: ev.target.checked })}
+                                                    <input type="checkbox" disabled={generating} aria-label={`Reponer ${it.name}`} checked={e.selected} onChange={(ev) => setEdit(it.productId, { selected: ev.target.checked })}
                                                         className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-amber-500 focus:ring-amber-500/50" />
                                                 </td>
                                                 <td className="px-3 py-3">
@@ -232,23 +373,23 @@ export default function SmartPurchases() {
                                                 <td className="px-3 py-3 text-center">
                                                     <span className={`px-2 py-0.5 rounded-full text-[11px] font-medium border ${REASON_META[it.reason]?.color}`}>{REASON_META[it.reason]?.label}</span>
                                                 </td>
-                                                <td className="px-3 py-3 text-right text-sm text-slate-300">{it.currentStock}</td>
+                                                <td className="px-3 py-3 text-right text-sm text-slate-300">{formatQuantityValue(it.currentStock)} {it.unit || 'unidad'}{decimalOrZero(it.incomingQuantity ?? 0).greaterThan(0) && <span className="mt-1 block text-xs text-sky-300">En camino: {formatQuantityValue(it.incomingQuantity!)}</span>}</td>
                                                 <td className="px-3 py-3 text-right text-sm">
                                                     {it.daysRemaining === null ? <span className="text-slate-600">—</span> :
                                                         <span className={it.daysRemaining <= 3 ? 'text-red-400 font-semibold' : 'text-slate-300'}>{it.daysRemaining}d</span>}
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
-                                                    <input type="text" inputMode="numeric" value={e.qty} disabled={!e.selected}
-                                                        onChange={(ev) => setEdit(it.productId, { qty: ev.target.value.replace(/[^\d]/g, '') })}
+                                                    <input type="text" inputMode="decimal" value={e.qty} aria-invalid={badQty} aria-label={`Cantidad de ${it.name}`} disabled={!e.selected || generating}
+                                                        onChange={(ev) => setEdit(it.productId, { qty: normalizeBodegaDecimalInput(ev.target.value) })}
                                                         className={`w-20 bg-slate-900 border rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50 ${badQty ? 'border-red-600/70' : 'border-slate-600'}`} />
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
-                                                    <input type="text" inputMode="decimal" value={e.cost} disabled={!e.selected}
-                                                        onChange={(ev) => setEdit(it.productId, { cost: sanitizeDecimalInput(ev.target.value) })}
+                                                    <input type="text" inputMode="decimal" value={e.cost} aria-invalid={badCost} aria-label={`Costo de ${it.name}`} disabled={!e.selected || generating}
+                                                        onChange={(ev) => setEdit(it.productId, { cost: normalizeBodegaDecimalInput(ev.target.value) })}
                                                         className={`w-24 bg-slate-900 border rounded-lg px-2 py-1.5 text-sm text-white text-right focus:outline-none focus:border-amber-500 disabled:opacity-50 ${badCost ? 'border-red-600/70' : 'border-slate-600'}`} />
                                                 </td>
                                                 <td className="px-3 py-3">
-                                                    <select value={e.supplierId} disabled={!e.selected}
+                                                    <select value={e.supplierId} aria-invalid={noSupplier} aria-label={`Proveedor de ${it.name}`} disabled={!e.selected || generating}
                                                         onChange={(ev) => setEdit(it.productId, { supplierId: ev.target.value })}
                                                         className={`w-40 bg-slate-900 border rounded-lg px-2 py-1.5 text-sm text-white focus:outline-none focus:border-amber-500 disabled:opacity-50 ${noSupplier ? 'border-red-600/70' : 'border-slate-600'}`}>
                                                         <option value="">— Asignar —</option>
@@ -276,17 +417,10 @@ export default function SmartPurchases() {
                                 <p className="text-xs text-slate-400">Total estimado</p>
                                 <p className="text-lg font-bold text-amber-400">{formatCurrency(totalSelected)}</p>
                             </div>
-                            <div>
-                                <p className="text-xs text-slate-400 mb-1">Forma de pago</p>
-                                <div className="flex gap-1">
-                                    <button onClick={() => setPaymentMethod('CREDIT')} className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${paymentMethod === 'CREDIT' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>Crédito</button>
-                                    <button onClick={() => setPaymentMethod('CASH')} className={`px-3 py-1 rounded-lg text-xs font-medium border transition-colors ${paymentMethod === 'CASH' ? 'bg-amber-600 border-amber-500 text-white' : 'bg-slate-900 border-slate-700 text-slate-400'}`}>Contado</button>
-                                </div>
-                            </div>
                         </div>
                         <button
                             onClick={() => setShowConfirm(true)}
-                            disabled={validRows.length === 0 || invalidCount > 0}
+                            disabled={generating || validRows.length === 0 || invalidCount > 0}
                             className="bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed text-white px-5 py-2.5 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors"
                         >
                             <ShoppingCart size={16} /> {invalidCount > 0 ? `Revisa ${invalidCount} fila(s)` : `Generar ${groups.length} orden(es)`}
@@ -297,14 +431,14 @@ export default function SmartPurchases() {
 
             {/* Confirmación */}
             {showConfirm && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowConfirm(false)}>
-                    <div className="bg-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={closeConfirmation}>
+                    <fieldset disabled={generating} role="dialog" aria-modal="true" aria-labelledby="reorder-confirmation-title" className="min-w-0 bg-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-hidden shadow-2xl border border-slate-700 flex flex-col" onClick={(e) => e.stopPropagation()}>
                         <div className="px-6 py-4 border-b border-slate-700 flex items-center justify-between">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2"><Truck size={20} className="text-amber-400" /> Confirmar órdenes de compra</h2>
-                            <button onClick={() => setShowConfirm(false)} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"><X size={20} /></button>
+                            <h2 id="reorder-confirmation-title" className="text-lg font-bold text-white flex items-center gap-2"><Truck size={20} className="text-amber-400" /> Confirmar órdenes de compra</h2>
+                            <button aria-label="Cerrar confirmación" onClick={closeConfirmation} className="p-2 hover:bg-slate-700 rounded-lg text-slate-400 hover:text-white"><X size={20} /></button>
                         </div>
                         <div className="p-6 overflow-y-auto space-y-3">
-                            <p className="text-sm text-slate-300">Se creará <strong className="text-white">una compra por proveedor</strong> ({paymentMethod === 'CREDIT' ? 'a crédito → cuenta por pagar' : 'de contado'}), ingresando el stock al inventario.</p>
+                            <p className="text-sm text-slate-300">Se creará <strong className="text-white">un borrador de orden por proveedor</strong>. Luego podrás aprobarlo y registrar lo que realmente llegó.</p>
                             {groups.map(g => (
                                 <div key={g.supplierId} className="bg-slate-900/60 rounded-lg p-3 border border-slate-700">
                                     <div className="flex items-center justify-between mb-1">
@@ -316,16 +450,16 @@ export default function SmartPurchases() {
                             ))}
                             <div className="bg-amber-950/40 border border-amber-800/50 rounded-lg p-3 flex items-start gap-2">
                                 <AlertTriangle size={16} className="text-amber-400 mt-0.5 shrink-0" />
-                                <p className="text-xs text-amber-300/80">Se genera un número de orden automático (OC-…). Podrás editar la factura real del proveedor desde Compras al recibir la mercadería.</p>
+                                <p className="text-xs text-amber-300/80">Crear el borrador no cambia stock, costos, caja ni cuentas por pagar. Esos efectos ocurren al recibir la mercadería y registrar la factura real.</p>
                             </div>
                         </div>
                         <div className="px-6 py-4 border-t border-slate-700 flex gap-3">
-                            <button onClick={() => setShowConfirm(false)} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors">Cancelar</button>
+                            <button onClick={closeConfirmation} className="flex-1 bg-slate-700 hover:bg-slate-600 text-white px-4 py-2.5 rounded-lg text-sm font-semibold transition-colors">Cancelar</button>
                             <button onClick={generateOrders} disabled={generating} className="flex-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white px-4 py-2.5 rounded-lg text-sm font-semibold flex items-center justify-center gap-2 transition-colors">
-                                {generating ? <><Loader2 size={15} className="animate-spin" /> Creando...</> : `Crear ${groups.length} compra(s)`}
+                                {generating ? <><Loader2 size={15} className="animate-spin" /> Creando...</> : `Crear ${groups.length} orden(es)`}
                             </button>
                         </div>
-                    </div>
+                    </fieldset>
                 </div>
             )}
         </div>

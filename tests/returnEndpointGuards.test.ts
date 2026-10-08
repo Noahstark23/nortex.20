@@ -1,0 +1,313 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const server = readFileSync(resolve(process.cwd(), 'backend/server.ts'), 'utf8');
+const pos = readFileSync(resolve(process.cwd(), 'components/POS.tsx'), 'utf8');
+const sales = readFileSync(resolve(process.cwd(), 'components/Sales.tsx'), 'utf8');
+
+const between = (source: string, start: string, end: string | RegExp): string => {
+    const from = source.indexOf(start);
+    const searchFrom = from + start.length;
+    const regexMatch = end instanceof RegExp ? source.slice(searchFrom).match(end) : null;
+    const to = end instanceof RegExp
+        ? (regexMatch?.index === undefined ? -1 : searchFrom + regexMatch.index)
+        : end
+            ? source.indexOf(end, searchFrom)
+            : source.indexOf("\napp.", searchFrom);
+    if (from < 0 || to < 0) throw new Error(`No se encontró el bloque ${start}`);
+    return source.slice(from, to);
+};
+
+const searchRoute = between(
+    server,
+    "app.get('/api/sales/search'",
+    /app\.post\(\s*['"]\/api\/returns['"]/,
+);
+const returnRoute = between(
+    server,
+    "app.post('/api/returns'",
+    '',
+);
+describe('guardas estructurales de devoluciones', () => {
+    it('el POS dirige las correcciones al expediente aprobado y no conserva atajos mutantes', () => {
+        expect(pos).toContain("navigate('/app/sales')");
+        expect(pos).toContain('Correcciones y aprobaciones');
+        expect(pos).not.toContain("fetch('/api/returns'");
+        expect(pos).not.toContain('/api/sales/${returnSaleData.id}/cancel');
+
+        expect(sales).toContain("fetch('/api/sale-corrections'");
+        expect(sales).toContain('correctionRequestId: request.id');
+        expect(sales).toContain('clientEventId: crypto.randomUUID()');
+    });
+
+    it('aísla por tenant tanto la búsqueda como la transacción de devolución', () => {
+        expect(searchRoute).toContain('tenantId: authReq.tenantId');
+        expect(searchRoute).toContain('where: { saleId: sale.id, tenantId: authReq.tenantId }');
+
+        expect(returnRoute).toContain('WHERE id = ${saleId} AND \\`tenantId\\` = ${authReq.tenantId}');
+        expect(returnRoute).toContain('where: { id: saleId, tenantId: authReq.tenantId }');
+        expect(returnRoute).toContain('where: { saleId, tenantId: authReq.tenantId }');
+        expect(returnRoute).toContain('where: { tenantId: authReq.tenantId, id: { in: productIds } }');
+    });
+
+    it('bloquea la venta antes de releer el historial que limita la cantidad', () => {
+        const transactionIndex = returnRoute.indexOf('prisma.$transaction');
+        const saleLockIndex = returnRoute.indexOf('SELECT id FROM \\`Sale\\`');
+        const forUpdateIndex = returnRoute.indexOf('FOR UPDATE', saleLockIndex);
+        const historyIndex = returnRoute.indexOf('tx.productReturn.findMany');
+        const resolutionIndex = returnRoute.indexOf('resolveRequestedReturnItems');
+
+        expect(transactionIndex).toBeGreaterThan(-1);
+        expect(saleLockIndex).toBeGreaterThan(transactionIndex);
+        expect(forUpdateIndex).toBeGreaterThan(saleLockIndex);
+        expect(historyIndex).toBeGreaterThan(forUpdateIndex);
+        expect(resolutionIndex).toBeGreaterThan(historyIndex);
+    });
+
+    it('mantiene stock, Kardex, contabilidad y auditoría dentro de la misma transacción', () => {
+        expect(returnRoute).toContain('applyStockDelta(tx');
+        expect(returnRoute).toContain('tx.kardexMovement.create');
+        expect(returnRoute).toMatch(/recordReturn\(\s*tx,/);
+        expect(returnRoute).toContain('tx.auditLog.create');
+        expect(returnRoute.indexOf('res.json({ ...result.productReturn')).toBeGreaterThan(returnRoute.indexOf('tx.auditLog.create'));
+    });
+
+    it('reclama tenant+clientEventId antes de cualquier efecto y persiste la huella canónica', () => {
+        const hashIndex = returnRoute.indexOf('buildReturnPayloadHash');
+        const fastReplayIndex = returnRoute.indexOf('const preexistingReturn = await prisma.productReturn.findFirst');
+        const transactionIndex = returnRoute.indexOf('prisma.$transaction');
+        const saleLockIndex = returnRoute.indexOf('SELECT id FROM \\`Sale\\`');
+        const replayReadIndex = returnRoute.indexOf('const existingReturn = await tx.productReturn.findFirst');
+        const processingShiftIndex = returnRoute.indexOf('const ownProcessingShifts:');
+        const stockIndex = returnRoute.indexOf('applyStockDelta(tx');
+        const createIndex = returnRoute.indexOf('tx.productReturn.create');
+        const createEnd = returnRoute.indexOf('// OFF queda', createIndex);
+
+        expect(hashIndex).toBeGreaterThan(-1);
+        expect(fastReplayIndex).toBeGreaterThan(hashIndex);
+        expect(returnRoute.slice(fastReplayIndex, transactionIndex)).toContain('tenantId: authReq.tenantId');
+        expect(returnRoute.slice(fastReplayIndex, transactionIndex)).toContain('clientEventId');
+        expect(saleLockIndex).toBeGreaterThan(transactionIndex);
+        expect(replayReadIndex).toBeGreaterThan(saleLockIndex);
+        expect(returnRoute.slice(replayReadIndex, createIndex)).toContain('tenantId: authReq.tenantId');
+        expect(returnRoute.slice(replayReadIndex, createIndex)).toContain('clientEventId');
+        expect(processingShiftIndex).toBeGreaterThan(replayReadIndex);
+        expect(createIndex).toBeGreaterThan(replayReadIndex);
+        expect(createIndex).toBeGreaterThan(processingShiftIndex);
+        expect(returnRoute.slice(createIndex, createEnd)).toContain('clientEventId,');
+        expect(returnRoute.slice(createIndex, createEnd)).toContain('payloadHash,');
+        expect(returnRoute.slice(createIndex, createEnd)).toContain('processedShiftId,');
+        expect(stockIndex).toBeGreaterThan(createIndex);
+    });
+
+    it('resuelve un processedShiftId no nulo antes de persistir y limita el fallback a CASH', () => {
+        const refundResolutionIndex = returnRoute.indexOf("const refundMethod = resolution === 'REFUND'");
+        const shiftSelectionStart = returnRoute.indexOf('const ownProcessingShifts:');
+        const attributionIndex = returnRoute.indexOf('resolveReturnShiftAttribution({', shiftSelectionStart);
+        const processedShiftIndex = returnRoute.indexOf(
+            'const processedShiftId = shiftAttribution.processedShiftId;',
+            attributionIndex,
+        );
+        const createIndex = returnRoute.indexOf('tx.productReturn.create', processedShiftIndex);
+        const shiftSelectionBlock = returnRoute.slice(shiftSelectionStart, createIndex);
+
+        expect(refundResolutionIndex).toBeGreaterThan(-1);
+        expect(shiftSelectionStart).toBeGreaterThan(refundResolutionIndex);
+        expect(shiftSelectionBlock).toContain('AND \\`userId\\` = ${authReq.userId}');
+        expect(shiftSelectionBlock.match(/LIMIT 2/g)).toHaveLength(2);
+        expect(shiftSelectionBlock.match(/FOR UPDATE/g)).toHaveLength(2);
+        expect(shiftSelectionBlock).toContain(
+            'if (requiresCashDrawer && ownProcessingShifts.length === 0)',
+        );
+        expect(shiftSelectionBlock).toContain('tenantOpenShifts: tenantProcessingShifts');
+        expect(shiftSelectionBlock).toContain('requiresCashDrawer,');
+        expect(processedShiftIndex).toBeGreaterThan(attributionIndex);
+        expect(createIndex).toBeGreaterThan(processedShiftIndex);
+        expect(shiftSelectionBlock).not.toContain('processedShiftId = processingShift?.id ?? null');
+    });
+
+    it('un replay idéntico retorna la fila existente y una reutilización distinta da 409', () => {
+        const existingIndex = returnRoute.indexOf('if (existingReturn)');
+        const replayAssertIndex = returnRoute.indexOf('assertMatchingReturnReplay', existingIndex);
+        const replayReturnIndex = returnRoute.indexOf('idempotentReplay: true', replayAssertIndex);
+        const uniqueCatchIndex = returnRoute.indexOf("error?.code === 'P2002'");
+        const fallbackQueryIndex = returnRoute.indexOf('prisma.productReturn.findFirst', uniqueCatchIndex);
+
+        expect(existingIndex).toBeGreaterThan(-1);
+        expect(replayAssertIndex).toBeGreaterThan(existingIndex);
+        expect(replayReturnIndex).toBeGreaterThan(replayAssertIndex);
+        expect(uniqueCatchIndex).toBeGreaterThan(replayReturnIndex);
+        expect(fallbackQueryIndex).toBeGreaterThan(uniqueCatchIndex);
+        expect(returnRoute.slice(fallbackQueryIndex)).toContain('tenantId: authReq.tenantId');
+        expect(returnRoute.slice(fallbackQueryIndex)).toContain('clientEventId');
+        expect(returnRoute).toContain('idempotentReplay: result.idempotentReplay');
+    });
+
+    it('la ejecución aprobada conserva el ID de corrección en ambos caminos', () => {
+        const executeRequest = between(sales, 'const executeRequest = async', '\n\n    return <div');
+
+        expect(executeRequest).toContain("? { correctionRequestId: request.id, motivo: request.reason }");
+        expect(executeRequest).toContain('correctionRequestId: request.id,');
+        expect(executeRequest).toContain("request.kind === 'VOID' ? `/api/sales/${request.saleId}/cancel` : '/api/returns'");
+    });
+
+    it('restituye existencias en la ubicación original de la venta cuando es inequívoca', () => {
+        expect(returnRoute).toContain('tx.kardexMovement.findMany');
+        expect(returnRoute).toContain('referenceId: saleId');
+        expect(returnRoute).toContain("referenceType: 'SALE'");
+        expect(returnRoute).toContain("type: 'SALE'");
+        expect(returnRoute).toContain('pedidos: { select: { id: true } }');
+        expect(returnRoute).toContain('const pedidoReferenceIds = sale.pedidos.map');
+        expect(returnRoute).toContain("referenceType: { in: ['PEDIDO_RESERVA', 'PEDIDO_VENTA'] }");
+        expect(returnRoute).toContain("type: 'OUT'");
+        expect(returnRoute).toContain('const returnWarehouseId = resolveReturnWarehouseId(saleKardexLocations)');
+        expect(returnRoute).toContain('warehouseId: returnWarehouseId ?? undefined');
+    });
+
+    it('bloquea la caja actual, revalida efectivo y registra un único movimiento firmado', () => {
+        const cashBlockStart = returnRoute.indexOf('if (requiresCashDrawer)');
+        const shiftSelectionIndex = returnRoute.indexOf('const ownProcessingShifts:');
+        const refundShiftIndex = returnRoute.indexOf(
+            'const refundShiftId = shiftAttribution.refundShiftId;',
+            shiftSelectionIndex,
+        );
+        const balanceIndex = returnRoute.indexOf('calcularEfectivoTurno', cashBlockStart);
+        const movementIndex = returnRoute.indexOf('appendSignedCashMovement', balanceIndex);
+
+        expect(cashBlockStart).toBeGreaterThan(-1);
+        expect(shiftSelectionIndex).toBeGreaterThan(-1);
+        expect(refundShiftIndex).toBeGreaterThan(shiftSelectionIndex);
+        expect(cashBlockStart).toBeGreaterThan(refundShiftIndex);
+        expect(balanceIndex).toBeGreaterThan(shiftSelectionIndex);
+        expect(returnRoute).toContain("'RETURN_CASH_INSUFFICIENT'");
+        expect(movementIndex).toBeGreaterThan(balanceIndex);
+        expect(returnRoute.slice(movementIndex)).toContain("category: 'DEVOLUCION'");
+        expect(returnRoute.slice(movementIndex)).toContain('amount: settledRefund.toFixed(2)');
+        expect(returnRoute.slice(movementIndex)).not.toContain('amount: settledRefund.toNumber()');
+        expect(returnRoute.match(/appendSignedCashMovement/g)).toHaveLength(1);
+        expect(returnRoute).not.toContain('recordCashMovement');
+    });
+
+    it('envía el split a contabilidad y deja IDs de caja y turno en auditoría', () => {
+        const accountingIndex = returnRoute.indexOf('await recordReturn(');
+        const auditIndex = returnRoute.indexOf('tx.auditLog.create', accountingIndex);
+
+        expect(accountingIndex).toBeGreaterThan(-1);
+        const accountingBlock = returnRoute.slice(accountingIndex, auditIndex);
+        expect(accountingBlock).toContain('exemptTotal: resolved.exemptTotal');
+        expect(accountingBlock).toContain('creditReduction,');
+        expect(accountingBlock).toContain('settledRefund,');
+        expect(accountingBlock).toContain("refundMethod: resolution === 'REFUND' ? (refundMethod ?? 'CASH') : 'STORE_CREDIT'");
+        expect(accountingBlock).toContain("refundPending: resolution === 'REFUND'");
+        expect(auditIndex).toBeGreaterThan(accountingIndex);
+        expect(returnRoute.slice(auditIndex)).toContain('processedShiftId,');
+        expect(returnRoute.slice(auditIndex)).toContain('shiftAttributionSource: shiftAttribution.source');
+        expect(returnRoute.slice(auditIndex)).toContain('cashMovementId,');
+        expect(returnRoute.slice(auditIndex)).toContain('refundShiftId,');
+        expect(returnRoute.slice(auditIndex)).toContain('refundMethod,');
+    });
+
+    it('restaura lotes dentro de la transacción usando el historial leído bajo lock', () => {
+        const transactionIndex = returnRoute.indexOf('prisma.$transaction');
+        const historyIndex = returnRoute.indexOf('tx.productReturn.findMany');
+        const batchCallIndex = returnRoute.indexOf('await restoreSaleItemBatchesForReturn(tx');
+        const batchCallEnd = returnRoute.indexOf('});', batchCallIndex);
+        const persistenceIndex = returnRoute.indexOf('const persistItems', batchCallEnd);
+        const batchCall = returnRoute.slice(batchCallIndex, batchCallEnd);
+
+        expect(transactionIndex).toBeGreaterThan(-1);
+        expect(historyIndex).toBeGreaterThan(transactionIndex);
+        expect(batchCallIndex).toBeGreaterThan(historyIndex);
+        expect(persistenceIndex).toBeGreaterThan(batchCallEnd);
+        expect(batchCall).toContain('tenantId: authReq.tenantId!');
+        expect(batchCall).toContain('saleItemId: item.saleItemId');
+        expect(batchCall).toContain('productId: item.productId');
+        expect(batchCall).toContain('quantity: item.quantity');
+        expect(batchCall).toContain('previousReturns,');
+    });
+
+    it('persiste evidencia por lote y el remanente agregado en ProductReturn.items', () => {
+        const persistenceIndex = returnRoute.indexOf(
+            'const persistItems = resolvedWithBatches.map',
+        );
+        const createIndex = returnRoute.indexOf('tx.productReturn.create', persistenceIndex);
+        const persistenceBlock = returnRoute.slice(persistenceIndex, createIndex);
+        const createBlockEnd = returnRoute.indexOf('// OFF queda', createIndex);
+        const createBlock = returnRoute.slice(createIndex, createBlockEnd);
+
+        expect(persistenceIndex).toBeGreaterThan(-1);
+        expect(persistenceBlock).toContain('batchRestorationMode: batchRestoration.mode');
+        expect(persistenceBlock).toContain('batchRestorations: batchRestoration.batchRestorations.map');
+        expect(persistenceBlock).toContain('batchId: restoration.batchId');
+        expect(persistenceBlock).toContain('quantity: restoration.quantity.toString()');
+        expect(persistenceBlock).toContain(
+            'aggregateOnlyQuantity: batchRestoration.aggregateOnlyQuantity.toString()',
+        );
+        expect(createBlock).toContain('items: persistItems');
+    });
+
+    it('OFF conserva un delta agregado y 2B restaura cada lote a su bodega exacta', () => {
+        const offBranch = returnRoute.indexOf("if (batchWarehouseLedgerMode === 'OFF')");
+        const exactBranch = returnRoute.indexOf('const exactPlan =', offBranch);
+        const offBlock = returnRoute.slice(offBranch, exactBranch);
+        expect(offBlock.match(/applyStockDelta\(tx/g)).toHaveLength(1);
+
+        const stockIndex = offBlock.indexOf('const stockResult = await applyStockDelta(tx');
+        const batchKardexIndex = offBlock.indexOf(
+            'for (const restoration of batchRestoration.batchRestorations)',
+            stockIndex,
+        );
+        const aggregateKardexIndex = offBlock.indexOf(
+            'if (batchRestoration.aggregateOnlyQuantity.greaterThan(0))',
+            batchKardexIndex,
+        );
+        const invariantIndex = offBlock.indexOf(
+            'if (stockCursor.minus(stockResult.stockAfter)',
+            aggregateKardexIndex,
+        );
+        const batchKardexBlock = offBlock.slice(batchKardexIndex, aggregateKardexIndex);
+        const aggregateKardexBlock = offBlock.slice(aggregateKardexIndex, invariantIndex);
+
+        expect(stockIndex).toBeGreaterThan(-1);
+        expect(batchKardexIndex).toBeGreaterThan(stockIndex);
+        expect(batchKardexBlock).toContain('tx.kardexMovement.create');
+        expect(batchKardexBlock).toContain('quantity: restoration.quantity.toNumber()');
+        expect(batchKardexBlock).toContain('batchId: restoration.batchId');
+
+        expect(aggregateKardexIndex).toBeGreaterThan(batchKardexIndex);
+        expect(aggregateKardexBlock).toContain('tx.kardexMovement.create');
+        expect(aggregateKardexBlock).toContain(
+            'quantity: batchRestoration.aggregateOnlyQuantity.toNumber()',
+        );
+        expect(aggregateKardexBlock).not.toMatch(/\bbatchId\s*:/);
+        expect(invariantIndex).toBeGreaterThan(aggregateKardexIndex);
+
+        const exactBlock = returnRoute.slice(exactBranch);
+        const sidecarIndex = exactBlock.indexOf('await applyBatchWarehouseDelta({');
+        const batchUpdateIndex = exactBlock.indexOf('tx.productBatch.updateMany', sidecarIndex);
+        const exactStockIndex = exactBlock.indexOf('applyStockDelta(tx', batchUpdateIndex);
+        const exactKardexIndex = exactBlock.indexOf('tx.kardexMovement.create', exactStockIndex);
+        expect(sidecarIndex).toBeGreaterThan(-1);
+        expect(exactBlock.slice(sidecarIndex, batchUpdateIndex)).toContain(
+            'warehouseId: restoration.warehouseId',
+        );
+        expect(exactBlock.slice(sidecarIndex, batchUpdateIndex)).toContain(
+            'delta: restoration.quantity.toFixed(4)',
+        );
+        expect(batchUpdateIndex).toBeGreaterThan(sidecarIndex);
+        expect(exactStockIndex).toBeGreaterThan(batchUpdateIndex);
+        expect(exactKardexIndex).toBeGreaterThan(exactStockIndex);
+    });
+
+    it('traduce BatchRestorationError sin ocultar su status ni código', () => {
+        const catchIndex = returnRoute.indexOf('if (error instanceof BatchRestorationError)');
+        const returnErrorIndex = returnRoute.indexOf('if (error instanceof ReturnResolutionError)');
+        const catchBlock = returnRoute.slice(catchIndex, returnErrorIndex);
+
+        expect(catchIndex).toBeGreaterThan(-1);
+        expect(catchBlock).toContain('res.status(error.httpStatus)');
+        expect(catchBlock).toContain('code: error.code');
+        expect(returnErrorIndex).toBeGreaterThan(catchIndex);
+    });
+});

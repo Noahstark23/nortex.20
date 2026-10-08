@@ -8,6 +8,12 @@ export const handleAuthError = (response: Response) => {
         localStorage.removeItem('nortex_user');
         localStorage.removeItem('nortex_tenant_id');
         localStorage.removeItem('nortex_tenant_data');
+        // Purgar cualquier caché de /api/ que haya quedado de instalaciones
+        // previas del SW, para que un usuario posterior en una terminal
+        // compartida nunca reciba datos de negocio del usuario anterior.
+        if (typeof caches !== 'undefined') {
+            caches.delete('nortex-api-cache').catch(() => {});
+        }
 
         // Redirect to login
         window.location.href = '/login?error=session_expired';

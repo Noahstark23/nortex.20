@@ -2,41 +2,50 @@ import express from 'express';
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 import Decimal from 'decimal.js';
+import { z } from 'zod';
 import { authenticate } from '../middleware/auth';
+import { checkRole } from '../middleware/checkRole';
+import { calcularAmortizacion } from '../services/loanMath';
+import {
+    validate, OriginateLoanSchema, RepaymentSchema, UpdateClientSchema,
+    RefinanceLoanSchema, PenaltySchema, VaultDepositSchema, RouteExpenseSchema,
+} from '../validation/schemas.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
+
+// ── Política de roles (Fase 0 blindaje) ──────────────────────────────────────
+// Solo el DUEÑO gestiona dinero y cartera: originar, refinanciar, multar,
+// asignar cobrador, bloquear cliente/límite y recibir en bóveda.
+// El COLLECTOR (motorizado) SOLO puede: registrar abonos y gastos de ruta.
+// checkRole deja pasar siempre a OWNER/ADMIN/SUPER_ADMIN; a COLLECTOR lo bloquea.
+const LENDER_MANAGER = checkRole(['OWNER', 'ADMIN']);
 
 const router = express.Router();
 const prisma = new PrismaClient();
 
+// Alta de cobradores (crea credenciales de login): validación estricta del body.
+// Definido inline para no colisionar con backend/schemas.ts (editado en paralelo).
+const CreateCollectorSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre es obligatorio'),
+    email: z.string().trim().email('Correo inválido'),
+    password: z
+        .string()
+        .min(8, 'La contraseña debe tener al menos 8 caracteres')
+        .regex(/[A-Za-z]/, 'La contraseña debe incluir al menos una letra')
+        .regex(/[0-9]/, 'La contraseña debe incluir al menos un número'),
+});
+
 // 1. ORIGINAR UN CRÉDITO (Desembolso) — Motor Dual
-router.post('/', authenticate, async (req: any, res: any) => {
+router.post('/', authenticate, LENDER_MANAGER, validate(OriginateLoanSchema), async (req: any, res: any) => {
     try {
         const { clientName, clientPhone, clientAddress, principalAmount, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.tenantId;
 
         const amount = new Decimal(principalAmount);
-        const rate   = new Decimal(interestRate).dividedBy(100); // 5% → 0.05
         const n      = parseInt(installments);
 
-        let totalToRepay:     Decimal;
-        let installmentAmount: Decimal;
-
-        if (type === 'FORMAL_AMORTIZED') {
-            // Sistema Francés: Cuota = Capital * ( i*(1+i)^n ) / ( (1+i)^n - 1 )
-            if (rate.isZero()) {
-                installmentAmount = amount.dividedBy(n);
-            } else {
-                const onePlusR = rate.plus(1);
-                const pow      = onePlusR.pow(n);
-                installmentAmount = amount.mul(rate.mul(pow)).dividedBy(pow.minus(1));
-            }
-            totalToRepay = installmentAmount.mul(n);
-        } else {
-            // Gota a Gota (Flat): interés sobre capital total
-            totalToRepay     = amount.plus(amount.mul(rate));
-            installmentAmount = totalToRepay.dividedBy(n);
-        }
+        // Amortización en función pura (deduplicada, con test-oro en CI).
+        const { installmentAmount, totalToRepay } = calcularAmortizacion(principalAmount, interestRate, n, type);
 
         // Calcular fecha de vencimiento según frecuencia
         const dueDate = new Date();
@@ -99,6 +108,24 @@ router.post('/', authenticate, async (req: any, res: any) => {
             }
             await tx.loanInstallment.createMany({ data: rows });
 
+            // Asiento inmutable del desembolso DENTRO de la misma transacción, para que
+            // el préstamo nunca quede persistido sin su rastro de auditoría.
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_DISBURSED',
+                    details: JSON.stringify({
+                        loanId: loan.id,
+                        customerId: customer!.id,
+                        principal: amount.toString(),
+                        totalToRepay: totalToRepay.toString(),
+                        installments: n,
+                        interestRate: String(interestRate),
+                    }),
+                },
+            });
+
             return loan;
         });
 
@@ -110,11 +137,17 @@ router.post('/', authenticate, async (req: any, res: any) => {
 });
 
 // 2. REGISTRAR COBRO DIARIO (Para el Motorizado)
-router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
+router.post('/:id/repayments', authenticate, validate(RepaymentSchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { amountPaid, collectedBy, notes, timestamp } = req.body;
-        const payment = parseFloat(amountPaid);
+        const lenderId = req.tenantId;
+        // Monto de pago con decimal.js (nunca parseFloat sobre dinero).
+        const payment = new Decimal(amountPaid);
+        if (!payment.isFinite() || payment.lessThanOrEqualTo(0)) {
+            return res.status(400).json({ success: false, error: 'Monto de pago inválido' });
+        }
+        const paymentNum = payment.toDecimalPlaces(4).toNumber();
 
         // Hacking prevention: Offline Clock Validation
         // Si mandan timestamp (modo offline), validar que no tenga más de 48h de desfase
@@ -130,13 +163,60 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
             }
         }
 
+        // Aislamiento multi-tenant: el préstamo debe pertenecer a este prestamista.
+        const owned = await prisma.loan.findFirst({ where: { id, lenderId } });
+        if (!owned) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+
+        // No permitir sobrepago: el abono no puede exceder el saldo pendiente (tolerancia de un centavo).
+        const saldoActual = new Decimal(owned.balanceRemaining.toString());
+        if (payment.greaterThan(saldoActual.plus('0.01'))) {
+            return res.status(400).json({ success: false, error: 'El abono excede el saldo pendiente del préstamo' });
+        }
+
         // Transacción Atómica: Registramos el pago y bajamos el saldo en la misma operación
         const transaction = await prisma.$transaction(async (tx) => {
+            // S41 — serialización por préstamo: FOR UPDATE del Loan como PRIMERA
+            // sentencia de la tx. El reintento concurrente espera el commit del
+            // rival y su snapshot se abre después, así que el dedupe de abajo SÍ
+            // ve el abono ya registrado.
+            await tx.$queryRaw`SELECT id FROM \`Loan\` WHERE id = ${id} AND \`lenderId\` = ${lenderId} FOR UPDATE`;
+
+            // S41 — idempotencia del abono. La columna es Decimal(10,2): comparar
+            // con el monto a 2 decimales, igual que quedó persistido.
+            const monto2dp = payment.toDecimalPlaces(2).toNumber();
+            if (timestamp) {
+                // Modo offline: el reintento manda el MISMO timestamp de captura,
+                // que junto a (loanId, monto) identifica el cobro original. Si ya
+                // existe, devolver el existente como éxito (la cola offline debe
+                // dejar de reintentar) SIN decrementar el saldo otra vez.
+                const existente = await tx.repayment.findFirst({
+                    where: { loanId: id, paymentDate: new Date(timestamp), amountPaid: monto2dp },
+                });
+                if (existente) {
+                    const loanActual = await tx.loan.findFirst({ where: { id, lenderId } });
+                    return { repayment: existente, updatedLoan: loanActual, idempotente: true };
+                }
+            } else {
+                // Online sin llave de cliente: mismo préstamo + mismo monto + mismo
+                // cobrador en los últimos 10s = doble-click casi seguro → 409. Un
+                // duplicado intencional se reintenta pasados unos segundos.
+                const reciente = await tx.repayment.findFirst({
+                    where: {
+                        loanId: id,
+                        amountPaid: monto2dp,
+                        collectedBy: collectedBy ?? null,
+                        createdAt: { gte: new Date(Date.now() - 10_000) },
+                    },
+                    select: { id: true },
+                });
+                if (reciente) throw new Error('ABONO_DUPLICADO');
+            }
+
             // 1. Crear el recibo de pago
             const repayment = await tx.repayment.create({
                 data: {
                     loanId: id,
-                    amountPaid: payment,
+                    amountPaid: paymentNum,
                     collectedBy,
                     notes,
                     // Usamos el timestamp si vino y es válido, si no, el default (now)
@@ -144,28 +224,48 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
                 }
             });
 
-            // 2. Actualizar el saldo del préstamo
-            const updatedLoan = await tx.loan.update({
-                where: { id },
-                data: {
-                    balanceRemaining: {
-                        decrement: payment
-                    }
-                }
+            // 2. Bajar el saldo con guarda atómica anti-sobrepago (concurrencia):
+            //    solo decrementa si el saldo aún alcanza; si otra transacción ya lo
+            //    dejó corto, count === 0 y abortamos sin dejar el saldo negativo.
+            const dec = await tx.loan.updateMany({
+                // Tolerancia de 1 centavo calculada en Decimal (0.1 - 0.01 en float
+                // da 0.09000000000000001 y endurece el guard por un pelo).
+                where: { id, lenderId, balanceRemaining: { gte: payment.minus('0.01').toNumber() } },
+                data: { balanceRemaining: { decrement: paymentNum } }
             });
-
-            // 3. Si el saldo llega a 0, marcamos como pagado
-            if (Number(updatedLoan.balanceRemaining) <= 0) {
-                await tx.loan.update({
-                    where: { id },
-                    data: { status: 'PAID_OFF' }
-                });
+            if (dec.count === 0) {
+                throw new Error('El abono excede el saldo pendiente');
             }
+            const afterDec = await tx.loan.findFirst({ where: { id, lenderId } });
+            if (!afterDec) throw new Error('Préstamo no encontrado');
 
+            // 3. Si el saldo queda en ~0, fijarlo en 0 exacto y marcar liquidado.
+            const updatedLoan = new Decimal(afterDec.balanceRemaining.toString()).lessThanOrEqualTo('0.01')
+                ? await tx.loan.update({
+                    where: { id },
+                    data: { balanceRemaining: 0, status: 'PAID_OFF' }
+                })
+                : afterDec;
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_PAYMENT',
+                    details: JSON.stringify({
+                        loanId: id,
+                        amountPaid: payment.toString(),
+                        balanceBefore: owned.balanceRemaining.toString(),
+                        balanceAfter: updatedLoan.balanceRemaining.toString(),
+                        collectedBy: collectedBy ?? null,
+                    }),
+                },
+            });
             // 4. Imputar el abono a las cuotas, más antiguas primero (Cobranza B2).
-            let remaining = new Decimal(payment);
+            let remaining = new Decimal(paymentNum);
             const pendientes = await tx.loanInstallment.findMany({
-                where: { loanId: id, status: { not: 'PAID' } },
+                // No imputar sobre cuotas REFINANCED: su saldo vive en el préstamo nuevo.
+                where: { loanId: id, status: { in: ['PENDING', 'PARTIAL'] } },
                 orderBy: { number: 'asc' }
             });
             for (const cuota of pendientes) {
@@ -191,6 +291,12 @@ router.post('/:id/repayments', authenticate, async (req: any, res: any) => {
 
         res.json({ success: true, data: transaction });
     } catch (error) {
+        if (error instanceof Error && error.message === 'ABONO_DUPLICADO') {
+            return res.status(409).json({ success: false, error: 'Abono idéntico registrado hace unos segundos — parece un doble envío. Si es intencional, esperá 10 segundos y repetilo.' });
+        }
+        if (error instanceof Error && error.message === 'El abono excede el saldo pendiente') {
+            return res.status(400).json({ success: false, error: error.message });
+        }
         console.error('Error registrando cobro:', error);
         res.status(500).json({ success: false, error: 'Error procesando el pago' });
     }
@@ -203,8 +309,8 @@ router.get('/', authenticate, async (req: any, res: any) => {
 
         // Si es MOTORIZADO, solo ve los asignados a su ID
         const whereClause: any = { lenderId };
-        if (req.user?.role === 'COLLECTOR') {
-            whereClause.assignedToId = req.user.id;
+        if (req.role === 'COLLECTOR') {
+            whereClause.assignedToId = req.userId;
         }
 
         // Solo traemos los pagos de "hoy" para el cálculo del Arqueo Diario
@@ -220,7 +326,9 @@ router.get('/', authenticate, async (req: any, res: any) => {
                     where: { paymentDate: { gte: startOfDay, lte: endOfDay } },
                     orderBy: { createdAt: 'desc' }
                 },
-                schedule: { where: { status: { not: 'PAID' } }, orderBy: { number: 'asc' } }
+                // Solo cuotas con deuda VIVA: las REFINANCED se absorbieron en el
+                // préstamo nuevo y no deben generar mora ni próxima-cuota acá.
+                schedule: { where: { status: { in: ['PENDING', 'PARTIAL'] } }, orderBy: { number: 'asc' } }
             }
         });
 
@@ -264,13 +372,14 @@ router.get('/:id/schedule', authenticate, async (req: any, res: any) => {
         const hoy = new Date(now.getFullYear(), now.getMonth(), now.getDate());
         const data = cuotas.map((c) => {
             const falta = Number(c.amountDue) - Number(c.amountPaid);
-            const overdue = falta > 0.001 && new Date(c.dueDate) < hoy;
+            // Una cuota REFINANCED no vence: su saldo se absorbió en el préstamo nuevo.
+            const overdue = c.status !== 'REFINANCED' && falta > 0.001 && new Date(c.dueDate) < hoy;
             const daysOverdue = overdue ? Math.floor((hoy.getTime() - new Date(c.dueDate).getTime()) / 86400000) : 0;
             return {
                 id: c.id, number: c.number, dueDate: c.dueDate,
                 amountDue: Number(c.amountDue), amountPaid: Number(c.amountPaid),
                 balance: Math.round(falta * 100) / 100,
-                status: c.status === 'PAID' ? 'PAID' : overdue ? 'OVERDUE' : c.status === 'PARTIAL' ? 'PARTIAL' : 'PENDING',
+                status: c.status === 'PAID' ? 'PAID' : c.status === 'REFINANCED' ? 'REFINANCED' : overdue ? 'OVERDUE' : c.status === 'PARTIAL' ? 'PARTIAL' : 'PENDING',
                 daysOverdue
             };
         });
@@ -319,17 +428,21 @@ router.get('/clients', authenticate, async (req: any, res: any) => {
 });
 
 // 8. ACTUALIZAR CLIENTE (Bloquear / Cambiar Límite)
-router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
+router.patch('/clients/:clientId', authenticate, LENDER_MANAGER, validate(UpdateClientSchema), async (req: any, res: any) => {
     try {
         const { clientId } = req.params;
         const { isBlocked, creditLimit } = req.body;
-        const updated = await prisma.customer.update({
-            where: { id: clientId },
+        const lenderId = req.tenantId;
+        // Aislamiento multi-tenant: solo actualiza si el cliente es de este prestamista.
+        const result = await prisma.customer.updateMany({
+            where: { id: clientId, tenantId: lenderId },
             data: {
                 ...(isBlocked !== undefined && { isBlocked }),
                 ...(creditLimit !== undefined && { creditLimit: parseFloat(creditLimit) })
             }
         });
+        if (result.count === 0) return res.status(404).json({ success: false, error: 'Cliente no encontrado' });
+        const updated = await prisma.customer.findFirst({ where: { id: clientId, tenantId: lenderId } });
         res.json({ success: true, data: updated });
     } catch (error) {
         res.status(500).json({ success: false, error: 'Error actualizando cliente' });
@@ -337,18 +450,38 @@ router.patch('/clients/:clientId', authenticate, async (req: any, res: any) => {
 });
 
 // 4. REGISTRAR GASTO DE RUTA (Motorizado)
-router.post('/route-expenses', authenticate, async (req: any, res: any) => {
+router.post('/route-expenses', authenticate, validate(RouteExpenseSchema), async (req: any, res: any) => {
     try {
         const { amount, description, collectedBy } = req.body;
         const lenderId = req.tenantId;
 
-        const expense = await prisma.routeExpense.create({
-            data: {
-                lenderId,
-                collectedBy: collectedBy || 'MOTO-01',
-                amount: parseFloat(amount),
-                description
-            }
+        // Salida de efectivo (baja el arqueo del motorizado): se persiste junto con su
+        // asiento inmutable en la misma transacción para no perder la traza (Capa 3).
+        const expense = await prisma.$transaction(async (tx) => {
+            const created = await tx.routeExpense.create({
+                data: {
+                    lenderId,
+                    collectedBy: collectedBy || 'MOTO-01',
+                    amount: parseFloat(amount),
+                    description
+                }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'ROUTE_EXPENSE',
+                    details: JSON.stringify({
+                        expenseId: created.id,
+                        collectedBy: created.collectedBy,
+                        amount: String(amount),
+                        description: description ?? null,
+                    }),
+                },
+            });
+
+            return created;
         });
 
         res.status(201).json({ success: true, data: expense });
@@ -373,46 +506,53 @@ router.get('/route-expenses', authenticate, async (req: any, res: any) => {
 });
 
 // 6. REFINANCIAR PRÉSTAMO (El botón de oro del Jefe)
-router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
+router.post('/:id/refinance', authenticate, LENDER_MANAGER, validate(RefinanceLoanSchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { newPrincipal, interestRate, installments, frequency, type } = req.body;
         const lenderId = req.tenantId;
 
         const result = await prisma.$transaction(async (tx) => {
-            // 1. Obtener el préstamo viejo
-            const oldLoan = await tx.loan.findUnique({ where: { id } });
-            if (!oldLoan) throw new Error('Préstamo no encontrado');
+            // Serialización por préstamo (mismo patrón que los abonos): dos
+            // refinanciamientos concurrentes del mismo préstamo crearían DOS
+            // préstamos nuevos arrastrando el MISMO saldo. El lock + re-lectura
+            // bajo lock hace que el segundo vea el préstamo ya PAID_OFF y rebote.
+            await tx.$queryRaw`SELECT id FROM \`Loan\` WHERE id = ${id} AND \`lenderId\` = ${lenderId} FOR UPDATE`;
 
-            // 2. Cerrar el préstamo viejo como PAID_OFF (liquidado por refinanciamiento)
+            // 1. Obtener el préstamo viejo
+            // Aislamiento multi-tenant: el préstamo debe pertenecer a este prestamista.
+            const oldLoan = await tx.loan.findFirst({ where: { id, lenderId } });
+            if (!oldLoan) throw new Error('Préstamo no encontrado');
+            // S40 — solo se refinancia deuda VIVA: refinanciar un préstamo ya
+            // liquidado fabricaría deuda de la nada (o duplicaría un refinance).
+            if (oldLoan.status !== 'ACTIVE' && oldLoan.status !== 'DEFAULTED') {
+                throw new Error('REFINANCE_NO_ACTIVO');
+            }
+
+            // 2. Cerrar el préstamo viejo liquidado por refinanciamiento.
+            //    S40 — el saldo se ABSORBE en el préstamo nuevo, así que acá se
+            //    pone en 0: dejarlo era deuda fantasma que la cartera sumaba DOS
+            //    veces (vieja + arrastrada en la nueva).
             await tx.loan.update({
                 where: { id },
-                data: { status: 'PAID_OFF' }
+                data: { status: 'PAID_OFF', balanceRemaining: 0 }
+            });
+            // S40 — las cuotas no pagadas del préstamo viejo pasan a REFINANCED:
+            // dejarlas PENDING generaba mora eterna sobre un préstamo cerrado
+            // (la mora se calcula por montos y fechas, no por estado del préstamo).
+            await tx.loanInstallment.updateMany({
+                where: { loanId: id, status: { in: ['PENDING', 'PARTIAL'] } },
+                data: { status: 'REFINANCED' },
             });
 
             // 3. Calcular nuevo capital = saldo pendiente viejo + capital nuevo
             const carryOver       = new Decimal(oldLoan.balanceRemaining.toString());
             const freshCapital    = new Decimal(newPrincipal);
             const totalNewPrincipal = carryOver.plus(freshCapital);
-            const rate = new Decimal(interestRate).dividedBy(100);
             const n    = parseInt(installments);
 
-            let totalToRepay:     Decimal;
-            let installmentAmount: Decimal;
-
-            if (type === 'FORMAL_AMORTIZED') {
-                if (rate.isZero()) {
-                    installmentAmount = totalNewPrincipal.dividedBy(n);
-                } else {
-                    const onePlusR = rate.plus(1);
-                    const pow      = onePlusR.pow(n);
-                    installmentAmount = totalNewPrincipal.mul(rate.mul(pow)).dividedBy(pow.minus(1));
-                }
-                totalToRepay = installmentAmount.mul(n);
-            } else {
-                totalToRepay      = totalNewPrincipal.plus(totalNewPrincipal.mul(rate));
-                installmentAmount = totalToRepay.dividedBy(n);
-            }
+            // Misma función pura que la originación (deduplicada, test-oro en CI).
+            const { installmentAmount, totalToRepay } = calcularAmortizacion(totalNewPrincipal, interestRate, n, type);
 
             const dueDate = new Date();
             const freqDays: Record<string, number> = { DAILY: 1, WEEKLY: 7, BIWEEKLY: 15, MONTHLY: 30 };
@@ -422,6 +562,12 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
             const newLoan = await tx.loan.create({
                 data: {
                     lenderId,
+                    // S61 — el refinance perdía los enlaces del préstamo viejo: el
+                    // nuevo quedaba huérfano del CRM (customerId), sin ruta de
+                    // cobro (assignedToId) y sin el tenant deudor si aplicaba.
+                    tenantId: oldLoan.tenantId,
+                    customerId: oldLoan.customerId,
+                    assignedToId: oldLoan.assignedToId,
                     clientName: oldLoan.clientName,
                     clientPhone: oldLoan.clientPhone,
                     clientAddress: oldLoan.clientAddress,
@@ -438,6 +584,20 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
                 }
             });
 
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_REFINANCED',
+                    details: JSON.stringify({
+                        oldLoanId: oldLoan.id,
+                        newLoanId: newLoan.id,
+                        carryOver: carryOver.toString(),
+                        freshCapital: freshCapital.toString(),
+                        newTotalToRepay: totalToRepay.toString(),
+                    }),
+                },
+            });
             // Plan de cuotas del préstamo refinanciado (Cobranza B2).
             const stepDays = freqDays[frequency] || 1;
             const perInstallment = installmentAmount.toDecimalPlaces(2);
@@ -459,27 +619,50 @@ router.post('/:id/refinance', authenticate, async (req: any, res: any) => {
 
         res.status(201).json({ success: true, data: result });
     } catch (error) {
+        if (error instanceof Error && error.message === 'REFINANCE_NO_ACTIVO') {
+            return res.status(400).json({ success: false, error: 'Solo se puede refinanciar un préstamo activo o en mora.' });
+        }
+        if (error instanceof Error && error.message === 'Préstamo no encontrado') {
+            return res.status(404).json({ success: false, error: error.message });
+        }
         console.error('Error refinanciando:', error);
         res.status(500).json({ success: false, error: 'Error en el refinanciamiento' });
     }
 });
 
 // APLICAR PENALIDAD A UN PRÉSTAMO
-router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
+router.post('/:id/penalty', authenticate, LENDER_MANAGER, validate(PenaltySchema), async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { penaltyAmount, reason } = req.body;
         const lenderId = req.tenantId;
 
-        const amount = parseFloat(penaltyAmount);
-        if (isNaN(amount) || amount <= 0) {
+        // Dinero con decimal.js (nunca parseFloat), redondeado a los 2 decimales
+        // de las columnas Decimal(12,2)/(10,2) donde va a persistir.
+        let amountD: Decimal;
+        try {
+            amountD = new Decimal(String(penaltyAmount)).toDecimalPlaces(2);
+        } catch {
             return res.status(400).json({ success: false, error: 'Monto de penalidad inválido' });
         }
-
-        const loan = await prisma.loan.findFirst({ where: { id, lenderId } });
-        if (!loan) return res.status(404).json({ success: false, error: 'Préstamo no encontrado' });
+        if (!amountD.isFinite() || amountD.lessThanOrEqualTo(0)) {
+            return res.status(400).json({ success: false, error: 'Monto de penalidad inválido' });
+        }
+        const amount = amountD.toNumber();
 
         const result = await prisma.$transaction(async (tx) => {
+            // Serialización por préstamo (mismo patrón que abonos/refinance): el
+            // número de la cuota nueva se calcula bajo lock — dos penalidades
+            // concurrentes chocarían en el @@unique([loanId, number]).
+            await tx.$queryRaw`SELECT id FROM \`Loan\` WHERE id = ${id} AND \`lenderId\` = ${lenderId} FOR UPDATE`;
+            const loan = await tx.loan.findFirst({ where: { id, lenderId } });
+            if (!loan) throw new Error('Préstamo no encontrado');
+            // S50 — no se penaliza un préstamo liquidado: revivía deuda sobre un
+            // crédito cerrado (el cliente ya no debe nada que multar).
+            if (loan.status !== 'ACTIVE' && loan.status !== 'DEFAULTED') {
+                throw new Error('PENALTY_NO_ACTIVO');
+            }
+
             const updatedLoan = await tx.loan.update({
                 where: { id },
                 data: {
@@ -488,13 +671,37 @@ router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
                 }
             });
 
-            await tx.repayment.create({
+            // S50 — la multa entra al plan como CUOTA extra (vence hoy), no como
+            // Repayment negativo: aquel restaba del "cobrado hoy" del arqueo y no
+            // aparecía en el plan, así que la imputación de abonos nunca la cobraba.
+            const ultima = await tx.loanInstallment.aggregate({
+                where: { loanId: id },
+                _max: { number: true },
+            });
+            const cuotaMulta = await tx.loanInstallment.create({
                 data: {
                     loanId: id,
-                    amountPaid: -amount,
-                    collectedBy: req.user?.name || 'Sistema',
-                    notes: `Penalidad / Multa: ${reason || 'Atraso'}`
-                }
+                    number: (ultima._max.number ?? 0) + 1,
+                    dueDate: new Date(),
+                    amountDue: amount,
+                    status: 'PENDING',
+                },
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'LOAN_PENALTY',
+                    details: JSON.stringify({
+                        loanId: id,
+                        penaltyAmount: amountD.toString(),
+                        balanceBefore: loan.balanceRemaining.toString(),
+                        balanceAfter: updatedLoan.balanceRemaining.toString(),
+                        installmentNumber: cuotaMulta.number,
+                        reason: reason ?? null,
+                    }),
+                },
             });
 
             return updatedLoan;
@@ -502,13 +709,19 @@ router.post('/:id/penalty', authenticate, async (req: any, res: any) => {
 
         res.status(200).json({ success: true, data: result });
     } catch (error) {
+        if (error instanceof Error && error.message === 'PENALTY_NO_ACTIVO') {
+            return res.status(400).json({ success: false, error: 'No se puede penalizar un préstamo ya liquidado.' });
+        }
+        if (error instanceof Error && error.message === 'Préstamo no encontrado') {
+            return res.status(404).json({ success: false, error: error.message });
+        }
         console.error('Error applying penalty:', error);
         res.status(500).json({ success: false, error: 'Error aplicando penalidad' });
     }
 });
 
 // 9. CREAR NUEVO MOTORIZADO (Auto-gestión del Prestamista)
-router.post('/collectors', authenticate, async (req: any, res: any) => {
+router.post('/collectors', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateCollectorSchema), async (req: any, res: any) => {
     try {
         const { name, email, password } = req.body;
         const lenderId = req.tenantId;
@@ -540,8 +753,25 @@ router.post('/collectors', authenticate, async (req: any, res: any) => {
     }
 });
 
+// 9.B LISTAR COBRADORES (Fase 2 H5 — el dropdown de asignación lo llamaba y no existía)
+router.get('/collectors', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
+    try {
+        const lenderId = req.tenantId;
+        // Solo usuarios COLLECTOR de este prestamista (aislamiento por tenant).
+        const collectors = await prisma.user.findMany({
+            where: { tenantId: lenderId, role: 'COLLECTOR' },
+            select: { id: true, name: true },
+            orderBy: { name: 'asc' },
+        });
+        res.json({ success: true, data: collectors });
+    } catch (error) {
+        console.error('Error listando cobradores:', error);
+        res.status(500).json({ success: false, error: 'Error obteniendo los cobradores' });
+    }
+});
+
 // 9. ASIGNAR COBRADOR A UN PRÉSTAMO (Cobranza A3 — botón del dashboard que hoy falla)
-router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
+router.patch('/:id/assign', authenticate, LENDER_MANAGER, async (req: any, res: any) => {
     try {
         const { id } = req.params;
         const { assignedToId } = req.body;
@@ -571,7 +801,7 @@ router.patch('/:id/assign', authenticate, async (req: any, res: any) => {
 });
 
 // 10. DEPÓSITO A BÓVEDA (Cobranza A3 — entrega de efectivo del cobrador; botón que hoy falla)
-router.post('/vault/deposit', authenticate, async (req: any, res: any) => {
+router.post('/vault/deposit', authenticate, LENDER_MANAGER, validate(VaultDepositSchema), async (req: any, res: any) => {
     try {
         const { collectorId, amount, notes } = req.body;
         const lenderId = req.tenantId;
@@ -591,15 +821,34 @@ router.post('/vault/deposit', authenticate, async (req: any, res: any) => {
             collectorName = collector.name;
         }
 
-        const deposit = await prisma.collectorDeposit.create({
-            data: {
-                lenderId,
-                collectorId: collectorId || null,
-                collectorName,
-                amount: amt,
-                notes: notes || null,
-                receivedBy: req.user.id
-            }
+        // Manejo de efectivo: el depósito y su asiento inmutable se escriben atómicamente
+        // en la misma transacción (Capa 3), para que nunca quede uno sin el otro.
+        const deposit = await prisma.$transaction(async (tx) => {
+            const created = await tx.collectorDeposit.create({
+                data: {
+                    lenderId,
+                    collectorId: collectorId || null,
+                    collectorName,
+                    amount: amt,
+                    notes: notes || null,
+                    receivedBy: req.userId
+                }
+            });
+
+            await tx.auditLog.create({
+                data: {
+                    tenantId: lenderId,
+                    userId: req.userId,
+                    action: 'VAULT_DEPOSIT',
+                    details: JSON.stringify({
+                        depositId: created.id,
+                        collectorId: collectorId ?? null,
+                        amount: String(amt),
+                    }),
+                },
+            });
+
+            return created;
         });
 
         res.status(201).json({ success: true, data: deposit });

@@ -7,7 +7,7 @@ export const MOCK_TENANT: Tenant = {
   creditScore: 785,
   creditLimit: 50000.00,
   walletBalance: 12450.50,
-  subscriptionStatus: 'TRIALING',
+  subscriptionStatus: 'TRIAL',
   plan: 'PRO_MONTHLY',
   trialEndsAt: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString()
 };

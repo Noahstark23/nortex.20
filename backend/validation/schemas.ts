@@ -12,29 +12,156 @@
 
 import { z } from 'zod';
 import type { Request, Response, NextFunction } from 'express';
+import Decimal from 'decimal.js';
+import { MAX_QUANTITY, QUANTITY_DECIMAL_PLACES, validateQuantity } from '../../utils/quantity.js';
+import {
+    normalizeAllowedProductImageUrl,
+    PRODUCT_IMAGE_ALLOWED_HOST,
+    PRODUCT_IMAGE_URL_MAX_LENGTH,
+} from '../../utils/productImageUrl.js';
+import { resolveProductQuantityRules } from '../../utils/productQuantityRules.js';
+import { fiscalCivilDate } from '../lib/fiscalAccess.js';
+import {
+    PURCHASE_NO_TAX_REASONS,
+    PURCHASE_TAX_TRASLADADO,
+    PURCHASE_TAX_TREATMENTS,
+    purchaseTaxTreatmentIssue,
+    type PurchaseTaxTreatment,
+} from '../../utils/purchaseTaxTreatment.js';
 
 // ============================================================
 // HELPERS
 // ============================================================
 
-/** Cantidad monetaria: string o number → Decimal-safe string  */
+/** Cantidad monetaria: string o number → Decimal-safe string.
+ *  Exige FINITO: `parseFloat('Infinity')`/`'1e400'` pasaban el chequeo `>= 0`
+ *  y llegaban a columnas Decimal como valores no-finitos (500/rollback, o peor
+ *  si algún cálculo los propaga).
+ *
+ *  Se valida con Decimal y NO con `parseFloat`, que acepta prefijos: '1,500.00'
+ *  entraba como 1 (pérdida silenciosa de C$1,499 — el peor error posible en
+ *  dinero) y '12abc' cruzaba la frontera para reventar con 500 en el
+ *  `new Decimal(...)` del handler. La misma regla que ya usan las cantidades. */
 const moneyAmount = z
     .union([z.string(), z.number()])
-    .transform((v) => String(v))
-    .refine((v) => !isNaN(parseFloat(v)) && parseFloat(v) >= 0, {
-        message: 'El monto debe ser un número positivo',
+    .transform((v) => typeof v === 'string' ? v.trim() : String(v))
+    .superRefine((value, ctx) => {
+        let parsed: Decimal;
+        try {
+            parsed = new Decimal(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'El monto debe ser un número válido' });
+            return;
+        }
+        // Decimal.js SÍ representa '1e400', pero la columna (y el `.toNumber()`
+        // del handler) no: ahí se vuelve Infinity. El tope sigue siendo el del
+        // chequeo anterior con `Number.isFinite`.
+        if (!parsed.isFinite() || !Number.isFinite(parsed.toNumber())) {
+            ctx.addIssue({ code: 'custom', message: 'El monto debe ser un número finito' });
+        } else if (parsed.isNegative()) {
+            ctx.addIssue({ code: 'custom', message: 'El monto debe ser un número positivo' });
+        }
     });
 
 /** Cantidad monetaria estrictamente mayor que cero */
-const moneyAmountPositive = moneyAmount.refine((v) => parseFloat(v) > 0, {
+const moneyAmountPositive = moneyAmount.refine((v) => decimalPredicate(v, (decimal) => decimal.greaterThan(0)), {
     message: 'El monto debe ser mayor que cero',
 });
 
 /** Entero positivo */
 const positiveInt = z.number().int().positive();
 
+/**
+ * Cantidad física persistible en las columnas legacy Float.
+ *
+ * Aunque esas columnas todavía no migran a Decimal, la frontera conserva el
+ * texto decimal hasta que el handler valida el modo/paso del producto. Esto
+ * evita aceptar `1.00001`, `Infinity` o notación que exceda Decimal(18,4) y
+ * recién descubrirlo dentro de la transacción.
+ */
+const physicalQuantity = z
+    .union([z.string(), z.number()])
+    .transform((value) => typeof value === 'string' ? value.trim() : value.toString())
+    .superRefine((value, ctx) => {
+        if (value === '') {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad es obligatoria' });
+            return;
+        }
+        let parsed: Decimal;
+        try {
+            parsed = new Decimal(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad debe ser un decimal válido' });
+            return;
+        }
+        if (!parsed.isFinite()) {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad debe ser finita' });
+        } else if (parsed.decimalPlaces() > QUANTITY_DECIMAL_PLACES) {
+            ctx.addIssue({ code: 'custom', message: `La cantidad admite máximo ${QUANTITY_DECIMAL_PLACES} decimales` });
+        } else if (parsed.abs().greaterThan(MAX_QUANTITY)) {
+            ctx.addIssue({ code: 'custom', message: 'La cantidad excede el máximo permitido' });
+        }
+    });
+
+const decimalPredicate = (value: string, predicate: (decimal: Decimal) => boolean): boolean => {
+    try {
+        const parsed = new Decimal(value);
+        return parsed.isFinite() && predicate(parsed);
+    } catch {
+        return false;
+    }
+};
+
+/** Cantidad física positiva; sale como string Decimal-safe. */
+export const positiveQuantity = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => decimal.greaterThan(0)), {
+    message: 'La cantidad debe ser mayor que cero',
+});
+
+/** Frontera nueva: no acepta JSON number; conserva el decimal exacto del cliente. */
+export const exactPositiveQuantity = z.string().trim().superRefine((value, ctx) => {
+    const parsed = positiveQuantity.safeParse(value);
+    if (parsed.success) return;
+    for (const issue of parsed.error.issues) {
+        ctx.addIssue({ code: 'custom', message: issue.message });
+    }
+});
+
+/** Cantidad física mayor o igual a cero; sale como string Decimal-safe. */
+export const nonNegativeQuantity = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => decimal.greaterThanOrEqualTo(0)), {
+    message: 'La cantidad no puede ser negativa',
+});
+
+/** Delta de inventario con signo, pero nunca cero; sale como string Decimal-safe. */
+export const nonZeroQuantityDelta = physicalQuantity.refine((value) => decimalPredicate(value, (decimal) => !decimal.isZero()), {
+    message: 'La cantidad no puede ser cero',
+});
+
+/** Número que acepta string o number (defensa ante payloads con strings). */
+const numeric = z
+    .union([z.string(), z.number()])
+    .transform((v) => Number(v))
+    .refine((v) => !isNaN(v), { message: 'Debe ser un número válido' });
+
 /** Método de pago permitido */
 const paymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'CREDIT', 'QR']);
+const customerPaymentMethod = z.enum(['CASH', 'CARD', 'TRANSFER', 'QR']);
+
+/**
+ * PUT /api/tenant/fiscal
+ *
+ * El régimen es una lista cerrada porque cambia el reconocimiento contable de
+ * ventas futuras. Los demás campos admiten cadena vacía/null para que la pantalla
+ * de configuración pueda limpiar valores previamente guardados.
+ */
+export const UpdateFiscalSettingsSchema = z.object({
+    taxId: z.string().trim().max(80).nullable().optional(),
+    address: z.string().trim().max(500).nullable().optional(),
+    phone: z.string().trim().max(80).nullable().optional(),
+    dgiAuthCode: z.string().trim().max(120).nullable().optional(),
+    fiscalRegime: z.enum(['GENERAL', 'CUOTA_FIJA']).optional(),
+}).strict().refine((value) => Object.values(value).some((field) => field !== undefined), {
+    message: 'Indicá al menos un dato fiscal',
+});
 
 // ============================================================
 // ESQUEMAS POR ENDPOINT
@@ -48,6 +175,8 @@ export const SaleItemSchema = z.object({
     costPrice:   moneyAmount.optional(),
     batchId:     z.string().optional(),
     discount:    moneyAmount.optional(),
+    // El snapshot lo construye salesService; ninguna frontera acepta uno del cliente.
+    promotionSnapshot: z.never().optional(),
 });
 
 export const CreateSaleSchema = z.object({
@@ -60,17 +189,47 @@ export const CreateSaleSchema = z.object({
     discount:       moneyAmount.optional(),
     notes:          z.string().max(500).optional(),
     invoiceNumber:  z.union([z.string(), z.number()]).optional(),
+    // Esta frontera legacy no registra promociones. El POS usa la revisión
+    // autoritativa de salesService; no descartar silenciosamente su referencia.
+    promotionQuote: z.never().optional(),
 });
 
 // POST /api/returns
 export const CreateReturnSchema = z.object({
+    correctionRequestId: z.string().trim().min(1, 'correctionRequestId requerido').max(191),
+    // Contrato de clientes actuales: una misma UUID se conserva en reintentos
+    // del mismo payload. ProductReturn mantiene la columna nullable únicamente
+    // para poder convivir con devoluciones históricas.
+    clientEventId: z.string().trim().min(8, 'clientEventId inválido').max(128, 'clientEventId inválido'),
     saleId: z.string().min(1, 'saleId requerido'),
-    items:  z.array(z.object({
-        productId: z.string().min(1),
-        quantity:  positiveInt,
-        price:     moneyAmountPositive,
-    })).min(1, 'Se requiere al menos 1 producto a devolver'),
-    reason:  z.string().min(3, 'La razón debe tener al menos 3 caracteres').max(500),
+    items: z.array(z.object({
+        // Contrato canónico: la identidad es la línea vendida, no el SKU.
+        saleItemId: z.string().trim().min(1).max(191).optional(),
+        // Compatibilidad de despliegue: solo se resolverá cuando el producto
+        // aparezca en exactamente una línea de la venta.
+        productId: z.string().trim().min(1).max(191).optional(),
+        quantity: positiveQuantity,
+        // Campo legacy tolerado y descartado. El servidor usa priceAtSale.
+        price: moneyAmountPositive.optional(),
+    }).superRefine((item, ctx) => {
+        if (!item.saleItemId && !item.productId) {
+            ctx.addIssue({ code: 'custom', message: 'saleItemId requerido' });
+        }
+    })).min(1, 'Se requiere al menos 1 producto a devolver').max(100, 'Máximo 100 líneas por devolución'),
+    reason: z.string().trim().min(3, 'La razón debe tener al menos 3 caracteres').max(500),
+    // Solo se necesita cuando una venta CREDIT fue abonada por métodos mixtos
+    // o históricos no derivables. La ruta exige OWNER/ADMIN antes de aceptarlo.
+    refundMethod: z.enum(['CASH', 'CARD', 'QR', 'TRANSFER']).optional(),
+});
+
+// POST /api/sales/:id/cancel — ANULACIÓN fiscal (DGI-5)
+// El motivo tiene mínimo REAL porque termina en el expediente: dentro de seis
+// meses "error" no le sirve a nadie que audite por qué se anuló una factura.
+// La regla fina (colapsar espacios, medir lo útil) vive en el módulo puro
+// `saleCancellation.ts`; acá solo se ataja lo grosero.
+export const CancelSaleSchema = z.object({
+    correctionRequestId: z.string().trim().min(1, 'correctionRequestId requerido').max(191),
+    motivo: z.string().min(10, 'Escribí por qué se anula (mínimo 10 caracteres)').max(500),
 });
 
 // POST /api/expenses
@@ -84,7 +243,10 @@ export const CreateExpenseSchema = z.object({
 // POST /api/cash-movements
 export const CreateCashMovementSchema = z.object({
     type:        z.enum(['IN', 'OUT']),
-    amount:      moneyAmountPositive,
+    amount:      moneyAmountPositive
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, { message: 'El movimiento admite como máximo 2 decimales' })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('99999999.99'), { message: 'El movimiento excede el máximo permitido' }),
+    currency:    z.enum(['NIO', 'USD']).default('NIO'),
     category:    z.string().min(1, 'La categoría es obligatoria'),
     description: z.string().max(300).optional(),
     shiftId:     z.string().optional(),
@@ -93,34 +255,479 @@ export const CreateCashMovementSchema = z.object({
 // POST /api/payments
 export const CreatePaymentSchema = z.object({
     saleId: z.string().min(1, 'saleId requerido'),
-    amount: moneyAmountPositive,
-    method: paymentMethod.optional(),
+    amount: moneyAmountPositive
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, { message: 'El abono admite como máximo 2 decimales' })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('99999999.99'), { message: 'El abono excede el máximo permitido' }),
+    method: customerPaymentMethod.optional(),
+    // La columna sigue nullable para filas históricas, pero toda mutación nueva
+    // debe poder distinguir un replay de un segundo abono real.
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID'),
+});
+
+// POST /api/purchases/:id/pay — body vacío conserva la liquidación total
+// histórica; cualquier abono parcial exige UUID para que el retry sea seguro.
+export const SupplierPaymentRequestSchema = z.object({
+    amount: moneyAmountPositive
+        // JournalLine y Account son Decimal(14,2): no aceptar una precisión
+        // que el mayor redondearía de forma distinta al subledger de CxP.
+        .refine((value) => new Decimal(value).decimalPlaces() <= 2, {
+            message: 'El abono admite como máximo 2 decimales',
+        })
+        .refine((value) => new Decimal(value).lessThanOrEqualTo('9999999999.99'), {
+            message: 'El abono excede el máximo permitido',
+        })
+        .optional(),
+    method: z.enum(['CASH', 'TRANSFER', 'CARD', 'QR']).optional(),
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID').optional(),
+    reference: z.preprocess(
+        (value) => value === null || value === '' ? undefined : value,
+        z.string().trim().min(1).max(191).optional(),
+    ),
+    notes: z.preprocess(
+        (value) => value === null || value === '' ? undefined : value,
+        z.string().trim().min(1).max(2000).optional(),
+    ),
+}).strict();
+
+// POST /api/b2b/order — orden del marketplace pagada con el wallet del tenant.
+// El total debe ser positivo y FINITO (parseFloat('Infinity') pasa moneyAmountPositive);
+// la suficiencia de saldo la garantiza el débito condicional atómico del handler.
+export const B2BOrderSchema = z.object({
+    items: z.array(z.unknown()).min(1, 'Se requiere al menos 1 ítem').max(200),
+    total: moneyAmountPositive.refine((v) => Number.isFinite(parseFloat(v)), {
+        message: 'El monto debe ser un número finito',
+    }),
+});
+
+// POST /api/stock-transfers — transferencia idempotente entre bodegas.
+// La API nueva exige UUID y cantidades textuales: aceptar Number acá perdería
+// precisión antes de que el servidor consulte modo/paso autoritativos.
+export const StockTransferSchema = z.object({
+    clientEventId: z.uuid('clientEventId debe ser UUID').transform(value => value.toLowerCase()),
+    fromWarehouseId: z.string().trim().min(1, 'Bodega de origen requerida').max(191),
+    toWarehouseId: z.string().trim().min(1, 'Bodega de destino requerida').max(191),
+    notes: z.string().trim().max(500).optional().nullable(),
+    items: z.array(z.object({
+        productId: z.string().trim().min(1, 'productId requerido').max(191),
+        quantity: z.string().trim().min(1, 'Cantidad requerida').max(64).pipe(exactPositiveQuantity),
+    }).strict()).min(1, 'Se requiere al menos un ítem').max(50, 'Máximo 50 ítems por transferencia'),
+}).strict().superRefine((value, ctx) => {
+    if (value.fromWarehouseId === value.toWarehouseId) {
+        ctx.addIssue({ code: 'custom', path: ['toWarehouseId'], message: 'Origen y destino deben ser diferentes' });
+    }
+    const seen = new Set<string>();
+    value.items.forEach((item, index) => {
+        if (seen.has(item.productId)) {
+            ctx.addIssue({ code: 'custom', path: ['items', index, 'productId'], message: 'Producto repetido' });
+        }
+        seen.add(item.productId);
+    });
 });
 
 // POST /api/purchases
-export const PurchaseItemSchema = z.object({
-    productId:   z.string().min(1),
-    quantity:    positiveInt,
-    unitCost:    moneyAmountPositive,
-    batchNumber: z.string().optional(),
-    expiryDate:  z.string().datetime({ offset: true }).optional(),
+// Los dos formularios usan <input type="date">, cuyo valor es YYYY-MM-DD.
+// También conservamos compatibilidad con integraciones que envían un datetime
+// ISO con zona horaria. Los validadores ISO de Zod comprueban el calendario
+// real (incluidos años bisiestos), cosa que Date.parse/regex por sí solos no hacen.
+const purchaseDateOnly = z.iso.date();
+const purchaseDateTimeWithOffset = z.iso.datetime({ offset: true });
+const purchaseDateInput = z.string().refine(
+    (value) => purchaseDateOnly.safeParse(value).success
+        || purchaseDateTimeWithOffset.safeParse(value).success,
+    { message: 'Fecha inválida: usa YYYY-MM-DD o datetime ISO con zona horaria' },
+).transform((value) => {
+    // Date-only representa un día de negocio, no medianoche UTC. Persistirlo al
+    // mediodía UTC mantiene el mismo día en Nicaragua/zonas americanas cuando
+    // reportes existentes usan getters locales para calcular vencimiento.
+    return purchaseDateOnly.safeParse(value).success
+        ? `${value}T12:00:00.000Z`
+        : value;
 });
 
-export const CreatePurchaseSchema = z.object({
-    supplierId:    z.string().min(1, 'supplierId requerido'),
-    invoiceNumber: z.string().min(1, 'Número de factura requerido'),
-    paymentMethod: z.enum(['CASH', 'CREDIT']),
-    dueDate:       z.string().datetime({ offset: true }).optional(),
-    notes:         z.string().max(500).optional(),
-    items:         z.array(PurchaseItemSchema).min(1, 'Se requiere al menos 1 ítem'),
+// Clientes anteriores serializaban campos opcionales vacíos como null. Aceptar
+// ese formato en la frontera y normalizarlo a undefined evita propagar null a
+// consumidores que esperan el contrato opcional de TypeScript.
+const historicalOptional = <T extends z.ZodTypeAny>(schema: T) => z.preprocess(
+    (value) => value === null ? undefined : value,
+    schema.optional(),
+);
+
+export const PurchaseUnitSchema = z.enum(['BASE', 'PACK']);
+
+export const PurchaseItemSchema = z.object({
+    productId:   z.string().trim().min(1),
+    // Referencia opcional a la línea de OC. El servidor vuelve a comprobar que
+    // pertenezca a la OC y al producto del tenant antes de persistirla.
+    purchaseOrderItemId: historicalOptional(z.string().trim().min(1, 'purchaseOrderItemId inválido')),
+    quantity:    positiveQuantity,
+    unitCost:    moneyAmountPositive,
+    // Intención explícita: si no viene (o un cliente histórico manda null),
+    // registrar la compra NO cambia el precio de venta actual del producto.
+    // Conservamos texto Decimal-safe hasta que el handler tome el lock del SKU.
+    salePrice:   historicalOptional(moneyAmountPositive.refine((value) => {
+        try {
+            const persisted = new Decimal(value).toNumber();
+            return Number.isFinite(persisted) && persisted > 0;
+        } catch {
+            return false;
+        }
+    }, { message: 'El precio de venta debe ser representable y mayor que cero' })),
+    // Compatibilidad: clientes anteriores siempre expresaron cantidad/costo en
+    // unidad base. El factor de PACK jamás forma parte de este contrato.
+    purchaseUnit: PurchaseUnitSchema.optional().default('BASE'),
+    batchNumber: historicalOptional(z.string().trim().min(1).max(100)),
+    expiryDate:  historicalOptional(purchaseDateInput),
+});
+
+export const CreatePurchaseSchema = z
+    .object({
+        supplierId:     z.string().trim().min(1, 'supplierId requerido'),
+        warehouseId:    historicalOptional(z.string().trim().min(1, 'warehouseId inválido')),
+        invoiceNumber:  z.string().trim().min(1, 'Número de factura requerido').max(100),
+        // La fecha de la factura define el período de constancias, libros, VET
+        // y retenciones. No existe un default seguro: usar "ahora" archivaría
+        // facturas retroactivas en el mes DGI equivocado.
+        date:            purchaseDateInput,
+        // Fecha del mayor. Si el cliente no la envía, el transform final usa la
+        // fecha de factura para conservar el contrato histórico.
+        postingDate:     historicalOptional(purchaseDateInput),
+        paymentMethod:  z.enum(['CASH', 'CREDIT']),
+        dueDate:        historicalOptional(purchaseDateInput),
+        notes:          historicalOptional(z.string().trim().max(500)),
+        purchaseOrderId: historicalOptional(z.string().trim().min(1, 'purchaseOrderId inválido')),
+        // Traslación declarada del documento. El default conserva el contrato de
+        // los clientes anteriores a este campo; un valor fuera del vocabulario se
+        // RECHAZA en vez de asumirse, porque asumir mueve dinero.
+        taxTreatment:   z.enum(PURCHASE_TAX_TREATMENTS as unknown as [PurchaseTaxTreatment, ...PurchaseTaxTreatment[]])
+            .default(PURCHASE_TAX_TRASLADADO),
+        noTaxReason:    historicalOptional(z.enum(PURCHASE_NO_TAX_REASONS)),
+        items:          z.array(PurchaseItemSchema)
+            .min(1, 'Se requiere al menos 1 ítem')
+            .max(200, 'Máximo 200 ítems por compra'),
+    })
+    .superRefine((purchase, ctx) => {
+        if (purchase.paymentMethod === 'CREDIT' && !purchase.dueDate) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['dueDate'],
+                message: 'La fecha de vencimiento es obligatoria para compras a crédito',
+            });
+        }
+        // El par tratamiento/motivo se valida con la MISMA función pura que usan
+        // el asistente y la re-verificación previa a escribir.
+        const issue = purchaseTaxTreatmentIssue(purchase.taxTreatment, purchase.noTaxReason ?? null);
+        if (issue === 'REASON_REQUIRED') {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['noTaxReason'],
+                message: 'Indicá por qué la factura no trae IVA',
+            });
+        }
+        if (issue === 'REASON_NOT_APPLICABLE') {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['noTaxReason'],
+                message: 'Una factura que traslada IVA no lleva motivo de no traslación',
+            });
+        }
+    })
+    .transform((purchase) => ({
+        ...purchase,
+        postingDate: purchase.postingDate ?? purchase.date,
+    }));
+
+// POST /api/accounting/retenciones-sufridas
+// La retención es dinero y crédito fiscal real: conserva los decimales como
+// texto hasta el handler y fija la fecha a un día civil de Managua. La BD
+// conserva nullable los identificadores de filas históricas, pero la API
+// actual exige factura + UUID para reconciliar la CxC y hacer seguro el retry.
+const retencionMoney = moneyAmountPositive
+    .refine((value) => decimalPredicate(value, (decimal) => decimal.decimalPlaces() <= 2), {
+        message: 'El monto admite como máximo 2 decimales',
+    })
+    .refine((value) => decimalPredicate(value, (decimal) => decimal.lessThanOrEqualTo('9999999999.99')), {
+        message: 'El monto excede el máximo permitido',
+    });
+
+const retencionDateInput = z.string()
+    .refine(
+        (value) => purchaseDateOnly.safeParse(value).success
+            || purchaseDateTimeWithOffset.safeParse(value).success,
+        { message: 'Fecha inválida: usa YYYY-MM-DD o datetime ISO con zona horaria' },
+    )
+    .transform((value) => purchaseDateOnly.safeParse(value).success
+        ? value
+        : fiscalCivilDate(value).isoDay);
+
+const optionalRetencionText = (maxLength: number) => z.preprocess(
+    (value) => value === null || (typeof value === 'string' && value.trim() === '')
+        ? undefined
+        : value,
+    z.string().trim().max(maxLength).optional(),
+);
+
+export const CreateRetencionSufridaSchema = z.object({
+    fecha: retencionDateInput,
+    clienteRetenedor: z.string().trim().min(1, 'El cliente retenedor es requerido').max(160),
+    tipo: z.enum(['IR_2', 'IMI_1']),
+    baseAmount: retencionMoney,
+    amount: retencionMoney,
+    numeroConstancia: optionalRetencionText(60),
+    saleId: z.string().trim().min(1, 'saleId requerido').max(191, 'saleId inválido'),
+    clientEventId: z.preprocess(
+        (value) => value === null ? undefined : value,
+        z.string().trim().uuid('clientEventId debe ser UUID'),
+    ),
+}).strict().superRefine((retencion, ctx) => {
+    const amountExceedsBase = decimalPredicate(retencion.amount, (amount) =>
+        decimalPredicate(retencion.baseAmount, (base) => amount.greaterThan(base)));
+    if (amountExceedsBase) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['amount'],
+            message: 'El monto retenido no puede exceder la base',
+        });
+    }
 });
 
 // POST /api/inventory/adjust
 export const InventoryAdjustSchema = z.object({
+    // Los clientes actuales conservan este UUID hasta recibir confirmación.
+    // Opcional únicamente para compatibilidad con clientes anteriores.
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID').optional(),
     productId: z.string().min(1, 'productId requerido'),
-    quantity:  z.number().int().refine((v) => v !== 0, { message: 'La cantidad no puede ser cero' }),
+    // La UI nueva siempre envía la ubicación. Se conserva opcional para
+    // clientes de una sola bodega; el handler rechaza la omisión ambigua.
+    warehouseId: z.string().trim().min(1, 'warehouseId inválido').optional(),
+    quantity:  nonZeroQuantityDelta,
     reason:    z.string().min(3, 'La justificación es obligatoria (mín. 3 caracteres)').max(300).optional(),
     type:      z.enum(['ADJUST_LOSS', 'ADJUST_GAIN', 'IN_PURCHASE', 'RETURN']).optional(),
+});
+
+// POST/PUT /api/products — contrato único para altas y edición. Los campos de
+// dinero siguen el tipo Float legacy del modelo; las cantidades físicas sí se
+// conservan como texto Decimal-safe hasta su validación contextual.
+export const ProductSaleModeSchema = z.enum(['COUNTED', 'MEASURED']);
+export const ProductFamilySchema = z.enum([
+    'GENERAL',
+    'MEAT',
+    'POULTRY',
+    'ANIMAL_FEED',
+    'AGRO_INPUT',
+    'VETERINARY',
+]);
+
+const nullablePositiveMoney = z.union([moneyAmountPositive, z.literal(''), z.null()]).optional();
+const nullablePositiveQuantity = z.union([positiveQuantity, z.literal(''), z.null()]).optional();
+
+/**
+ * Cantidad opcional del formulario de productos.
+ *
+ * Un campo numérico que el dueño deja EN BLANCO llega como `''` (input de texto)
+ * o como `null` (un `parseFloat('')` que JSON.stringify serializa así). Eso
+ * significa "sin valor", no "cantidad inválida": el alta rechazaba con el
+ * genérico "Datos de entrada inválidos" un producto perfectamente válido solo
+ * por dejar vacíos Punto de Reorden y Stock Objetivo. Se normaliza a `undefined`
+ * para que el handler aplique su propio default (`reorderPoint ?? '0'` en el
+ * alta, "no cambiar" en la edición). Un valor presente pero inválido (-1,
+ * '1.00001', 'Infinity') sigue fallando con su mensaje específico.
+ */
+const optionalNonNegativeQuantity = z
+    .union([nonNegativeQuantity, z.literal(''), z.null()])
+    .optional()
+    .transform((value) => (value === '' || value === null ? undefined : value));
+
+/** Igual que la anterior, pero el blanco cae en el default del contrato de alta. */
+const nonNegativeQuantityWithDefault = (fallback: string) => z
+    .union([nonNegativeQuantity, z.literal(''), z.null()])
+    .optional()
+    .transform((value) => (value === undefined || value === null || value === '' ? fallback : value));
+
+/**
+ * Host autorizado para fotos de producto.
+ *
+ * El cargador oficial usa Cloudinary. Esta misma frontera se comparte con los
+ * renderers: las URLs históricas de otros hosts ya no se solicitan y caen al
+ * fallback hasta que el usuario las reemplace.
+ */
+export const ProductImageUrlSchema = z
+    .union([
+        z.string().trim().max(PRODUCT_IMAGE_URL_MAX_LENGTH, 'La URL de la foto es demasiado larga'),
+        z.null(),
+    ])
+    .superRefine((value, ctx) => {
+        if (value === null || value === '') return;
+
+        let parsed: URL;
+        try {
+            parsed = new URL(value);
+        } catch {
+            ctx.addIssue({ code: 'custom', message: 'La foto debe usar una URL absoluta válida' });
+            return;
+        }
+
+        const hostname = parsed.hostname.toLowerCase();
+        if (parsed.protocol !== 'https:') {
+            ctx.addIssue({ code: 'custom', message: 'La foto debe usar HTTPS' });
+        } else if (parsed.username || parsed.password) {
+            ctx.addIssue({ code: 'custom', message: 'La URL de la foto no puede incluir credenciales' });
+        } else if (parsed.port) {
+            ctx.addIssue({ code: 'custom', message: 'La URL de la foto debe usar el puerto HTTPS estándar' });
+        } else if (
+            hostname !== PRODUCT_IMAGE_ALLOWED_HOST
+            || normalizeAllowedProductImageUrl(value) === null
+        ) {
+            ctx.addIssue({ code: 'custom', message: 'El proveedor de la foto no está autorizado' });
+        }
+    })
+    .transform((value) => {
+        if (value === '' || value === null) return null;
+        return normalizeAllowedProductImageUrl(value) ?? value;
+    });
+
+const publicCatalogPositiveInteger = (fallback: number, max: number) => z.preprocess(
+    (value) => value === undefined ? fallback : value,
+    z.union([
+        z.number().int(),
+        z.string().regex(/^[1-9]\d*$/, 'Debe ser un entero positivo').transform(Number),
+    ]).pipe(z.number().int().min(1).max(max)),
+);
+
+const optionalPublicCatalogText = (max: number) => z.preprocess(
+    (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
+    z.string().trim().min(1).max(max).optional(),
+);
+
+/** Query pública acotada para evitar offsets y payloads sin límite. */
+export const PublicCatalogQuerySchema = z.object({
+    page: publicCatalogPositiveInteger(1, 10_000),
+    pageSize: publicCatalogPositiveInteger(48, 100),
+    search: optionalPublicCatalogText(120),
+    category: optionalPublicCatalogText(100),
+}).strict();
+
+const ProductFieldsSchema = z.object({
+    name:                  z.string().trim().min(1, 'Nombre requerido').max(200),
+    sku:                   z.string().trim().min(1, 'SKU requerido').max(100),
+    description:           z.string().trim().max(1000).optional().nullable(),
+    brand:                 z.string().trim().max(100).optional().nullable(),
+    category:              z.string().trim().max(100).optional().nullable(),
+    price:                 moneyAmountPositive,
+    cost:                  moneyAmount.optional(),
+    stock:                 optionalNonNegativeQuantity,
+    minStock:              optionalNonNegativeQuantity,
+    unit:                  z.string().trim().min(1, 'Unidad requerida').max(40).optional(),
+    saleMode:              ProductSaleModeSchema.optional().nullable(),
+    quantityStep:          nullablePositiveQuantity,
+    productFamily:         ProductFamilySchema.optional().nullable(),
+    isPublished:           z.boolean().optional(),
+    ivaExento:             z.boolean().optional(),
+    imageUrl:              ProductImageUrlSchema.optional(),
+    requiresBatchTracking: z.boolean().optional(),
+    reorderPoint:          optionalNonNegativeQuantity,
+    maxStock:              optionalNonNegativeQuantity,
+    defaultSupplierId:     z.string().trim().max(191).optional().nullable(),
+    wholesalePrice:        nullablePositiveMoney,
+    wholesaleMinQty:       nullablePositiveQuantity,
+    packUnit:              z.string().trim().max(40).optional().nullable(),
+    packSize:              nullablePositiveQuantity,
+    packPrice:             nullablePositiveMoney,
+});
+
+const addQuantityConfigurationIssues = (
+    product: {
+        unit?: string | null;
+        saleMode?: 'COUNTED' | 'MEASURED' | null;
+        quantityStep?: string | null;
+        stock?: string;
+        minStock?: string;
+        reorderPoint?: string;
+        maxStock?: string;
+        wholesaleMinQty?: string | null;
+        packUnit?: string | null;
+        packSize?: string | null;
+        packPrice?: string | null;
+    },
+    ctx: z.RefinementCtx,
+) => {
+    const { saleMode, quantityStep } = resolveProductQuantityRules(product);
+    const quantities = [
+        ['stock', product.stock],
+        ['minStock', product.minStock],
+        ['reorderPoint', product.reorderPoint],
+        ['maxStock', product.maxStock],
+        ['wholesaleMinQty', product.wholesaleMinQty],
+        ['packSize', product.packSize],
+    ] as const;
+
+    const hasPackUnit = Boolean(product.packUnit?.trim());
+    const hasPackSize = product.packSize !== undefined && product.packSize !== null && product.packSize !== '';
+    const hasPackPrice = product.packPrice !== undefined && product.packPrice !== null && product.packPrice !== '';
+    if (hasPackUnit !== hasPackSize) {
+        ctx.addIssue({
+            code: 'custom',
+            path: hasPackUnit ? ['packSize'] : ['packUnit'],
+            message: 'El empaque requiere unidad y tamaño',
+        });
+    }
+    if (hasPackPrice && (!hasPackUnit || !hasPackSize)) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['packPrice'],
+            message: 'El precio de empaque requiere unidad y tamaño',
+        });
+    }
+
+    // El propio paso también debe ser compatible con COUNTED (entero) o
+    // MEASURED (hasta 4 decimales). validateQuantity garantiza ambas reglas.
+    try {
+        validateQuantity(quantityStep, { saleMode, quantityStep });
+    } catch (error) {
+        ctx.addIssue({
+            code: 'custom',
+            path: ['quantityStep'],
+            message: error instanceof Error ? error.message : 'Paso de cantidad inválido',
+        });
+        return;
+    }
+
+    for (const [field, raw] of quantities) {
+        if (raw === undefined || raw === null || raw === '' || new Decimal(raw).isZero()) continue;
+        try {
+            validateQuantity(raw, { saleMode, quantityStep });
+        } catch (error) {
+            ctx.addIssue({
+                code: 'custom',
+                path: [field],
+                message: error instanceof Error ? error.message : 'Cantidad inválida',
+            });
+        }
+    }
+};
+
+export const CreateProductSchema = ProductFieldsSchema
+    .extend({
+        saleMode:     ProductSaleModeSchema.optional().nullable(),
+        quantityStep: nullablePositiveQuantity,
+        productFamily: ProductFamilySchema.optional().nullable(),
+        unit:          z.string().trim().min(1).max(40).default('unidad'),
+        stock:         nonNegativeQuantityWithDefault('0'),
+        minStock:      nonNegativeQuantityWithDefault('5'),
+    })
+    .superRefine(addQuantityConfigurationIssues);
+
+export const UpdateProductSchema = ProductFieldsSchema.partial().refine(
+    (data) => Object.keys(data).length > 0,
+    { message: 'Indicá al menos un cambio' },
+);
+
+// El bulk conserva aliases históricos (nombre/precio/etc.); cada fila se
+// normaliza y valida con CreateProductSchema dentro del handler.
+export const BulkImportProductsSchema = z.object({
+    warehouseId: z.string().trim().min(1).max(191).optional(),
+    products: z.array(z.record(z.string(), z.unknown()))
+        .min(1, 'Se requiere al menos un producto')
+        .max(500, 'Máximo 500 productos por lote'),
 });
 
 // PATCH /api/products/bulk-edit  [Bodeguero A2 — edición masiva]
@@ -149,15 +756,29 @@ export const BulkEditProductsSchema = z
 
 // POST /api/inventory/batches  [Bodeguero A4 — alta de lote]
 export const CreateBatchSchema = z.object({
-    productId:   z.string().min(1, 'productId requerido'),
-    batchNumber: z.string().trim().min(1, 'Número de lote requerido').max(100),
-    expiryDate:  z.string().min(1, 'Fecha de vencimiento requerida'),
-    quantity:    z.number().int().positive('La cantidad debe ser mayor que cero'),
-});
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID'),
+    productId:     z.string().trim().min(1, 'productId requerido'),
+    warehouseId:   z.string().trim().min(1, 'Bodega requerida'),
+    batchNumber:   z.string().trim().min(1, 'Número de lote requerido').max(100),
+    expiryDate:    z.string().regex(/^\d{4}-\d{2}-\d{2}$/u, 'Fecha de vencimiento inválida'),
+    quantity:      exactPositiveQuantity,
+}).strict();
+
+// POST /api/inventory/batches/:batchId/writeoff  [Bodeguero B3 — merma]
+export const WriteoffBatchSchema = z.object({
+    clientEventId: z.string().trim().uuid('clientEventId debe ser UUID'),
+    warehouseId:   z.string().trim().min(1, 'Bodega requerida'),
+    quantity:      exactPositiveQuantity,
+    reason:        z.string().trim().min(3, 'La justificación es obligatoria (mín. 3 caracteres)').max(500),
+}).strict();
 
 // POST /api/stock-counts  [Bodeguero B1 — toma física]
 export const CreateStockCountSchema = z
     .object({
+        // Compatibilidad: clientes anteriores pueden omitirlo. El handler solo
+        // resuelve la bodega por defecto cuando el tenant tiene una única
+        // ubicación activa; con multi-bodega exige selección explícita.
+        warehouseId: z.string().trim().min(1, 'Bodega requerida').optional(),
         scope:    z.enum(['ALL', 'CATEGORY']).default('ALL'),
         category: z.string().trim().min(1).max(100).optional(),
         notes:    z.string().trim().max(300).optional(),
@@ -170,20 +791,95 @@ export const CreateStockCountSchema = z
 // PATCH /api/stock-counts/:id/count  [Bodeguero B1 — captura de conteo]
 export const RecordCountSchema = z.object({
     productId: z.string().min(1, 'productId requerido'),
-    counted:   z.number().min(0, 'El conteo no puede ser negativo'),
+    counted:   nonNegativeQuantity,
 });
 
 // POST /api/shifts/open
 export const OpenShiftSchema = z.object({
     initialCash: moneyAmount,
-    employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos'),
+    // Fase D (gaveta multi-moneda): fondo inicial en dólares, opcional.
+    initialCashUsd: moneyAmount.optional(),
+    // El PIN dejó de ser OBLIGATORIO: cuando no viene, el backend resuelve al
+    // cajero desde el usuario del JWT (ver services/shiftIdentity.ts). Pedirlo
+    // siempre era fricción a medio cobro y, para el dueño, puro trámite — la
+    // pantalla imprimía el PIN inicial y además lo precargaba.
+    //
+    // Si VIENE, se valida igual de estricto que antes: un PIN mal formado tiene
+    // que fallar como PIN incorrecto, NUNCA colarse como "no vino" y abrir la
+    // caja a nombre de otro. Por eso el `.optional()` va sobre el regex y no se
+    // afloja el regex.
+    employeePin: z.string().regex(/^\d{4}$/, 'El PIN debe ser exactamente 4 dígitos numéricos').optional(),
+});
+
+const closeShiftNioAmount = moneyAmount.superRefine((value, ctx) => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        return; // moneyAmount ya agregó el error de sintaxis.
+    }
+    if (parsed.decimalPlaces() > 2) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en córdobas admite máximo 2 decimales' });
+    }
+    if (parsed.greaterThan('99999999.99')) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en córdobas excede el máximo permitido' });
+    }
+});
+
+const closeShiftUsdAmount = moneyAmount.superRefine((value, ctx) => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        return; // moneyAmount ya agregó el error de sintaxis.
+    }
+    if (parsed.decimalPlaces() > 4) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en dólares admite máximo 4 decimales' });
+    }
+    if (parsed.greaterThan('99999999999999.9999')) {
+        ctx.addIssue({ code: 'custom', message: 'El monto en dólares excede el máximo permitido' });
+    }
 });
 
 // POST /api/shifts/close
 export const CloseShiftSchema = z.object({
-    shiftId:      z.string().min(1, 'shiftId requerido'),
-    declaredCash: moneyAmount,
-    auditNotes:   z.string().max(500).optional(),
+    shiftId:      z.string().trim().min(1, 'shiftId requerido').max(191, 'shiftId inválido'),
+    // Los PWA anteriores no enviaban llave idempotente, por eso sigue siendo
+    // opcional. Clientes nuevos deben conservar la misma UUID durante todos
+    // los retries del mismo intento de cierre.
+    clientEventId: z.string()
+        .trim()
+        .uuid('clientEventId debe ser UUID')
+        .transform((value) => value.toLowerCase())
+        .optional(),
+    declaredCash: closeShiftNioAmount,
+    // Fase D: dólares contados al cierre (opcional; si no viene y hubo
+    // movimiento USD, la diferencia USD se calcula contra 0 declarado).
+    declaredCashUsd: closeShiftUsdAmount.optional(),
+    auditNotes:   z.string().trim().max(500).optional(),
+});
+
+/**
+ * Representación canónica de la intención material de cierre.
+ *
+ * La llave idempotente no forma parte de la huella: identifica el comando,
+ * mientras la huella demuestra qué se intentó hacer. El schema rechaza antes
+ * toda escala o rango no persistible; aquí solo se serializa para que
+ * `100`, `100.0` y `100.00`
+ * sean el mismo cierre y no conflictos artificiales de serialización JSON.
+ */
+export const canonicalizeCloseShiftPayload = (input: {
+    shiftId: string;
+    declaredCash: string | number;
+    declaredCashUsd?: string | number;
+    auditNotes?: string;
+}): string => JSON.stringify({
+    version: 1,
+    shiftId: input.shiftId,
+    declaredCash: new Decimal(input.declaredCash).toFixed(2),
+    // Omitido y cero tienen la misma semántica en el endpoint legacy.
+    declaredCashUsd: new Decimal(input.declaredCashUsd ?? 0).toFixed(4),
+    auditNotes: input.auditNotes?.trim() || null,
 });
 
 // POST /api/payroll/calculate
@@ -194,6 +890,241 @@ export const PayrollCalculateSchema = z.object({
 
 // POST /api/tax-report/generate
 export const TaxReportSchema = PayrollCalculateSchema;
+
+// ============================================================
+// AUTH
+// ============================================================
+const businessType = z.enum([
+    'FERRETERIA', 'PULPERIA', 'FARMACIA', 'BOUTIQUE', 'RETAIL', 'LENDER',
+    'DISTRIBUIDORA', 'MISCELANEA', 'CARNICERIA_POLLERIA', 'AGROPECUARIA',
+]);
+const tenantCapability = z.enum([
+    'CARNES_AVES', 'ALIMENTO_ANIMAL', 'AGROINSUMOS', 'PERECEDEROS', 'MAYOREO',
+]);
+
+// POST /api/auth/register
+export const RegisterSchema = z.object({
+    companyName: z.string().trim().min(2, 'El nombre del negocio es obligatorio').max(120),
+    email:       z.string().trim().email('Correo inválido'),
+    password:    z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
+    type:        businessType.optional(),
+    capabilities: z.array(tenantCapability).max(5, 'Máximo 5 capacidades').optional(),
+    // Retención R1: el WhatsApp del dueño es EL canal de rescate en Nicaragua.
+    // Opcional para no bajar la conversión del formulario; '' cuenta como vacío.
+    phone:       z.string().trim().max(20, 'Teléfono demasiado largo')
+                     .regex(/^[0-9+\-\s()]*$/, 'Teléfono inválido — solo números')
+                     .optional().or(z.literal('')),
+});
+
+// POST /api/auth/login — sin mínimo de contraseña para no bloquear cuentas viejas.
+export const LoginSchema = z.object({
+    email:    z.string().trim().email('Correo inválido'),
+    password: z.string().min(1, 'La contraseña es obligatoria'),
+});
+
+// POST /api/auth/reset-password/:token
+export const ResetPasswordSchema = z.object({
+    password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
+});
+
+// POST /api/invite/:token/accept
+// Una invitación crea una cuenta igual que registro o recuperación: no puede
+// abrir una excepción de seis caracteres ni dejar tipos inválidos llegar a bcrypt.
+export const AcceptInvitationSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre es obligatorio').max(120),
+    password: z.string().min(8, 'La contraseña debe tener al menos 8 caracteres').max(200),
+});
+
+// ============================================================
+// PRÉSTAMOS (Prestamista)
+// ============================================================
+const loanFrequency = z.enum(['DAILY', 'WEEKLY', 'BIWEEKLY', 'MONTHLY']);
+const loanType = z.enum(['INFORMAL_FLAT', 'FORMAL_AMORTIZED']);
+
+// POST /api/loans
+export const OriginateLoanSchema = z.object({
+    clientName:      z.string().trim().min(1, 'El nombre del cliente es obligatorio').max(160),
+    clientPhone:     z.string().trim().max(40).optional(),
+    clientAddress:   z.string().trim().max(300).optional(),
+    principalAmount: moneyAmountPositive,
+    interestRate:    numeric.refine((v) => v >= 0 && v <= 1000, { message: 'Tasa de interés fuera de rango' }),
+    // Cota superior: sin techo, un `installments` gigante construye un arreglo
+    // masivo síncrono + `createMany` que bloquea el event loop del proceso ÚNICO
+    // (DoS multi-tenant). 600 cuotas ≈ 50 años mensuales — holgado para cualquier
+    // préstamo real. Mismo tope en refinanciamiento.
+    installments:    numeric.refine((v) => Number.isInteger(v) && v > 0 && v <= 600, { message: 'Número de cuotas inválido (1–600)' }),
+    frequency:       loanFrequency.optional(),
+    type:            loanType.optional(),
+});
+
+// POST /api/loans/:id/repayments
+export const RepaymentSchema = z.object({
+    amountPaid:  moneyAmountPositive,
+    collectedBy: z.string().trim().max(120).optional(),
+    notes:       z.string().trim().max(500).optional(),
+    timestamp:   z.union([z.string(), z.number()]).optional(),
+});
+
+// PATCH /api/loans/clients/:clientId
+export const UpdateClientSchema = z.object({
+    isBlocked:   z.boolean().optional(),
+    creditLimit: moneyAmount.optional(),
+}).refine((d) => d.isBlocked !== undefined || d.creditLimit !== undefined, {
+    message: 'Indicá al menos un cambio (bloqueo o límite de crédito)',
+});
+
+// POST /api/loans/:id/refinance
+export const RefinanceLoanSchema = z.object({
+    newPrincipal: moneyAmount,
+    interestRate: numeric.refine((v) => v >= 0 && v <= 1000, { message: 'Tasa de interés fuera de rango' }),
+    // Mismo tope que en originación (S34): evita el DoS del arreglo síncrono gigante.
+    installments: numeric.refine((v) => Number.isInteger(v) && v > 0 && v <= 600, { message: 'Número de cuotas inválido (1–600)' }),
+    frequency:    loanFrequency.optional(),
+    type:         loanType.optional(),
+});
+
+// POST /api/loans/:id/penalty
+export const PenaltySchema = z.object({
+    penaltyAmount: moneyAmountPositive,
+    reason:        z.string().trim().max(300).optional(),
+});
+
+// POST /api/loans/vault/deposit
+export const VaultDepositSchema = z.object({
+    collectorId: z.string().trim().optional(),
+    amount:      moneyAmountPositive,
+    notes:       z.string().trim().max(500).optional(),
+});
+
+// POST /api/loans/route-expenses
+export const RouteExpenseSchema = z.object({
+    amount:      moneyAmountPositive,
+    description: z.string().trim().min(1, 'La descripción es obligatoria').max(300),
+    collectedBy: z.string().trim().max(120).optional(),
+});
+
+// ============================================================
+// AGENTE BANCARIO (corresponsalía) — ver docs/PLAN_AGENTE_BANCARIO.md
+// ============================================================
+
+/** Operaciones de mostrador del agente (define la dirección del efectivo). */
+export const agentOperation = z.enum([
+    'DEPOSITO', 'PAGO_TARJETA', 'PAGO_PRESTAMO', 'PAGO_SERVICIO', 'RECARGA',
+    'REMESA_ENVIO', // cliente envía dinero → entrega efectivo (IN)
+    'RETIRO', 'REMESA_COBRO', // el negocio paga efectivo (OUT)
+    // Fase B — traslado de efectivo con el banco (solo manager, comisión 0):
+    'LIQUIDACION_ENTREGA', // llevás el efectivo captado al banco (OUT, baja la deuda)
+    'LIQUIDACION_FONDEO',  // traés efectivo del banco para fondear retiros (IN, sube la deuda)
+]);
+
+/** Config de comisión por operación: monto fijo y/o porcentaje (pactado en contrato). */
+const commissionEntry = z.object({
+    fija: numeric.refine((v) => v >= 0, { message: 'Comisión fija inválida' }).optional(),
+    pct:  numeric.refine((v) => v >= 0 && v <= 100, { message: 'Porcentaje de comisión fuera de rango' }).optional(),
+});
+
+// z.record con clave enum exige TODAS las claves (exhaustivo) en esta versión
+// de Zod → clave string + refine de pertenencia, para aceptar configs parciales
+// ({ DEPOSITO: {...} } sin las otras 7 operaciones).
+const commissionConfigSchema = z.record(z.string(), commissionEntry).refine(
+    (cfg) => Object.keys(cfg).every((k) => (agentOperation.options as string[]).includes(k)),
+    { message: 'Operación desconocida en la configuración de comisiones' },
+);
+
+/** Límites por operación del convenio (Fase C): por transacción y/o por día. */
+const limitEntry = z.object({
+    maxTx:  numeric.refine((v) => v > 0, { message: 'Límite por transacción inválido' }).optional(),
+    maxDia: numeric.refine((v) => v > 0, { message: 'Límite diario inválido' }).optional(),
+});
+const limitsConfigSchema = z.record(z.string(), limitEntry).refine(
+    (cfg) => Object.keys(cfg).every((k) => (agentOperation.options as string[]).includes(k)),
+    { message: 'Operación desconocida en la configuración de límites' },
+);
+
+// PATCH /api/agent-banking/settings — umbrales de alerta de gaveta del tenant.
+// null limpia el umbral; validación cruzada min < max sobre el estado enviado.
+export const AgentSettingsSchema = z.object({
+    agentCashMin: moneyAmountPositive.nullable().optional(),
+    agentCashMax: moneyAmountPositive.nullable().optional(),
+}).refine((d) => d.agentCashMin !== undefined || d.agentCashMax !== undefined, {
+    message: 'Indicá al menos un umbral',
+}).refine((d) => {
+    if (d.agentCashMin == null || d.agentCashMax == null) return true;
+    return parseFloat(d.agentCashMin) < parseFloat(d.agentCashMax);
+}, { message: 'El mínimo debe ser menor que el máximo' });
+
+// POST /api/agent-banking/agreements
+export const CreateAgentAgreementSchema = z.object({
+    name: z.string().trim().min(1, 'El nombre del convenio es obligatorio').max(120),
+    kind: z.enum(['BANCO', 'RED_RECAUDADORA', 'REMESERA']).default('BANCO'),
+    commissionConfig: commissionConfigSchema.optional(),
+    limitsConfig: limitsConfigSchema.optional(),
+});
+
+// PATCH /api/agent-banking/agreements/:id
+export const UpdateAgentAgreementSchema = z.object({
+    name:   z.string().trim().min(1).max(120).optional(),
+    active: z.boolean().optional(),
+    commissionConfig: commissionConfigSchema.optional(),
+    limitsConfig: limitsConfigSchema.optional(),
+}).refine((d) => d.name !== undefined || d.active !== undefined || d.commissionConfig !== undefined || d.limitsConfig !== undefined, {
+    message: 'Indicá al menos un cambio',
+});
+
+// POST /api/agent-banking/transactions/:id/reverse
+export const ReverseAgentTxSchema = z.object({
+    reason: z.string().trim().min(3, 'Indicá el motivo de la reversa').max(300),
+});
+
+// POST /api/agent-banking/agreements/:id/settle-commissions
+export const SettleCommissionsSchema = z.object({
+    // Sin monto = liquidar TODO lo devengado.
+    amount: moneyAmountPositive.optional(),
+});
+
+// POST /api/agent-banking/transactions
+export const CreateAgentTxSchema = z.object({
+    agreementId: z.string().min(1, 'agreementId requerido'),
+    operation:   agentOperation,
+    amount:      moneyAmountPositive,
+    currency:    z.enum(['NIO', 'USD']).default('NIO'),
+    // Fase D: tipo de cambio C$/US$ de la transacción — obligatorio en USD.
+    exchangeRate: moneyAmountPositive.refine((v) => parseFloat(v) >= 1 && parseFloat(v) <= 1000, {
+        message: 'Tipo de cambio fuera de rango (1–1000)',
+    }).optional(),
+    // Si no viene, se calcula del commissionConfig del convenio (en C$).
+    commission:  moneyAmount.optional(),
+    externalRef: z.string().trim().max(120).optional(),
+    customerRef: z.string().trim().max(160).optional(),
+}).refine((d) => d.currency !== 'USD' || d.exchangeRate !== undefined, {
+    message: 'El tipo de cambio es obligatorio para operaciones en dólares',
+    path: ['exchangeRate'],
+});
+
+// ============================================================
+// INVENTARIO / CAPITAL
+// ============================================================
+
+// POST /api/kardex/record
+export const KardexRecordSchema = z.object({
+    productId:     z.string().min(1, 'productId requerido'),
+    type:          z.string().min(1).max(40),
+    quantity:      numeric.refine((v) => v !== 0, { message: 'La cantidad no puede ser cero' }),
+    referenceId:   z.string().optional(),
+    referenceType: z.string().optional(),
+    reason:        z.string().trim().max(300).optional(),
+});
+
+// POST /api/capital/finance-purchase
+export const FinancePurchaseSchema = z.object({
+    supplierId: z.string().min(1, 'supplierId requerido'),
+    items: z.array(z.object({
+        productId:   z.string().min(1),
+        productName: z.string().optional(),
+        quantity:    positiveQuantity,
+        unitCost:    moneyAmountPositive,
+    })).min(1, 'Se requiere al menos 1 ítem'),
+});
 
 // ============================================================
 // MIDDLEWARE FACTORY

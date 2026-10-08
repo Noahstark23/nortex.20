@@ -1,27 +1,340 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
+import Decimal from 'decimal.js';
 import { ShoppingCart, Plus, Minus, X, Send, Phone, User, Store, Search, Share2, Package, Loader2, CheckCircle } from 'lucide-react';
+import { formatMoney } from '../utils/money';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import { resolveProductQuantityRules } from '../utils/productQuantityRules';
+import { ProductImage } from './ui/ProductImage';
+
+type PublicPresentation = 'BASE' | 'PACK';
 
 interface CatalogProduct {
     id: string;
     name: string;
-    price: number;
+    price: number | string;
     description?: string;
     imageUrl?: string;
     category?: string;
     unit?: string;
+    saleMode?: 'COUNTED' | 'MEASURED' | null;
+    quantityStep?: number | string | null;
+    packUnit?: string | null;
+    packSize?: number | string | null;
+    packPrice?: number | string | null;
 }
 
 interface CartItem extends CatalogProduct {
-    quantity: number;
+    /** Cantidad de la presentación elegida; el servidor deriva unidades base. */
+    quantity: string;
+    presentation: PublicPresentation;
+}
+
+export interface ConfirmedPublicOrderItem {
+    productId: string;
+    name: string;
+    /** Cantidad de la presentación confirmada por el servidor. */
+    quantity: string;
+    presentation: PublicPresentation;
+    unit: string;
+    /** Subtotal monetario autoritativo, redondeado por el servidor. */
+    subtotal: string;
+}
+
+export interface ConfirmedPublicOrder {
+    items: ConfirmedPublicOrderItem[];
+    total: string;
 }
 
 interface BusinessInfo {
-    id: string;
     name: string;
     slug: string;
     phone?: string;
 }
+
+interface CatalogPagination {
+    page: number;
+    pageSize: number;
+    total: number;
+    totalPages: number;
+}
+
+const PUBLIC_CATALOG_PAGE_SIZE = 48;
+const SEARCH_DEBOUNCE_MS = 250;
+
+const fallbackPagination = (productsLength: number): CatalogPagination => ({
+    page: 1,
+    pageSize: Math.max(productsLength, PUBLIC_CATALOG_PAGE_SIZE),
+    total: productsLength,
+    totalPages: 1,
+});
+
+const parseCatalogPagination = (
+    value: unknown,
+    productsLength: number,
+): { pagination: CatalogPagination; paginated: boolean } => {
+    if (!value || typeof value !== 'object') {
+        return { pagination: fallbackPagination(productsLength), paginated: false };
+    }
+
+    const record = value as Record<string, unknown>;
+    const page = Number(record.page);
+    const pageSize = Number(record.pageSize);
+    const total = Number(record.total);
+    const totalPages = Number(record.totalPages);
+    if (
+        !Number.isInteger(page) || page < 1
+        || !Number.isInteger(pageSize) || pageSize < 1
+        || !Number.isInteger(total) || total < 0
+        || !Number.isInteger(totalPages) || totalPages < 0
+    ) {
+        return { pagination: fallbackPagination(productsLength), paginated: false };
+    }
+
+    return {
+        pagination: {
+            page,
+            pageSize,
+            total,
+            totalPages: Math.max(totalPages, total > 0 ? 1 : 0),
+        },
+        paginated: true,
+    };
+};
+
+const normalizedCatalogCategories = (value: unknown, products: CatalogProduct[]): string[] => {
+    const source = Array.isArray(value)
+        ? value
+        : products.map(product => product.category || 'Otros');
+    return Array.from(new Set(source.flatMap(category => {
+        if (typeof category !== 'string') return [];
+        const normalized = category.trim();
+        return normalized && normalized !== 'ALL' ? [normalized] : [];
+    })));
+};
+
+export const buildPublicCatalogUrl = (
+    slug: string,
+    options: { page: number; search?: string; category?: string },
+): string => {
+    const query = new URLSearchParams({
+        page: String(options.page),
+        pageSize: String(PUBLIC_CATALOG_PAGE_SIZE),
+    });
+    const search = options.search?.trim().slice(0, 120);
+    const category = options.category?.trim().slice(0, 100);
+    if (search) query.set('search', search);
+    if (category && category !== 'ALL') query.set('category', category);
+    return `/api/public/catalog/${encodeURIComponent(slug)}?${query.toString()}`;
+};
+
+export const appendUniqueCatalogProducts = (
+    current: CatalogProduct[],
+    incoming: CatalogProduct[],
+): CatalogProduct[] => {
+    const knownIds = new Set(current.map(product => product.id));
+    const uniqueIncoming = incoming.filter(product => {
+        if (knownIds.has(product.id)) return false;
+        knownIds.add(product.id);
+        return true;
+    });
+    return [...current, ...uniqueIncoming];
+};
+
+const parseCanonicalDecimal = (
+    value: unknown,
+    options: { strictlyPositive: boolean; maxDecimalPlaces: number },
+): Decimal | null => {
+    if (typeof value !== 'string' && typeof value !== 'number') return null;
+    try {
+        const decimal = new Decimal(value);
+        if (
+            !decimal.isFinite()
+            || (options.strictlyPositive ? !decimal.greaterThan(0) : decimal.isNegative())
+            || decimal.decimalPlaces() > options.maxDecimalPlaces
+        ) {
+            return null;
+        }
+        return decimal;
+    } catch {
+        return null;
+    }
+};
+
+/**
+ * Frontera fail-closed para el resumen autoritativo del checkout. Nunca se
+ * reconstruyen nombres, unidades o dinero desde el carrito persistido.
+ */
+export const parseConfirmedPublicOrder = (value: unknown): ConfirmedPublicOrder | null => {
+    if (!value || typeof value !== 'object') return null;
+    const record = value as Record<string, unknown>;
+    if (!Array.isArray(record.items) || record.items.length < 1 || record.items.length > 50) {
+        return null;
+    }
+    const total = parseCanonicalDecimal(record.total, {
+        strictlyPositive: false,
+        maxDecimalPlaces: 2,
+    });
+    if (!total) return null;
+
+    const seen = new Set<string>();
+    const items: ConfirmedPublicOrderItem[] = [];
+    let itemTotal = new Decimal(0);
+    for (const rawItem of record.items) {
+        if (!rawItem || typeof rawItem !== 'object') return null;
+        const item = rawItem as Record<string, unknown>;
+        const productId = typeof item.productId === 'string' ? item.productId.trim() : '';
+        const name = typeof item.name === 'string' ? item.name.trim() : '';
+        const unit = typeof item.unit === 'string' ? item.unit.trim() : '';
+        const presentation: PublicPresentation | null = item.presentation === 'BASE'
+            ? 'BASE'
+            : item.presentation === 'PACK'
+                ? 'PACK'
+                : null;
+        const quantity = parseCanonicalDecimal(item.quantity, {
+            strictlyPositive: true,
+            maxDecimalPlaces: 4,
+        });
+        const subtotal = parseCanonicalDecimal(item.subtotal, {
+            strictlyPositive: false,
+            maxDecimalPlaces: 2,
+        });
+        if (
+            !productId
+            || !name
+            || !unit
+            || !presentation
+            || !quantity
+            || !subtotal
+            || (presentation === 'PACK' && !quantity.isInteger())
+        ) {
+            return null;
+        }
+
+        const identity = `${productId}:${presentation}`;
+        if (seen.has(identity)) return null;
+        seen.add(identity);
+        itemTotal = itemTotal.plus(subtotal);
+        items.push({
+            productId,
+            name,
+            quantity: quantity.toFixed(),
+            presentation,
+            unit,
+            subtotal: subtotal.toFixed(2),
+        });
+    }
+
+    // DELIVERY puede sumar flete; ningún checkout válido puede confirmar un
+    // total menor que la suma de sus renglones.
+    if (total.lessThan(itemTotal)) return null;
+    return { items, total: total.toFixed(2) };
+};
+
+const refreshCartFromCatalogPage = (
+    current: CartItem[],
+    pageProducts: CatalogProduct[],
+): CartItem[] => current.flatMap(item => {
+    const currentProduct = pageProducts.find(product => product.id === item.id);
+    if (!currentProduct) return [item];
+    return reconcilePublicCatalogCart([item], [currentProduct]);
+});
+
+const productRules = (product: CatalogProduct, presentation: PublicPresentation) => presentation === 'PACK'
+    ? { saleMode: 'COUNTED' as const, quantityStep: '1' }
+    : resolveProductQuantityRules(product);
+
+const hasPackPresentation = (product: CatalogProduct): boolean => {
+    try {
+        const packPrice = new Decimal(product.packPrice ?? 0);
+        const packSize = new Decimal(product.packSize ?? 0);
+        return Boolean(
+            product.packUnit?.trim()
+            && product.packPrice !== null
+            && product.packPrice !== undefined
+            && product.packSize !== null
+            && product.packSize !== undefined
+            && packPrice.isFinite()
+            && packPrice.greaterThan(0)
+            && packSize.isFinite()
+            && packSize.greaterThan(0),
+        );
+    } catch {
+        return false;
+    }
+};
+
+const defaultQuantity = (product: CatalogProduct, presentation: PublicPresentation): string => {
+    const rules = productRules(product, presentation);
+    try {
+        return formatQuantityValue(validateQuantity('1', rules));
+    } catch {
+        return formatQuantityValue(validateQuantity(rules.quantityStep, rules));
+    }
+};
+
+const normalizedCartQuantity = (
+    product: CatalogProduct,
+    presentation: PublicPresentation,
+    value: unknown,
+): string => formatQuantityValue(validateQuantity(String(value), productRules(product, presentation)));
+
+const cartQuantityOrDefault = (
+    product: CatalogProduct,
+    presentation: PublicPresentation,
+    value: unknown,
+): Decimal => {
+    try {
+        return new Decimal(normalizedCartQuantity(product, presentation, value));
+    } catch {
+        return new Decimal(defaultQuantity(product, presentation));
+    }
+};
+
+export const reconcilePublicCatalogCart = (
+    cachedItems: unknown,
+    publicProducts: CatalogProduct[],
+): CartItem[] => {
+    if (!Array.isArray(cachedItems)) return [];
+    return cachedItems.flatMap((cached: unknown) => {
+        if (!cached || typeof cached !== 'object') return [];
+        const record = cached as Record<string, unknown>;
+        const product = publicProducts.find(candidate => candidate.id === record.id);
+        if (!product) return [];
+        const requestedPresentation: PublicPresentation = record.presentation === 'PACK'
+            ? 'PACK'
+            : 'BASE';
+        // Un PACK retirado no se convierte silenciosamente en unidades BASE:
+        // el número representa empaques y cambiar su significado alteraría el
+        // pedido. Se descarta la línea para que el cliente la elija de nuevo.
+        if (requestedPresentation === 'PACK' && !hasPackPresentation(product)) return [];
+        try {
+            return [{
+                ...product,
+                presentation: requestedPresentation,
+                quantity: normalizedCartQuantity(product, requestedPresentation, record.quantity),
+            }];
+        } catch {
+            return [];
+        }
+    });
+};
+
+const presentationUnit = (item: CatalogProduct, presentation: PublicPresentation): string => (
+    presentation === 'PACK' ? item.packUnit?.trim() || 'empaque' : item.unit?.trim() || 'unidad'
+);
+
+const presentationPrice = (item: CatalogProduct, presentation: PublicPresentation): Decimal => (
+    new Decimal(presentation === 'PACK' ? item.packPrice ?? 0 : item.price)
+);
+
+const cartLineTotal = (item: CartItem): Decimal => {
+    try {
+        return presentationPrice(item, item.presentation).mul(new Decimal(item.quantity));
+    } catch {
+        return new Decimal(0);
+    }
+};
 
 const PublicCatalog: React.FC = () => {
     const { slug } = useParams<{ slug: string }>();
@@ -40,16 +353,25 @@ const PublicCatalog: React.FC = () => {
             return parsed;
         } catch (error) { 
             // Si explota el parseo, nukeamos el storage para evitar la pantalla blanca
-            console.warn("⚠️ Carrito corrupto detectado. Limpiando...");
+            console.warn("Carrito corrupto detectado. Limpiando...");
             localStorage.removeItem(CART_KEY);
             return []; 
         }
     });
     const [showCart, setShowCart] = useState(false);
     const [searchTerm, setSearchTerm] = useState('');
+    const [debouncedSearch, setDebouncedSearch] = useState('');
     const [loading, setLoading] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
     const [error, setError] = useState('');
+    const [loadMoreError, setLoadMoreError] = useState('');
     const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+    const [catalogCategories, setCatalogCategories] = useState<string[]>([]);
+    const [pagination, setPagination] = useState<CatalogPagination>(() => fallbackPagination(0));
+    const [usesServerFilters, setUsesServerFilters] = useState(false);
+    const [legacyVisibleCount, setLegacyVisibleCount] = useState(PUBLIC_CATALOG_PAGE_SIZE);
+    const requestVersionRef = useRef(0);
+    const loadMoreControllerRef = useRef<AbortController | null>(null);
 
     // Checkout state
     const [showCheckout, setShowCheckout] = useState(false);
@@ -63,6 +385,8 @@ const PublicCatalog: React.FC = () => {
     const [orderSuccess, setOrderSuccess] = useState(false);
     const [lastOrderId, setLastOrderId] = useState('');
     const [lastWhatsappUrl, setLastWhatsappUrl] = useState('');
+    const [lastConfirmedItems, setLastConfirmedItems] = useState<ConfirmedPublicOrderItem[]>([]);
+    const [lastConfirmedTotal, setLastConfirmedTotal] = useState('');
     // Checkout híbrido: DELIVERY crea un Pedido (módulo motorizados+tracking);
     // QUOTE crea un PublicOrder → Cotización mayorista (flujo B2B).
     const [orderMode, setOrderMode] = useState<'DELIVERY' | 'QUOTE'>('DELIVERY');
@@ -83,75 +407,211 @@ const PublicCatalog: React.FC = () => {
     }, [cart, CART_KEY]);
 
     useEffect(() => {
-        fetchCatalog();
-    }, [slug]);
+        const timeoutId = window.setTimeout(
+            () => setDebouncedSearch(searchTerm.trim()),
+            SEARCH_DEBOUNCE_MS,
+        );
+        return () => window.clearTimeout(timeoutId);
+    }, [searchTerm]);
 
-    const fetchCatalog = async () => {
-        try {
-            setLoading(true);
-            const res = await fetch(`/api/public/catalog/${slug}`);
-            if (!res.ok) {
-                setError('Catálogo no encontrado');
-                return;
-            }
-            const data = await res.json();
-            
-            setBusiness(data.business || null);
-            // 🛡️ BLINDAJE: Si products viene null/undefined, forzamos un array vacío [] 
-            // Esto evita que .map() o .filter() crasheen la app más abajo.
-            setProducts(Array.isArray(data.products) ? data.products : []);
-            
-        } catch (err) {
-            setError('Error al cargar el catálogo');
-        } finally {
+    useEffect(() => {
+        if (!slug) {
+            setError('Catálogo no encontrado');
             setLoading(false);
+            return undefined;
+        }
+
+        const controller = new AbortController();
+        const requestVersion = ++requestVersionRef.current;
+        loadMoreControllerRef.current?.abort();
+        loadMoreControllerRef.current = null;
+        setLoadingMore(false);
+        setLoading(true);
+        setError('');
+        setLoadMoreError('');
+
+        const loadFirstPage = async () => {
+            try {
+                const response = await fetch(buildPublicCatalogUrl(slug, {
+                    page: 1,
+                    search: debouncedSearch,
+                    category: selectedCategory,
+                }), { signal: controller.signal });
+                if (!response.ok) {
+                    if (requestVersion === requestVersionRef.current) {
+                        setError('Catálogo no encontrado');
+                    }
+                    return;
+                }
+
+                const data = await response.json() as Record<string, unknown>;
+                if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
+
+                const publicProducts: CatalogProduct[] = Array.isArray(data.products)
+                    ? data.products
+                    : [];
+                const nextPagination = parseCatalogPagination(data.pagination, publicProducts.length);
+
+                setBusiness((data.business as BusinessInfo | null | undefined) || null);
+                setProducts(publicProducts);
+                setPagination(nextPagination.pagination);
+                setUsesServerFilters(nextPagination.paginated);
+                setLegacyVisibleCount(PUBLIC_CATALOG_PAGE_SIZE);
+                setCatalogCategories(normalizedCatalogCategories(data.categories, publicProducts));
+                // Una página es autoridad solo para sus propios productos. Los
+                // renglones cacheados que viven en otra página no se descartan.
+                // Al enviar, ambos endpoints públicos vuelven a validar producto,
+                // presentación, cantidad y precio en el servidor.
+                setCart(previous => nextPagination.paginated
+                    ? refreshCartFromCatalogPage(previous, publicProducts)
+                    : reconcilePublicCatalogCart(previous, publicProducts));
+            } catch {
+                if (!controller.signal.aborted && requestVersion === requestVersionRef.current) {
+                    setError('Error al cargar el catálogo');
+                }
+            } finally {
+                if (!controller.signal.aborted && requestVersion === requestVersionRef.current) {
+                    setLoading(false);
+                }
+            }
+        };
+
+        void loadFirstPage();
+        return () => {
+            controller.abort();
+            loadMoreControllerRef.current?.abort();
+        };
+    }, [slug, debouncedSearch, selectedCategory]);
+
+    const loadNextPage = async () => {
+        if (!usesServerFilters) {
+            setLegacyVisibleCount(current => current + PUBLIC_CATALOG_PAGE_SIZE);
+            return;
+        }
+
+        if (
+            !slug
+            || loadingMore
+            || pagination.page >= pagination.totalPages
+            || searchTerm.trim() !== debouncedSearch
+        ) {
+            return;
+        }
+
+        const requestVersion = requestVersionRef.current;
+        const controller = new AbortController();
+        loadMoreControllerRef.current?.abort();
+        loadMoreControllerRef.current = controller;
+        setLoadingMore(true);
+        setLoadMoreError('');
+
+        try {
+            const response = await fetch(buildPublicCatalogUrl(slug, {
+                page: pagination.page + 1,
+                search: debouncedSearch,
+                category: selectedCategory,
+            }), { signal: controller.signal });
+            if (!response.ok) throw new Error('No se pudo cargar la siguiente página');
+
+            const data = await response.json() as Record<string, unknown>;
+            if (controller.signal.aborted || requestVersion !== requestVersionRef.current) return;
+
+            const nextProducts: CatalogProduct[] = Array.isArray(data.products) ? data.products : [];
+            const nextPagination = parseCatalogPagination(data.pagination, nextProducts.length);
+            setProducts(current => appendUniqueCatalogProducts(current, nextProducts));
+            setPagination(nextPagination.pagination);
+            setCatalogCategories(current => {
+                const next = normalizedCatalogCategories(data.categories, nextProducts);
+                return next.length > 0 ? next : current;
+            });
+            setCart(current => refreshCartFromCatalogPage(current, nextProducts));
+        } catch {
+            if (!controller.signal.aborted && requestVersion === requestVersionRef.current) {
+                setLoadMoreError('No pudimos cargar más productos. Intenta de nuevo.');
+            }
+        } finally {
+            if (loadMoreControllerRef.current === controller) {
+                loadMoreControllerRef.current = null;
+                setLoadingMore(false);
+            }
         }
     };
 
-    const addToCart = (product: CatalogProduct) => {
+    const addToCart = (product: CatalogProduct, presentation: PublicPresentation = 'BASE') => {
         setCart(prev => {
-            const existing = prev.find(item => item.id === product.id);
+            const existing = prev.find(item => item.id === product.id && item.presentation === presentation);
             if (existing) {
                 return prev.map(item =>
-                    item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+                    item.id === product.id && item.presentation === presentation
+                        ? {
+                            ...item,
+                            quantity: formatQuantityValue(
+                                cartQuantityOrDefault(item, presentation, item.quantity)
+                                    .plus(productRules(item, presentation).quantityStep),
+                            ),
+                        }
+                        : item
                 );
             }
-            return [...prev, { ...product, quantity: 1 }];
+            return [...prev, { ...product, presentation, quantity: defaultQuantity(product, presentation) }];
         });
     };
 
-    const updateQuantity = (id: string, delta: number) => {
+    const updateQuantity = (id: string, presentation: PublicPresentation, direction: -1 | 1) => {
         setCart(prev =>
-            prev.map(item => {
-                if (item.id !== id) return item;
-                const newQty = item.quantity + delta;
-                return newQty <= 0 ? item : { ...item, quantity: newQty };
-            }).filter(item => item.quantity > 0)
+            prev.flatMap(item => {
+                if (item.id !== id || item.presentation !== presentation) return [item];
+                const next = cartQuantityOrDefault(item, presentation, item.quantity).plus(
+                    new Decimal(productRules(item, presentation).quantityStep).mul(direction),
+                );
+                if (!next.greaterThan(0)) return [];
+                return [{ ...item, quantity: formatQuantityValue(next) }];
+            }),
         );
     };
 
-    const removeFromCart = (id: string) => {
-        setCart(prev => prev.filter(item => item.id !== id));
+    const updateQuantityInput = (id: string, presentation: PublicPresentation, value: string) => {
+        if (!/^\d*(?:\.\d{0,4})?$/.test(value)) return;
+        setCart(prev => prev.map(item => (
+            item.id === id && item.presentation === presentation
+                ? { ...item, quantity: value }
+                : item
+        )));
     };
 
-    const cartTotal = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
-    const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+    const commitQuantityInput = (id: string, presentation: PublicPresentation) => {
+        setCart(prev => prev.map(item => {
+            if (item.id !== id || item.presentation !== presentation) return item;
+            try {
+                return { ...item, quantity: normalizedCartQuantity(item, presentation, item.quantity) };
+            } catch {
+                return { ...item, quantity: defaultQuantity(item, presentation) };
+            }
+        }));
+    };
+
+    const removeFromCart = (id: string, presentation: PublicPresentation) => {
+        setCart(prev => prev.filter(item => item.id !== id || item.presentation !== presentation));
+    };
+
+    const cartTotal = cart.reduce((sum, item) => sum.plus(cartLineTotal(item)), new Decimal(0));
+    const cartCount = cart.length;
 
     const generateWhatsAppLink = (
-        cartItems: CartItem[],
+        confirmedItems: ConfirmedPublicOrderItem[],
         businessInfo: BusinessInfo,
         orderId: string,
-        total: number,
+        total: string,
         trackingUrl?: string
     ): string => {
         const orderNum = orderId.slice(-8).toUpperCase();
-        const itemLines = cartItems
-            .map(item => `- ${item.quantity}x ${item.name} (C$ ${(item.price * item.quantity).toFixed(2)})`)
+        const itemLines = confirmedItems
+            .map(item => `- ${item.quantity} ${item.unit} de ${item.name} (${formatMoney(item.subtotal)})`)
             .join('\n');
         const message =
-            `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de C$ ${total.toFixed(2)}.\n\n` +
+            `Hola ${businessInfo.name}, quiero hacer el pedido #${orderNum} por un total de ${formatMoney(total)}.\n\n` +
             `Detalles:\n${itemLines}\n\n` +
-            (trackingUrl ? `📍 Seguimiento en vivo: ${trackingUrl}\n\n` : '') +
+            (trackingUrl ? `Seguimiento en vivo: ${trackingUrl}\n\n` : '') +
             `Por favor, confírmenme mi pedido.`;
         const phone = businessInfo.phone?.replace(/\D/g, '') || '';
         return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
@@ -175,11 +635,20 @@ const PublicCatalog: React.FC = () => {
         if (!customerPhone.trim()) return alert('Ingresa tu teléfono');
         if (orderMode === 'DELIVERY' && !direccionEntrega.trim()) return alert('Ingresa tu dirección de entrega');
         if (!validatePhone(customerPhone)) return;
+        let cartSnapshot: CartItem[];
+        try {
+            cartSnapshot = cart.map(item => ({
+                ...item,
+                quantity: normalizedCartQuantity(item, item.presentation, item.quantity),
+            }));
+        } catch (quantityError) {
+            alert(quantityError instanceof Error ? quantityError.message : 'Revisa las cantidades del pedido');
+            return;
+        }
         setSubmitting(true);
-
-        // Snapshot cart + total before clearing
-        const cartSnapshot = [...cart];
-        const totalSnapshot = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+        setLastWhatsappUrl('');
+        setLastConfirmedItems([]);
+        setLastConfirmedTotal('');
 
         try {
             if (orderMode === 'DELIVERY') {
@@ -196,7 +665,11 @@ const PublicCatalog: React.FC = () => {
                         direccionEntrega: direccionEntrega.trim(),
                         referenciaDireccion: referenciaDireccion.trim() || undefined,
                         notas: notas.trim() || undefined,
-                        items: cartSnapshot.map(item => ({ productoId: item.id, cantidad: item.quantity })),
+                        items: cartSnapshot.map(item => ({
+                            productoId: item.id,
+                            cantidad: item.quantity,
+                            presentation: item.presentation,
+                        })),
                     }),
                 });
                 const data = await res.json();
@@ -206,14 +679,28 @@ const PublicCatalog: React.FC = () => {
                 }
 
                 const pedidoId: string = data.pedidoId || '';
-                const trackingPath: string = data.trackingPath || (pedidoId ? `/track/${pedidoId}` : '');
+                const confirmation = parseConfirmedPublicOrder(data);
+                // Sin capacidad firmada no construimos un enlace legacy por UUID:
+                // el endpoint público falla cerrado y evita exponer el pedido.
+                const trackingPath: string = typeof data.trackingPath === 'string'
+                    && data.trackingPath.startsWith(`/track/${pedidoId}#token=`)
+                    ? data.trackingPath
+                    : '';
                 const trackingUrl = trackingPath ? `${window.location.origin}${trackingPath}` : '';
                 setLastOrderId(pedidoId);
                 setLastTrackingPath(trackingPath);
+                setLastConfirmedItems(confirmation?.items ?? []);
+                setLastConfirmedTotal(confirmation?.total ?? '');
 
                 // 🚀 WhatsApp con resumen + link de seguimiento en vivo
-                if (business?.phone && pedidoId) {
-                    const waUrl = generateWhatsAppLink(cartSnapshot, business, pedidoId, Number(data.total ?? totalSnapshot), trackingUrl);
+                if (business?.phone && pedidoId && confirmation) {
+                    const waUrl = generateWhatsAppLink(
+                        confirmation.items,
+                        business,
+                        pedidoId,
+                        confirmation.total,
+                        trackingUrl,
+                    );
                     setLastWhatsappUrl(waUrl);
                     window.open(waUrl, '_blank');
                 }
@@ -228,9 +715,8 @@ const PublicCatalog: React.FC = () => {
                         customerPhone: customerPhone.trim(),
                         items: cartSnapshot.map(item => ({
                             productId: item.id,
-                            name: item.name,
                             quantity: item.quantity,
-                            price: item.price,
+                            presentation: item.presentation,
                         })),
                     }),
                 });
@@ -241,12 +727,20 @@ const PublicCatalog: React.FC = () => {
                 }
 
                 const orderId: string = data.orderId || '';
+                const confirmation = parseConfirmedPublicOrder(data);
                 setLastOrderId(orderId);
                 setLastTrackingPath('');
+                setLastConfirmedItems(confirmation?.items ?? []);
+                setLastConfirmedTotal(confirmation?.total ?? '');
 
                 // 🚀 Abrir WhatsApp automáticamente con resumen del pedido
-                if (business?.phone && orderId) {
-                    const waUrl = generateWhatsAppLink(cartSnapshot, business, orderId, totalSnapshot);
+                if (business?.phone && orderId && confirmation) {
+                    const waUrl = generateWhatsAppLink(
+                        confirmation.items,
+                        business,
+                        orderId,
+                        confirmation.total,
+                    );
                     setLastWhatsappUrl(waUrl);
                     window.open(waUrl, '_blank');
                 }
@@ -270,13 +764,22 @@ const PublicCatalog: React.FC = () => {
     const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
     const whatsappShare = `https://wa.me/?text=${encodeURIComponent(`¡Mira el catálogo de ${business?.name || ''}! ${shareUrl}`)}`;
 
-    const categories = ['ALL', ...Array.from(new Set(products.map(p => p.category || 'Otros').filter(Boolean)))];
-    const filteredProducts = products.filter(p => {
+    const categories = ['ALL', ...catalogCategories];
+    const locallyFilteredProducts = products.filter(p => {
         const matchSearch = p.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
             (p.description || '').toLowerCase().includes(searchTerm.toLowerCase());
         const matchCategory = selectedCategory === 'ALL' || (p.category || 'Otros') === selectedCategory;
         return matchSearch && matchCategory;
     });
+    const filteredProducts = usesServerFilters
+        ? products
+        : locallyFilteredProducts.slice(0, legacyVisibleCount);
+    const visibleProductsTotal = usesServerFilters
+        ? pagination.total
+        : locallyFilteredProducts.length;
+    const hasMoreProducts = usesServerFilters
+        ? pagination.page < pagination.totalPages
+        : legacyVisibleCount < locallyFilteredProducts.length;
 
     // ---- ORDER SUCCESS SCREEN ----
     if (orderSuccess) {
@@ -295,6 +798,33 @@ const PublicCatalog: React.FC = () => {
                         <strong>{business?.name}</strong> recibirá tu pedido y se pondrá en contacto contigo pronto.
                     </p>
 
+                    {lastConfirmedItems.length > 0 && lastConfirmedTotal && (
+                        <div className="mb-6 rounded-2xl bg-slate-50 p-4 text-left">
+                            <p className="mb-2 text-xs font-bold uppercase tracking-wider text-slate-500">
+                                Resumen confirmado
+                            </p>
+                            <div className="space-y-1.5">
+                                {lastConfirmedItems.map(item => (
+                                    <div
+                                        key={`${item.productId}:${item.presentation}`}
+                                        className="flex justify-between gap-3 text-sm"
+                                    >
+                                        <span className="text-slate-600">
+                                            {item.quantity} {item.unit} · {item.name}
+                                        </span>
+                                        <span className="font-medium text-slate-800">
+                                            {formatMoney(item.subtotal)}
+                                        </span>
+                                    </div>
+                                ))}
+                            </div>
+                            <div className="mt-3 flex justify-between border-t border-slate-200 pt-3 font-bold text-slate-900">
+                                <span>Total confirmado</span>
+                                <span>{formatMoney(lastConfirmedTotal)}</span>
+                            </div>
+                        </div>
+                    )}
+
                     {lastWhatsappUrl && (
                         <a
                             href={lastWhatsappUrl}
@@ -311,7 +841,7 @@ const PublicCatalog: React.FC = () => {
                             href={lastTrackingPath}
                             className="flex items-center justify-center gap-2 w-full bg-slate-900 text-white px-6 py-4 rounded-2xl font-bold text-base hover:bg-slate-800 active:scale-[0.98] transition-all shadow-lg mb-3"
                         >
-                            📍 Seguir mi pedido en vivo
+                            Seguir mi pedido en vivo
                         </a>
                     )}
 
@@ -328,6 +858,8 @@ const PublicCatalog: React.FC = () => {
                             setShowCart(false);
                             setLastOrderId('');
                             setLastWhatsappUrl('');
+                            setLastConfirmedItems([]);
+                            setLastConfirmedTotal('');
                             setLastTrackingPath('');
                         }}
                         className="block w-full text-blue-600 font-medium hover:underline"
@@ -412,7 +944,7 @@ const PublicCatalog: React.FC = () => {
                     />
                 </div>
 
-                {categories.length > 2 && (
+                {categories.length > 1 && (
                     <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
                         {categories.map(cat => (
                             <button
@@ -431,16 +963,21 @@ const PublicCatalog: React.FC = () => {
             </div>
 
             {/* Product Grid */}
-            <div className="max-w-6xl mx-auto px-4 pb-28">
+            <div
+                className="max-w-6xl mx-auto px-4 pb-28"
+                aria-busy={loading || loadingMore}
+            >
                 {filteredProducts.length === 0 ? (
                     <div className="text-center py-16 text-slate-400">
                         <Package size={40} className="mx-auto mb-3 opacity-50" />
                         <p>No se encontraron productos</p>
                     </div>
                 ) : (
+                    <>
                     <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3 sm:gap-4">
-                        {filteredProducts.map(product => {
-                            const inCart = cart.find(c => c.id === product.id);
+                        {filteredProducts.map((product, index) => {
+                            const baseInCart = cart.find(c => c.id === product.id && c.presentation === 'BASE');
+                            const packInCart = cart.find(c => c.id === product.id && c.presentation === 'PACK');
                             return (
                                 <div
                                     key={product.id}
@@ -448,17 +985,16 @@ const PublicCatalog: React.FC = () => {
                                 >
                                     {/* Product Image */}
                                     <div className="aspect-square bg-gradient-to-br from-slate-100 to-slate-50 relative overflow-hidden">
-                                        {product.imageUrl ? (
-                                            <img
-                                                src={product.imageUrl}
-                                                alt={product.name}
-                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
-                                            />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center">
-                                                <Package className="text-slate-200" size={40} />
-                                            </div>
-                                        )}
+                                        <ProductImage
+                                            src={product.imageUrl}
+                                            alt={product.name}
+                                            loading={index < 8 ? 'eager' : 'lazy'}
+                                            fetchPriority={index < 4 ? 'high' : 'auto'}
+                                            sizes="(max-width: 639px) 50vw, (max-width: 1023px) 33vw, 25vw"
+                                            className="h-full w-full text-slate-400"
+                                            imageClassName="transition-transform duration-500 group-hover:scale-105"
+                                            fallback={<Package className="text-slate-200" size={40} />}
+                                        />
                                         {product.category && (
                                             <span className="absolute top-2 left-2 text-[10px] font-semibold bg-white/90 backdrop-blur text-slate-600 px-2 py-0.5 rounded-lg">
                                                 {product.category}
@@ -477,23 +1013,31 @@ const PublicCatalog: React.FC = () => {
                                         <div className="flex items-center justify-between mt-2">
                                             <div>
                                                 <span className="text-lg font-bold text-slate-900">
-                                                    C${product.price.toFixed(2)}
+                                                    {formatMoney(Number(product.price))}
                                                 </span>
-                                                {product.unit && product.unit !== 'unidad' && (
-                                                    <span className="text-xs text-slate-400 ml-1">/{product.unit}</span>
-                                                )}
+                                                <span className="text-xs text-slate-400 ml-1">/{product.unit || 'unidad'}</span>
                                             </div>
-                                            {inCart ? (
+                                            {baseInCart ? (
                                                 <div className="flex items-center gap-1.5 bg-blue-50 rounded-xl px-1">
                                                     <button
-                                                        onClick={() => updateQuantity(product.id, -1)}
+                                                        onClick={() => updateQuantity(product.id, 'BASE', -1)}
                                                         className="p-1 rounded-lg hover:bg-blue-100 text-blue-600"
                                                     >
                                                         <Minus size={14} />
                                                     </button>
-                                                    <span className="text-sm font-bold text-blue-700 min-w-[20px] text-center">{inCart.quantity}</span>
+                                                    <input
+                                                        type="number"
+                                                        inputMode="decimal"
+                                                        min={productRules(product, 'BASE').quantityStep}
+                                                        step={productRules(product, 'BASE').quantityStep}
+                                                        value={baseInCart.quantity}
+                                                        onChange={event => updateQuantityInput(product.id, 'BASE', event.target.value)}
+                                                        onBlur={() => commitQuantityInput(product.id, 'BASE')}
+                                                        aria-label={`Cantidad en ${product.unit || 'unidad'} de ${product.name}`}
+                                                        className="w-14 bg-transparent text-sm font-bold text-blue-700 text-center focus:outline-none"
+                                                    />
                                                     <button
-                                                        onClick={() => updateQuantity(product.id, 1)}
+                                                        onClick={() => updateQuantity(product.id, 'BASE', 1)}
                                                         className="p-1 rounded-lg hover:bg-blue-100 text-blue-600"
                                                     >
                                                         <Plus size={14} />
@@ -501,18 +1045,82 @@ const PublicCatalog: React.FC = () => {
                                                 </div>
                                             ) : (
                                                 <button
-                                                    onClick={() => addToCart(product)}
+                                                    onClick={() => addToCart(product, 'BASE')}
                                                     className="p-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 shadow-md shadow-blue-200 hover:shadow-lg transition-all active:scale-95"
+                                                    aria-label={`Agregar ${product.name} por ${product.unit || 'unidad'}`}
                                                 >
                                                     <Plus size={16} />
                                                 </button>
                                             )}
                                         </div>
+                                        {hasPackPresentation(product) && (
+                                            <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-amber-50 px-2 py-1.5 text-xs">
+                                                <span className="min-w-0 text-amber-800">
+                                                    {product.packUnit} × {String(product.packSize)} · {formatMoney(Number(product.packPrice))}
+                                                </span>
+                                                {packInCart ? (
+                                                    <div className="flex items-center gap-1 rounded-lg bg-white px-1">
+                                                        <button
+                                                            onClick={() => updateQuantity(product.id, 'PACK', -1)}
+                                                            className="p-1 text-amber-700"
+                                                            aria-label="Quitar empaque"
+                                                        >
+                                                            <Minus size={12} />
+                                                        </button>
+                                                        <input
+                                                            type="number"
+                                                            inputMode="numeric"
+                                                            min="1"
+                                                            step="1"
+                                                            value={packInCart.quantity}
+                                                            onChange={event => updateQuantityInput(product.id, 'PACK', event.target.value)}
+                                                            onBlur={() => commitQuantityInput(product.id, 'PACK')}
+                                                            aria-label={`Cantidad de ${product.packUnit} de ${product.name}`}
+                                                            className="w-10 bg-transparent text-center font-bold text-amber-800 focus:outline-none"
+                                                        />
+                                                        <button
+                                                            onClick={() => updateQuantity(product.id, 'PACK', 1)}
+                                                            className="p-1 text-amber-700"
+                                                            aria-label="Agregar otro empaque"
+                                                        >
+                                                            <Plus size={12} />
+                                                        </button>
+                                                    </div>
+                                                ) : (
+                                                    <button
+                                                        onClick={() => addToCart(product, 'PACK')}
+                                                        className="rounded-lg bg-amber-600 px-2 py-1 font-bold text-white hover:bg-amber-700"
+                                                    >
+                                                        Agregar
+                                                    </button>
+                                                )}
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             );
                         })}
                     </div>
+                    {hasMoreProducts && (
+                        <div className="mt-8 flex flex-col items-center gap-2 text-center">
+                            <p className="text-sm text-slate-500">
+                                Mostrando {filteredProducts.length} de {visibleProductsTotal} productos
+                            </p>
+                            <button
+                                type="button"
+                                onClick={() => void loadNextPage()}
+                                disabled={loadingMore || searchTerm.trim() !== debouncedSearch}
+                                className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl border border-blue-200 bg-white px-6 py-2.5 font-semibold text-blue-700 shadow-sm transition-colors hover:bg-blue-50 disabled:cursor-wait disabled:opacity-60"
+                            >
+                                {loadingMore && <Loader2 className="animate-spin" size={17} />}
+                                {loadingMore ? 'Cargando...' : 'Mostrar más'}
+                            </button>
+                            {loadMoreError && (
+                                <p role="alert" className="text-sm text-red-600">{loadMoreError}</p>
+                            )}
+                        </div>
+                    )}
+                    </>
                 )}
             </div>
 
@@ -527,7 +1135,7 @@ const PublicCatalog: React.FC = () => {
                             <ShoppingCart size={20} />
                             <span className="font-bold">{cartCount} {cartCount === 1 ? 'item' : 'items'}</span>
                         </div>
-                        <span className="font-bold text-lg">C${cartTotal.toFixed(2)}</span>
+                        <span className="font-bold text-lg">{formatMoney(cartTotal.toNumber())}</span>
                     </button>
                 </div>
             )}
@@ -551,7 +1159,7 @@ const PublicCatalog: React.FC = () => {
                         {!showCheckout ? (
                             <>
                                 {/* Cart Items */}
-                                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                                <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
                                     {cart.length === 0 ? (
                                         <div className="text-center py-10 text-slate-400">
                                             <ShoppingCart size={32} className="mx-auto mb-2 opacity-40" />
@@ -559,27 +1167,41 @@ const PublicCatalog: React.FC = () => {
                                         </div>
                                     ) : (
                                         cart.map(item => (
-                                            <div key={item.id} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
-                                                <div className="w-12 h-12 rounded-lg bg-white border border-slate-200 flex items-center justify-center flex-shrink-0 overflow-hidden">
-                                                    {item.imageUrl ? (
-                                                        <img src={item.imageUrl} alt={item.name} className="w-full h-full object-cover" />
-                                                    ) : (
-                                                        <Package className="text-slate-300" size={20} />
-                                                    )}
-                                                </div>
+                                            <div key={`${item.id}:${item.presentation}`} className="flex items-center gap-3 bg-slate-50 rounded-xl p-3">
+                                                <ProductImage
+                                                    src={item.imageUrl}
+                                                    alt={item.name}
+                                                    loading="lazy"
+                                                    sizes="48px"
+                                                    className="h-12 w-12 flex-shrink-0 rounded-lg border border-slate-200 bg-white text-slate-300"
+                                                    fallback={<Package className="text-slate-300" size={20} />}
+                                                />
                                                 <div className="flex-1 min-w-0">
                                                     <p className="text-sm font-medium text-slate-800 truncate">{item.name}</p>
-                                                    <p className="text-xs text-slate-400">C${item.price.toFixed(2)} × {item.quantity}</p>
+                                                    <p className="text-xs text-slate-400">
+                                                        {formatMoney(presentationPrice(item, item.presentation).toNumber())} / {presentationUnit(item, item.presentation)}
+                                                    </p>
                                                 </div>
                                                 <div className="flex items-center gap-1">
-                                                    <button onClick={() => updateQuantity(item.id, -1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">
+                                                    <button onClick={() => updateQuantity(item.id, item.presentation, -1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-red-300 hover:text-red-500">
                                                         <Minus size={12} />
                                                     </button>
-                                                    <span className="text-sm font-bold text-slate-800 w-6 text-center">{item.quantity}</span>
-                                                    <button onClick={() => updateQuantity(item.id, 1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-blue-300 hover:text-blue-600">
+                                                    <input
+                                                        type="number"
+                                                        inputMode={item.presentation === 'PACK' || item.saleMode === 'COUNTED' ? 'numeric' : 'decimal'}
+                                                        min={productRules(item, item.presentation).quantityStep}
+                                                        step={productRules(item, item.presentation).quantityStep}
+                                                        value={item.quantity}
+                                                        onChange={event => updateQuantityInput(item.id, item.presentation, event.target.value)}
+                                                        onBlur={() => commitQuantityInput(item.id, item.presentation)}
+                                                        aria-label={`Cantidad en ${presentationUnit(item, item.presentation)} de ${item.name}`}
+                                                        className="w-16 rounded-lg border border-slate-200 bg-white px-1 py-0.5 text-center text-sm font-bold text-slate-800"
+                                                    />
+                                                    <span className="max-w-14 truncate text-[10px] text-slate-500">{presentationUnit(item, item.presentation)}</span>
+                                                    <button onClick={() => updateQuantity(item.id, item.presentation, 1)} className="p-1 rounded-lg bg-white border border-slate-200 text-slate-500 hover:border-blue-300 hover:text-blue-600">
                                                         <Plus size={12} />
                                                     </button>
-                                                    <button onClick={() => removeFromCart(item.id)} className="p-1 rounded-lg text-slate-300 hover:text-red-500 ml-1">
+                                                    <button onClick={() => removeFromCart(item.id, item.presentation)} className="p-1 rounded-lg text-slate-300 hover:text-red-500 ml-1">
                                                         <X size={14} />
                                                     </button>
                                                 </div>
@@ -593,7 +1215,7 @@ const PublicCatalog: React.FC = () => {
                                     <div className="p-5 border-t border-slate-100 space-y-3">
                                         <div className="flex justify-between items-center">
                                             <span className="text-slate-500 font-medium">Total</span>
-                                            <span className="text-2xl font-bold text-slate-900">C${cartTotal.toFixed(2)}</span>
+                                            <span className="text-2xl font-bold text-slate-900">{formatMoney(cartTotal.toNumber())}</span>
                                         </div>
                                         <button
                                             onClick={() => setShowCheckout(true)}
@@ -606,7 +1228,7 @@ const PublicCatalog: React.FC = () => {
                             </>
                         ) : (
                             /* Checkout Form */
-                            <div className="p-5 space-y-4">
+                            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
                                 {/* 🔀 Modo híbrido: domicilio (B2C) vs cotización mayorista (B2B) */}
                                 <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100 rounded-2xl">
                                     <button
@@ -614,14 +1236,14 @@ const PublicCatalog: React.FC = () => {
                                         onClick={() => setOrderMode('DELIVERY')}
                                         className={`py-2.5 px-2 rounded-xl text-sm font-bold transition-all ${orderMode === 'DELIVERY' ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                     >
-                                        🛵 Pedir a Domicilio
+                                        Pedir a Domicilio
                                     </button>
                                     <button
                                         type="button"
                                         onClick={() => setOrderMode('QUOTE')}
                                         className={`py-2.5 px-2 rounded-xl text-sm font-bold transition-all ${orderMode === 'QUOTE' ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
                                     >
-                                        🧾 Cotización Mayorista
+                                        Cotización Mayorista
                                     </button>
                                 </div>
                                 <p className="text-sm text-slate-500 mb-2">
@@ -710,14 +1332,16 @@ const PublicCatalog: React.FC = () => {
                                 {/* Order Summary */}
                                 <div className="bg-slate-50 rounded-xl p-4 space-y-1.5">
                                     {cart.map(item => (
-                                        <div key={item.id} className="flex justify-between text-sm">
-                                            <span className="text-slate-600">{item.quantity}× {item.name}</span>
-                                            <span className="font-medium text-slate-800">C${(item.price * item.quantity).toFixed(2)}</span>
+                                        <div key={`${item.id}:${item.presentation}`} className="flex justify-between gap-3 text-sm">
+                                            <span className="min-w-0 break-words text-slate-600">
+                                                {item.quantity} {presentationUnit(item, item.presentation)} · {item.name}
+                                            </span>
+                                            <span className="font-medium text-slate-800">{formatMoney(cartLineTotal(item).toNumber())}</span>
                                         </div>
                                     ))}
                                     <div className="flex justify-between text-base font-bold pt-2 border-t border-slate-200 mt-2">
                                         <span className="text-slate-700">Total</span>
-                                        <span className="text-slate-900">C${cartTotal.toFixed(2)}</span>
+                                        <span className="text-slate-900">{formatMoney(cartTotal.toNumber())}</span>
                                     </div>
                                 </div>
 
@@ -742,7 +1366,6 @@ const PublicCatalog: React.FC = () => {
                     </div>
                 </div>
             )}
-
             {/* Custom animations */}
             <style>{`
                 @keyframes slide-up {
@@ -758,6 +1381,15 @@ const PublicCatalog: React.FC = () => {
                 .no-scrollbar {
                     -ms-overflow-style: none;
                     scrollbar-width: none;
+                }
+                input:-webkit-autofill,
+                input:-webkit-autofill:hover,
+                input:-webkit-autofill:focus,
+                textarea:-webkit-autofill {
+                    -webkit-box-shadow: 0 0 0 60px #ffffff inset;
+                    -webkit-text-fill-color: #1e293b;
+                    caret-color: #1e293b;
+                    
                 }
             `}</style>
         </div>

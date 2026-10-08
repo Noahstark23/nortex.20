@@ -1,15 +1,97 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Package, Loader2, RefreshCw, Copy } from 'lucide-react';
-import { MOCK_PRODUCTS } from '../constants';
+import { FileText, Plus, Search, ShoppingCart, Calendar, User, Printer, ArrowRight, Trash2, Clock, CheckCircle, Globe, Phone, Loader2, RefreshCw, Copy, Minus } from 'lucide-react';
 import { Product, CartItem, Quotation, PublicOrder } from '../types';
 import { useNavigate } from 'react-router-dom';
+import { formatMoney } from '../utils/money';
+import Decimal from 'decimal.js';
+import { formatQuantityValue, validateQuantity } from '../utils/quantity';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    includedVatFromGross,
+    normalizeFiscalRegime,
+    resolveSaleFiscalAmounts,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
+import {
+    normalizeFiscalSettingsSnapshot,
+    type FiscalSettingsSnapshot,
+} from '../utils/fiscalSettingsSnapshot';
+import {
+    claveTraspasoCarrito,
+    resolverIdentidadPersistencia,
+    serializarTraspasoCarrito,
+} from '../utils/cartPersistence';
+import { DAY_DARK_SURFACE } from '../utils/daySurfaceInk';
+import CommerceInbox from './whatsapp/CommerceInbox';
+
+type FiscalQuotation = Quotation & {
+    fiscalRegimeAtQuote?: FiscalRegime;
+};
+
+const fiscalSettingsFromTenantCache = (): FiscalSettingsSnapshot => {
+    try {
+        return normalizeFiscalSettingsSnapshot(
+            JSON.parse(localStorage.getItem('nortex_tenant_data') || '{}'),
+        );
+    } catch {
+        return normalizeFiscalSettingsSnapshot(undefined);
+    }
+};
+
+const cacheFiscalSettings = (settings: FiscalSettingsSnapshot): void => {
+    try {
+        const raw = localStorage.getItem('nortex_tenant_data');
+        if (!raw) return;
+        const tenant = JSON.parse(raw);
+        if (!tenant || typeof tenant !== 'object' || Array.isArray(tenant) || typeof tenant.id !== 'string') return;
+        localStorage.setItem('nortex_tenant_data', JSON.stringify({ ...tenant, ...settings }));
+    } catch {
+        // El cache es un fallback; una entrada ilegible no bloquea cotizaciones.
+    }
+};
+
+const sanitizeDecimalInput = (raw: string): string => {
+    const cleaned = raw.replace(/[^\d.]/g, '');
+    const dot = cleaned.indexOf('.');
+    return dot === -1 ? cleaned : cleaned.slice(0, dot + 1) + cleaned.slice(dot + 1).replace(/\./g, '');
+};
+
+const effectiveSaleMode = (product: Pick<Product, 'saleMode'>): 'COUNTED' | 'MEASURED' =>
+    product.saleMode === 'COUNTED' ? 'COUNTED' : 'MEASURED';
+
+const effectiveQuantityStep = (product: Pick<Product, 'saleMode' | 'quantityStep'>): number => {
+    if (Number.isFinite(product.quantityStep) && Number(product.quantityStep) > 0) {
+        return Number(product.quantityStep);
+    }
+    return product.saleMode === 'COUNTED' ? 1 : 0.0001;
+};
+
+const publicOrderLineTotal = (item: Record<string, unknown>): Decimal => {
+    try {
+        const quantity = new Decimal(String(item.quantityExact ?? item.quantity));
+        const price = new Decimal(String(item.unitPriceExact ?? item.price));
+        if (!quantity.isFinite() || !quantity.greaterThan(0) || !price.isFinite()) return new Decimal(0);
+        return price.mul(quantity).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    } catch {
+        return new Decimal(0);
+    }
+};
 
 const QuotationManager: React.FC = () => {
     const navigate = useNavigate();
-    const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS'>('NEW');
+    // La cotización visible queda ligada a la sesión que montó la pantalla.
+    // Otra pestaña puede cerrar sesión e iniciar con otro cajero mientras esta
+    // sigue abierta; en ese caso no debemos escribir datos viejos bajo la
+    // identidad nueva que apareció en localStorage.
+    const [identidadSesion] = useState(() => resolverIdentidadPersistencia(
+        localStorage.getItem('nortex_tenant_data'),
+        localStorage.getItem('nortex_user'),
+    ));
+    const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS' | 'WHATSAPP'>('NEW');
 
     const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
+    const [fiscalSettings, setFiscalSettings] = useState<FiscalSettingsSnapshot>(fiscalSettingsFromTenantCache);
 
     useEffect(() => {
         fetchProducts();
@@ -29,12 +111,31 @@ const QuotationManager: React.FC = () => {
             console.error('Error fetching products:', error);
         }
     };
+
+    const fetchFiscalSettings = async () => {
+        try {
+            const token = localStorage.getItem('nortex_token');
+            const res = await fetch('/api/tenant/fiscal-settings', {
+                headers: { Authorization: `Bearer ${token}` },
+            });
+            if (!res.ok) return;
+            const payload = await res.json();
+            setFiscalSettings(previous => {
+                const normalized = normalizeFiscalSettingsSnapshot(payload, previous);
+                cacheFiscalSettings(normalized);
+                return normalized;
+            });
+        } catch {
+            // Sin red se conserva el régimen/version del tenant cacheado.
+        }
+    };
     const [searchTerm, setSearchTerm] = useState('');
     const [customerName, setCustomerName] = useState('');
     const [customerRuc, setCustomerRuc] = useState('');
+    const [quantityErrors, setQuantityErrors] = useState<Record<string, string>>({});
 
     // Persistence for history
-    const [history, setHistory] = useState<Quotation[]>([]);
+    const [history, setHistory] = useState<FiscalQuotation[]>([]);
 
     // Web Orders (Public Orders)
     const [webOrders, setWebOrders] = useState<PublicOrder[]>([]);
@@ -141,26 +242,100 @@ const QuotationManager: React.FC = () => {
         fetchQuotations();
         fetchWebOrders();
         fetchTenantInfo();
+        fetchFiscalSettings();
     }, []);
 
     // --- LOGIC ---
     const addToCart = (product: Product) => {
+        const step = effectiveQuantityStep(product);
         setCart(prev => {
             const existing = prev.find(item => item.id === product.id);
-            if (existing) return prev.map(item => item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item);
-            return [...prev, { ...product, quantity: 1 }];
+            if (existing) {
+                const newQuantity = new Decimal(existing.quantity).plus(step).toNumber();
+                return prev.map(item => item.id === product.id ? { ...item, quantity: newQuantity } : item);
+            }
+            return [...prev, { ...product, quantity: step }];
+        });
+        setQuantityErrors(prev => {
+            if (!prev[product.id]) return prev;
+            const next = { ...prev };
+            delete next[product.id];
+            return next;
         });
     };
 
     const removeFromCart = (id: string) => setCart(prev => prev.filter(item => item.id !== id));
 
-    const total = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-    const tax = total * 0.15; // IVA 15% Nicaragua
-    const grandTotal = total + tax;
+    const setItemQuantity = (id: string, raw: string) => {
+        const product = cart.find((item) => item.id === id);
+        if (!product) return;
+        const clean = sanitizeDecimalInput(raw);
+        if (!clean) {
+            setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: 0 as unknown as number } : item));
+            setQuantityErrors(prev => ({ ...prev, [id]: 'La cantidad es obligatoria' }));
+            return;
+        }
+        try {
+            const valid = validateQuantity(clean, {
+                saleMode: effectiveSaleMode(product),
+                quantityStep: effectiveQuantityStep(product),
+            });
+            setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: valid.toNumber() } : item));
+            setQuantityErrors(prev => {
+                if (!prev[id]) return prev;
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+        } catch (error) {
+            setCart(prev => prev.map(item => item.id === id ? { ...item, quantity: Number(clean) || item.quantity } : item));
+            setQuantityErrors(prev => ({ ...prev, [id]: error instanceof Error ? error.message : 'Cantidad inválida' }));
+        }
+    };
+
+    const bumpItemQuantity = (id: string, direction: -1 | 1) => {
+        const product = cart.find((item) => item.id === id);
+        if (!product) return;
+        const step = new Decimal(effectiveQuantityStep(product));
+        const current = new Decimal(product.quantity);
+        const next = direction > 0 ? current.plus(step) : Decimal.max(current.minus(step), step);
+        setItemQuantity(id, next.toString());
+    };
+
+    // T1: el precio del producto es de GÓNDOLA — YA incluye el IVA (así lo trata
+    // la venta: neto = total / 1.15). Antes acá se le sumaba 15% ENCIMA, así que
+    // la proforma mostraba un total ~15% mayor al que el POS le cobra al cliente.
+    // El IVA se deriva por RESTA para que neto + IVA === total exacto.
+    const quoteTotals = cart.reduce((acc, item) => {
+        const lineTotal = new Decimal(item.price)
+            .mul(item.quantity)
+            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        acc.grand = acc.grand.plus(lineTotal);
+        if (item.ivaExento) {
+            acc.subtotal = acc.subtotal.plus(lineTotal);
+            return acc;
+        }
+        const iva = includedVatFromGross(lineTotal).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+        const net = lineTotal.minus(iva);
+        acc.subtotal = acc.subtotal.plus(net);
+        acc.tax = acc.tax.plus(iva);
+        return acc;
+    }, { subtotal: new Decimal(0), tax: new Decimal(0), grand: new Decimal(0) });
+    const grandTotal = quoteTotals.grand.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const generalTax = quoteTotals.tax.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const quoteFiscalAmounts = resolveSaleFiscalAmounts(
+        grandTotal,
+        generalTax,
+        fiscalSettings.fiscalRegime,
+    );
+    const total = quoteFiscalAmounts.netRevenue.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const tax = quoteFiscalAmounts.vatAmount.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const isFixedQuota = quoteFiscalAmounts.fiscalRegime === FISCAL_REGIME_CUOTA_FIJA;
 
     const handleSaveQuotation = async () => {
         if (cart.length === 0) return alert("Agrega productos primero.");
         if (!customerName) return alert("Ingresa el nombre del cliente.");
+        if (Object.keys(quantityErrors).length > 0) return alert('Corregí las cantidades marcadas antes de guardar.');
 
         try {
             const token = localStorage.getItem('nortex_token');
@@ -173,13 +348,27 @@ const QuotationManager: React.FC = () => {
                 body: JSON.stringify({
                     customerName,
                     customerRuc,
-                    items: cart, // Backend will calculate totals
+                    items: cart.map((item) => ({
+                        productId: item.id,
+                        quantity: formatQuantityValue(item.quantity),
+                    })),
                     expiresAt: new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString()
                 })
             });
 
             if (res.ok) {
-                const savedQuote = await res.json();
+                const response = await res.json();
+                // El POST recalcula importes y régimen desde el tenant del JWT.
+                // Si los devuelve, esos snapshots reemplazan la proyección local.
+                const savedQuote: FiscalQuotation = {
+                    ...response,
+                    tax: response.tax ?? tax.toNumber(),
+                    subtotal: response.subtotal ?? total.toNumber(),
+                    total: response.total ?? grandTotal.toNumber(),
+                    fiscalRegimeAtQuote: normalizeFiscalRegime(
+                        response.fiscalRegimeAtQuote ?? fiscalSettings.fiscalRegime,
+                    ),
+                };
                 setHistory(prev => [savedQuote, ...prev]);
 
                 // Reset
@@ -187,7 +376,7 @@ const QuotationManager: React.FC = () => {
                 setCustomerName('');
                 setCustomerRuc('');
                 setActiveTab('HISTORY');
-                alert(`✅ Cotización ${savedQuote.id} generada exitosamente.`);
+                alert(`Cotización ${savedQuote.id} generada exitosamente.`);
             } else {
                 alert('Error al guardar cotización');
             }
@@ -197,10 +386,36 @@ const QuotationManager: React.FC = () => {
         }
     };
 
-    const convertToSale = (quote: Quotation) => {
+    const convertToSale = (quote: FiscalQuotation) => {
         if (confirm(`¿Convertir Cotización ${quote.id} en una Venta Activa?`)) {
-            // WE USE THE EXISTING HOOK IN POS.TSX
-            localStorage.setItem('nortex_pending_cart', JSON.stringify(quote.items));
+            const identidadActual = resolverIdentidadPersistencia(
+                localStorage.getItem('nortex_tenant_data'),
+                localStorage.getItem('nortex_user'),
+            );
+            if (
+                !identidadSesion
+                || !identidadActual
+                || identidadSesion.tenantId !== identidadActual.tenantId
+                || identidadSesion.userId !== identidadActual.userId
+            ) {
+                alert('No se pudo verificar tu sesión. Volvé a iniciar sesión antes de convertir la cotización.');
+                return;
+            }
+            const identidad = identidadSesion;
+            const traspaso = serializarTraspasoCarrito({
+                identidad,
+                referenciaId: quote.id,
+                lineas: quote.items,
+                ahoraMs: Date.now(),
+            });
+            if (!traspaso) {
+                alert('La cotización tiene datos incompletos y no se puede enviar a caja. Actualizá la página e intentá de nuevo.');
+                return;
+            }
+            localStorage.setItem(
+                claveTraspasoCarrito(identidad.tenantId, identidad.userId),
+                traspaso,
+            );
 
             // Mark as converted
             const updated = history.map(q => q.id === quote.id ? { ...q, status: 'CONVERTED' as const } : q);
@@ -223,7 +438,7 @@ const QuotationManager: React.FC = () => {
             });
 
             if (res.ok) {
-                alert('✅ Pedido convertido en cotización exitosamente.');
+                alert('Pedido convertido en cotización exitosamente.');
                 // Refresh both lists
                 await Promise.all([fetchWebOrders(), fetchQuotations()]);
                 setActiveTab('HISTORY');
@@ -247,29 +462,29 @@ const QuotationManager: React.FC = () => {
     const pendingWebOrders = webOrders.filter(o => o.status === 'PENDING');
 
     return (
-        <div className="flex h-full bg-slate-100 overflow-hidden">
+        <div className="flex h-full bg-white/[0.04] overflow-hidden">
             {/* Left Panel: Navigation & Products/List */}
-            <div className="flex-1 flex flex-col border-r border-slate-200 bg-white text-slate-800">
-                <div className="p-6 border-b border-slate-200 text-slate-800">
-                    <h1 className="text-2xl font-bold text-nortex-900 flex items-center gap-2">
-                        <FileText className="text-nortex-500" /> Cotizaciones B2B
+            <div className="flex-1 flex flex-col border-r border-white/[0.06] bg-surface-900 text-slate-100">
+                <div className="p-6 border-b border-white/[0.06] text-slate-100">
+                    <h1 className="text-2xl font-bold text-slate-100 flex items-center gap-2">
+                        <FileText className="text-nortex-500" /> Proformas
                     </h1>
                     <div className="flex gap-2 mt-6">
                         <button
                             onClick={() => setActiveTab('NEW')}
-                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'NEW' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'NEW' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             + NUEVA
                         </button>
                         <button
                             onClick={() => setActiveTab('HISTORY')}
-                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'HISTORY' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'HISTORY' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             HISTORIAL
                         </button>
                         <button
                             onClick={() => { setActiveTab('WEB_ORDERS'); fetchWebOrders(); }}
-                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all relative ${activeTab === 'WEB_ORDERS' ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-500'}`}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all relative ${activeTab === 'WEB_ORDERS' ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
                         >
                             <Globe size={14} className="inline mr-1" />
                             PEDIDOS WEB
@@ -279,18 +494,26 @@ const QuotationManager: React.FC = () => {
                                 </span>
                             )}
                         </button>
+                        <button
+                            type="button"
+                            aria-pressed={activeTab === 'WHATSAPP'}
+                            onClick={() => setActiveTab('WHATSAPP')}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'WHATSAPP' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
+                        >
+                            <Phone size={14} className="inline mr-1" /> WhatsApp
+                        </button>
                     </div>
                 </div>
 
                 {activeTab === 'NEW' ? (
                     <div className="flex-1 flex flex-col overflow-hidden">
-                        <div className="p-4 border-b border-slate-100 text-slate-800">
+                        <div className="p-4 border-b border-white/[0.04] text-slate-100">
                             <div className="relative">
                                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
                                 <input
                                     type="text"
                                     placeholder="Buscar productos para cotizar..."
-                                    className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:border-nortex-500"
+                                    className="w-full pl-10 pr-4 py-2 bg-surface-800/40 border border-white/[0.06] rounded-lg focus:outline-none focus:border-nortex-500"
                                     value={searchTerm}
                                     onChange={e => setSearchTerm(e.target.value)}
                                 />
@@ -301,30 +524,35 @@ const QuotationManager: React.FC = () => {
                                 <button
                                     key={product.id}
                                     onClick={() => addToCart(product)}
-                                    className="p-3 text-left border border-slate-200 rounded-lg hover:border-nortex-500 hover:bg-slate-50 transition-all group text-slate-800"
+                                    className="p-3 text-left border border-white/[0.06] rounded-lg hover:border-nortex-500 hover:bg-surface-800/40 transition-all group text-slate-100"
                                 >
                                     <div className="flex justify-between items-start">
                                         <span className="text-xs font-mono text-slate-400">{product.sku}</span>
                                         <div className="opacity-0 group-hover:opacity-100 text-nortex-600 bg-nortex-100 p-1 rounded-full"><Plus size={14} /></div>
                                     </div>
-                                    <div className="font-medium text-slate-800 text-sm line-clamp-1 mt-1">{product.name}</div>
-                                    <div className="font-bold text-slate-900 mt-1">${product.price.toFixed(2)}</div>
-                                </button>
-                            ))}
-                        </div>
+                                    <div className="font-medium text-slate-100 text-sm line-clamp-1 mt-1">{product.name}</div>
+                                        <div className="font-bold text-white mt-1">{formatMoney(product.price)}</div>
+                                        <div className="mt-1 text-[11px] text-slate-500">
+                                            {effectiveSaleMode(product) === 'COUNTED'
+                                                ? `Contado · paso ${formatQuantityValue(effectiveQuantityStep(product))}`
+                                                : `Medido · ${product.unit || 'unidad'} · paso ${formatQuantityValue(effectiveQuantityStep(product))}`}
+                                        </div>
+                                    </button>
+                                ))}
+                            </div>
                     </div>
                 ) : activeTab === 'HISTORY' ? (
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                         {history.length === 0 && <div className="text-center text-slate-400 mt-10">No hay cotizaciones guardadas.</div>}
                         {history.map(quote => (
-                            <div key={quote.id} className="p-4 mb-3 border border-slate-200 rounded-xl hover:shadow-md transition-shadow bg-slate-50 text-slate-800">
+                            <div key={quote.id} className="p-4 mb-3 border border-white/[0.06] rounded-xl hover:shadow-md transition-shadow bg-surface-800/40 text-slate-100">
                                 <div className="flex justify-between items-start mb-2">
                                     <div>
-                                        <h3 className="font-bold text-nortex-900">{quote.customerName}</h3>
+                                        <h3 className="font-bold text-slate-100">{quote.customerName}</h3>
                                         <span className="text-xs text-slate-500 font-mono">ID: {quote.id}</span>
                                     </div>
-                                    <span className={`text-xs px-2 py-1 rounded font-bold ${quote.status === 'CONVERTED' ? 'bg-green-100 text-green-700' :
-                                        quote.status === 'EXPIRED' ? 'bg-red-100 text-red-700' : 'bg-blue-100 text-blue-700'
+                                    <span className={`text-xs px-2 py-1 rounded font-bold ${quote.status === 'CONVERTED' ? 'bg-green-500/15 text-green-400' :
+                                        quote.status === 'EXPIRED' ? 'bg-red-500/15 text-red-400' : 'bg-blue-500/15 text-blue-400'
                                         }`}>
                                         {quote.status}
                                     </span>
@@ -349,11 +577,13 @@ const QuotationManager: React.FC = () => {
                             </div>
                         ))}
                     </div>
+                ) : activeTab === 'WHATSAPP' ? (
+                    <div className="flex-1 min-h-0 overflow-y-auto p-4"><CommerceInbox /></div>
                 ) : (
                     /* WEB_ORDERS Tab */
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
                         {tenantSlug ? (
-                            <div className="mb-6 bg-gradient-to-r from-slate-900 to-slate-800 rounded-xl p-5 text-white shadow-lg relative overflow-hidden">
+                            <div className={`${DAY_DARK_SURFACE.publicCatalog} mb-6 rounded-xl p-5 shadow-lg relative overflow-hidden`}>
                                 {/* Decorative Blur */}
                                 <div className="absolute -top-10 -right-10 w-32 h-32 bg-nortex-500/30 rounded-full blur-3xl pointer-events-none"></div>
 
@@ -388,7 +618,7 @@ const QuotationManager: React.FC = () => {
                                             href={`https://wa.me/?text=${encodeURIComponent(`¡Hola! Visita nuestro catálogo en línea y haz tu pedido aquí: ${window.location.origin}/pedidos/${tenantSlug}`)}`}
                                             target="_blank"
                                             rel="noopener noreferrer"
-                                            className="px-4 py-2 bg-[#25D366] hover:bg-[#1ebd5a] text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
+                                            className="px-4 py-2 bg-whatsapp hover:bg-whatsapp-hover text-white rounded-lg text-sm font-bold flex items-center justify-center gap-2 transition-all shadow-lg hover:shadow-xl hover:-translate-y-0.5"
                                         >
                                             <Phone size={16} />
                                             Enviar por WhatsApp
@@ -397,9 +627,9 @@ const QuotationManager: React.FC = () => {
                                 </div>
                             </div>
                         ) : (
-                            <div className="mb-6 bg-white border border-slate-200 rounded-xl p-5 shadow-sm text-center">
+                            <div className="mb-6 bg-surface-900 border border-white/[0.06] rounded-xl p-5 shadow-sm text-center">
                                 <Globe className="mx-auto text-slate-400 mb-2" size={32} />
-                                <h3 className="font-bold text-slate-800 mb-1">Activa tu Catálogo Público</h3>
+                                <h3 className="font-bold text-slate-100 mb-1">Activa tu Catálogo Público</h3>
                                 <p className="text-sm text-slate-500 mb-4">Aún no tienes un enlace público para compartir con tus clientes.</p>
                                 <button
                                     onClick={handleCreateSlug}
@@ -419,7 +649,7 @@ const QuotationManager: React.FC = () => {
                             <button
                                 onClick={fetchWebOrders}
                                 disabled={loadingWebOrders}
-                                className="p-2 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors"
+                                className="p-2 rounded-lg hover:bg-white/[0.06] text-slate-400 hover:text-slate-300 transition-colors"
                             >
                                 <RefreshCw size={16} className={loadingWebOrders ? 'animate-spin' : ''} />
                             </button>
@@ -438,22 +668,23 @@ const QuotationManager: React.FC = () => {
                             </div>
                         ) : (
                             webOrders.map(order => {
-                                const orderItems = (order.items || []) as any[];
-                                const orderTotal = orderItems.reduce((sum: number, item: any) =>
-                                    sum + (Number(item.price) * Number(item.quantity)), 0
+                                const orderItems = (order.items || []) as Record<string, unknown>[];
+                                const orderTotal = orderItems.reduce(
+                                    (sum, item) => sum.plus(publicOrderLineTotal(item)),
+                                    new Decimal(0),
                                 );
 
                                 return (
                                     <div
                                         key={order.id}
                                         className={`p-4 mb-3 border rounded-xl transition-all ${order.status === 'PENDING'
-                                            ? 'border-emerald-200 bg-emerald-50/50 hover:shadow-md'
-                                            : 'border-slate-200 bg-slate-50 opacity-70'
+                                            ? 'border-emerald-500/20 bg-emerald-500/10 hover:shadow-md'
+                                            : 'border-white/[0.06] bg-surface-800/40 opacity-70'
                                             }`}
                                     >
                                         <div className="flex justify-between items-start mb-3">
                                             <div>
-                                                <h3 className="font-bold text-slate-900 flex items-center gap-2">
+                                                <h3 className="font-bold text-white flex items-center gap-2">
                                                     <User size={14} className="text-slate-400" />
                                                     {order.customerName}
                                                 </h3>
@@ -462,15 +693,15 @@ const QuotationManager: React.FC = () => {
                                                         href={`https://wa.me/${order.customerPhone.replace(/\D/g, '')}`}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="text-xs text-green-600 hover:underline flex items-center gap-1 mt-0.5"
+                                                        className="text-xs text-green-400 hover:underline flex items-center gap-1 mt-0.5"
                                                     >
                                                         <Phone size={10} /> {order.customerPhone}
                                                     </a>
                                                 )}
                                             </div>
                                             <span className={`text-xs px-2 py-1 rounded font-bold ${order.status === 'PENDING'
-                                                ? 'bg-amber-100 text-amber-700'
-                                                : 'bg-green-100 text-green-700'
+                                                ? 'bg-amber-500/15 text-amber-400'
+                                                : 'bg-green-500/15 text-green-400'
                                                 }`}>
                                                 {order.status === 'PENDING' ? 'PENDIENTE' : 'CONVERTIDO'}
                                             </span>
@@ -478,10 +709,16 @@ const QuotationManager: React.FC = () => {
 
                                         {/* Items preview */}
                                         <div className="bg-white/80 rounded-lg p-2 mb-3 space-y-1">
-                                            {orderItems.slice(0, 4).map((item: any, idx: number) => (
-                                                <div key={idx} className="flex justify-between text-xs text-slate-600">
-                                                    <span className="truncate flex-1">{item.quantity}× {item.name}</span>
-                                                    <span className="font-medium ml-2">C${(Number(item.price) * Number(item.quantity)).toFixed(2)}</span>
+                                            {orderItems.slice(0, 4).map((item, idx) => (
+                                                <div key={idx} className="flex justify-between text-xs text-slate-300">
+                                                    <span className="truncate flex-1">
+                                                        {String(item.presentationQuantityAtSale ?? item.quantityExact ?? item.quantity)} {String(
+                                                            item.presentationAtSale === 'PACK'
+                                                                ? item.packUnit ?? 'empaque'
+                                                                : item.unit ?? 'unidad',
+                                                        )} · {String(item.name ?? '')}
+                                                    </span>
+                                                    <span className="font-medium ml-2">{formatMoney(publicOrderLineTotal(item).toNumber())}</span>
                                                 </div>
                                             ))}
                                             {orderItems.length > 4 && (
@@ -495,7 +732,7 @@ const QuotationManager: React.FC = () => {
                                                 {new Date(order.createdAt).toLocaleString()}
                                             </div>
                                             <div className="flex items-center gap-3">
-                                                <span className="font-bold text-slate-900">C${orderTotal.toFixed(2)}</span>
+                                                <span className="font-bold text-white">{formatMoney(orderTotal.toNumber())}</span>
                                                 {order.status === 'PENDING' && (
                                                     <button
                                                         onClick={() => convertWebOrder(order)}
@@ -522,16 +759,16 @@ const QuotationManager: React.FC = () => {
 
             {/* Right Panel: Active Quotation Details */}
             {activeTab === 'NEW' && (
-                <div className="w-96 bg-slate-50 flex flex-col border-l border-slate-200 text-slate-800">
-                    <div className="p-6 border-b border-slate-200 bg-white text-slate-800">
-                        <h2 className="font-bold text-slate-800 mb-4 flex items-center gap-2">Detalle de Cotización</h2>
+                <div className="w-96 bg-surface-800/40 flex flex-col border-l border-white/[0.06] text-slate-100">
+                    <div className="p-6 border-b border-white/[0.06] bg-surface-900 text-slate-100">
+                        <h2 className="font-bold text-slate-100 mb-4 flex items-center gap-2">Detalle de Cotización</h2>
                         <div className="space-y-3">
                             <div>
                                 <label className="block text-xs font-mono text-slate-500 mb-1">CLIENTE / EMPRESA</label>
                                 <div className="relative">
                                     <User className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={16} />
                                     <input
-                                        className="w-full pl-9 pr-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-800"
+                                        className="bg-transparent w-full pl-9 pr-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
                                         placeholder="Nombre del Cliente"
                                         value={customerName}
                                         onChange={e => setCustomerName(e.target.value)}
@@ -541,7 +778,7 @@ const QuotationManager: React.FC = () => {
                             <div>
                                 <label className="block text-xs font-mono text-slate-500 mb-1">RUC / NIT (Opcional)</label>
                                 <input
-                                    className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-800"
+                                    className="bg-transparent w-full px-3 py-2 border border-white/[0.06] rounded-lg text-sm focus:border-nortex-500 outline-none text-slate-100"
                                     placeholder="00000000000"
                                     value={customerRuc}
                                     onChange={e => setCustomerRuc(e.target.value)}
@@ -558,29 +795,66 @@ const QuotationManager: React.FC = () => {
                             </div>
                         ) : (
                             cart.map(item => (
-                                <div key={item.id} className="flex justify-between items-center bg-white p-3 rounded border border-slate-200 text-sm text-slate-800">
-                                    <div>
-                                        <div className="font-medium text-slate-800 line-clamp-1">{item.name}</div>
-                                        <div className="text-xs text-slate-500">{item.quantity} x ${item.price.toFixed(2)}</div>
+                                <div key={item.id} className="bg-surface-900 p-3 rounded border border-white/[0.06] text-sm text-slate-100">
+                                    <div className="flex justify-between items-start gap-3">
+                                        <div className="min-w-0">
+                                            <div className="font-medium text-slate-100 line-clamp-1">{item.name}</div>
+                                            <div className="text-xs text-slate-500">
+                                                {effectiveSaleMode(item) === 'COUNTED' ? 'Contado' : 'Medido'} · {item.unit || 'unidad'} · paso {formatQuantityValue(effectiveQuantityStep(item))}
+                                            </div>
+                                            <div className="text-xs text-slate-500 mt-0.5">
+                                                {formatMoney(item.price)} / {item.unit || 'unidad'}
+                                            </div>
+                                        </div>
+                                        <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 size={14} /></button>
                                     </div>
-                                    <div className="flex items-center gap-3">
-                                        <span className="font-bold">${(item.quantity * item.price).toFixed(2)}</span>
-                                        <button onClick={() => removeFromCart(item.id)} className="text-slate-300 hover:text-red-500"><Trash2 size={14} /></button>
+                                    <div className="mt-3 flex items-center justify-between gap-3">
+                                        <div className="flex items-center gap-1 bg-surface-800/60 rounded-lg border border-white/[0.06] p-1">
+                                            <button
+                                                onClick={() => bumpItemQuantity(item.id, -1)}
+                                                className="w-9 h-9 flex items-center justify-center rounded text-slate-300 hover:bg-white/[0.06]"
+                                                aria-label={`Restar ${formatQuantityValue(effectiveQuantityStep(item))} ${item.unit || 'unidad'} de ${item.name}`}
+                                            >
+                                                <Minus size={15} />
+                                            </button>
+                                            <input
+                                                value={formatQuantityValue(item.quantity)}
+                                                onChange={(event) => setItemQuantity(item.id, event.target.value)}
+                                                inputMode="decimal"
+                                                className="w-20 bg-transparent text-center font-mono text-sm outline-none"
+                                                aria-label={`Cantidad de ${item.name}`}
+                                            />
+                                            <button
+                                                onClick={() => bumpItemQuantity(item.id, 1)}
+                                                className="w-9 h-9 flex items-center justify-center rounded text-slate-300 hover:bg-white/[0.06]"
+                                                aria-label={`Agregar ${formatQuantityValue(effectiveQuantityStep(item))} ${item.unit || 'unidad'} a ${item.name}`}
+                                            >
+                                                <Plus size={15} />
+                                            </button>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="font-bold">{formatMoney(new Decimal(item.price).mul(item.quantity).toNumber())}</span>
+                                        </div>
                                     </div>
+                                    {quantityErrors[item.id] && <p className="mt-2 text-[11px] text-red-400">{quantityErrors[item.id]}</p>}
                                 </div>
                             ))
                         )}
                     </div>
 
-                    <div className="p-6 bg-white border-t border-slate-200 text-slate-800">
+                    <div className="p-6 bg-surface-900 border-t border-white/[0.06] text-slate-100">
                         <div className="space-y-2 text-sm mb-4">
-                            <div className="flex justify-between text-slate-500"><span>Subtotal</span><span>${total.toFixed(2)}</span></div>
-                            <div className="flex justify-between text-slate-500"><span>Impuesto (18%)</span><span>${tax.toFixed(2)}</span></div>
-                            <div className="flex justify-between font-bold text-nortex-900 text-lg pt-2 border-t border-slate-100 text-slate-800"><span>Total</span><span>${grandTotal.toFixed(2)}</span></div>
+                            {!isFixedQuota && (
+                                <>
+                                    <div className="flex justify-between text-slate-500"><span>Subtotal</span><span className="font-mono tabular-nums">{formatMoney(total.toNumber())}</span></div>
+                                    <div className="flex justify-between text-slate-500"><span>IVA (15%)</span><span className="font-mono tabular-nums">{formatMoney(tax.toNumber())}</span></div>
+                                </>
+                            )}
+                            <div className="flex justify-between font-bold text-slate-100 text-lg pt-2 border-t border-white/[0.04]"><span>Total</span><span className="font-mono tabular-nums">{formatMoney(grandTotal.toNumber())}</span></div>
                         </div>
 
                         <div className="grid grid-cols-2 gap-3">
-                            <button className="py-3 border border-slate-300 rounded-lg font-bold text-slate-600 hover:bg-slate-50 flex items-center justify-center gap-2 text-slate-800">
+                            <button className="py-3 border border-white/10 rounded-lg font-bold text-slate-300 hover:bg-surface-800/40 flex items-center justify-center gap-2 text-slate-100">
                                 <Printer size={18} /> IMPRIMIR
                             </button>
                             <button

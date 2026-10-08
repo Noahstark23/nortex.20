@@ -1,0 +1,24 @@
+{
+  "scope": "Synthetic QA tenant only; read-only database check after browser demo",
+  "products": [
+    {
+      "id": "cmtysfe680016ilf6m86pbsj3",
+      "sku": "QA-UX-BROCHA-3",
+      "brand": "Truper",
+      "name": "Brocha de muestra 3 pulgadas",
+      "stock": 2
+    },
+    {
+      "id": "cmtytysxz0018il4dlm0rs0cz",
+      "sku": "QA-CAMARA-NUEVO",
+      "brand": "Stanley",
+      "name": "Brocha para demostración de cámara",
+      "stock": 0
+    }
+  ],
+  "saleItems": 0,
+  "cameraHardware": "Unavailable in the test browser",
+  "opticalSoftwareTest": "Real ZXing decoder on synthetic EAN-13 pixels",
+  "uiInputPath": "Manual fallback in the same scanner panel",
+  "stockUnchangedByScanning": true
+}

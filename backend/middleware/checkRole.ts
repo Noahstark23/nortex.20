@@ -1,4 +1,4 @@
-import { AuthRequest } from './auth';
+import type { AuthRequest } from './auth';
 
 /**
  * Middleware para verificar roles de usuario.
@@ -42,9 +42,26 @@ export const ROLE_PERMISSIONS: Record<string, string[]> = {
         'pos:write',
         'inventory:read',
     ],
+    // Vendedor de ruta (cartera propia): factura, ve inventario y clientes, y
+    // consulta SU reporte (el endpoint fuerza self-only para roles no-admin).
+    // Sin entrada acá, un rol cae a [] y recibe 403 en toda ruta con
+    // checkPermission — no dejar la mina aunque hoy no haya call-sites.
+    VENDEDOR: [
+        'pos:write',
+        'inventory:read',
+        'customers:read', 'customers:write',
+        'reports:read',
+    ],
+    BODEGUERO: [
+        'inventory:read', 'inventory:write',
+        'warehouses:read',
+        'stock-transfers:read', 'stock-transfers:write',
+        'stock-counts:read', 'stock-counts:write',
+        'purchase-orders:read', 'purchase-orders:receive',
+    ],
 };
 
-export const checkRole = (allowedRoles: string[]) => {
+export const checkRole = (allowedRoles: readonly string[]) => {
     return (req: AuthRequest, res: any, next: any) => {
         const userRole = req.role;
 

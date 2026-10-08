@@ -1,13 +1,40 @@
+import type { FiscalRegime } from './utils/fiscalRegime';
+
+export type { FiscalRegime } from './utils/fiscalRegime';
+
+export type SaleMode = 'COUNTED' | 'MEASURED';
+export type MeasurementSource = 'MANUAL' | 'SCALE_LABEL' | 'LIVE_SCALE';
+export type MeasurementPricePolicy = 'RECALCULATE' | 'REQUIRE_MATCH' | 'ACCEPT_LABEL_TOTAL';
 
 export interface Product {
   id: string;
+  brand?: string | null;
   name: string;
   price: number;
   costPrice: number; // NUEVO: Para calcular utilidad real
   stock: number;
+  minStock?: number | null;
   sku: string;
   category: string;
+  // Foto del producto (opcional). El schema ya la tiene (`Product.imageUrl`);
+  // el tipo compartido no la exponía, así que el POS no podía mostrar
+  // miniatura en la grilla y quedaba un hueco donde nunca iba a haber imagen.
+  imageUrl?: string | null;
   requiresBatchTracking?: boolean; // Control de lotes
+  // Venta por mayor (distribuidora/miscelánea)
+  wholesalePrice?: number | null;  // precio de mayoreo (null = sin mayoreo)
+  wholesaleMinQty?: number | null; // cantidad mínima a partir de la cual aplica
+  // Unidad de empaque (caja/fardo): atajo de cantidad + tercer nivel de precio
+  packUnit?: string | null;  // nombre del empaque (caja, fardo, docena)
+  packSize?: number | null;  // unidades base por empaque (ej: 12)
+  packPrice?: number | null; // precio del empaque completo (null = solo atajo)
+  /** Unidad base que se descuenta del inventario y se factura. */
+  unit?: string | null;
+  saleMode?: SaleMode | null;
+  quantityStep?: number | null;
+  productFamily?: string | null;
+  /** Exención fiscal base del producto para el cálculo del carrito/POS. */
+  ivaExento?: boolean;
 }
 
 export interface ProductBatch {
@@ -20,20 +47,73 @@ export interface ProductBatch {
 
 export interface CartItem extends Product {
   quantity: number;
+  /** Referencia opaca a la línea de cotización autoritativa. */
+  quotationItemId?: string;
+  /** Snapshots decimales enviados por el serializer de cotizaciones. */
+  quantityExact?: string | null;
+  unitPriceExact?: string | null;
+  presentationAtQuote?: 'BASE' | 'PACK';
   batchNumber?: string;
   expiryDate?: string;
+  cartLineId?: string;
+  /** Presentación que vio el cajero; quantity siempre queda en unidad base. */
+  presentation?: {
+    quantity: string;
+    unit: string;
+  };
+  /**
+   * Evidencia de captura. Para SCALE_LABEL el código crudo solo vive en el
+   * carrito/venta pendiente: el servidor lo reparsea y la cola se elimina al
+   * sincronizar. Nunca es autoridad de producto, cantidad ni precio.
+   */
+  measurement?: {
+    source: MeasurementSource;
+    clientEventId: string;
+    capturedAt: string;
+    rawCode?: string;
+    profileVersionId?: string;
+    previewBaseQuantity?: string;
+    sourceValue?: string;
+    sourceUnit?: string;
+    encodedPrice?: string;
+    pricingPolicy?: MeasurementPricePolicy;
+    managerOverride?: boolean;
+    deviceId?: string;
+    stable?: boolean;
+  };
+  // Campos legacy de la primera exploración. Se leen para no romper carritos
+  // ya guardados; todo dato nuevo usa `presentation` + `measurement`.
+  displayQuantity?: number;
+  displayUnit?: string;
+  measurementSource?: MeasurementSource;
+  measurementCode?: string;
+  scaleProfileVersionId?: string;
+  scalePlu?: string;
+  measuredValue?: number;
+  measuredUnit?: string;
+  measurementPricePolicy?: MeasurementPricePolicy;
 }
 
 export interface Tenant {
   id: string;
   name: string;
-  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE'; 
-  creditScore: number;
+  type: 'FERRETERIA' | 'FARMACIA' | 'RETAIL' | 'PULPERIA' | 'BOUTIQUE';
+  creditScore: number | null; // null = sin datos suficientes (tenant sin historial)
   creditLimit: number;
   walletBalance: number;
-  subscriptionStatus: 'TRIALING' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
+  // 'TRIAL' (no 'TRIALING'): es el valor que usan la BD (schema.prisma), el
+  // backend, auth.ts, Billing y SuperAdmin. El type decía 'TRIALING' y por eso
+  // el banner de prueba del Dashboard nunca matcheaba el estado real.
+  subscriptionStatus: 'TRIAL' | 'ACTIVE' | 'PAST_DUE' | 'CANCELLED';
   plan: string;
-  trialEndsAt: string; 
+  trialEndsAt: string;
+  /** Configuración fiscal opcional para tolerar tenants/respuestas anteriores. */
+  fiscalRegime?: FiscalRegime;
+  fiscalRegimeVersion?: number;
+  taxId?: string | null;
+  address?: string | null;
+  phone?: string | null;
+  dgiAuthCode?: string | null;
 }
 
 export interface Shift {
@@ -56,6 +136,13 @@ export interface Shift {
     lastName: string;
     role: string;
   };
+  // Traspaso de caja: el backend devuelve el turno abierto de la caja aunque lo
+  // haya abierto otra persona (antes devolvía null y el POS mostraba C$0.00 con
+  // plata real en la gaveta). Con `esTurnoPropio: false` se ve el efectivo pero
+  // NO se puede cobrar: primero hay que tomar la caja, para que el arqueo tenga
+  // un responsable único.
+  esTurnoPropio?: boolean;
+  turnoDe?: string | null;
 }
 
 export interface CashMovement {
@@ -147,7 +234,7 @@ export interface Quotation {
   id: string;
   customerName: string;
   customerRuc?: string;
-  items: CartItem[];
+  items: Array<CartItem & { quantityExact?: string | null }>;
   subtotal: number;
   tax: number;
   total: number;

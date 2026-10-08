@@ -1,0 +1,11 @@
+{
+  "status": "passed",
+  "database": "nortex_quality_run_link_migration",
+  "checks": [
+    "migration executes on pre-link table",
+    "existing row and Decimal value preserved",
+    "legacy runId remains nullable",
+    "new run link persists",
+    "runId index exists"
+  ]
+}
