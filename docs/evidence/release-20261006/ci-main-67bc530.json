@@ -1,0 +1,129 @@
+{
+  "status": "PASS",
+  "sha": "67bc53092c21679565c0c62934d5de8f3b7bc51a",
+  "image": {
+    "id": "sha256:518d5747c26a38cee58f072fa57589eb0d85156784f7b6473873269ed7e4cf3b",
+    "os": "linux",
+    "arch": "amd64",
+    "cmd": [
+      "sh",
+      "scripts/nortex-start.sh"
+    ]
+  },
+  "syntheticOnly": true,
+  "checks": [
+    {
+      "check": "prepare dispatch",
+      "profile": "staging",
+      "buildExit": 0,
+      "gateExit": 0,
+      "existingEnvPreserved": false,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "staging",
+      "buildExit": 7,
+      "gateExit": 0,
+      "existingEnvPreserved": false,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "staging",
+      "buildExit": 0,
+      "gateExit": 9,
+      "existingEnvPreserved": false,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "staging",
+      "buildExit": 0,
+      "gateExit": 0,
+      "existingEnvPreserved": true,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "production",
+      "buildExit": 0,
+      "gateExit": 0,
+      "existingEnvPreserved": false,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "production",
+      "buildExit": 7,
+      "gateExit": 0,
+      "existingEnvPreserved": false,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "production",
+      "buildExit": 0,
+      "gateExit": 9,
+      "existingEnvPreserved": false,
+      "status": "PASS"
+    },
+    {
+      "check": "prepare dispatch",
+      "profile": "production",
+      "buildExit": 0,
+      "gateExit": 0,
+      "existingEnvPreserved": true,
+      "status": "PASS"
+    },
+    {
+      "check": "Compose pre-cut gate and stale SHA rejection",
+      "profile": "staging",
+      "liveContainerPreserved": true,
+      "mutations": 0,
+      "status": "PASS"
+    },
+    {
+      "check": "actual CMD health",
+      "profile": "staging",
+      "health": {
+        "body": {
+          "ok": true,
+          "db": "up",
+          "uptimeSeconds": 0,
+          "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a"
+        },
+        "cacheControl": "no-store, no-cache, max-age=0, must-revalidate"
+      },
+      "ddl": 0,
+      "status": "PASS"
+    },
+    {
+      "check": "old production schema rejected",
+      "mutations": 0,
+      "status": "PASS"
+    },
+    {
+      "check": "Compose pre-cut gate and stale SHA rejection",
+      "profile": "production",
+      "liveContainerPreserved": true,
+      "mutations": 0,
+      "status": "PASS"
+    },
+    {
+      "check": "actual CMD health",
+      "profile": "production",
+      "health": {
+        "body": {
+          "ok": true,
+          "db": "up",
+          "uptimeSeconds": 0,
+          "commit": "67bc53092c21679565c0c62934d5de8f3b7bc51a"
+        },
+        "cacheControl": "no-store, no-cache, max-age=0, must-revalidate"
+      },
+      "ddl": 0,
+      "status": "PASS"
+    }
+  ]
+}

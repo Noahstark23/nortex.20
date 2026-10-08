@@ -1,0 +1,32 @@
+# Aplicar después del Compose generado por Coolify. No instalar archivos host.
+services:
+  db:
+    image: sha256:6cd09145362dfe6831b14545de3d5fd6cc75c37cfd6ef8561429c1fc73518b39
+  assistant-worker:
+    image: sha256:afd1dc8138f000bcbbd3a8c940e36b21d66b7876eb8cf8e4697ee1ef449d16c1
+  backup:
+    image: sha256:4df4fd9cdb06f619b8808eecbdaa4d33112b5f750d9554f9b4e1939811b5ef65
+    volumes:
+      - type: volume
+        source: nortex_backup_inherited_mysql
+        target: /var/lib/mysql
+        read_only: false
+  app:
+    environment:
+      NORTEX_SCHEMA_PROFILE: production
+      NORTEX_ROLLBACK_DATABASE: ${NORTEX_ROLLBACK_DATABASE:?}
+      NORTEX_ROLLBACK_MYSQL_UUID: ${NORTEX_ROLLBACK_MYSQL_UUID:?}
+      NORTEX_ROLLBACK_CONFIRMATION: ${NORTEX_ROLLBACK_CONFIRMATION:?}
+volumes:
+  loksow84gw0wccs8ookkosw8_mysql-data:
+    name: loksow84gw0wccs8ookkosw8_mysql-data
+    external: true
+  loksow84gw0wccs8ookkosw8_assistant-private:
+    name: loksow84gw0wccs8ookkosw8_assistant-private
+    external: true
+  loksow84gw0wccs8ookkosw8_backup-data:
+    name: loksow84gw0wccs8ookkosw8_backup-data
+    external: true
+  nortex_backup_inherited_mysql:
+    name: 2e59a1dcfc792775cf9e891548551991b44baf46451855f8cd2cb9d35a2ae882
+    external: true

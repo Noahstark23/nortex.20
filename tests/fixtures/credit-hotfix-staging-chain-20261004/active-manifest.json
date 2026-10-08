@@ -1,0 +1,107 @@
+{
+  "candidate_commit": "df6fc095fe8da39b4829336e79b78e4454997046",
+  "candidate_tree": "44fe586fac288df75ca0076c74c21de0e1e972b8",
+  "base_commit": "f656392d2c3a861d605e3da7012c7a9d4732e221",
+  "patch_sha256": "a5715d6ae54fb07f36a0d4f2edd8059a09651cb258b0e1b669ead47f2550286a",
+  "product_files": [
+    "components/POS.tsx",
+    "utils/posCredit.ts"
+  ],
+  "source_files": [
+    {
+      "path": "components/POS.tsx",
+      "sha256": "7ad836457ea642e1721c9e4d25ea52b10532b8fd815bafd2650740fbe13ff57f",
+      "bytes": 349891
+    },
+    {
+      "path": "deploy/nortex/product-files.json",
+      "sha256": "b5c4ae80cf75d6318b217f37000796d8274515983c4aeb5df6b10bb7c4cb904c",
+      "bytes": 872
+    },
+    {
+      "path": "scripts/check-mutation-scope.cjs",
+      "sha256": "122b78a3786d9bbb0f8b58d7e3cf01a1625e8d3ae2533049f54bf97e007a58ab",
+      "bytes": 27959
+    },
+    {
+      "path": "scripts/quality-gate-contract.mjs",
+      "sha256": "b9bcde48b2a440e21479bbba1722a073f103c3ecb66fca683f044c5846d27d0c",
+      "bytes": 4561
+    },
+    {
+      "path": "stryker.config.json",
+      "sha256": "ab47c38bb0a015ecc61ec0dbfee65d2d1d0b5d80bd6a75160f6c0d6d19f350d9",
+      "bytes": 23127
+    },
+    {
+      "path": "tests/posCredit.integration.test.ts",
+      "sha256": "6ab7a0f4a3a2d7698ca58cb10d31fac85aa3bb4c2940276049fe084d23662496",
+      "bytes": 7111
+    },
+    {
+      "path": "tests/posCredit.test.ts",
+      "sha256": "80b25fae6f61e51aeaadf929ec659dd864cd566bea95effe26079382c726f9ae",
+      "bytes": 3831
+    },
+    {
+      "path": "tests/posVentaCritica.test.tsx",
+      "sha256": "57514a92cb10372be38be8c4a9efb1a8d0541a5255dd7236b1d85a1e9bfa624d",
+      "bytes": 36587
+    },
+    {
+      "path": "tests/presupuestoPos.test.ts",
+      "sha256": "f22e3f8062fee850b1284f11e95c33631d608c7eaaef34b07378924932e5d89e",
+      "bytes": 7884
+    },
+    {
+      "path": "utils/posCredit.ts",
+      "sha256": "4fb10ab5c88a57fafe313ad3552effdec27045088e1951ad7842d349d7b9bc51",
+      "bytes": 1767
+    }
+  ],
+  "unchanged_critical_files": [
+    {
+      "path": "backend/prisma/schema.prisma",
+      "sha256": "3162c81a2ad0b0fa225b89828dbccb2cbe6389ce42104d92f860e191f24fc779"
+    },
+    {
+      "path": "Dockerfile",
+      "sha256": "6dec466affda21195a3d35d6485f35bd250d5d5dd4c9350ba4e4219c0949168c"
+    },
+    {
+      "path": "docker-compose.yml",
+      "sha256": "4b321d74f3c10704526d228f045b26768fed7ba4909b77105ac92403ebe3021b"
+    },
+    {
+      "path": "scripts/docker-entrypoint.sh",
+      "sha256": "148e44c6cd059ae8c82651de8c7e62d70edca10f83d2bbef4908aba0e14f725e"
+    },
+    {
+      "path": "package-lock.json",
+      "sha256": "d2ee4115a5672416f24f334d7f91c3b2537f86d5ee77a95b7c5df730c2eaa7ad"
+    }
+  ],
+  "case": "credit-20261001",
+  "repository": "Noahstark23/nortex.20",
+  "branch": "codex/hotfix-pos-credit-packaged-20261002",
+  "recovery_branch": "codex/credit-recovery-packaged-20261002",
+  "base_tree": "b687bcd3cb27bfa0ca6adeca36ba80d7ca6d5364",
+  "active": true,
+  "applications": {
+    "staging": {
+      "origin": "https://staging.somosnortex.com",
+      "identity_sha256": "18ce89ef7c4909f28286601331102f6770691bfb51925d04b98e531c0d69a8f6"
+    },
+    "production": {
+      "origin": "https://somosnortex.com",
+      "identity_sha256": "7995eb46427376f2da54ab6a179e0e18e9d6503aecf304d09b59a9373db7c2b4"
+    }
+  },
+  "initial_production_base": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
+  "integration_provenance": {
+    "original_product_c": "d563c750dd62c9192df1d078c4c13308748f69bd",
+    "original_recovery_b": "bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4",
+    "controller_base": "535a1c50a90597f858810cbf14a26b72878cd60a",
+    "scope": "New image/launcher integration, v2 external prepare command; requires new CI, staging and authorization. Historical receipts are not release evidence."
+  }
+}

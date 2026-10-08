@@ -1,0 +1,13 @@
+{
+  "status": "PASS",
+  "start": "2026-10-06T19:38:14.467941+00:00",
+  "finished": "2026-10-06T19:38:24.483944+00:00",
+  "before": "65341b108be99cda2a06a2ce32660e3d48e4e1e33e89b4a89b596ee1b016870c",
+  "after": "7941abbd1ab5a72d5df3028c8ef755427bdf8e85042bff37bd224964502b8bb2",
+  "migrationHashes": {
+    "202609290001_whatsapp_commerce": "5c56fa5883245b35aa649a0c1ebb7fe8c3cb78e7b14bf108d11dd9c345d07f1f",
+    "202609290002_whatsapp_activation_request": "e822d72c0a96f715dcfd573d855b898b33f0ea9912724601109a03e7c643373f",
+    "202609290004_whatsapp_operations": "0a8c1b23f962811982e41d41753235347ecdceb53047460961b090cc44a7ccda"
+  },
+  "scope": "Three reviewed additive migrations; no production restore or business DML"
+}

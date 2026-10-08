@@ -24,6 +24,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,8 +65,24 @@ jobs:
           name: mutation-report
           path: reports/mutation/
           retention-days: 7
-      - name: Build frontend
-        run: npm run build
+      - name: Build frontend y SEO
+        run: npm run build:seo
+      - name: Sellar el paquete real del candidato
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          node --input-type=module -e 'import { writeFileSync } from "node:fs"; writeFileSync(".nortex-build-source.json", JSON.stringify({ version: 1, commit: process.env.BUILD_COMMIT }));'
+          node scripts/nortex-seal-image.mjs
+      - name: Arranque de la imagen candidata y ensayo de migración sin datos reales
+        run: python3 scripts/qa/release-runtime.py --evidence "$RUNNER_TEMP/nortex-runtime-evidence"
+      - name: Evidencia del arranque real del candidato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-runtime
+          path: ${{ runner.temp }}/nortex-runtime-evidence/
+          if-no-files-found: ignore
+          retention-days: 7
 
   deploy-schema-smoke:
     runs-on: ubuntu-latest

@@ -648,3 +648,63 @@ describe('POS · sin caja abierta', () => {
         expect(posteos.find((p) => p.ruta === '/api/sales')).toBeUndefined();
     });
 });
+
+
+describe('POS · regresión crédito Decimal de la API', () => {
+    const elegirCliente = async (debt: unknown = '900', limit: unknown = '30000', extra: Record<string, unknown> = {}, legacyArray = false) => {
+        installResponsiveMedia(true);
+        localStorage.setItem('nortex_token', 'token-sintetico-qa');
+        localStorage.setItem('nortex_ui_mode', 'full');
+        respuestas['/api/products'] = [{ ...PRODUCTO, name: 'Artículo sintético QA', price: 1960 }];
+        const rows = [{ id: 'cliente-qa', name: 'Cliente sintético QA', creditLimit: limit, currentDebt: debt, isBlocked: false, ...extra }];
+        respuestas['/api/customers'] = legacyArray ? rows : { customers: rows, total: 1, page: 1, pageSize: 20 };
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await user.click(await screen.findByRole('button', { name: /^CRÉDITO/ }));
+        await user.click(await screen.findByText('Cliente sintético QA'));
+        return user;
+    };
+
+    it.each([['900', '30000', false], ['900.00', '30000.00', false], [900, 30000, true]])('registra 1960 con deuda %s y límite %s sin denegar crédito', async (debt, limit, legacyArray) => {
+        const user = await elegirCliente(debt, limit, {}, legacyArray);
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).not.toHaveTextContent('C$ 9,001,960.00 (30007%)');
+        await waitFor(() => expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(1));
+        expect(posteos.find(p => p.ruta === '/api/sales')?.cuerpo).toMatchObject({ customerId: 'cliente-qa', paymentMethod: 'CREDIT', total: 1960 });
+        expect(document.body).not.toHaveTextContent('CRÉDITO DENEGADO');
+    });
+
+    it('muestra 2860/143% y conserva PIN cuando realmente supera el límite', async () => {
+        const user = await elegirCliente('900', '2000');
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).toHaveTextContent('C$ 2,860.00 (143%)');
+        expect(document.body).toHaveTextContent('CRÉDITO DENEGADO');
+        expect(screen.getByRole('button', { name: /Autorizar Override/ })).toBeDisabled();
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('cliente bloqueado conserva denegación aunque su límite alcance', async () => {
+        const user = await elegirCliente('900', '30000', { isBlocked: true });
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).toHaveTextContent('C$ 2,860.00 (10%)');
+        expect(document.body).toHaveTextContent('CRÉDITO DENEGADO');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it.each([null, 'inválido'])('deuda %s detiene el cobro y pide volver a consultar', async (debt) => {
+        const user = await elegirCliente(debt);
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).toHaveTextContent('No se pudo verificar el crédito');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('saldo a favor reduce solamente la deuda nueva, como executeSale', async () => {
+        const user = await elegirCliente('900', '2400', { storeCreditBalance: '500' });
+        await user.click(await screen.findByRole('button', { name: /Usar saldo a favor/ }));
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        await waitFor(() => expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(1));
+        expect(posteos.find(p => p.ruta === '/api/sales')?.cuerpo).toMatchObject({ paymentMethod: 'CREDIT', storeCreditAmount: '500.00' });
+        expect(document.body).not.toHaveTextContent('CRÉDITO DENEGADO');
+    });
+});

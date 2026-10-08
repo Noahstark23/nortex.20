@@ -26,7 +26,7 @@ jobs:
       - name: Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.23.2
           cache: npm
 
       - name: JDK 17
@@ -37,15 +37,18 @@ jobs:
 
       - name: Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          # Google retiró el paquete tools; los CLI ya vienen con la action.
+          packages: platform-tools
 
       - name: Instalar dependencias
         run: npm ci
 
       - name: Construir la web y sincronizar a Android
         run: |
-          DATABASE_URL="mysql://u:p@localhost:3306/db" npx prisma generate --schema=backend/prisma/schema.prisma
+          DATABASE_URL="mysql://u:p@localhost:3306/db" npx --no-install prisma generate --schema=backend/prisma/schema.prisma
           npm run build
-          npx cap sync android
+          npx --no-install cap sync android
 
       # ── APK de DEBUG: instalable en cualquier teléfono para probar ──────────
       # Firmado con la clave de debug de Android (no sirve para la tienda, sí
