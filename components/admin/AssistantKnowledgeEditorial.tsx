@@ -3,7 +3,7 @@ import React, { lazy, Suspense, useId, useState } from 'react';
 const KnowledgeEditorialPanel = lazy(() => import('./knowledge/KnowledgeEditorialPanel'));
 
 /** Abrir/cerrar conserva el trabajo editorial en memoria; la pantalla se carga al solicitarla. */
-export function AssistantKnowledgeEditorial() {
+export function AssistantKnowledgeEditorial({ onPendingWorkChange }: { onPendingWorkChange?: (pending: boolean) => void } = {}) {
   const [open, setOpen] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const id = useId();
@@ -13,7 +13,7 @@ export function AssistantKnowledgeEditorial() {
       {open ? 'Ocultar revisión de ayuda' : 'Revisar ayuda de NortexGPT'}
     </button>
     <div id={id} hidden={!open}>
-      {loaded && <Suspense fallback={<p role="status" className="nx-shell-muted text-sm">Cargando revisión de ayuda…</p>}><KnowledgeEditorialPanel /></Suspense>}
+      {loaded && <Suspense fallback={<p role="status" className="nx-shell-muted text-sm">Cargando revisión de ayuda…</p>}><KnowledgeEditorialPanel onPendingWorkChange={onPendingWorkChange} /></Suspense>}
     </div>
   </section>;
 }

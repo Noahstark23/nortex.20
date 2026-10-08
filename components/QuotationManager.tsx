@@ -22,6 +22,7 @@ import {
     serializarTraspasoCarrito,
 } from '../utils/cartPersistence';
 import { DAY_DARK_SURFACE } from '../utils/daySurfaceInk';
+import CommerceInbox from './whatsapp/CommerceInbox';
 
 type FiscalQuotation = Quotation & {
     fiscalRegimeAtQuote?: FiscalRegime;
@@ -86,7 +87,7 @@ const QuotationManager: React.FC = () => {
         localStorage.getItem('nortex_tenant_data'),
         localStorage.getItem('nortex_user'),
     ));
-    const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS'>('NEW');
+    const [activeTab, setActiveTab] = useState<'NEW' | 'HISTORY' | 'WEB_ORDERS' | 'WHATSAPP'>('NEW');
 
     const [products, setProducts] = useState<Product[]>([]);
     const [cart, setCart] = useState<CartItem[]>([]);
@@ -493,6 +494,14 @@ const QuotationManager: React.FC = () => {
                                 </span>
                             )}
                         </button>
+                        <button
+                            type="button"
+                            aria-pressed={activeTab === 'WHATSAPP'}
+                            onClick={() => setActiveTab('WHATSAPP')}
+                            className={`flex-1 py-2 rounded-lg font-bold text-sm border transition-all ${activeTab === 'WHATSAPP' ? 'bg-nortex-50 border-nortex-200 text-nortex-700' : 'bg-surface-900 border-white/[0.06] text-slate-500'}`}
+                        >
+                            <Phone size={14} className="inline mr-1" /> WhatsApp
+                        </button>
                     </div>
                 </div>
 
@@ -568,6 +577,8 @@ const QuotationManager: React.FC = () => {
                             </div>
                         ))}
                     </div>
+                ) : activeTab === 'WHATSAPP' ? (
+                    <div className="flex-1 min-h-0 overflow-y-auto p-4"><CommerceInbox /></div>
                 ) : (
                     /* WEB_ORDERS Tab */
                     <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">

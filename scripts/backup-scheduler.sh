@@ -84,6 +84,11 @@ edad_del_ultimo_backup_horas() {
 }
 
 EDAD="$(edad_del_ultimo_backup_horas)"
+if [[ "${BACKUP_ASSISTANT_ORIGINALS_ENABLED:-false}" == true && -f "$HEARTBEAT_FILE" ]] \
+  && ! grep -q '"assistantOriginals"' "$HEARTBEAT_FILE"; then
+  # Un latido SQL reciente no acredita originales al habilitar esta capacidad.
+  EDAD=999999
+fi
 if [[ "$EDAD" -ge "$BACKUP_MAX_AGE_HOURS" ]]; then
   log "⚠️  El último backup bueno tiene ${EDAD}h (límite ${BACKUP_MAX_AGE_HOURS}h). Corriendo uno ahora."
   correr_backup

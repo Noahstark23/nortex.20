@@ -10,6 +10,9 @@ export const BODEGUERO_ROLE = 'BODEGUERO';
 const ALLOWED_PATTERNS: Array<{ method: string; pattern: RegExp }> = [
     // Chat privado con autorización por capacidad; jamás habilita documentos financieros.
     { method: 'GET', pattern: /^\/api\/assistant\/capabilities$/ },
+    // La ruta sólo expone ayuda revalidada por rol, tenant y capacidad.
+    { method: 'GET', pattern: /^\/api\/assistant\/knowledge\/revision$/ },
+    { method: 'GET', pattern: /^\/api\/assistant\/knowledge\/documents\/[^/]+\/versions\/[^/]+\/sections\/[^/]+$/ },
     { method: 'POST', pattern: /^\/api\/assistant\/conversations$/ },
     { method: 'GET', pattern: /^\/api\/assistant\/conversations\/[^/]+$/ },
     { method: 'POST', pattern: /^\/api\/assistant\/conversations\/[^/]+\/messages$/ },

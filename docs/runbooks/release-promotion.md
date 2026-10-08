@@ -5,6 +5,14 @@
 > la aprobación técnica de un environment son señales distintas; ninguna sustituye
 > la autorización explícita del producto para producción.
 >
+> **Excepción de fundador único (2026-09-25).** El dueño confirmó que no dispone
+> de otra persona para aprobar el environment. `Noahstark23` puede iniciar y
+> aprobar la promoción, pero esa aprobación **no es independiente**. Se exige
+> una aceptación escrita del riesgo para el SHA y alcance concretos, dos cadenas
+> exactas en el dispatch, CI y staging manual sanos para el mismo SHA, pin de
+> Coolify, aprobación del environment sin bypass, salud y observación posterior.
+> Esta excepción de proceso no autoriza desplegar ningún SHA por sí sola.
+>
 > Este runbook tampoco configura proveedores externos. Las variables, UUIDs, tokens
 > y apps reales de Coolify se habilitan solo con autorización externa separada; su
 > ausencia o identidad no comprobada bloquea la promoción.
@@ -22,6 +30,45 @@ La preparación local del 2026-09-19 y la última observación remota constan en
 son una fotografía fechada, no valores para copiar en una promoción futura.
 Preparar el expediente no autoriza ejecutar staging ni producción.
 
+El [diagnóstico de runtime del 6 de octubre](../releases/2026-10-06-runtime-repair.md)
+registró la expansión comercial entonces pendiente de producción. El
+[cierre de esa intervención](../releases/2026-10-06-production-release.md) conserva
+el SHA y la evidencia de ejecución; no es autorización para un candidato futuro.
+CI verify debe ensayar la imagen y el CMD exactos; prepare ejecuta el gate antes
+de detener el stack.
+El contrato posterior a migración no acredita que la base real ya esté migrada.
+No promover hasta verificar respaldo restaurable, expansión autorizada y rollback
+compatible con el esquema expandido. Un rollback de código no revierte DDL.
+
+La excepción `credit_hotfix_20261001` queda inactiva al cerrar este release por
+la ruta normal de main. Sus candidatos y recetas históricas no son una ruta de
+recuperación para el esquema ampliado.
+
+## Cadencia de entrega y diagnóstico
+
+Objetivo solicitado por el propietario el 2026-10-06: entregar incrementos pequeños
+sin acumular más de cinco días de bloqueo. Meta de operación: staging el mismo día
+que un candidato queda listo y producción en 24–48 horas, sujeta a las compuertas
+siguientes. El límite no autoriza omitir pruebas, restore o aprobación.
+
+- Una capacidad revisable por PR; identificar migración, flag, smoke y recuperación
+  al iniciar el trabajo. Separar correcciones de infraestructura de nuevas funciones.
+- Antes del dispatch, comparar en una sola ficha el SHA de main/CI/staging, pin
+  Coolify, SOURCE_COMMIT generado y confirmación de conservación del schema.
+  No mantener un SOURCE_COMMIT manual que compita con el generado por Coolify.
+- Conservar los comandos `nortex-release.sh <entorno> prepare/start`. Comprobar
+  antes del corte la salida del gate y las variables públicas requeridas; no
+  sustituirlo por recetas inline ni volver a ejecutar sin identificar el primer fallo.
+- A las 24 h bloqueado: registrar error reproducible, responsable y reparación.
+  A las 48 h: dividir el lote y entregar lo independiente que esté verificado.
+  Antes de cinco días: el propietario decide entrega acotada, reparación o reversión.
+- Cerrar cada release con SHA de producción, enlaces a runs, smoke, observación
+  y limitaciones. Health por sí solo no acredita una transacción de negocio.
+
+Esta cadencia define responsabilidades; no instala recordatorios, alertas ni
+promociones automáticas. Para PayPal/Meta usar incrementos demostrables y flags;
+la urgencia del evento no sustituye la aceptación del alcance de cada release.
+
 ## El contrato que evita una promoción accidental
 
 El incidente que motivó este cambio permitió que un push a `main`, incluso uno de
@@ -37,7 +84,7 @@ Después de esta reparación, las rutas son deliberadamente separadas:
 | Staging | `.github/workflows/release-staging.yml`, solo manual | Procedencia manual, destino Coolify validado y API/base/SHA exactos de staging | Producción ni el smoke funcional |
 | Decisión de producto | Registro humano explícito | Que el responsable acepta alcance, SHA, ventana y rollback | Ejecutar un deployment por sí sola |
 | Producción | `.github/workflows/release-production.yml`, solo manual | Que el mismo SHA vigente de `main`, un staging manual exitoso y su salud siguen siendo el candidato | Una autorización futura o un SHA distinto |
-| Environment `production` | Protección técnica dentro del workflow manual | Segunda revisión antes de acceder a secretos de producción | Autorización de producto por inferencia |
+| Environment `production` | Protección técnica dentro del workflow manual | Confirmación deliberada antes de acceder a secretos; en modo fundador único puede ser la misma persona | Autorización de producto por inferencia o revisión independiente inexistente |
 
 `ci.yml` solo verifica código: no puede invocar ningún webhook ni crear jobs de
 staging o producción, ni siquiera con `workflow_dispatch`. El único workflow con
@@ -151,6 +198,10 @@ La identidad pública no comprobada sigue bloqueando el webhook.
    “Aprobado”, la aprobación de un PR, una demostración local, CI verde, staging
    sano o el visto bueno de un environment no cumplen este requisito si no nombran
    producción, SHA y alcance.
+   En modo fundador único, el mismo registro debe reconocer expresamente que
+   `Noahstark23` inicia y aprueba el environment sin segunda persona. No presentar
+   esa excepción como una revisión independiente; si el dueño no acepta ese riesgo
+   para el SHA exacto, la promoción queda bloqueada.
 5. Confirmá responsable de la observación posterior y la decisión de rollback. No
    uses este runbook para inferir una autorización que no quedó registrada.
 
@@ -164,6 +215,7 @@ inicia manualmente. Debe introducir:
 |---|---|
 | `candidate_sha` | El SHA completo de 40 caracteres ya verificado en `main` y staging |
 | `confirmation` | Exactamente `PROMOTE <candidate_sha>` |
+| `sole_owner_confirmation` | Exactamente `SOLE_OWNER <candidate_sha>`; reconoce la excepción de fundador único para ese SHA |
 
 El workflow falla cerrado si los valores no son exactos, si el SHA ya no coincide
 con `main`, si no existe un staging **manual exitoso** y sano para ese SHA o si la
@@ -175,9 +227,10 @@ el input por un SHA nuevo: el nuevo SHA vuelve a CI y staging.
 El job que llega al environment `production` vuelve a comprobar **después** de la
 aprobación técnica que `main` y staging siguen en el SHA candidato. Si alguien
 mergea otro cambio mientras espera la aprobación, el job debe terminar sin invocar
-el webhook de producción. La persona que aprobó el environment actúa como segunda
-línea de defensa; esa acción no reemplaza la autorización de producto registrada
-arriba.
+el webhook de producción. La aprobación del environment es un segundo acto
+deliberado; en la excepción de fundador único la hace la misma persona y no se
+presenta como revisión independiente. Tampoco reemplaza la autorización de
+producto registrada arriba.
 
 ## Verificación posterior y cierre
 
@@ -208,8 +261,8 @@ ruta manual, lo siguiente:
 | Identidad Coolify de staging | `COOLIFY_STAGING_API_ORIGIN` y `COOLIFY_STAGING_APPLICATION_UUID` configurados como variables; `COOLIFY_STAGING_READ_TOKEN` y `COOLIFY_STAGING_WEBHOOK` solo en `staging`, más `COOLIFY_TOKEN` opcional si el webhook exige bearer. Los cuatro deben concordar según el contrato anterior y no ser accesibles desde CI. |
 | Variable de habilitación de staging | `NORTEX_DEPLOY_ENABLED=true` en repo u organización antes del preflight; un push no la usa para desplegar |
 | Environment `production` | Política de ramas limitada a `main` (preferiblemente solo ramas protegidas) |
-| Reviewer de producción | Revisor independiente del autor que inicia la promoción |
-| Autoaprobación | `prevent-self-review=true` |
+| Reviewer de producción | `Noahstark23` en la excepción de fundador único; registrar que coincide con el iniciador y que no hubo revisión independiente |
+| Autoaprobación | `prevent-self-review=false` solo para la excepción de fundador único, con las dos confirmaciones exactas y autorización de producto separada |
 | Bypass administrativo | `can_admins_bypass=false` |
 | Identidad Coolify de producción | `COOLIFY_PROD_API_ORIGIN` y `COOLIFY_PROD_APPLICATION_UUID` configurados como variables; `COOLIFY_PROD_READ_TOKEN` y `COOLIFY_PROD_WEBHOOK` solo en `production`, nunca expuestos a CI/staging. `COOLIFY_PROD_DEPLOY_TOKEN` es separado y opcional solo si el webhook exige bearer. |
 | Variable de habilitación de producción | `NORTEX_PRODUCTION_DEPLOY_ENABLED` a nivel repo u organización; no dentro del environment porque el preflight no entra a él |
@@ -221,17 +274,15 @@ Si cualquiera de estos controles no se puede verificar, el estado es
 `LISTO PARA PRODUCCIÓN BLOQUEADO`, no una excepción implícita. Documentá el
 bloqueo y escalalo al responsable de infraestructura.
 
-**Revisor ya elegido por el usuario:** en esta sesión el dueño eligió su propia
-cuenta, `Noahstark23`, para revisar producción. No volver a pedirle otra cuenta
-como si esa decisión no existiera. La lectura de GitHub del 2026-09-19 encontró
-esa cuenta como reviewer y `prevent_self_review=false`. Es un estado observado,
-no evidencia de una segunda persona independiente ni autorización para un nuevo
-SHA. La elección se conserva en el expediente junto con la diferencia respecto
-al control independiente de la tabla. Ningún agente debe cambiar protecciones,
-activar bypass o declarar cumplida la revisión independiente para resolver esa
-diferencia. Antes de una promoción, el responsable registra cómo aplica la
-decisión del dueño al iniciador y aprobador concretos; esta preparación no cambia
-la política ni la configuración externa.
+**Identidad y límite de la excepción:** el dueño eligió `Noahstark23` como
+revisor y confirmó que no hay otra persona disponible. GitHub muestra esa cuenta
+como único reviewer, `prevent_self_review=false` y bypass administrativo apagado.
+La excepción acepta expresamente la falta de independencia, sin cambiar las
+protecciones externas ni atribuir una aprobación a Claude, Codex u otra IA. El
+responsable debe registrar iniciador, aprobador, SHA, alcance y autorización de
+producto antes del dispatch. Si aparece una segunda persona autorizada, se
+restaura la regla de revisión independiente mediante una decisión y cambio
+controlados; nunca se asume por la existencia de otra cuenta del mismo dueño.
 
 Solo con autorización externa registrada, el responsable de infraestructura fija en
 Coolify `git_commit_sha` al candidato autorizado. El workflow no escribe esa
@@ -250,6 +301,7 @@ CI del mismo SHA:
 Run manual de release-staging.yml:
 Staging: procedencia manual, identidad Coolify saneada, salud/SHA/no-store/smoke:
 Autorización explícita de producto (responsable, fecha, ventana, rollback):
+Excepción fundador único aceptada para el SHA exacto, con iniciador y aprobador:
 Run manual de release-production.yml:
 Aprobación técnica del environment (quién/cuándo):
 Revalidación posterior a la aprobación (main y staging):
@@ -266,3 +318,92 @@ automáticas a staging y producción, exige intención humana inequívoca y vuel
 validar el candidato después de cada aprobación técnica. Cualquier cambio futuro de
 workflow, environment o runbook debe conservar un test negativo de que un push
 docs-only no puede crear ni ejecutar un job de staging o producción.
+
+## Excepción histórica cerrada: crédito 2026-10-01 y recuperación
+
+**Estado al cierre del 2026-10-06: inactiva (`active=false`).** Los procedimientos
+y candidatos siguientes se conservan como historia; no deben ejecutarse para
+promover ni recuperar el esquema actual. La ruta vigente es la promoción normal
+de main descrita arriba. El cierre no elimina los controles de esa ruta.
+
+El paquete integrado en main se documenta en
+[`deploy/nortex/README.md`](../../deploy/nortex/README.md). La excepción siguiente
+conserva los SHAs inmutables del hotfix; no promueve automáticamente el producto
+actual de main. Antes de elegir la ruta, consultar la
+[auditoría del 6 de octubre](../releases/2026-10-06-deployment-audit.md): CI histórico,
+contrato del cliente, schema remoto y build son evidencias distintas.
+
+### C′/B′ empaquetados: cadena fija acreditada el 4 de octubre
+
+Para los candidatos históricos del manifiesto, C′=`df6fc095fe8da39b4829336e79b78e4454997046`
+y B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, la cadena ya acreditada es
+`37164392068 → 37165601168 → 37166458396`, intento 1, controlador productor
+`526fb15440d7a993da2862baa45baf7e4bf1cb92`. No repetirla porque main haya avanzado.
+Los valores C/B originales del texto histórico siguiente no son los candidatos
+de esta entrega; manda el manifiesto inmutable `credit-hotfix-20261001.json`.
+
+Si el ejecutor actual no tiene una cadena propia, producción puede verificar
+exclusivamente esos tres runs. El verificador fija controlador, digest del
+manifiesto, IDs y SHA-256 de los tres artifacts de salud, intento, destinos y
+enlaces; consulta procedencia y jobs del intento productor y conserva el orden
+temporal. No admite sustituir un artifact, cambiar esos valores por entorno ni
+usar otro recibo histórico. Un artifact ausente, expirado o adulterado bloquea.
+Una cadena propia presente pero inválida no se oculta con la excepción.
+
+El ejecutor sigue siendo el main actual y requiere su propio CI antes y después
+del environment. Los nuevos recibos productivos identifican a ese ejecutor.
+Recuperar B′ exige además la solicitud productiva de C′ de ese mismo ejecutor y
+app, enlazada exactamente al C′ final y al B′ de la cadena fija; se revalidan los
+tres artifacts. Para esa recuperación no se repite staging B′. Este caso acotado
+sustituye los pasos de repetición del drill y staging B del procedimiento original.
+
+No cambia la salud requerida, el pin de Coolify, la aprobación del environment,
+backup/restauración, persistencia, secretos, parada efectiva ni observación. El
+manifiesto, C′/B′ y su schema permanecen intactos. Integrar estos controles no
+autoriza ni dispara una promoción. Regresión específica:
+`tests/creditHotfixFixedStagingChain.test.ts`; fixtures saneados del API/ZIP de
+GitHub en `tests/fixtures/credit-hotfix-staging-chain-20261004/`.
+
+### Contrato y procedimiento originales
+
+Esta excepción se aprobó expresamente el 2026-10-02 para el arreglo y su recuperación. No convierte una autorización genérica en permiso para otros SHAs. Sólo existe mientras `docs/releases/credit-hotfix-20261001.json` tiene active=true. Las reglas anteriores siguen vigentes cuando `credit_hotfix_20261001=false`, valor por defecto.
+
+Identidades fijas: C=`d563c750dd62c9192df1d078c4c13308748f69bd`, B=`bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4`; C tiene un único padre B y árbol `8038a539d7b4479625f9eadfd7885c43a914a154`. El manifiesto registra exactamente las nueve fuentes de producto/QA y hashes, y conserva backend/schema/migraciones/lockfile/Docker/Compose/.github de B. Publicar C en `codex/hotfix-pos-credit-20261001` sin alterar el commit. Si se necesita CI nuevo de B, publicar B en `codex/credit-hotfix-recovery-20261001`. No integrar el árbol de producto C en main para desplegar luego los cambios ajenos de main.
+
+M es el SHA revisado de controles en main. Los **mismos** release-staging.yml y release-production.yml se despachan siempre desde main M; los environments siguen admitiendo sólo main. M debe seguir siendo el tip antes y después de aprobar el environment. En la excepción, el checkout del job es M y todos los scripts con acceso a secretos se ejecutan desde M. C/B se inspeccionan como objetos Git y Coolify construye el SHA fijado; no se ejecutan sus scripts de promoción con secretos. La ruta normal conserva su checkout y su igualdad candidato=M.
+
+Inputs añadidos a ambos workflows:
+
+| Input | Valor de promoción | Valor de recuperación |
+|---|---|---|
+| credit_hotfix_20261001 | true | true |
+| credit_hotfix_action | promote | recover |
+| candidate_sha | C completo | B completo |
+| confirmation de staging | STAGE C | STAGE B |
+| confirmation de producción | PROMOTE C | PROMOTE B |
+| sole_owner_confirmation | SOLE_OWNER C | SOLE_OWNER B |
+
+No se aceptan otras bases, hashes ni acciones. Mode/referencia/evento/repositorio/origen, padre/árbol/diff/hashes y HEAD de la rama se verifican ejecutablemente. Promover exige producción fresca B sana, con no-store. La selección de recuperación no exige que el C averiado esté sano: exige un recibo de POST aceptado de C emitido por el mismo controlador, workflow y aplicación aprobada, junto con CI y staging B sano. No interpreta un request, un timeout o un run cancelado como una release saludable.
+
+### Secuencia operacional obligatoria
+
+1. Revisar e integrar por PR sólo los controles, respetando checks/protección sin bypass. Registrar M y CI terminal de sus cuatro checks. Preservar la revisión independiente del producto C.
+2. Publicar las referencias fijas y obtener CI terminal del código C por ci.yml/workflow_dispatch en su rama; B necesita CI terminal histórico push/main o dispatch en su referencia de recuperación. Cada identidad exige verify, integration-required, deploy-schema-smoke y backup-restore-smoke ejecutados y aprobados. Los CI de M, C, B y un merge SHA de PR no son intercambiables. Mantener la evidencia de mutación monetaria de C; no cambiar CI, pisos o umbrales.
+3. Por una superficie operativa autorizada, revalidar UUID/origen/URL/app/build y pin de Coolify, Auto Deploy false, digest/estrategia de reemplazo y compatibilidad real del schema de staging. Fijar pin=C para staging; no cambiar app, git_branch, ACL, variables o secrets. Si no puede construir el SHA sin esos cambios, detener y registrar la necesidad exacta.
+4. Staging manual C (promote): health C con API/base/no-store; smoke sintético de crédito, exceso/centavos/replay y actualización PWA.
+5. Fijar pin=B en la misma app de staging; staging manual B (recover). Registrar restablecimiento de imagen/health/assets/PWA y recuperación ordinaria. El artefacto de B sólo acredita un drill de C sano si enlaza el run sano de C anterior. Una recuperación tras C nunca sano se permite para restablecer servicio, pero no acredita ese drill.
+6. Fijar nuevamente pin=C; staging manual C (promote), repetir smoke/PWA y comprobar que los artefactos enlazan C sano → B sano → C sano del mismo M/app. El health no sustituye el smoke funcional; registrar sus resultados aparte y detener producción si falla o falta.
+7. Revalidar protecciones y el destino productivo; fijar pin=C, autorizar/aprobar el environment y ejecutar producción manual C sólo cuando estén completas las condiciones anteriores. El expediente de autorización ya cubre este C y recuperación B, sin repetir una petición genérica. La aceptación de la excepción fundador único se conserva explícita para el SHA/operación del dispatch.
+8. Verificar health C, frontend/assets/PWA, smoke proporcional sin datos/clientes reales y observar al menos30 minutos. No cerrar por el solo status del workflow.
+9. Si la recuperación resulta necesaria, fijar B para staging, usar recover B y comprobar staging B sano. Fijar pin=B en la misma app productiva y ejecutar release-production desde M con recover, candidate=B, PROMOTE B y SOLE_OWNER B. La compuerta exige el recibo productivo de solicitud C de ese mismo M/app y su cadena de staging probada. Esto cubre health C fallido; no autoriza otra app, imagen, SHA o assets directos. Verificar B y su funcionamiento antes de cerrar la recuperación. No se reintenta automáticamente un POST de resultado incierto.
+10. Deshabilitar la excepción por PR tras cerrar incidente/recuperación. No usarla para otro arreglo ni avanzar las referencias fijas.
+
+### Evidencia, permisos y límites
+
+Los workflows guardan artifacts pequeños requested/healthy inmediatamente después del POST aceptado y después de health respectivamente. Sólo contienen caso, operación, M/C/B, digest del manifiesto, run_id/run_attempt, links del drill y hashes de origen/UUID. Nunca tokens, URLs de webhook, UUID en texto ni datos financieros. La identidad pública y hashes de apps se fijaron desde las variables públicas existentes antes de implementar; ello no sustituye verificar su relación real URL↔app.
+
+Producción acepta únicamente CI fuente correcto y evidencia de workflow manual desde main M. Los artifacts deben pertenecer al run y attempt correctos, tener digest SHA256 válido, ZIP de un solo JSON acotado/esquema estricto, identidad exacta, POST probado y health exitoso donde corresponda. La cadena requiere timestamps y referencias ordenadas C→B→C. No basta un run verde de M que desplegara M. Todas las comprobaciones se repiten post-environment.
+
+No se crean workflows, secretos, permisos de GitHub o reglas de Environment nuevos. permissions sigue contents:read/actions:read; upload-artifact usa la capacidad de runtime ya disponible. Producción conserva reviewer, prevent_self_review y can_admins_bypass=false. Los verificadores Coolify/health, el POST y el entrypoint siguen intactos. No usar SSH/assets como ruta alternativa. El entrypoint ejecuta preflight/db push incluso sin diff de schema: si staging tiene un schema ajeno posterior a B, no borrar tablas ni relajar data-loss guards para conseguir el drill. Ese desacuerdo bloquea la operación y debe resolverse con alcance aprobado aparte.
+
+Implementación ejecutable: scripts/verify-credit-hotfix-release.mjs, scripts/verify-credit-hotfix-run-evidence.mjs y authorize-production-release.mjs. Pruebas: tests/creditHotfixReleaseGate.test.ts más los contratos normales preservados.

@@ -1,0 +1,19 @@
+# Aplicar después del Compose generado por Coolify. No instalar archivos host.
+services:
+  db:
+    image: sha256:6cd09145362dfe6831b14545de3d5fd6cc75c37cfd6ef8561429c1fc73518b39
+  assistant-worker:
+    image: sha256:1e9ac5b2be2b871a2aa9ab275123f9f4550dfce3dccb5d228107802eca19303d
+  app:
+    environment:
+      NORTEX_SCHEMA_PROFILE: staging
+      NORTEX_ROLLBACK_DATABASE: ${NORTEX_ROLLBACK_DATABASE:?}
+      NORTEX_ROLLBACK_MYSQL_UUID: ${NORTEX_ROLLBACK_MYSQL_UUID:?}
+      NORTEX_ROLLBACK_CONFIRMATION: ${NORTEX_ROLLBACK_CONFIRMATION:?}
+volumes:
+  jxzjinox4xrszsr2giwjxaky_mysql-data:
+    name: jxzjinox4xrszsr2giwjxaky_mysql-data
+    external: true
+  jxzjinox4xrszsr2giwjxaky_assistant-private:
+    name: jxzjinox4xrszsr2giwjxaky_assistant-private
+    external: true

@@ -1,3 +1,6 @@
+import { getReleaseCommit } from './lib/releaseIdentity';
+import { createQuotationHandler } from './routes/quotationCreate';
+import { buildWhatsappCommerceRouter } from './routes/whatsappCommerce';
 import { executeProductCreation, DuplicateProductCode } from './services/productCreationService';
 import productEnrollmentRouter from './routes/productEnrollment';
 import { registerRetentionCertificate } from './routes/retentionCertificate';
@@ -21,6 +24,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
+import { registerProductionFrontend } from './productionFrontend';
 import {
     ACCOUNTING_READ_ROLES,
     CUSTOMER_CREATE_ROLES,
@@ -124,7 +128,6 @@ import { encryptField } from './services/crypto';
 import { calcularMargenBruto, calcularRetiroSeguro, calcularEfectivoTurno } from '../utils/margen';
 import Stripe from 'stripe';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
@@ -415,8 +418,7 @@ app.get('/api/health', async (_req: any, res: any) => {
         ok: db === 'up',
         db,
         uptimeSeconds: Math.floor((Date.now() - arranqueDelProceso) / 1000),
-        // Coolify inyecta SOURCE_COMMIT en el build: permite ver QUÉ versión corre.
-        commit: process.env.SOURCE_COMMIT ?? null,
+        commit: getReleaseCommit(), // Identidad de imagen; el entorno sólo sirve al QA local.
     });
 });
 
@@ -520,6 +522,7 @@ const invitationAcceptLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+app.use('/api/whatsapp-commerce', buildWhatsappCommerceRouter());
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -1272,8 +1275,7 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
             // usuario exista o no crea un oráculo de enumeración de cuentas (el caso "email
             // inexistente" ya responde 200 genericMsg). Registrar el fallo solo del lado del
             // servidor y devolver el mismo mensaje genérico.
-            console.error(`❌ FAILED TO SEND RESET EMAIL to ${user.email}`);
-            console.log(`🔗 Reset link (fallback): ${resetLink}`);
+            console.error('❌ No se pudo entregar email de recuperación.');
             return res.json({ message: genericMsg });
         }
 
@@ -9584,126 +9586,7 @@ app.get('/api/quotations', authenticate, checkRole(QUOTATION_READ_ROLES), async 
 });
 
 // POST /api/quotations - Crear
-app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { customerName, customerRuc, items, expiresAt } = req.body;
-
-    if (!items || items.length === 0) return res.status(400).json({ error: 'Faltan items' });
-
-    try {
-        const parsedItems = z.array(z.object({
-            id: z.string().trim().min(1).max(191).optional(),
-            productId: z.string().trim().min(1).max(191).optional(),
-            quantity: z.union([z.string(), z.number()]),
-            price: z.union([z.string(), z.number()]).optional(),
-            name: z.string().trim().min(1).max(255).optional(),
-        }).strict()).min(1).max(500).parse(items).map((item) => ({
-            ...item,
-            quantity: item.quantity,
-        }));
-
-        const productIds = [...new Set(parsedItems.map((item) => String(item.productId ?? item.id)))];
-        const [products, tenantFiscal] = await Promise.all([
-            prisma.product.findMany({
-                where: { tenantId: authReq.tenantId!, id: { in: productIds } },
-                select: {
-                    id: true,
-                    name: true,
-                    price: true,
-                    unit: true,
-                    ivaExento: true,
-                    saleMode: true,
-                    quantityStep: true,
-                },
-            }) as Promise<QuotationProductAuthority[]>,
-            prisma.tenant.findUnique({
-                where: { id: authReq.tenantId! },
-                select: { fiscalRegime: true },
-            }),
-        ]);
-        if (!tenantFiscal) return res.status(404).json({ error: 'Negocio no encontrado' });
-        const fiscalRegimeAtQuote = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
-        const resolvedItems = resolveQuotationItems(parsedItems, products);
-
-        let subtotalD = new Decimal(0);
-        let taxD = new Decimal(0);
-        let grossTotalD = new Decimal(0);
-        for (const item of resolvedItems) {
-            const lineTotal = item.price.mul(item.quantityExact).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            grossTotalD = grossTotalD.plus(lineTotal);
-            if (item.ivaExento) {
-                subtotalD = subtotalD.plus(lineTotal);
-                continue;
-            }
-            const { neto, iva } = desglosarIvaIncluido(lineTotal);
-            subtotalD = subtotalD.plus(neto);
-            taxD = taxD.plus(iva);
-        }
-
-        const cuotaFija = fiscalRegimeAtQuote === FISCAL_REGIME_CUOTA_FIJA;
-        const subtotal = (cuotaFija ? grossTotalD : subtotalD)
-            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-            .toNumber();
-        const tax = cuotaFija ? 0 : taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
-        const total = cuotaFija
-            ? grossTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
-            : new Decimal(subtotal).plus(tax).toNumber();
-
-        const quote = await prisma.quotation.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                customerName,
-                customerRuc,
-                subtotal,
-                tax,
-                fiscalRegimeAtQuote,
-                total,
-                expiresAt: new Date(expiresAt),
-                items: {
-                    create: resolvedItems.map((item) => ({
-                        productId: item.productId,
-                        name: item.name,
-                        price: item.price.toNumber(),
-                        unitPriceExact: item.price.toFixed(4),
-                        quantity: item.quantityLegacy,
-                        quantityExact: item.quantityExact.toFixed(),
-                        unitAtQuote: item.unit,
-                        saleModeAtQuote: item.saleMode,
-                        quantityStepAtQuote: item.quantityStep,
-                        presentationAtQuote: item.presentationAtQuote,
-                        presentationQuantityAtQuote: item.presentationQuantityAtQuote.toFixed(4),
-                        ivaExentoAtQuote: item.ivaExento,
-                    })),
-                },
-            },
-            include: {
-                items: {
-                    orderBy: { id: 'asc' },
-                },
-            },
-        });
-
-        res.json({
-            ...quote,
-            subtotal,
-            tax,
-            total,
-            items: serializeQuotationItemsForClient(quote.items, products),
-        });
-    } catch (error) {
-        if (error instanceof QuotationItemError) {
-            return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 404 : 400).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof QuantityValidationError) {
-            return res.status(400).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: error.issues.map((issue) => issue.message).join(' | ') || 'Items inválidos' });
-        }
-        console.error('Create quotation error:', error);
-        res.status(500).json({ error: 'Error al crear cotización' });
-    }
-});
+app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), createQuotationHandler({ db: prisma }));
 
 // ==========================================
 // 💰 COBRANZA & CRÉDITOS (RECEIVABLES)
@@ -12931,43 +12814,7 @@ registerFiscalExports(app);
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION
 // ==========================================
-const isProduction = process.env.NODE_ENV === 'production';
-if (isProduction) {
-    const distPath = path.join(__dirname, '../dist');
-
-    // Landing page en la raíz — tiene prioridad sobre el SPA
-    app.get('/', (req: any, res: any) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.sendFile(path.join(distPath, 'landing.html'));
-    });
-
-    // Assets con hash (JS/CSS) → cache agresivo 1 año
-    app.use('/assets', express.static(path.join(distPath, 'assets'), {
-        maxAge: '1y',
-        immutable: true,
-    }));
-
-    // Resto de archivos estáticos (favicon, logos, etc.).
-    // redirect:false → no redirige /ruta → /ruta/ (controlamos el HTML por-ruta abajo).
-    app.use(express.static(distPath, { maxAge: 0, redirect: false }));
-
-    // SPA catch-all: cualquier ruta que no sea /api.
-    // Sirve el HTML prerenderizado por-ruta (dist/<ruta>/index.html) si existe — cada uno
-    // con su <title>, description y canonical únicos (SEO). Si no, cae al shell del SPA.
-    app.get(/^(?!\/api).+/, (req: any, res: any) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        const rel = req.path.replace(/^\/+|\/+$/g, '');
-        if (rel) {
-            const prerendered = path.join(distPath, rel, 'index.html');
-            // Guard anti-traversal: el archivo debe quedar dentro de distPath.
-            if (prerendered.startsWith(distPath + path.sep) && fs.existsSync(prerendered)) {
-                return res.sendFile(prerendered);
-            }
-        }
-        res.sendFile(path.join(distPath, 'index.html'));
-    });
-    console.log(`📂 Serving static files from: ${distPath}`);
-}
+if (process.env.NODE_ENV === 'production') registerProductionFrontend(app, path.join(__dirname, '../dist'));
 
 // ==========================================
 // ⏰ CRON: EXPIRACIÓN AUTOMÁTICA DE SUSCRIPCIONES

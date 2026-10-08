@@ -5,9 +5,10 @@ import type { AssistantPrincipal } from '../../../../shared/assistant.js';
 import { AssistantAccessError, getAssistantCapabilities } from '../access.js';
 import { getAssistantFlags } from '../config.js';
 import { managuaDay } from './analyticsPeriod.js';
+import { readAssistantWorkerHeartbeat } from './workerHeartbeat.js';
 
 type Aggregate = Record<string, string | number | bigint | Prisma.Decimal | Date | null>;
-export interface AssistantStatusDependencies { db?:PrismaClient; now?:()=>Date }
+export interface AssistantStatusDependencies { db?:PrismaClient; now?:()=>Date; workerHeartbeat?: typeof readAssistantWorkerHeartbeat }
 const ADMIN_ROLES=['OWNER','ADMIN','SUPER_ADMIN'];
 const RUN_STATUSES=['PENDING','RUNNING','SUCCEEDED','FAILED','CANCELLED','OTHER'];
 const QUEUE_STATUSES=['PENDING','PROCESSING','SUCCEEDED','FAILED','DONE','SENDING','SENT','UNKNOWN','CANCELLED','OTHER'];
@@ -96,7 +97,8 @@ export async function getAssistantHealthStatus(principal:AssistantPrincipal,deps
   const start=new Date(now.getTime()-86400_000),month=managuaDay(now).slice(0,7);
   const base={checkedAt:now.toISOString(),window:{start:start.toISOString(),end:now.toISOString(),timeZone:'America/Managua'},month,
     runbook:'docs/NORTEXGPT_EVALUACION_OPERATIVA_2026-09-05.md#estado-operativo'};
-  const disabled=()=>({...base,status:'disabled' as const,capabilities,switches:getAssistantFlags(),runs:null,budget:null,queues:null,commands:null,warnings:['NortexGPT está deshabilitado; no se consultaron sus indicadores.']});
+  const worker=await (deps.workerHeartbeat??readAssistantWorkerHeartbeat)({now});
+  const disabled=()=>({...base,status:'disabled' as const,capabilities,switches:getAssistantFlags(),worker,runs:null,budget:null,queues:null,commands:null,warnings:['NortexGPT está deshabilitado; no se consultaron sus indicadores.']});
   if(!capabilities.enabled)return disabled();
   const queries=assistantStatusQueries(principal.tenantId,start,now,month),warnings:string[]=[];
   const read=async(label:string,query:Prisma.Sql):Promise<Aggregate[]|null>=>{
@@ -108,8 +110,9 @@ export async function getAssistantHealthStatus(principal:AssistantPrincipal,deps
   const runs=runStatus(runRows),budget=budgetStatus(budgetRows),queues={scope:'RETAINED_TENANT_RECORDS' as const,extraction:queueStatus(queueRows,'extraction'),whatsappInbox:queueStatus(queueRows,'whatsappInbox'),whatsappOutbox:queueStatus(queueRows,'whatsappOutbox')},commands=commandStatus(commandRows);
   const verified=[runs,budget,queues.extraction,queues.whatsappInbox,queues.whatsappOutbox,commands];
   if(!budgetRows?.length || budget.reconciled!==true)warnings.push('Sin un presupuesto materializado y conciliado no se informa saldo disponible como cero.');
+  if(worker.status!=='ok')warnings.push('El worker principal no tiene un latido reciente de la misma versión o está deshabilitado.');
   warnings.push('La latencia usa startedAt y updatedAt terminal, excluye espera de cola y muestra cuántas muestras tienen evidencia.',
     'UNKNOWN conserva una reserva conservadora; no acredita el costo final del proveedor. Las colas incluyen sólo registros retenidos del negocio.');
-  return {...base,status:verified.every(item=>item.status==='unavailable')?'unavailable' as const:verified.every(item=>item.status==='ok')?'ok' as const:'partial' as const,
-    capabilities,switches:getAssistantFlags(),runs,budget,queues,commands,warnings};
+  return {...base,status:verified.every(item=>item.status==='unavailable')?'unavailable' as const:verified.every(item=>item.status==='ok')&&worker.status==='ok'?'ok' as const:'partial' as const,
+    capabilities,switches:getAssistantFlags(),worker,runs,budget,queues,commands,warnings};
 }

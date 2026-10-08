@@ -1159,7 +1159,7 @@ const PublicCatalog: React.FC = () => {
                         {!showCheckout ? (
                             <>
                                 {/* Cart Items */}
-                                <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                                <div className="flex-1 min-h-0 overflow-y-auto p-4 space-y-2">
                                     {cart.length === 0 ? (
                                         <div className="text-center py-10 text-slate-400">
                                             <ShoppingCart size={32} className="mx-auto mb-2 opacity-40" />
@@ -1228,7 +1228,7 @@ const PublicCatalog: React.FC = () => {
                             </>
                         ) : (
                             /* Checkout Form */
-                            <div className="p-5 space-y-4">
+                            <div className="flex-1 min-h-0 overflow-y-auto p-5 space-y-4">
                                 {/* 🔀 Modo híbrido: domicilio (B2C) vs cotización mayorista (B2B) */}
                                 <div className="grid grid-cols-2 gap-1.5 p-1.5 bg-slate-100 rounded-2xl">
                                     <button
@@ -1333,7 +1333,7 @@ const PublicCatalog: React.FC = () => {
                                 <div className="bg-slate-50 rounded-xl p-4 space-y-1.5">
                                     {cart.map(item => (
                                         <div key={`${item.id}:${item.presentation}`} className="flex justify-between gap-3 text-sm">
-                                            <span className="text-slate-600">
+                                            <span className="min-w-0 break-words text-slate-600">
                                                 {item.quantity} {presentationUnit(item, item.presentation)} · {item.name}
                                             </span>
                                             <span className="font-medium text-slate-800">{formatMoney(cartLineTotal(item).toNumber())}</span>
@@ -1366,7 +1366,6 @@ const PublicCatalog: React.FC = () => {
                     </div>
                 </div>
             )}
-
             {/* Custom animations */}
             <style>{`
                 @keyframes slide-up {
@@ -1382,6 +1381,15 @@ const PublicCatalog: React.FC = () => {
                 .no-scrollbar {
                     -ms-overflow-style: none;
                     scrollbar-width: none;
+                }
+                input:-webkit-autofill,
+                input:-webkit-autofill:hover,
+                input:-webkit-autofill:focus,
+                textarea:-webkit-autofill {
+                    -webkit-box-shadow: 0 0 0 60px #ffffff inset;
+                    -webkit-text-fill-color: #1e293b;
+                    caret-color: #1e293b;
+                    
                 }
             `}</style>
         </div>

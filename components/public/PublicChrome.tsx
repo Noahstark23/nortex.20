@@ -20,6 +20,7 @@ export interface PublicNavAction {
   mobileLabel?: string;
   kind?: 'link' | 'secondary' | 'primary';
   className?: string;
+  sectorCta?: { vertical: 'farmacia' | 'ferreteria'; pageKind: 'blog' | 'landing'; location: 'nav' | 'hero' | 'footer' };
 }
 
 interface PublicThemeFrameProps {
@@ -132,6 +133,9 @@ export const PublicTopBar: React.FC<PublicTopBarProps> = ({
             key={`${action.kind ?? 'link'}:${action.to}:${action.label}`}
             to={action.to}
             className={`${navClassFor(action.kind)} ${action.className ?? ''}`.trim()}
+            data-sector-cta={action.sectorCta?.vertical}
+            data-page-kind={action.sectorCta?.pageKind}
+            data-cta-location={action.sectorCta?.location}
           >
             {action.mobileLabel ? (
               <>

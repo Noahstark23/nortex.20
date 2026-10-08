@@ -18,6 +18,10 @@ export const MIGRATION_PATHS = [
   'backend/prisma/migrations/20260919010000_assistant_knowledge_publication/migration.sql',
   'backend/prisma/migrations/20260919020000_assistant_knowledge_editorial/migration.sql',
   'backend/prisma/migrations/20260919030000_assistant_work_items/migration.sql',
+  'backend/prisma/migrations/20260926010000_assistant_work_report_acceptance/migration.sql',
+  'backend/prisma/migrations/202609290001_whatsapp_commerce/migration.sql',
+  'backend/prisma/migrations/202609290002_whatsapp_activation_request/migration.sql',
+  'backend/prisma/migrations/202609290004_whatsapp_operations/migration.sql',
 ];
 
 // `git diff --name-status --no-renames -z` incluye cambios sin commit; los SQL

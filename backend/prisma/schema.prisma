@@ -16,6 +16,7 @@ datasource db {
 // ==========================================
 
 model Tenant {
+  whatsappActivationRequest WaCommerceActivationRequest?
   id                   String    @id @default(cuid())
   businessName         String
   type                 String    @default("FERRETERIA") // FERRETERIA | PULPERIA | LENDER | RETAIL | DISTRIBUIDORA | MISCELANEA
@@ -2301,6 +2302,9 @@ model AgentTransaction {
 // firma de TODO webhook); cada tenant trae su número/WABA y su access token
 // de envío (cifrado con crypto.encryptField).
 model WhatsAppChannel {
+  commerceEnabled Boolean @default(false)
+  commercePolicyVersion Int @default(0)
+  commercePolicy Json?
   id             String   @id @default(cuid())
   tenantId       String
   phoneNumberId  String   @unique // ID del número en Meta — routing de entrada
@@ -3851,6 +3855,11 @@ model AssistantWorkItem {
   status String @default("IN_REVIEW") @db.VarChar(16)
   version Int @default(0)
   eventCount Int @default(1)
+  acceptedAt DateTime?
+  acceptedByUserId String?
+  acceptedReportHash String? @db.Char(64)
+  acceptedReportVersion Int?
+  acceptedEventId String? @db.VarChar(36)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   expiresAt DateTime
@@ -3878,4 +3887,180 @@ model AssistantWorkEvent {
   workItem AssistantWorkItem @relation(fields: [workItemId], references: [id], onDelete: Restrict)
   @@unique([workItemId, eventId])
   @@index([workItemId, version, id])
+}
+
+
+model WaCommerceConversation {
+  id String @id @default(cuid())
+  tenantId String
+  channelId String
+  waId String
+  status String @default("BOT")
+  version Int @default(1)
+  assignedUserId String?
+  optedOutAt DateTime?
+  optedInAt DateTime?
+  lastInboundAt DateTime
+  draftState Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@unique([channelId, waId])
+  @@index([tenantId, status, updatedAt])
+  @@index([tenantId, channelId])
+}
+
+model WaCommerceInbox {
+  id String @id @default(cuid())
+  sequence BigInt @unique @default(autoincrement())
+  providerMessageId String @unique
+  tenantId String
+  channelId String
+  conversationId String
+  waId String
+  body String @db.Text
+  payloadHash String @db.VarChar(64)
+  eventAt DateTime
+  status String @default("PENDING")
+  attempts Int @default(0)
+  availableAt DateTime @default(now())
+  leaseToken String?
+  leaseUntil DateTime?
+  errorCode String?
+  createdAt DateTime @default(now())
+  @@index([status, availableAt])
+  @@index([conversationId, status, sequence])
+  @@index([tenantId, channelId, createdAt])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, status, leaseUntil])
+}
+
+model WaCommerceOutbox {
+  id String @id @default(cuid())
+  sequence BigInt @unique @default(autoincrement())
+  idempotencyKey String @unique
+  tenantId String
+  channelId String
+  conversationId String
+  waId String
+  body String @db.Text
+  status String @default("PENDING")
+  providerMessageId String? @unique
+  policyVersion Int
+  actorUserId String?
+  quoteDraftId String?
+  expiresAt DateTime
+  leaseToken String?
+  leaseUntil DateTime?
+  errorCode String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, createdAt])
+  @@index([conversationId, status, sequence])
+  @@index([tenantId, channelId, createdAt])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, status, leaseUntil])
+}
+
+model WaCommerceReceipt {
+  id String @id @default(cuid())
+  fingerprint String @unique @db.VarChar(64)
+  tenantId String
+  channelId String
+  waId String
+  providerMessageId String
+  status String
+  createdAt DateTime @default(now())
+  @@index([channelId, providerMessageId, waId])
+  @@index([tenantId, createdAt])
+}
+
+model WaCommerceQuoteDraft {
+  id String @id @default(cuid())
+  tenantId String
+  channelId String
+  conversationId String
+  requestKey String @unique
+  version Int @default(1)
+  status String @default("DRAFT")
+  items Json
+  snapshot Json?
+  reviewHash String?
+  policyVersion Int
+  quotationId String? @unique
+  reviewedBy String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([tenantId, status, updatedAt])
+  @@index([conversationId, createdAt])
+}
+
+model WaCommerceConsentEvent {
+  id String @id @default(cuid())
+  tenantId String
+  channelId String
+  conversationId String
+  sourceId String @unique
+  action String
+  noticeVersion String
+  purpose String @default("RESPONSE_ONLY")
+  createdAt DateTime @default(now())
+  @@index([tenantId, conversationId, createdAt])
+}
+
+model WaCommercePolicyVersion {
+  id String @id @default(cuid())
+  tenantId String
+  channelId String
+  version Int
+  enabled Boolean
+  policy Json
+  approvedBy String
+  createdAt DateTime @default(now())
+  @@unique([channelId, version])
+  @@index([tenantId, channelId, createdAt])
+}
+
+model WaCommerceActivationRequest {
+  id String @id @default(cuid())
+  tenantId String @unique
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  phone String @db.VarChar(15)
+  requestedBy String
+  status String @default("REQUESTED")
+  version Int @default(1)
+  assignedTo String?
+  noticeVersion String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  @@index([status, createdAt])
+  @@index([createdAt, id])
+  @@index([status, createdAt, id])
+}
+
+model WaCommerceWorkerHeartbeat {
+  id String @id
+  startedAt DateTime
+  lastSeenAt DateTime
+  lastProgressAt DateTime?
+  processingEnabled Boolean
+  sendingEnabled Boolean
+  status String
+  errorCode String? @db.VarChar(64)
+  @@index([status, lastSeenAt])
+  @@index([lastSeenAt])
+}
+
+model WaCommerceOutboxAttempt {
+  id String @id
+  tenantId String
+  outboxId String
+  channelId String
+  claimedAt DateTime
+  invokedAt DateTime?
+  settledAt DateTime?
+  status String
+  providerMessageId String?
+  errorCode String? @db.VarChar(64)
+  @@index([tenantId, outboxId, claimedAt])
+  @@index([status, claimedAt])
 }

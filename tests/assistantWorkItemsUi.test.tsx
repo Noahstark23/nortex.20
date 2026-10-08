@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAssistantWorkItems } from '../hooks/useAssistantWorkItems';
 import { AssistantWorkItems } from '../components/assistant/AssistantWorkItems';
 import type { AssistantWorkItemDTO } from '../shared/assistantWorkItems';
+import { assistantWorkDraftScope, readAssistantWorkDraft, saveAssistantWorkDraft } from '../utils/assistantWorkDraft';
 
 const fixture = (): AssistantWorkItemDTO => ({ id: 'work-1', kind: 'W01_CASH_REVIEW', status: 'IN_REVIEW', version: 0,
     conversationId: 'conversation-1', createdAt: '2026-09-19T12:00:00Z', updatedAt: '2026-09-19T12:00:00Z', expiresAt: '2026-10-10T12:00:00Z',
@@ -13,10 +14,122 @@ const fixture = (): AssistantWorkItemDTO => ({ id: 'work-1', kind: 'W01_CASH_REV
         period: { startDate: '2026-09-12', endDate: '2026-09-18', cutoff: '2026-09-19T06:00:00Z', timeZone: 'America/Managua', completeDays: true },
         rows: [], counts: { closed: 0, verified: 0, differences: 0, missingReports: 0, invalidReports: 0, open: 0 },
         totals: { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' }, warnings: [], evidence: [] },
+    report: { kind: 'W01_CASH_REPORT', workItemId: 'work-1', workItemVersion: 0, sourceHash: 'a'.repeat(64),
+        period: { startDate: '2026-09-12', endDate: '2026-09-18', cutoff: '2026-09-19T06:00:00Z', timeZone: 'America/Managua', completeDays: true },
+        checkedAt: '2026-09-19T12:00:00Z', scope: 'business', completeness: 'ok', truncated: false,
+        counts: { closed: 0, verified: 0, differences: 0, missingReports: 0, invalidReports: 0, open: 0 },
+        totals: { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' },
+        rows: [], exceptions: [], noteEventIds: [], notesHash: 'd'.repeat(64), notesTruncated: false,
+        warnings: [], evidence: ['Reporte de cierre sintético'], reportHash: 'c'.repeat(64) },
     events: [], eventsTruncated: false });
-afterEach(cleanup);
+afterEach(() => { cleanup(); sessionStorage.clear(); });
 
 describe('continuidad privada de revisiones', () => {
+    it('identifica la pestaña por negocio, usuario y permisos sin guardar el JWT', () => {
+        const token = `header.${btoa(JSON.stringify({ tenantId: 'tenant-a', userId: 'user-a' }))}.signature`;
+        const scope = assistantWorkDraftScope(token, 'OWNER:budget:false');
+        saveAssistantWorkDraft({ version: 1, scope, selectedId: 'work-1', note: 'Nota privada', pending: null, pendingAcceptance: null });
+        expect(scope).not.toContain(token);
+        expect(JSON.stringify([...Array(sessionStorage.length)].map((_, i) => [sessionStorage.key(i), sessionStorage.getItem(sessionStorage.key(i)!)]))).not.toContain(token);
+        expect(assistantWorkDraftScope(token, 'CASHIER:budget:false')).not.toBe(scope);
+    });
+    it('recupera nota sin enviar al desmontar el asistente sin crear otro evento', async () => {
+        const request = vi.fn().mockResolvedValue(fixture());
+        const first = renderHook(() => useAssistantWorkItems(request, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await act(() => first.result.current.open('work-1'));
+        act(() => first.result.current.setNote('Evidencia aún por verificar.'));
+        first.unmount();
+        const second = renderHook(() => useAssistantWorkItems(request, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await waitFor(() => expect(second.result.current.selected?.id).toBe('work-1'));
+        expect(second.result.current.note).toBe('Evidencia aún por verificar.');
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+    });
+    it('recupera UUID y cuerpo tras una respuesta incierta sin repetir el POST al montar', async () => {
+        let attempts = 0;
+        const request = vi.fn(async (_path: string, init?: RequestInit) => {
+            if (!init) return fixture();
+            if (++attempts === 1) throw new Error('Conexión interrumpida');
+            const input = JSON.parse(String(init.body));
+            return { ...fixture(), version: 1, receiptEventId: input.eventId,
+                events: [{ id: input.eventId, type: 'ADD_NOTE', note: input.note, fromStatus: 'IN_REVIEW', status: 'IN_REVIEW', version: 1, createdAt: '2026-09-19T12:01:00Z' }] };
+        });
+        const first = renderHook(() => useAssistantWorkItems(request as any, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await act(() => first.result.current.open('work-1'));
+        act(() => first.result.current.setNote('Esta nota debe conservar su identidad.'));
+        await act(() => first.result.current.change('ADD_NOTE'));
+        const posted = request.mock.calls.filter(([, init]) => init?.method === 'POST');
+        expect(posted).toHaveLength(1);
+        const body = String(posted[0][1]!.body);
+        first.unmount();
+        const second = renderHook(() => useAssistantWorkItems(request as any, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await waitFor(() => expect(second.result.current.selected?.id).toBe('work-1'));
+        expect(second.result.current.pending?.input.eventId).toBe(JSON.parse(body).eventId);
+        expect(second.result.current.note).toBe('Esta nota debe conservar su identidad.');
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+        await act(() => second.result.current.retry());
+        const writes = request.mock.calls.filter(([, init]) => init?.method === 'POST');
+        expect(writes).toHaveLength(2);
+        expect(String(writes[1][1]!.body)).toBe(body);
+    });
+    it('un usuario distinto no recibe la nota ni el intento de esta pestaña', async () => {
+        const request = vi.fn().mockResolvedValue(fixture());
+        const first = renderHook(() => useAssistantWorkItems(request, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await act(() => first.result.current.open('work-1'));
+        act(() => first.result.current.setNote('Nota privada del primer usuario.'));
+        first.unmount();
+        const second = renderHook(() => useAssistantWorkItems(request, 'user-b', true, 'tenant-a:user-b:OWNER'));
+        expect(second.result.current.note).toBe('');
+        expect(second.result.current.selected).toBeNull();
+        expect(second.result.current.recoveryId).toBeNull();
+        expect(readAssistantWorkDraft('tenant-a:user-a:OWNER')?.note).toBe('Nota privada del primer usuario.');
+    });
+    it('un 401 al recuperar bloquea envíos sin borrar la nota privada', async () => {
+        saveAssistantWorkDraft({ version: 1, scope: 'tenant-a:user-a:OWNER', selectedId: 'work-1',
+            note: 'Nota pendiente de recuperar.', pending: null, pendingAcceptance: null });
+        const request = vi.fn().mockRejectedValue(Object.assign(new Error('Sesión vencida'), { status: 401 }));
+        const { result } = renderHook(() => useAssistantWorkItems(request, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await waitFor(() => expect(result.current.storageBlocked).toBe(true));
+        expect(result.current.recoveryId).toBe('work-1');
+        expect(result.current.note).toBe('Nota pendiente de recuperar.');
+        expect(readAssistantWorkDraft('tenant-a:user-a:OWNER')?.note).toBe('Nota pendiente de recuperar.');
+        await act(() => result.current.create('run-1'));
+        expect(request).toHaveBeenCalledTimes(1);
+    });
+    it('al volver descubre una aceptación ya aplicada sin reenviar su POST', async () => {
+        let accepted: AssistantWorkItemDTO | null = null;
+        const request = vi.fn(async (_path: string, init?: RequestInit) => {
+            if (!init) return accepted ?? fixture();
+            const input = JSON.parse(String(init.body));
+            accepted = { ...fixture(), status: 'ACCEPTED', version: 1,
+                acceptance: { eventId: input.eventId, reportHash: input.reportHash, reportVersion: 0,
+                    acceptedAt: '2026-09-19T12:01:00Z', acceptedByUserId: 'owner-1', withExceptions: false } };
+            throw new Error('Se perdió la respuesta después de guardar.');
+        });
+        const first = renderHook(() => useAssistantWorkItems(request as any, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await act(() => first.result.current.open('work-1'));
+        await act(() => first.result.current.acceptReport());
+        expect(first.result.current.pendingAcceptance?.input.reportHash).toBe('c'.repeat(64));
+        first.unmount();
+        const second = renderHook(() => useAssistantWorkItems(request as any, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        await waitFor(() => expect(second.result.current.selected?.status).toBe('ACCEPTED'));
+        expect(second.result.current.pendingAcceptance).toBeNull();
+        expect(second.result.current.selected?.acceptance?.reportHash).toBe('c'.repeat(64));
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1);
+    });
+    it('un intento corrupto bloquea otro envío hasta recuperar su identidad', async () => {
+        sessionStorage.setItem('nortex.assistant.work-draft.v1:tenant-a%3Auser-a%3AOWNER', JSON.stringify({ version: 1,
+            scope: 'tenant-a:user-a:OWNER', selectedId: 'work-1', note: 'Nota previa', pending: { id: 'work-1', input: { eventId: 'inválido' } } }));
+        const request = vi.fn().mockResolvedValue(fixture());
+        const { result } = renderHook(() => useAssistantWorkItems(request, 'user-a', true, 'tenant-a:user-a:OWNER'));
+        expect(result.current.storageBlocked).toBe(true);
+        await act(() => result.current.open('work-1'));
+        expect(result.current.selected?.id).toBe('work-1');
+        expect(result.current.storageBlocked).toBe(true);
+        await act(() => result.current.create('run-1'));
+        expect(request).toHaveBeenCalledTimes(1);
+        expect(request.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(0);
+        expect(sessionStorage.getItem('nortex.assistant.work-draft.v1:tenant-a%3Auser-a%3AOWNER')).toContain('inválido');
+    });
     it('abrir y listar sólo leen; conserva nota al comprobar la misma referencia', async () => {
         const request = vi.fn().mockResolvedValueOnce({ items: [fixture()], nextCursor: null }).mockResolvedValue(fixture());
         const { result } = renderHook(() => useAssistantWorkItems(request, 'user-a', true));
@@ -80,13 +193,67 @@ describe('continuidad privada de revisiones', () => {
         expect(result.current.selected).toBeNull(); expect(result.current.items).toEqual([]);
         await act(() => result.current.create('run-1')); expect(request).toHaveBeenCalledTimes(1);
     });
-    it('componente muestra notas como aportes y bloquea aceptación no implementada', async () => {
+    it('componente exige revisar la versión y guardar la nota antes de aceptar', async () => {
         function Harness() { const c = useAssistantWorkItems(vi.fn().mockResolvedValue(fixture()), 'user-a', true); return <><button onClick={() => void c.create('run-1')}>Guardar fuente</button><AssistantWorkItems controller={c} /></>; }
         render(<Harness />); fireEvent.click(screen.getByText('Guardar fuente'));
         await screen.findByRole('region', { name: 'Revisión guardada' });
+        expect(screen.getByRole('region', { name: 'Informe preliminar W01' })).toHaveTextContent('Todavía no está aceptado');
+        expect(screen.getByRole('region', { name: 'Informe preliminar W01' })).toHaveTextContent('Reporte de cierre sintético');
+        const acceptance = screen.getByRole('button', { name: 'Aceptar informe sin excepciones detectadas' });
+        expect(acceptance).toBeDisabled();
+        const review = screen.getByRole('checkbox', { name: /Revisé esta versión/ });
+        await waitFor(() => expect(review).toBeEnabled());
+        fireEvent.click(review);
+        expect(acceptance).toBeEnabled();
         fireEvent.change(screen.getByLabelText('Nota de la revisión'), { target: { value: 'Falta evidencia' } });
         expect(screen.getByRole('button', { name: 'Dejar en espera' })).toBeDisabled();
-        expect(screen.queryByRole('button', { name: /Aceptar informe|Confirmar caja/ })).not.toBeInTheDocument();
+        expect(acceptance).toBeDisabled();
+        expect(screen.queryByRole('button', { name: /Confirmar caja/ })).not.toBeInTheDocument();
         await waitFor(() => expect(screen.getByRole('button', { name: 'Guardar nota' })).toBeEnabled());
+    });
+
+    it('respuesta perdida reintenta la misma aceptación y conserva su hash', async () => {
+        const item = fixture(); let attempts = 0;
+        const request = vi.fn(async (_path: string, init?: RequestInit) => {
+            if (!init) return item;
+            const input = JSON.parse(String(init.body));
+            if (++attempts === 1) throw new Error('Conexión interrumpida');
+            return { ...item, status: 'ACCEPTED', version: 1, receiptEventId: input.eventId,
+                acceptance: { eventId: input.eventId, reportHash: input.reportHash, reportVersion: 0,
+                    acceptedAt: '2026-09-19T12:01:00Z', acceptedByUserId: 'owner-1', withExceptions: false } };
+        });
+        const { result } = renderHook(() => useAssistantWorkItems(request as any, 'user-a', true));
+        await act(() => result.current.open('work-1'));
+        await act(() => result.current.acceptReport());
+        expect(result.current.pendingAcceptance?.input.reportHash).toBe('c'.repeat(64));
+        await act(() => result.current.retryAcceptance());
+        const writes = request.mock.calls.filter(([, init]) => init?.method === 'POST');
+        expect(writes).toHaveLength(2);
+        expect(writes[0][1]?.body).toBe(writes[1][1]?.body);
+        expect(result.current.pendingAcceptance).toBeNull();
+        expect(result.current.selected?.acceptance?.reportHash).toBe('c'.repeat(64));
+    });
+    it('un hash rechazado deja revisar la nueva versión sin crear una aceptación fantasma', async () => {
+        const request = vi.fn(async (_path: string, init?: RequestInit) => {
+            if (!init) return fixture();
+            throw { status: 409, code: 'WORK_ITEM_REPORT_CHANGED' };
+        });
+        const { result } = renderHook(() => useAssistantWorkItems(request as any, 'user-a', true));
+        await act(() => result.current.open('work-1'));
+        await act(() => result.current.acceptReport());
+        expect(result.current.pendingAcceptance).toBeNull();
+        expect(result.current.selected?.status).toBe('IN_REVIEW');
+        expect(result.current.error).toBeTruthy();
+    });
+    it('muestra el comprobante aceptado con excepciones sin volver a ofrecer edición', async () => {
+        const accepted = { ...fixture(), status: 'ACCEPTED' as const,
+            acceptance: { eventId: 'accept-1', reportHash: 'c'.repeat(64), reportVersion: 0,
+                acceptedAt: '2026-09-19T12:01:00Z', acceptedByUserId: 'owner-1', withExceptions: true } };
+        function Harness() { const c = useAssistantWorkItems(vi.fn().mockResolvedValue(accepted), 'user-a', true);
+            return <><button onClick={() => void c.open('work-1')}>Abrir aceptado</button><AssistantWorkItems controller={c} /></>; }
+        render(<Harness />); fireEvent.click(screen.getByText('Abrir aceptado'));
+        expect(await screen.findByRole('region', { name: 'Informe aceptado W01' })).toHaveTextContent('Aceptado con excepciones pendientes');
+        expect(screen.queryByLabelText('Nota de la revisión')).not.toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /Aceptar informe/ })).not.toBeInTheDocument();
     });
 });

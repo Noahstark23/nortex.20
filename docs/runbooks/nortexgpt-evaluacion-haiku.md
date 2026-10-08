@@ -1,9 +1,10 @@
 # Runbook — evaluación local de NortexGPT con Haiku
 
 Entorno privado de QA para medir NortexGPT contra `claude-haiku-4-5-20251001`.
-Todo corre en `127.0.0.1` contra una base MySQL descartable y los negocios
-sintéticos de la demostración. **No conecta bases reales, no toca el POS, no
-inicia servicios de producción y no envía mensajes externos.**
+El backend y la base MySQL descartable corren en `127.0.0.1` con negocios
+sintéticos. **No conecta bases reales, no toca el POS ni inicia servicios de
+producción.** Una consulta con `--allow-paid-model`, tras sus compuertas, sí
+envía una solicitud al proveedor y consume presupuesto sintético.
 
 ## 0. Lo que este runbook no hace
 
@@ -78,28 +79,37 @@ mise exec -- node --import tsx scripts/assistant-operations-demo.ts
 La fixture siembra ferretería y farmacia sintéticas. Es idempotente: si ya existe
 un montaje parcial se detiene en vez de duplicar efectos.
 
-## 3. Habilitación del primer paso
+## 3. Configurar el modo de evaluación
 
 ```sh
 mise exec -- node --import tsx scripts/qa/nortexgpt-enable-synthetic.ts
+
+# Primer corte web del piloto, con operaciones apagadas:
+mise exec -- node --import tsx scripts/qa/nortexgpt-enable-synthetic.ts --pilot-first-cut
 ```
 
-Aplica la configuración **por negocio**; los interruptores **globales** los pone
-el lanzador del backend. Una capacidad queda activa sólo si ambos coinciden.
+El comando sin opción reproduce la evaluación operativa anterior de la sección 6.
+Para el primer corte web se usa `--pilot-first-cut`: habilita ayuda e
+interpretación y deja operaciones apagadas. Aplica la configuración **por
+negocio**; los interruptores **globales** los pone el lanzador del backend. Una
+capacidad queda activa sólo si ambos coinciden.
 
-| Capacidad | Primer paso |
-|---|---|
-| Conversación (`enabled`) | habilitada |
-| Consultas operativas (`operationsEnabled`) | habilitada |
-| Ejecución de dinero/inventario (`executionEnabled`) | **deshabilitada** |
-| Preparación de acciones (`actionsEnabled`) | **deshabilitada** |
-| Extracción de documentos (`extractionEnabled`) | **deshabilitada** |
-| Promociones (`promotionsEnabled`) | **deshabilitada** |
-| WhatsApp privado / comercial | **deshabilitados** |
+| Capacidad | Evaluación operativa anterior | Primer corte web |
+|---|---|---|
+| Conversación (`enabled`) | habilitada | habilitada |
+| Interpretación de lenguaje | apagada | habilitada |
+| Consultas operativas (`operationsEnabled`) | habilitadas | **deshabilitadas** |
+| Ejecución de dinero/inventario (`executionEnabled`) | **deshabilitada** | **deshabilitada** |
+| Preparación de acciones (`actionsEnabled`) | **deshabilitada** | **deshabilitada** |
+| Extracción de documentos (`extractionEnabled`) | **deshabilitada** | **deshabilitada** |
+| Promociones (`promotionsEnabled`) | **deshabilitadas** | **deshabilitadas** |
+| WhatsApp privado / comercial | **deshabilitados** | **deshabilitados** |
 
-Presupuestos: las constantes del servidor no se tocan — **US$20 globales** y
-**US$10 por negocio**. La configuración por negocio de QA se fija en **US$5**,
-más conservadora, para quedar dentro del tope del workspace `Nortex-QA`.
+Presupuestos: las constantes del servidor no se tocan — **US$20 globales**,
+**US$2 iniciales por negocio** y ampliación aprobada hasta **US$10**. La
+configuración por negocio de QA fija tanto el presupuesto como el aprobado en
+**US$2**, según `nortexgpt-enable-synthetic.ts`. Una receta anterior de US$5
+no concede ese cupo al piloto ni al workspace `Nortex-QA`.
 
 ## 4. Arrancar y detener el backend de QA
 
@@ -109,11 +119,46 @@ scripts/qa/nortexgpt-qa-run.sh node scripts/qa/nortexgpt-eval-server.mjs --allow
 
 # Arrancar sin proveedor, para ensayar el recorrido sin gastar:
 node scripts/qa/nortexgpt-eval-server.mjs
+
+# Primer corte real del piloto: ayuda + interpretación, operaciones apagadas.
+# Esta opción sólo configura el backend de QA; no autoriza ni ejecuta una llamada.
+node scripts/qa/nortexgpt-eval-server.mjs --pilot-first-cut
 ```
 
 Imprime la URL base, la huella de la credencial propagada (nunca el valor) y las
 capacidades activas. **Detener:** `Ctrl+C` en esa terminal, o `SIGTERM` al proceso;
 el lanzador cierra el backend hijo y libera el puerto.
+
+### Latido de un worker en el primer corte, sin proveedor
+
+Para comprobar el worker activo contra la misma base descartable, iniciá el
+backend con `--pilot-first-cut --worker-qa --source-commit <SHA_COMPLETO>` y sin
+`--allow-provider`. Este modo exige un SHA de 40 caracteres e imprime un
+`assistantStorageDir` temporal. El worker debe usar **ese directorio**, el mismo
+SHA y la misma `DATABASE_URL` descartable, con `NORTEX_ASSISTANT_ENABLED=true`,
+`NORTEX_ASSISTANT_LANGUAGE_ENABLED=true` y operaciones, extracción, ejecución,
+acciones, promociones y canal privado en `false`. Iniciá un solo proceso
+`mise exec -- node --import tsx backend/workers/assistant.ts` y consultá
+`GET /api/assistant/status` con una sesión OWNER sintética. Exigí
+`worker.status=ok`, edad menor de 90 segundos y SHA exacto; el estado global
+puede ser `partial` antes de que exista un presupuesto materializado. Detené el
+worker y el backend al terminar; un latido anterior no demuestra que el proceso
+siga vivo.
+
+La receta de la sección 6 usa `operations-model.mjs` y exige **operations=true**.
+No se debe ejecutar contra `--pilot-first-cut`: ese CLI no evalúa el recorrido
+que recibirán las cuentas piloto. En ese recorrido el modelo sólo interpreta
+la pregunta y los servicios deterministas recuperan ayuda publicada o cifras
+autorizadas. Antes de usar proveedor con este modo faltan la revisión humana
+del corpus de ayuda, su publicación controlada en QA, una evaluación específica
+de mensajes, y evidencia atribuible del consumo. El éxito de la sección 6 no
+acredita esas cuatro condiciones.
+
+Para preparar la configuración del negocio sintético en ese modo, tras sembrar
+la fixture de la sección 2 ejecutá `nortexgpt-enable-synthetic.ts --pilot-first-cut`
+contra la base descartable. El backend debe arrancarse con
+`nortexgpt-eval-server.mjs --pilot-first-cut --allow-provider` mediante el
+lanzador privado. Preparar el backend no envía una consulta al proveedor.
 
 El secreto JWT de QA se conserva en `~/.nortex-qa/eval-jwt-secret` (0600) para que
 un reinicio no invalide la sesión del evaluador. No es la clave del proveedor.
@@ -131,12 +176,17 @@ sesión autenticada de Nortex, nunca la clave del proveedor.**
 
 ```sh
 mise exec -- node --import tsx scripts/qa/nortexgpt-prepare-review.ts \
-  --out docs/evidence/nortexgpt/evaluation-20260908
+  --out docs/evidence/nortexgpt/evaluation-20260923
 ```
 
 Deja los dos formularios con datos del montaje y resultados esperados calculados
 con consultas ORM propias — **no** con `checkInventoryBurnRate`, para que sirvan de
 contraste y no de eco. Quedan con `expectedOutcomesReviewed: false` y `reviewer: null`.
+
+Los formularios generados el 23 de septiembre de 2026 están en esa carpeta,
+con una lectura resumida en su `README.md`. Si la consulta se ejecuta otro día
+civil de Managua, usar una carpeta fechada nueva, regenerar y volver a revisar
+las expectativas: cambian la ventana de salidas y los vencimientos.
 
 **Paso humano obligatorio:** revisar montaje, productos, lotes, fechas, período,
 existencias vendibles, salidas BASE y OC pendientes contra evidencia independiente;
@@ -150,7 +200,7 @@ falsa. Nadie más puede marcarla.
 mise exec -- node --import tsx scripts/assistant-evaluation/operations-model.mjs \
   --allow-paid-model --synthetic-tenant --base-url http://127.0.0.1:PUERTO \
   --vertical ferreteria --role OWNER --limit 1 --max-reserved-usd 2 \
-  --review-file docs/evidence/nortexgpt/evaluation-20260908/model-review-ferreteria.json \
+  --review-file docs/evidence/nortexgpt/evaluation-20260923/model-review-ferreteria.json \
   --session-token-file ~/.nortex-qa/sesion-ferreteria \
   --report reports/assistant-evaluation/ferreteria-lote-01.json
 ```
@@ -201,6 +251,39 @@ Responde **dos preguntas separadas, con evidencias distintas**:
 
 Con `--require-cost-attribution` la falta de acreditación devuelve código distinto de
 cero, para usarlo donde el gasto por consulta sea un requisito y no un dato ausente.
+
+### Ensayo separado del primer corte web
+
+[`first-cut-help-review.json`](../evidence/nortexgpt/evaluation-20260923/first-cut-help-review.json)
+contiene una sola pregunta sintética y la cita `reposicion` `web3` esperada.
+Está en `expectedOutcomesReviewed: false`: el CLI rechaza `--allow-paid-model`
+antes de leer la sesión o hacer una llamada. Una persona debe revisar el texto,
+la fuente, el hash del manifiesto y los criterios y completar revisor y fecha.
+La publicación del corpus en QA requiere una decisión editorial separada;
+este evaluador no cambia `DRAFT`, `REVIEWED` ni `PUBLISHED`.
+
+Una vez revisado el formulario, con la ayuda del hash exacto publicada **sólo
+en la base sintética autorizada**, el servidor local en modo `--pilot-first-cut`
+y el negocio configurado con `--pilot-first-cut`, el comando es:
+
+```sh
+DATABASE_URL='mysql://.../nortex_quality_first_cut_model' \
+NORTEX_QA_DATABASE_ACK=disposable-database \
+mise exec -- node --import tsx scripts/assistant-evaluation/first-cut-model.mjs \
+  --allow-paid-model --synthetic-tenant --base-url http://127.0.0.1:PUERTO \
+  --review-file docs/evidence/nortexgpt/evaluation-20260923/first-cut-help-review.json \
+  --session-token-file ~/.nortex-qa/sesion-ferreteria \
+  --max-reserved-usd 2 --report reports/assistant-evaluation/first-cut-ferreteria-01.json
+```
+
+El servidor reserva como máximo US$0,281920 para este mensaje; el costo real
+se consulta por `AssistantUsage.runId = message:<conversationId>:<requestId>`.
+El informe se guarda antes del único POST. Si se corta la respuesta, repetir
+**los mismos argumentos** con `--resume`: sólo hace GET y lecturas de la base.
+Una reserva `UNKNOWN` o sin vínculo no acredita costo ni calidad del modelo.
+Un `providerRequestId` liquidado acredita contacto y gasto; por sí solo no
+demuestra que el plan interpretado se aplicó. La respuesta, cita y ausencia de
+`AssistantRun` se registran aparte y requieren juicio humano posterior.
 
 ## 7. Retirar la credencial al terminar
 

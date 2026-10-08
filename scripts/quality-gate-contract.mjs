@@ -4,6 +4,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/whatsappIdentity.mysql.test.ts',
   'tests/cashCloseJournal.mysql.test.ts',
   'tests/posIntegrity.integration.test.ts',
+  'tests/posCredit.integration.test.ts',
   'tests/manualCashMovementVoid.integration.test.ts',
   'tests/customerFlow.integration.test.ts',
   'tests/hrAccess.integration.test.ts',
@@ -31,6 +32,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/assistantInventory.integration.test.ts',
   'tests/assistantCatalog.integration.test.ts',
   'tests/assistantRuns.integration.test.ts',
+  'tests/assistantWorkItems.integration.test.ts',
   'tests/assistantStatus.integration.test.ts',
   'tests/assistantActions.integration.test.ts',
   'tests/assistantActionsHttp.integration.test.ts',
@@ -51,6 +53,17 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/productBrandCamera.integration.test.ts',
   'tests/productEnrollment.integration.test.ts',
   'tests/delivery.mysql.integration.test.ts',
+  'tests/whatsappCommerceTransport.mysql.test.ts',
+  'tests/whatsappCommerceRecovery.mysql.test.ts',
+  'tests/whatsappCommerceQuotes.mysql.test.ts',
+  'tests/whatsappCommercePolicy.mysql.test.ts',
+  'tests/whatsappCommerceActivation.mysql.test.ts',
+  'tests/whatsappCommerceOperations.mysql.test.ts',
+  'tests/whatsappCommerceSupport.mysql.test.ts',
+  'tests/whatsappCommerceAttempts.mysql.test.ts',
+  'tests/whatsappCommerceFlow.integration.test.ts',
+  'tests/quotationTotalsHttp.integration.test.ts',
+  'tests/whatsappCommerceReceiptRace.mysql.test.ts',
 ];
 
 export function validateQualityDatabase(raw, acknowledgement) {
