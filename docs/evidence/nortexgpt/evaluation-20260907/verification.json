@@ -1,0 +1,228 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-07",
+  "source": "/Users/stark/Documents/GitHub/nortex.20",
+  "candidate": "/private/tmp/nortexgpt-operativo-20260905",
+  "branch": "codex/caja-nica-retention",
+  "status": "local_tooling_verified",
+  "files": [
+    {
+      "path": "scripts/assistant-evaluation/operations-model.mjs",
+      "beforeSha256": "e7deb9a1019ae4f09f2e95f20bff7435ddedce7c5a37fb61b07016502bb64272",
+      "sha256": "6ea5cf7828a7835371bcd670f0b940a280b20450046f9eae017614d752f1f68d",
+      "beforeLines": 87,
+      "afterLines": 124,
+      "deltaLines": 37
+    },
+    {
+      "path": "scripts/assistant-evaluation/evaluation-report.mjs",
+      "beforeSha256": null,
+      "sha256": "34fe8798fa3e5970fa36ac056708b466bede122db70c06a344dede6545a53a58",
+      "beforeLines": 0,
+      "afterLines": 33,
+      "deltaLines": 33
+    },
+    {
+      "path": "scripts/assistant-evaluation/pilot-analyze.mjs",
+      "beforeSha256": null,
+      "sha256": "012b7fa2e76bd206062d844de1bf2e327f26d9c5f7b59e428fa9c6c8bb0785df",
+      "beforeLines": 0,
+      "afterLines": 77,
+      "deltaLines": 77
+    },
+    {
+      "path": "scripts/assistant-evaluation/forecast-backtest.mjs",
+      "beforeSha256": null,
+      "sha256": "4d2a39a125ebaed556bf4ffbcfdeab3fc02ac95c0c853c09b366513007c93a84",
+      "beforeLines": 0,
+      "afterLines": 98,
+      "deltaLines": 98
+    },
+    {
+      "path": "tests/assistantEvaluationRecovery.test.ts",
+      "beforeSha256": null,
+      "sha256": "970f16912df046f8cd58c3259394299ce2c283414d9f1a1c2067d3c9b8fb8bd1",
+      "beforeLines": 0,
+      "afterLines": 110,
+      "deltaLines": 110
+    },
+    {
+      "path": "tests/assistantPilotMeasurement.test.ts",
+      "beforeSha256": null,
+      "sha256": "995425f9cd85a7bc137e80661d58877a8c7017924d1a93210ede8b91a8d3d3cb",
+      "beforeLines": 0,
+      "afterLines": 54,
+      "deltaLines": 54
+    },
+    {
+      "path": "tests/assistantForecastBacktest.test.ts",
+      "beforeSha256": null,
+      "sha256": "79e1b77dc43e69094b550427f3e99b31beb28100d928f45a89fae079b09cb071",
+      "beforeLines": 0,
+      "afterLines": 61,
+      "deltaLines": 61
+    },
+    {
+      "path": "docs/NORTEXGPT_EVALUACION_CONTINUIDAD_2026-09-07.md",
+      "beforeSha256": null,
+      "sha256": "82cc5b428a8263b6fb5a7d8c1b1cb329ae7ed904078995318b2e854ca10fd6b3",
+      "beforeLines": 0,
+      "afterLines": 108,
+      "deltaLines": 108
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/pilot-worksheet.json",
+      "beforeSha256": null,
+      "sha256": "20b5dbd4c904b3148fda2b88db68eb4c0e6f1cec271525fac8f735c51c1ddfd9",
+      "beforeLines": 0,
+      "afterLines": 1271,
+      "deltaLines": 1271
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/pilot-baseline.json",
+      "beforeSha256": null,
+      "sha256": "6c00bb3091b965ff87727f7262e53c3329b2324ea9f13f52857410b9a1312c24",
+      "beforeLines": 0,
+      "afterLines": 106,
+      "deltaLines": 106
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/model-pending.json",
+      "beforeSha256": null,
+      "sha256": "dd5ce0c3c195838d09569e675c9071b055806bf8c573a69d043d2bbd4e6a5243",
+      "beforeLines": 0,
+      "afterLines": 11,
+      "deltaLines": 11
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/model-review-ferreteria.json",
+      "beforeSha256": null,
+      "sha256": "883f07da8dc52fa65ab1374b0bb594100782cbed4fc043e6c938d0108f528535",
+      "beforeLines": 0,
+      "afterLines": 25,
+      "deltaLines": 25
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/model-review-farmacia.json",
+      "beforeSha256": null,
+      "sha256": "20ad02caba4904fa1b17e56d26df2543c7ea04ea2aad9f9228977cc14578e6a9",
+      "beforeLines": 0,
+      "afterLines": 25,
+      "deltaLines": 25
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/recovery-before.log",
+      "beforeSha256": null,
+      "sha256": "b44723ad7b00c117d0ba7bbd52d1d75380fc1185f8089d932fafdd3d8591b445",
+      "beforeLines": 0,
+      "afterLines": 306,
+      "deltaLines": 306
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/focused.log",
+      "beforeSha256": null,
+      "sha256": "a316c5ba5251ae6da268f68ddbea9a3345469d5f01c0d3dc967833cf918985fd",
+      "beforeLines": 0,
+      "afterLines": 9,
+      "deltaLines": 9
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/vitest.log",
+      "beforeSha256": null,
+      "sha256": "3395721d02e105b897724a3ee5a7c4ba0b8b0588cf74e7ef5a63b8839a7e1696",
+      "beforeLines": 0,
+      "afterLines": 16,
+      "deltaLines": 16
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/gates.log",
+      "beforeSha256": null,
+      "sha256": "93c904b9615c4725fc4079fc036866a0bb54d2a69ed5f28388ff163c6a23f24f",
+      "beforeLines": 0,
+      "afterLines": 177,
+      "deltaLines": 177
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/typescript.log",
+      "beforeSha256": null,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "beforeLines": 0,
+      "afterLines": 0,
+      "deltaLines": 0
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260907/forecast-synthetic-result.json",
+      "beforeSha256": null,
+      "sha256": "fb8e2fb0fc19e4b7ebf5901f1b8f7a485f30c519560e9574ef2097f76f20b716",
+      "beforeLines": 0,
+      "afterLines": 216,
+      "deltaLines": 216
+    }
+  ],
+  "manifestExcludesItself": true,
+  "tests": {
+    "reproduction": {
+      "passed": 1,
+      "failed": 7
+    },
+    "focused": {
+      "passed": 157,
+      "failed": 0,
+      "skipped": 0,
+      "files": 4
+    },
+    "general": {
+      "passed": 4785,
+      "failed": 0,
+      "skipped": 284,
+      "passedFiles": 343,
+      "skippedFiles": 34
+    },
+    "typescript": "passed",
+    "prismaGenerate": "passed-6.4.1",
+    "prismaValidate": "passed-6.4.1",
+    "design": "passed",
+    "build": "passed",
+    "mysqlRequired": "not_rerun_no_domain_changes",
+    "mutation": "not_rerun_no_financial_changes"
+  },
+  "realModel": {
+    "status": "not_run",
+    "paidCalls": 0,
+    "configuration": "not_configured_user_reported",
+    "humanReview": "pending"
+  },
+  "pilot": {
+    "status": "not_run",
+    "tasksCompleted": 0,
+    "hardwareStore": "contact_reference_in_private_conversation",
+    "pharmacy": "pending",
+    "reviewers": "pending"
+  },
+  "forecast": {
+    "instrument": "synthetic_cli_and_tests_passed",
+    "realAccuracy": "not_evaluated"
+  },
+  "deployment": "not_run",
+  "scope": {
+    "domainChanges": false,
+    "schemaChanges": false,
+    "frontendChanges": false,
+    "serverLineDelta": 0,
+    "posLineDelta": 0,
+    "budgetsRaised": false
+  },
+  "previousEvidence": {
+    "path": "docs/evidence/nortexgpt/operational-files.json",
+    "supersededPaths": [
+      "scripts/assistant-evaluation/operations-model.mjs"
+    ],
+    "note": "Other previously recorded product sources are unchanged. Earlier MySQL and mutation results remain historical."
+  },
+  "limitations": [
+    "Synthetic transport does not evaluate Haiku or prove remote delivery.",
+    "Human review and provenance of pilot/historical data remain pending.",
+    "Report resume binds the exact session token and never sends POST.",
+    "Forecast metrics concern sales minus RESTOCK, not unobserved demand or optimal replenishment."
+  ]
+}

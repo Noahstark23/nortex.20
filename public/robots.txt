@@ -4,6 +4,7 @@ Allow: /ferreterias
 Allow: /farmacias
 Allow: /nicaragua
 Allow: /blog
+Allow: /blog/categoria/
 Allow: /register
 Disallow: /app/
 Disallow: /admin

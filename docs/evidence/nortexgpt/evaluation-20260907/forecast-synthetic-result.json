@@ -1,0 +1,216 @@
+{
+  "version": 1,
+  "status": "simulation_only",
+  "observations": [
+    {
+      "id": "synthetic-cement-august",
+      "vertical": "ferreteria",
+      "productId": "cement",
+      "businessRef": "synthetic-hardware",
+      "cutoff": "2026-08-01T06:00:00.000Z",
+      "horizon": 7,
+      "reasons": [],
+      "status": "scored",
+      "actual": "70",
+      "estimates": {
+        "product30": "56",
+        "average7": "56",
+        "weekday4": "56",
+        "manual": "63"
+      },
+      "historyStatus": "SUFFICIENT",
+      "suggestedQuantity": "80",
+      "interpretation": "Salidas por venta menos RESTOCK; no mide demanda perdida ni prueba que la compra sugerida sea óptima."
+    },
+    {
+      "id": "synthetic-cement-august",
+      "vertical": "ferreteria",
+      "productId": "cement",
+      "businessRef": "synthetic-hardware",
+      "cutoff": "2026-08-01T06:00:00.000Z",
+      "horizon": 14,
+      "reasons": [],
+      "status": "scored",
+      "actual": "140",
+      "estimates": {
+        "product30": "112",
+        "average7": "112",
+        "weekday4": "112",
+        "manual": "126"
+      },
+      "historyStatus": "SUFFICIENT",
+      "suggestedQuantity": "80",
+      "interpretation": "Salidas por venta menos RESTOCK; no mide demanda perdida ni prueba que la compra sugerida sea óptima."
+    }
+  ],
+  "groups": [
+    {
+      "vertical": "ferreteria",
+      "horizon": 7,
+      "model": "product30",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "14",
+      "bias": "-14",
+      "wapePercent": "20"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 7,
+      "model": "average7",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "14",
+      "bias": "-14",
+      "wapePercent": "20"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 7,
+      "model": "weekday4",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "14",
+      "bias": "-14",
+      "wapePercent": "20"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 7,
+      "model": "manual",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "7",
+      "bias": "-7",
+      "wapePercent": "10"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 14,
+      "model": "product30",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "28",
+      "bias": "-28",
+      "wapePercent": "20"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 14,
+      "model": "average7",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "28",
+      "bias": "-28",
+      "wapePercent": "20"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 14,
+      "model": "weekday4",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "28",
+      "bias": "-28",
+      "wapePercent": "20"
+    },
+    {
+      "vertical": "ferreteria",
+      "horizon": 14,
+      "model": "manual",
+      "scored": 1,
+      "excluded": 0,
+      "mae": "14",
+      "bias": "-14",
+      "wapePercent": "10"
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 7,
+      "model": "product30",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 7,
+      "model": "average7",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 7,
+      "model": "weekday4",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 7,
+      "model": "manual",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 14,
+      "model": "product30",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 14,
+      "model": "average7",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 14,
+      "model": "weekday4",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    },
+    {
+      "vertical": "farmacia",
+      "horizon": 14,
+      "model": "manual",
+      "scored": 0,
+      "excluded": 0,
+      "mae": null,
+      "bias": null,
+      "wapePercent": null
+    }
+  ],
+  "limitations": [
+    "Validar procedencia de cada snapshot y cancelaciones conocidas entonces requiere revisión humana; las fechas declaradas no lo demuestran.",
+    "Los ceros no acreditan demanda cero; faltantes de stock e historia incompleta se excluyen explícitamente.",
+    "MAE y sesgo se expresan en unidades BASE; no mezclar grupos heterogéneos como un KPI de negocio.",
+    "Los cortes solapados no son muestras independientes. La tasa pública del producto conserva su redondeo a cuatro decimales."
+  ],
+  "inputSha256": "b7d08fad70b7357a99c1d851f99b1b5d0a2ea53cc015fca296075a1ccb00c2ac",
+  "productSourceSha256": "5f966c83ad400f1dd6db0d929d28c3c1e0399352316b06909d1c786758e3ac78"
+}

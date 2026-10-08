@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Banknote, Save, AlertCircle, CheckCircle2, LogOut, AlertTriangle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { formatMoney } from '../../utils/money';
 
 const MotorizadosPanel: React.FC = () => {
     const [loans, setLoans] = useState<any[]>([]);
@@ -170,7 +171,7 @@ const MotorizadosPanel: React.FC = () => {
             )}
             {offlineQueue.length > 0 && isOffline && (
                 <div className="bg-slate-800 border border-slate-600 text-slate-300 p-3 rounded-xl mb-4 text-sm">
-                    📦 {offlineQueue.length} cobro(s) en cola esperando señal.
+                    {offlineQueue.length} cobro(s) en cola esperando señal.
                 </div>
             )}
 
@@ -186,10 +187,10 @@ const MotorizadosPanel: React.FC = () => {
                         onClick={() => {
                             const clientName = loans.find(l => l.id === selectedLoan)?.clientName || 'Cliente';
                             const userName = JSON.parse(localStorage.getItem('nortex_user') || '{}').name || 'Tu Cobrador';
-                            const text = `*NORTEX CAPITAL* 🏦\n\nHola *${clientName}* 👋,\nConfirmamos la recepción de tu pago.\n\n💰 *Monto:* $${parseFloat(amount || '0').toFixed(2)}\n👤 *Cobrador:* ${userName}\n📅 *Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
+                            const text = `*NORTEX CAPITAL* \n\nHola *${clientName}* ,\nConfirmamos la recepción de tu pago.\n\n*Monto:* ${formatMoney(parseFloat(amount || '0'))}\n*Cobrador:* ${userName}\n*Fecha:* ${new Date().toLocaleString()}\n\n_Gracias por tu puntualidad. Tu saldo ha sido actualizado._`;
                             window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, '_blank');
                         }}
-                        className="w-full py-4 bg-[#25D366] hover:bg-[#1ebe57] text-white font-bold rounded-xl flex items-center justify-center gap-3 shadow-lg shadow-[#25D366]/20 transition-all active:scale-95"
+                        className="w-full py-4 bg-whatsapp hover:bg-whatsapp-hover text-white font-bold rounded-xl flex items-center justify-center gap-3 shadow-lg shadow-whatsapp/20 transition-all active:scale-95"
                     >
                         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" /></svg>
                         ENVIAR RECIBO (WHATSAPP)
@@ -219,55 +220,45 @@ const MotorizadosPanel: React.FC = () => {
                                 <h3 className="text-lg font-bold text-white uppercase">{loan.clientName}</h3>
 
                                 {(() => {
-                                    // Cálculo de Mora vs Cuota Esperada
-                                    const oneDay = 24 * 60 * 60 * 1000;
-                                    const disbursedStr = loan.disbursedAt || loan.createdAt;
-                                    const disbursementDate = new Date(disbursedStr);
+                                    // Mora REAL del backend (Fase 1 H8): el endpoint GET /api/loans
+                                    // enriquece cada préstamo con overdueAmount / nextDueAmount /
+                                    // nextDueDate / daysOverdue calculados sobre el plan de cuotas
+                                    // (LoanInstallment). Ya no se estima por días transcurridos.
+                                    const balance = Number(loan.balanceRemaining);
+                                    const atraso = Number(loan.overdueAmount ?? 0);
+                                    const cuota = Number(loan.nextDueAmount ?? loan.installmentAmount ?? 0);
+                                    const daysOverdue = Number(loan.daysOverdue ?? 0);
 
-                                    // Días transcurridos (básico, sin saltar domingos por ahora para mantener la robustez)
-                                    const daysElapsed = Math.max(1, Math.floor((new Date().getTime() - disbursementDate.getTime()) / oneDay));
-
-                                    const totalPaidSoFar = Number(loan.totalToRepay) - Number(loan.balanceRemaining);
-                                    let expectedToDate = 0;
-
-                                    if (loan.frequency === 'DAILY') {
-                                        expectedToDate = daysElapsed * Number(loan.installmentAmount);
-                                    } else if (loan.frequency === 'WEEKLY') {
-                                        expectedToDate = Math.max(1, Math.floor(daysElapsed / 7)) * Number(loan.installmentAmount);
-                                    } else if (loan.frequency === 'BIWEEKLY') {
-                                        expectedToDate = Math.max(1, Math.floor(daysElapsed / 15)) * Number(loan.installmentAmount);
-                                    } else if (loan.frequency === 'MONTHLY') {
-                                        expectedToDate = Math.max(1, Math.floor(daysElapsed / 30)) * Number(loan.installmentAmount);
-                                    }
-
-                                    // Limitamos lo esperado al total a pagar
-                                    expectedToDate = Math.min(expectedToDate, Number(loan.totalToRepay));
-
-                                    const atraso = Math.max(0, expectedToDate - totalPaidSoFar);
-                                    const totalAExigirHoy = Number(loan.installmentAmount) + atraso;
+                                    // Evitar doble conteo: si la próxima cuota YA está vencida,
+                                    // su monto ya está incluido en `atraso`; solo se suma la
+                                    // próxima cuota cuando aún no vence (vence hoy o después).
+                                    const nextIsOverdue = loan.nextDueDate && new Date(loan.nextDueDate) < new Date();
+                                    const totalAExigirHoy = Math.min(atraso + (nextIsOverdue ? 0 : cuota), balance);
 
                                     return (
                                         <div className="mt-3 space-y-2">
                                             <div className="flex justify-between text-xs">
                                                 <span className="text-slate-400">Saldo Restante:</span>
-                                                <span className="text-slate-200 font-bold">${Number(loan.balanceRemaining).toFixed(2)}</span>
+                                                <span className="text-slate-200 font-bold">${balance.toFixed(2)}</span>
                                             </div>
 
                                             <div className="flex justify-between text-xs items-center bg-slate-900/50 p-2 rounded">
-                                                <span className="text-slate-400">Cuota Base:</span>
-                                                <span className="text-white font-mono font-bold">${Number(loan.installmentAmount).toFixed(2)}</span>
+                                                <span className="text-slate-400">Próxima Cuota:</span>
+                                                <span className="text-white font-mono font-bold">${cuota.toFixed(2)}</span>
                                             </div>
 
                                             {atraso > 0 && (
                                                 <div className="flex justify-between text-xs items-center bg-red-900/20 text-red-400 p-2 rounded border border-red-500/20">
-                                                    <span className="flex items-center gap-1"><AlertTriangle size={12} /> Atraso Acumulado:</span>
+                                                    <span className="flex items-center gap-1">
+                                                        <AlertTriangle size={12} /> Mora{daysOverdue > 0 ? ` (${daysOverdue} días)` : ''}:
+                                                    </span>
                                                     <span className="font-mono font-bold">+${atraso.toFixed(2)}</span>
                                                 </div>
                                             )}
 
                                             <div className="border-t border-slate-700/50 pt-2 mt-2 flex justify-between text-sm items-center">
                                                 <span className="text-nortex-accent font-bold">TOTAL A COBRAR HOY:</span>
-                                                <span className="text-nortex-accent font-mono text-lg font-black">${Math.min(totalAExigirHoy, Number(loan.balanceRemaining)).toFixed(2)}</span>
+                                                <span className="text-nortex-accent font-mono text-lg font-black">${totalAExigirHoy.toFixed(2)}</span>
                                             </div>
                                         </div>
                                     );
@@ -278,16 +269,17 @@ const MotorizadosPanel: React.FC = () => {
                 </div>
 
                 {/* Paso 2: Ingresar Monto */}
-                <div className={!selectedLoan ? 'opacity-30 pointer-events-none' : ''}>
+                <div aria-disabled={!selectedLoan}>
                     <label className="block text-sm font-medium text-slate-400 mb-2">2. Efectivo Recibido</label>
                     <div className="relative">
                         <span className="absolute left-4 top-1/2 -translate-y-1/2 text-2xl text-slate-500">$</span>
                         <input
                             type="number"
+                            disabled={!selectedLoan}
                             value={amount}
                             onChange={(e) => setAmount(e.target.value)}
                             placeholder="0.00"
-                            className="w-full bg-slate-800 border border-slate-700 rounded-xl py-4 pl-12 pr-4 text-3xl font-bold text-white focus:outline-none focus:border-nortex-accent"
+                            className="w-full bg-slate-800 border border-slate-700 rounded-xl py-4 pl-12 pr-4 text-3xl font-bold text-white focus:outline-none focus:border-nortex-accent disabled:cursor-not-allowed disabled:opacity-60"
                         />
                     </div>
                 </div>
@@ -298,7 +290,7 @@ const MotorizadosPanel: React.FC = () => {
                     disabled={!selectedLoan || !amount || loading}
                     className={`w-full py-5 rounded-xl font-bold text-xl flex justify-center items-center gap-2 transition-all shadow-lg active:scale-95 ${!selectedLoan || !amount
                         ? 'bg-slate-800 text-slate-500 cursor-not-allowed'
-                        : 'bg-nortex-accent text-slate-900 hover:bg-emerald-400 shadow-emerald-500/20'
+                        : 'bg-nortex-accent text-white hover:bg-emerald-400 shadow-emerald-500/20'
                         }`}
                 >
                     {loading ? (

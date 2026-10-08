@@ -1,0 +1,76 @@
+{
+  "environment": "Datos sintéticos; frontend local 4186 y backend local 3221 con MySQL 8 descartable",
+  "desktopViewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "mobileViewport": {
+    "width": 390,
+    "height": 844
+  },
+  "scenarios": [
+    {
+      "action": "Crear ficha",
+      "sku": "QA-BROCHA-2",
+      "price": 75,
+      "initialStock": 0,
+      "result": "Confirmado en catálogo"
+    },
+    {
+      "action": "Recibir compra directa a crédito",
+      "invoice": "QA-VISUAL-BROCHA-001",
+      "sku": "QA-BROCHA-2",
+      "warehouse": "Bodega de reserva",
+      "quantity": 5,
+      "unitCost": 50,
+      "subtotal": 250,
+      "tax": 37.5,
+      "total": 287.5,
+      "result": "Confirmado en historial y bodega destino"
+    },
+    {
+      "action": "Trasladar",
+      "sku": "CABLE-12",
+      "quantity": 0.25,
+      "from": "Tienda principal",
+      "to": "Bodega de reserva",
+      "sourceAfter": 18.5,
+      "destinationAfter": 100.75,
+      "totalAfter": 119.25,
+      "result": "Comprobante visible en historial"
+    },
+    {
+      "action": "Contar por bodega y categoría",
+      "warehouse": "Tienda principal",
+      "category": "Electricidad",
+      "input": "18,5",
+      "captured": 1,
+      "items": 1,
+      "difference": 0,
+      "result": "Cerrada"
+    },
+    {
+      "action": "Inspección de alta común",
+      "fieldsVisible": 5,
+      "themes": [
+        "día",
+        "noche"
+      ],
+      "mobileSaveVisible": true,
+      "result": "Etiquetas legibles en las capturas inspeccionadas"
+    }
+  ],
+  "databaseVerification": {
+    "healthy": true,
+    "productsChecked": 7,
+    "aggregateEqualsWarehouseSum": true,
+    "batchProductSumMatches": true
+  },
+  "notProven": [
+    "lector físico",
+    "Android real",
+    "uso con comerciantes",
+    "retención",
+    "rendimiento de catálogos masivos"
+  ]
+}

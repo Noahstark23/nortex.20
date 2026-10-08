@@ -1,0 +1,29 @@
+# Compra de contado y responsabilidad de caja
+
+Auditoría local 2026-09-12. Alcance: `purchaseRegistrationService.ts`, preview compartido, `shiftHandoverService.ts`, composición del endpoint por el integrador y prueba `bodegaPurchaseCashAuthority.integration.test.ts`. Base MySQL8 descartable; dinero ficticio. No se modificó `purchaseRegistrationPreparation.ts` ni se implementaron otros medios de pago.
+
+## RC15 — retiro implícito desde una caja ajena
+
+**Defecto reproducido.** La resolución anterior intentaba primero el turno propio y luego la última caja abierta de cualquier persona del tenant. `registrarSalidaDeCajaPorCompra` verificaba tenant y OPEN al debitar, pero no titularidad. El formulario Compras sólo avisaba «Se descuenta de caja», sin identificar cajero ni permitir elegir gaveta.
+
+Autoridad existente: OWNER, ADMIN, SUPER_ADMIN y MANAGER pueden registrar compras; CASHIER recibe 403. El flujo `/api/shifts/current` distingue caja ajena y documenta que mirarla no autoriza usarla. `/api/shifts/:id/tomar` es el acto explícito para asumir su responsabilidad. No existe `cashRegisterId` en el modelo, esquema de compra ni formulario; tampoco había un `shiftId` aceptado en el body de compra. Zod descartaba ambos campos desconocidos. No se eliminó una selección legítima preexistente.
+
+Reproducción HTTP/MySQL anterior al cambio, 11:46:21: MANAGER sin turno propio y dos cajas ajenas obtuvo HTTP200; se creó una compra, stock pasó 0→2 y se registró OUT por C$23 en la última gaveta ajena. OWNER sin caja propia produjo el mismo retiro implícito. Suite inicial: 2 rojas de defecto y 3 caracterizaciones aprobadas (propia preferida/replay, tenant/roles y crédito).
+
+**Corrección.** El resolver compartido sólo admite OPEN del usuario autenticado y toma `SELECT ... FOR UPDATE` sobre ese turno antes de crear compra/debitar. Conserva orden de locks Supplier→Product→Shift. Preview aplica la misma autoridad. El retorno de una reserva idempotente ya completada sucede antes de exigir turno actual, por lo que recuperar el comprobante después de cerrar caja sigue funcionando.
+
+Sin caja propia se responde 409 `SIN_CAJA_ABIERTA`: «No hay caja abierta a tu nombre. Abrí una caja o tomá el turno a tu nombre antes de pagar de contado; también podés registrar la compra a crédito.» La UI debe expresar esta responsabilidad; ocultar o adivinar otra caja no es una solución.
+
+**QA ejecutada 11:49:27.** Backend efímero nuevo del candidato, cerrado al finalizar: `bodegaPurchaseCashAuthority.integration.test.ts` **9/9** y `purchaseRegistration.integration.test.ts` **7/7** (16 aprobados, 0 omitidos, 3.28s). Incluye preview→confirmación, replay tras cierre y dos carreras con `/tomar`: si el traspaso gana, compra rechazada sin efectos; si la compra ya eligió caja, el traspaso espera y la titularidad permanece hasta commit. La pausa de la segunda prueba sólo controla el punto de intercalación del adaptador Prisma; servicio, SQL, débito y ruta de traspaso son los reales.
+
+`purchaseRegistration.test.ts`, `purchaseLockOrder.test.ts` y `ordenDeBloqueoCaja.test.ts`: **35/35**, 0 omitidos. TypeScript: exit0. El integrador ejecuta nuevamente la compuerta completa después de estos cambios; una ejecución anterior mezclada no acredita este candidato. No es CI, staging ni producción.
+
+## RC16 — corte de efectivo del traspaso calculado antes del lock
+
+**Defecto reproducido antes de extraer.** `/api/shifts/:id/tomar` calculaba efectivo antes de abrir su transacción/esperar el lock. En la fixture concurrente de RC15, la compra confirma con auditoría 100→77; el traspaso posterior registraba `efectivoAlTraspaso=100`. La consulta sobre esa fixture sintética comprobó ambos registros. Una aserción nueva sobre la misma ruta real falló a las 11:51:26: esperado `77`, recibido `100`. Fue una ejecución dirigida al caso; los demás casos filtrados no se cuentan como aprobados.
+
+**Corrección autorizada y ejecutada.** El nuevo `executeShiftHandover` bloquea primero autoridad del actor y después el turno por tenant en una transacción ReadCommitted. Relee OPEN y titularidad después de esperar. Calcula ventas y movimientos con la misma transacción y conserva `calcularEfectivoTurno` sin modificar la fórmula. Agrega movimientos por tipo, moneda y categoría para evitar cargar el historial completo. Cambio de responsable y auditoría confirman juntos; un fallo revierte ambos. La respuesta idempotente cuando ya pertenece al receptor ocurre después del lock. El servidor sólo compone este servicio y mantiene URL, roles, éxito y 404; errores de concurrencia propios son 409 y persistencia se responde sin SQL.
+
+**QA final ejecutada 11:54:17.** Backend nuevo efímero con el servidor compuesto por el integrador, cerrado al finalizar: `bodegaPurchaseCashAuthority.integration.test.ts` **13/13** y `purchaseRegistration.integration.test.ts` **7/7**, total **20 aprobados, 0 omitidos**, 4.66s. La carrera comprobada ahora registra `77`. También pasan dos tomas concurrentes con una sola auditoría; NIO/USD, crédito de tienda, agente bancario y movimientos/ventas anulados; tenant ajeno, caja cerrada, rol sin permiso; rollback completo al fallar AuditLog mediante trigger MySQL real. TypeScript final exit0. Los 35 casos unitarios de compra y orden de bloqueo se repitieron después de componer el traspaso: 35/35, 0 omitidos, 11:54:54, 470ms. La compuerta integral se vuelve a ejecutar sobre el candidato estable por el integrador.
+
+Modularidad RC16 frente al checkout original: cuerpo del endpoint 78→9 líneas, import nuevo +1; `server.ts` −68 líneas, servicio nuevo 59 líneas; total de runtime afectado −9 líneas. El integrador mantiene el presupuesto exacto y registra además el delta acumulado del monolito con las otras extracciones. Estos resultados sólo acreditan ejecución local, no CI, staging ni producción.

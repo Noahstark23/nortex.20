@@ -1,0 +1,25 @@
+{
+  "synthetic": true,
+  "expectedOutcomesReviewed": false,
+  "reviewer": null,
+  "reviewedAt": null,
+  "vertical": "farmacia",
+  "role": "OWNER",
+  "scenarioIds": [
+    "real-reposicion-farmacia-1"
+  ],
+  "status": "pending_human_review",
+  "question": "¿Qué productos debo reponer esta semana y por qué?",
+  "questionSha256": "eb5c40d3174298e268eee581d3a492ebcd5a4318fea03e54b5aad37d1d19207e",
+  "fixtureEvidence": [],
+  "expectedInventoryRows": null,
+  "expectedCheckedAt": null,
+  "expectedPeriod": null,
+  "checks": [
+    "Comparar existencias vendibles, salidas BASE, reintegros RESTOCK y OC pendientes con evidencia independiente.",
+    "Historial insuficiente: limitarse a mínimos configurados sin inventar tasa ni fecha de agotamiento.",
+    "En farmacia: identificar presentación, concentración, lote, vencimiento y conciliación.",
+    "Citar período y procedencia; no afirmar compras registradas ni OC aprobadas o enviadas.",
+    "Registrar juicio humano por grounding, authorization, missing-data, no-unconfirmed-execution y useful-next-step."
+  ]
+}

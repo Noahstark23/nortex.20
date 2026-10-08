@@ -1,47 +1,64 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Shield, Zap, Users, Building2, DollarSign, TrendingUp, AlertTriangle, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, ArrowRight, Clock, BarChart3, Wallet, Target, XCircle, Banknote, FileCheck, X } from 'lucide-react';
+import React, { useState } from 'react';
+import useSWR from 'swr';
+import Decimal from 'decimal.js';
+import { AlertTriangle, Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X, Mail, MessageCircle, Download, Moon } from 'lucide-react';
 import AdminMotorizadosKYC from './AdminMotorizadosKYC';
+import { AssistantBudgetRequests } from './admin/AssistantBudgetRequests';
+import { AssistantKnowledgeEditorial } from './admin/AssistantKnowledgeEditorial';
+import { AssistantPilotActivation } from './admin/AssistantPilotActivation';
+import CommerceSupport from './whatsapp/CommerceSupport';
 
+// ── Tipos de respuesta del backend (tipado estricto, sin any) ──
+// El dinero viaja como string con precisión Decimal(18,4); se parsea con Decimal.js en el cliente.
 interface TenantInfo {
     id: string;
     businessName: string;
     taxId: string;
-    walletBalance: number;
-    creditLimit: number;
-    creditScore: number;
+    type?: string | null;
+    phone?: string | null;
+    walletBalance: string;
+    creditLimit: string;
+    creditScore: number | null;
     subscriptionStatus: string;
     createdAt: string;
+    trialEndsAt?: string | null;
+    lastLogin?: string | null;   // máx lastLogin entre los usuarios del tenant
+    dormant?: boolean;           // >7d registrada, sin venta ni login en 30d
     owner: { id: string; name: string; email: string; role: string } | null;
     stats: { sales: number; products: number; employees: number };
 }
 
-interface PlatformStats {
+interface AdminMetrics {
     totalTenants: number;
-    activeTenants: number;
+    activeTenants: number;        // uso real (venta o login 30d)
+    activeSubscriptions: number;  // suscripciones no morosas
+    activeUsers30d: number;
+    newTenantsThisMonth: number;
+    dormantTenants: number;       // registradas hace >7d, sin uso 30d
     morosos: number;
     activeUsers: number;
-    totalDebtLent: number;
-    totalWallet: number;
-    monthlySales: number;
     monthlyTransactions: number;
-    platformFee: number;
-    interestIncome: number;
-    monthlyRevenue: number;
+    totalDebtLent: string;   // Capital asignado vigente
+    totalWallet: string;
+    monthlySales: string;
+    platformFee: string;     // 2% sobre ventas
+    interestIncome: string;  // 5% de retención sobre capital
+    monthlyRevenue: string;
 }
 
 interface LoanRequest {
     id: string;
     tenantId: string;
-    totalAmount: number;
+    total: string;
     status: string;
     createdAt: string;
-    tenant: { businessName: string; creditScore: number; walletBalance: number; creditLimit: number };
+    tenant: { businessName: string; creditScore: number | null; walletBalance: string; creditLimit: string };
 }
 
 interface ManualPaymentAdmin {
     id: string;
     tenantId: string;
-    amount: number;
+    amount: string;
     currency: string;
     bank: string;
     referenceNumber: string;
@@ -53,15 +70,80 @@ interface ManualPaymentAdmin {
     tenant: { businessName: string; subscriptionStatus: string; users: { email: string; name: string }[] };
 }
 
-const formatMoney = (n: number) => '$' + n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+// Formato monetario 100% Decimal.js (cero float): separador de miles + 2 decimales para display.
+const formatMoney = (value: string | number, symbol = '$'): string => {
+    let d: Decimal;
+    try {
+        d = new Decimal(value === '' || value === null || value === undefined ? 0 : value);
+    } catch {
+        d = new Decimal(0);
+    }
+    const rounded = d.toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    const negative = rounded.isNegative() && !rounded.isZero();
+    const [intPart, decPart] = rounded.abs().toFixed(2).split('.');
+    const grouped = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return `${negative ? '-' : ''}${symbol}${grouped}.${decPart}`;
+};
 
-const getScoreColor = (score: number) => {
+// Fetcher tipado para SWR: adjunta el JWT y lanza en respuestas no-OK.
+async function fetcher<T>(url: string): Promise<T> {
+    const token = localStorage.getItem('nortex_token');
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token ?? ''}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<T>;
+}
+
+const authHeaders = (): Record<string, string> => ({
+    Authorization: `Bearer ${localStorage.getItem('nortex_token') ?? ''}`,
+    'Content-Type': 'application/json',
+});
+
+// "hace N d" — recencia compacta para la columna de actividad (retención R1).
+const relativeDays = (iso: string | null | undefined): string => {
+    if (!iso) return 'nunca';
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / (24 * 60 * 60 * 1000));
+    if (days <= 0) return 'hoy';
+    if (days === 1) return 'ayer';
+    return `hace ${days}d`;
+};
+
+// wa.me con prefijo 505 si el número viene local (8 dígitos). Mismo patrón que
+// el resto del repo (AccountsReceivable, QuotationManager, etc.).
+const waLink = (phone: string): string => {
+    const digits = phone.replace(/\D/g, '');
+    return `https://wa.me/${digits.length === 8 ? '505' + digits : digits}?text=${encodeURIComponent('Hola, soy Noel de Nortex 👋 Vi que creaste tu cuenta y quería ayudarte a arrancar. ¿Te trabaste con algo?')}`;
+};
+
+// CSV de la lista visible (retención R1): la salida manual hacia llamadas/Excel.
+const exportTenantsCsv = (rows: TenantInfo[]) => {
+    const header = ['Empresa', 'Giro', 'Email', 'WhatsApp', 'Estado', 'Ultima actividad', 'Registrada', 'Fin de prueba', 'Ventas', 'Productos', 'Dormida'];
+    const cells = rows.map(t => [
+        t.businessName, t.type || '', t.owner?.email || '', t.phone || '',
+        t.subscriptionStatus, t.lastLogin || '', t.createdAt, t.trialEndsAt || '',
+        String(t.stats.sales), String(t.stats.products), t.dormant ? 'SI' : 'NO',
+    ]);
+    const csv = [header, ...cells]
+        .map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(','))
+        .join('\n');
+    // BOM para que Excel abra el UTF-8 con tildes bien.
+    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `nortex-tenants-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+};
+
+const getScoreColor = (score: number | null) => {
+    if (score == null) return 'text-slate-500';
     if (score >= 700) return 'text-green-400';
     if (score >= 500) return 'text-yellow-400';
     return 'text-red-400';
 };
 
-const getScoreLabel = (score: number) => {
+const getScoreLabel = (score: number | null) => {
+    if (score == null) return 'S/D';
     if (score >= 800) return 'AAA';
     if (score >= 700) return 'AA';
     if (score >= 600) return 'A';
@@ -80,55 +162,43 @@ const getStatusBadge = (status: string) => {
 };
 
 const SuperAdmin: React.FC = () => {
-    const [stats, setStats] = useState<PlatformStats | null>(null);
-    const [tenants, setTenants] = useState<TenantInfo[]>([]);
-    const [loanRequests, setLoanRequests] = useState<LoanRequest[]>([]);
-    const [manualPayments, setManualPayments] = useState<ManualPaymentAdmin[]>([]);
+    const [pendingEditorialWork, setPendingEditorialWork] = useState(false);
+    const [editorialExitBlocked, setEditorialExitBlocked] = useState(false);
     const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null);
-    const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
-    const [lastRefresh, setLastRefresh] = useState(new Date());
+    const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+    // Retención R1: filtro "solo dormidas" — convierte el KPI en lista de llamadas.
+    const [onlyDormant, setOnlyDormant] = useState(false);
 
-    const token = localStorage.getItem('nortex_token');
-    const headers: Record<string, string> = { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' };
+    // ── Datos en vivo vía SWR (polling 30s, sin useEffect + fetch manual) ──
+    const swrConfig = { refreshInterval: 30000, revalidateOnFocus: false, keepPreviousData: true };
 
-    const fetchAll = useCallback(async () => {
-        setLoading(true);
-        try {
-            const [statsRes, tenantsRes, loansRes, paymentsRes] = await Promise.all([
-                fetch('/api/admin/stats', { headers }),
-                fetch('/api/admin/tenants', { headers }),
-                fetch('/api/admin/loan-requests', { headers }),
-                fetch('/api/admin/manual-payments', { headers }),
-            ]);
+    const {
+        data: metrics,
+        error: metricsError,
+        isLoading: metricsLoading,
+        isValidating: metricsValidating,
+        mutate: mutateMetrics,
+    } = useSWR<AdminMetrics>('/api/admin/metrics', fetcher, { ...swrConfig, onSuccess: () => setLastRefresh(new Date()) });
 
-            if (statsRes.ok) setStats(await statsRes.json());
-            if (tenantsRes.ok) setTenants(await tenantsRes.json());
-            if (loansRes.ok) setLoanRequests(await loansRes.json());
-            if (paymentsRes.ok) setManualPayments(await paymentsRes.json());
-            setLastRefresh(new Date());
-        } catch (e) {
-            console.error('Admin fetch error:', e);
-        } finally {
-            setLoading(false);
-        }
-    }, []);
+    const { data: tenants = [], mutate: mutateTenants } = useSWR<TenantInfo[]>('/api/admin/tenants', fetcher, swrConfig);
+    const { data: loanRequests = [], mutate: mutateLoans } = useSWR<LoanRequest[]>('/api/admin/loan-requests', fetcher, swrConfig);
+    const { data: manualPayments = [], mutate: mutatePayments } = useSWR<ManualPaymentAdmin[]>('/api/admin/manual-payments', fetcher, swrConfig);
 
-    useEffect(() => { fetchAll(); }, [fetchAll]);
-
-    // Auto-refresh every 30s
-    useEffect(() => {
-        const interval = setInterval(fetchAll, 30000);
-        return () => clearInterval(interval);
-    }, [fetchAll]);
+    const refreshAll = () => {
+        mutateMetrics();
+        mutateTenants();
+        mutateLoans();
+        mutatePayments();
+    };
 
     const handleSuspend = async (tenantId: string, name: string) => {
         if (!confirm(`CONFIRMAR SUSPENSIÓN de "${name}"\n\nEsta acción bloqueará todas las operaciones de escritura inmediatamente.`)) return;
         setActionLoading(tenantId);
         try {
-            const res = await fetch(`/api/admin/tenants/${tenantId}/suspend`, { method: 'POST', headers });
+            const res = await fetch(`/api/admin/tenants/${tenantId}/suspend`, { method: 'POST', headers: authHeaders() });
             if (res.ok) {
-                fetchAll();
+                refreshAll();
             } else {
                 const err = await res.json();
                 alert(err.error || 'Error');
@@ -141,23 +211,49 @@ const SuperAdmin: React.FC = () => {
         if (!confirm(`¿Reactivar "${name}"?`)) return;
         setActionLoading(tenantId);
         try {
-            const res = await fetch(`/api/admin/tenants/${tenantId}/reactivate`, { method: 'POST', headers });
+            const res = await fetch(`/api/admin/tenants/${tenantId}/reactivate`, { method: 'POST', headers: authHeaders() });
             if (res.ok) {
-                fetchAll();
+                refreshAll();
             }
         } catch (e) { alert('Error de conexión'); }
         finally { setActionLoading(null); }
     };
 
-    const handleApproveLoan = async (orderId: string, amount: number) => {
+    // El score se recalcula ACÁ, a pedido, y no como efecto secundario de que el
+    // dueño abra su Dashboard. Antes ese era el único disparador: al sacar Nortex
+    // Capital de la interfaz del cliente, sin este botón esta columna quedaría
+    // congelada (o en 'S/D' para siempre en cada empresa nueva).
+    const handleRecalcularScore = async (tenantId: string, name: string) => {
+        setActionLoading(tenantId);
+        try {
+            const res = await fetch(`/api/admin/tenants/${tenantId}/score`, { method: 'POST', headers: authHeaders() });
+            const json = await res.json();
+            if (!res.ok) {
+                alert(json.error || 'Error al recalcular el score');
+                return;
+            }
+            const puntaje = json.analysis?.score ?? null;
+            const factores: string[] = json.analysis?.factors ?? [];
+            alert(
+                `${name}\n\nScore: ${puntaje ?? 'sin historial suficiente'}`
+                + `${json.analysis?.rating ? ` (${json.analysis.rating})` : ''}`
+                + `\nLínea calculada: ${formatMoney(json.tenant?.creditLimit ?? 0)}`
+                + (factores.length ? `\n\n${factores.join('\n')}` : '')
+            );
+            refreshAll();
+        } catch (e) { alert('Error de conexión'); }
+        finally { setActionLoading(null); }
+    };
+
+    const handleApproveLoan = async (orderId: string, amount: string) => {
         if (!confirm(`¿Aprobar préstamo de ${formatMoney(amount)}?`)) return;
         setActionLoading(orderId);
         try {
             const res = await fetch('/api/admin/loans/approve', {
-                method: 'POST', headers,
+                method: 'POST', headers: authHeaders(),
                 body: JSON.stringify({ orderId, amount }),
             });
-            if (res.ok) { fetchAll(); }
+            if (res.ok) { refreshAll(); }
         } catch (e) { alert('Error'); }
         finally { setActionLoading(null); }
     };
@@ -167,23 +263,36 @@ const SuperAdmin: React.FC = () => {
         setActionLoading(orderId);
         try {
             const res = await fetch('/api/admin/loans/reject', {
-                method: 'POST', headers,
+                method: 'POST', headers: authHeaders(),
                 body: JSON.stringify({ orderId }),
             });
-            if (res.ok) { fetchAll(); }
+            if (res.ok) { refreshAll(); }
         } catch (e) { alert('Error'); }
         finally { setActionLoading(null); }
     };
 
-    const handleApprovePayment = async (id: string) => {
-        if (!confirm('¿Aprobar este pago y activar la suscripción del cliente?')) return;
+    const handleApprovePayment = async (id: string, confirmUnderpaid = false) => {
+        if (!confirmUnderpaid && !confirm('¿Aprobar este pago y activar la suscripción del cliente?')) return;
         setActionLoading(`approve-pay-${id}`);
         try {
-            const res = await fetch(`/api/admin/manual-payments/${id}/approve`, { method: 'POST', headers });
+            const res = await fetch(`/api/admin/manual-payments/${id}/approve`, {
+                method: 'POST', headers: authHeaders(),
+                body: JSON.stringify({ confirmUnderpaid }),
+            });
             const data = await res.json();
-            if (res.ok) { alert(data.message); fetchAll(); }
-            else alert(data.error);
-        } catch (e: any) { alert(e.message); }
+            if (res.ok) { alert(data.message); refreshAll(); return; }
+            // El backend frena los pagos por debajo del precio del plan en vez de
+            // otorgar 30 días con cualquier monto. Se puede aprobar igual, pero a
+            // propósito y con el número a la vista.
+            if (res.status === 409 && data.needsConfirmation) {
+                if (confirm(`${data.error}\n\nAprobar de todas formas activa 30 días completos.`)) {
+                    setActionLoading(null);
+                    return handleApprovePayment(id, true);
+                }
+                return;
+            }
+            alert(data.error);
+        } catch (e) { alert(e instanceof Error ? e.message : 'Error'); }
         finally { setActionLoading(null); }
     };
 
@@ -192,23 +301,24 @@ const SuperAdmin: React.FC = () => {
         setActionLoading(`reject-pay-${rejectModal.id}`);
         try {
             const res = await fetch(`/api/admin/manual-payments/${rejectModal.id}/reject`, {
-                method: 'POST', headers,
+                method: 'POST', headers: authHeaders(),
                 body: JSON.stringify({ reason: rejectModal.reason || 'Comprobante inválido.' }),
             });
             const data = await res.json();
-            if (res.ok) { alert(data.message); setRejectModal(null); fetchAll(); }
+            if (res.ok) { alert(data.message); setRejectModal(null); refreshAll(); }
             else alert(data.error);
-        } catch (e: any) { alert(e.message); }
+        } catch (e) { alert(e instanceof Error ? e.message : 'Error'); }
         finally { setActionLoading(null); }
     };
 
     const handleLogout = () => {
+        if (pendingEditorialWork) { setEditorialExitBlocked(true); return; }
         localStorage.removeItem('nortex_token');
         localStorage.removeItem('nortex_user');
         window.location.href = '/login';
     };
 
-    if (loading && !stats) {
+    if (metricsLoading && !metrics) {
         return (
             <div className="min-h-screen bg-gray-950 flex items-center justify-center">
                 <div className="text-center">
@@ -222,6 +332,8 @@ const SuperAdmin: React.FC = () => {
         );
     }
 
+    const pendingPayments = manualPayments.filter(p => p.status === 'PENDING').length;
+
     return (
         <div className="min-h-screen bg-gray-950 text-gray-100 font-mono">
             {/* HEADER BAR */}
@@ -234,51 +346,66 @@ const SuperAdmin: React.FC = () => {
                     </div>
                     <div className="h-4 w-px bg-gray-700" />
                     <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <Activity size={12} className="text-green-500 animate-pulse" />
-                        LIVE
+                        <Activity size={12} className={metricsError ? 'text-red-500' : 'text-green-500 animate-pulse'} />
+                        {metricsError ? 'RECONECTANDO' : 'LIVE'}
                         <span className="text-gray-600">|</span>
                         Last: {lastRefresh.toLocaleTimeString()}
                     </div>
                 </div>
                 <div className="flex items-center gap-3">
-                    <button onClick={fetchAll} className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white">
-                        <RefreshCw size={16} className={loading ? 'animate-spin' : ''} />
+                    <button onClick={refreshAll} className="p-2 hover:bg-gray-800 rounded-lg transition-colors text-gray-400 hover:text-white">
+                        <RefreshCw size={16} className={metricsValidating ? 'animate-spin' : ''} />
                     </button>
                     <button onClick={handleLogout} className="text-xs text-gray-500 hover:text-red-400 transition-colors">
                         LOGOUT
                     </button>
+                    {editorialExitBlocked && pendingEditorialWork && <p role="alert" className="text-xs text-amber-300">Guardá o descartá tu trabajo editorial antes de salir.</p>}
                 </div>
             </div>
 
             <div className="p-6 max-w-[1600px] mx-auto">
                 {/* KPI STRIP */}
                 <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-6">
-                    <KPICard icon={<Building2 size={18} />} label="EMPRESAS" value={String(stats?.totalTenants || 0)} sub={`${stats?.activeTenants || 0} activas`} color="blue" />
-                    <KPICard icon={<Ban size={18} />} label="MOROSOS" value={String(stats?.morosos || 0)} sub="Suspendidos" color={stats?.morosos ? "red" : "green"} />
-                    <KPICard icon={<Users size={18} />} label="USUARIOS" value={String(stats?.activeUsers || 0)} sub="Registrados" color="cyan" />
-                    <KPICard icon={<DollarSign size={18} />} label="PRESTADO" value={formatMoney(stats?.totalDebtLent || 0)} sub="Riesgo actual" color="yellow" />
-                    <KPICard icon={<BarChart3 size={18} />} label="VENTAS MES" value={formatMoney(stats?.monthlySales || 0)} sub={`${stats?.monthlyTransactions || 0} txns`} color="green" />
-                    <KPICard icon={<TrendingUp size={18} />} label="TU GANANCIA" value={formatMoney(stats?.monthlyRevenue || 0)} sub="Fees + Intereses" color="emerald" highlight />
+                    <KPICard icon={<Building2 size={18} />} label="EMPRESAS" value={String(metrics?.totalTenants ?? 0)} sub={`${metrics?.activeSubscriptions ?? 0} suscripciones`} color="blue" />
+                    <KPICard icon={<Ban size={18} />} label="MOROSOS" value={String(metrics?.morosos ?? 0)} sub="Suspendidos" color={metrics?.morosos ? "red" : "green"} />
+                    <KPICard icon={<Users size={18} />} label="USUARIOS" value={String(metrics?.activeUsers ?? 0)} sub="Registrados" color="cyan" />
+                    <KPICard icon={<DollarSign size={18} />} label="CAPITAL ASIGNADO" value={formatMoney(metrics?.totalDebtLent ?? 0)} sub="Riesgo actual" color="yellow" />
+                    <KPICard icon={<BarChart3 size={18} />} label="VENTAS MES" value={formatMoney(metrics?.monthlySales ?? 0)} sub={`${metrics?.monthlyTransactions ?? 0} txns`} color="green" />
+                    <KPICard icon={<TrendingUp size={18} />} label="TU GANANCIA" value={formatMoney(metrics?.monthlyRevenue ?? 0)} sub="Fees + Retención" color="emerald" highlight />
+                </div>
+
+                {/* RETENCIÓN — actividad REAL, no métricas de vanidad. "Activo" = vendió
+                    o entró en los últimos 30 días. "Dormidas" = registradas hace >7d
+                    sin ningún uso en 30d (el "se registran pero no se quedan", medido). */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                    <KPICard icon={<Building2 size={18} />} label="ACTIVAS (30d)" value={String(metrics?.activeTenants ?? 0)} sub="Vendió o entró" color="green" />
+                    <KPICard icon={<Ban size={18} />} label="DORMIDAS" value={String(metrics?.dormantTenants ?? 0)} sub="Registradas, sin uso 30d" color={metrics?.dormantTenants ? "red" : "green"} />
+                    <KPICard icon={<TrendingUp size={18} />} label="NUEVAS (mes)" value={String(metrics?.newTenantsThisMonth ?? 0)} sub="Altas del mes" color="blue" />
+                    <KPICard icon={<Users size={18} />} label="USUARIOS ACTIVOS" value={String(metrics?.activeUsers30d ?? 0)} sub="Login en 30d" color="cyan" />
                 </div>
 
                 {/* Revenue breakdown */}
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-6">
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                         <div className="text-[10px] text-gray-500 mb-1">PLATFORM FEE (2% VENTAS)</div>
-                        <div className="text-xl font-bold text-blue-400">{formatMoney(stats?.platformFee || 0)}</div>
+                        <div className="text-xl font-bold text-blue-400">{formatMoney(metrics?.platformFee ?? 0)}</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                        <div className="text-[10px] text-gray-500 mb-1">INTERESES (5% DEUDA)</div>
-                        <div className="text-xl font-bold text-yellow-400">{formatMoney(stats?.interestIncome || 0)}</div>
+                        <div className="text-[10px] text-gray-500 mb-1">FEES (5% RETENCIÓN)</div>
+                        <div className="text-xl font-bold text-yellow-400">{formatMoney(metrics?.interestIncome ?? 0)}</div>
                     </div>
                     <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
                         <div className="text-[10px] text-gray-500 mb-1">WALLETS TOTALES</div>
-                        <div className="text-xl font-bold text-green-400">{formatMoney(stats?.totalWallet || 0)}</div>
+                        <div className="text-xl font-bold text-green-400">{formatMoney(metrics?.totalWallet ?? 0)}</div>
                     </div>
                 </div>
 
                 {/* 🛵 Cola de revisión KYC — Red Nortex de repartidores */}
                 <AdminMotorizadosKYC />
+                <AssistantBudgetRequests />
+                <AssistantKnowledgeEditorial onPendingWorkChange={setPendingEditorialWork} />
+                <AssistantPilotActivation />
+                <div className="mb-6"><CommerceSupport /></div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* TENANT TABLE - 2 cols */}
@@ -287,9 +414,25 @@ const SuperAdmin: React.FC = () => {
                             <div className="px-4 py-3 border-b border-gray-800 flex justify-between items-center">
                                 <div className="flex items-center gap-2">
                                     <Skull size={16} className="text-red-500" />
-                                    <span className="font-bold text-sm text-gray-300">LISTA NEGRA - TODAS LAS EMPRESAS</span>
+                                    <span className="font-bold text-sm text-gray-300">TODAS LAS EMPRESAS</span>
                                 </div>
-                                <span className="text-[10px] text-gray-600">{tenants.length} registros</span>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        onClick={() => setOnlyDormant(v => !v)}
+                                        className={`px-2 py-1 rounded text-[10px] font-bold flex items-center gap-1 transition-colors ${onlyDormant ? 'bg-amber-500/25 text-amber-300' : 'bg-gray-800 text-gray-500 hover:text-gray-300'}`}
+                                        title="Registradas hace >7 días, sin venta ni login en 30 días"
+                                    >
+                                        <Moon size={11} /> SOLO DORMIDAS ({tenants.filter(t => t.dormant).length})
+                                    </button>
+                                    <button
+                                        onClick={() => exportTenantsCsv(onlyDormant ? tenants.filter(t => t.dormant) : tenants)}
+                                        className="px-2 py-1 bg-gray-800 text-gray-400 hover:text-gray-200 rounded text-[10px] font-bold flex items-center gap-1 transition-colors"
+                                        title="Descargar la lista visible como CSV (Excel)"
+                                    >
+                                        <Download size={11} /> CSV
+                                    </button>
+                                    <span className="text-[10px] text-gray-600">{(onlyDormant ? tenants.filter(t => t.dormant) : tenants).length} registros</span>
+                                </div>
                             </div>
                             <div className="overflow-x-auto max-h-[600px] overflow-y-auto">
                                 <table className="w-full text-xs">
@@ -297,15 +440,17 @@ const SuperAdmin: React.FC = () => {
                                         <tr>
                                             <th className="px-3 py-2 text-left">Empresa</th>
                                             <th className="px-3 py-2 text-left">Dueño</th>
+                                            <th className="px-3 py-2 text-center">Actividad</th>
                                             <th className="px-3 py-2 text-center">Score</th>
                                             <th className="px-3 py-2 text-right">Wallet</th>
                                             <th className="px-3 py-2 text-center">Estado</th>
                                             <th className="px-3 py-2 text-center">Stats</th>
+                                            <th className="px-3 py-2 text-center">Contacto</th>
                                             <th className="px-3 py-2 text-center">Acciones</th>
                                         </tr>
                                     </thead>
                                     <tbody className="divide-y divide-gray-800/50">
-                                        {tenants.map(t => (
+                                        {(onlyDormant ? tenants.filter(t => t.dormant) : tenants).map(t => (
                                             <tr key={t.id} className={`hover:bg-gray-800/30 transition-colors ${t.subscriptionStatus === 'PAST_DUE' ? 'bg-red-900/10' : ''}`}>
                                                 <td className="px-3 py-3">
                                                     <div className="font-bold text-gray-200">{t.businessName}</div>
@@ -320,8 +465,26 @@ const SuperAdmin: React.FC = () => {
                                                     ) : <span className="text-gray-600">-</span>}
                                                 </td>
                                                 <td className="px-3 py-3 text-center">
-                                                    <div className={`font-bold text-lg ${getScoreColor(t.creditScore)}`}>{t.creditScore}</div>
+                                                    <div className={`font-mono text-[11px] ${t.dormant ? 'text-amber-400' : 'text-gray-400'}`}>{relativeDays(t.lastLogin)}</div>
+                                                    {t.dormant && (
+                                                        <span className="inline-flex items-center gap-0.5 mt-0.5 px-1.5 py-0.5 bg-amber-500/15 text-amber-400 text-[9px] font-bold rounded" title="Registrada hace >7 días, sin venta ni login en 30 días">
+                                                            <Moon size={8} /> DORMIDA
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-3 py-3 text-center">
+                                                    <div className={`font-bold text-lg ${getScoreColor(t.creditScore)}`}>{t.creditScore ?? 'S/D'}</div>
                                                     <div className={`text-[9px] font-bold ${getScoreColor(t.creditScore)}`}>{getScoreLabel(t.creditScore)}</div>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleRecalcularScore(t.id, t.businessName)}
+                                                        disabled={actionLoading === t.id}
+                                                        className="mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 bg-white/[0.06] text-gray-400 text-[9px] font-bold rounded hover:bg-white/[0.12] hover:text-gray-200 transition-colors disabled:opacity-40"
+                                                        title="Recalcular el Nortex Score de esta empresa"
+                                                    >
+                                                        <RefreshCw size={9} className={actionLoading === t.id ? 'animate-spin' : ''} />
+                                                        {actionLoading === t.id ? '…' : 'Recalcular'}
+                                                    </button>
                                                 </td>
                                                 <td className="px-3 py-3 text-right">
                                                     <span className="text-green-400 font-bold">{formatMoney(t.walletBalance)}</span>
@@ -330,6 +493,35 @@ const SuperAdmin: React.FC = () => {
                                                 <td className="px-3 py-3 text-center">
                                                     <div className="text-[10px] text-gray-500">
                                                         <span title="Ventas">{t.stats.sales}v</span> / <span title="Productos">{t.stats.products}p</span> / <span title="Empleados">{t.stats.employees}e</span>
+                                                    </div>
+                                                </td>
+                                                <td className="px-3 py-3">
+                                                    {/* Contacto directo (retención R1): de "17 dormidas" a poder escribirles. */}
+                                                    <div className="flex items-center justify-center gap-1">
+                                                        {t.owner?.email && (
+                                                            <a
+                                                                href={`mailto:${t.owner.email}?subject=${encodeURIComponent('¿Te ayudo a arrancar con Nortex?')}`}
+                                                                className="p-1.5 bg-blue-500/15 text-blue-400 rounded hover:bg-blue-500/30 transition-colors"
+                                                                title={`Email a ${t.owner.email}`}
+                                                            >
+                                                                <Mail size={12} />
+                                                            </a>
+                                                        )}
+                                                        {t.phone ? (
+                                                            <a
+                                                                href={waLink(t.phone)}
+                                                                target="_blank"
+                                                                rel="noopener noreferrer"
+                                                                className="p-1.5 bg-green-500/15 text-green-400 rounded hover:bg-green-500/30 transition-colors"
+                                                                title={`WhatsApp ${t.phone}`}
+                                                            >
+                                                                <MessageCircle size={12} />
+                                                            </a>
+                                                        ) : (
+                                                            <span className="p-1.5 text-gray-700" title="Sin WhatsApp registrado">
+                                                                <MessageCircle size={12} />
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 </td>
                                                 <td className="px-3 py-3">
@@ -355,8 +547,8 @@ const SuperAdmin: React.FC = () => {
                                                 </td>
                                             </tr>
                                         ))}
-                                        {tenants.length === 0 && (
-                                            <tr><td colSpan={7} className="px-4 py-8 text-center text-gray-600">Sin empresas registradas</td></tr>
+                                        {(onlyDormant ? tenants.filter(t => t.dormant) : tenants).length === 0 && (
+                                            <tr><td colSpan={9} className="px-4 py-8 text-center text-gray-600">{onlyDormant ? 'Ninguna empresa dormida 🎉' : 'Sin empresas registradas'}</td></tr>
                                         )}
                                     </tbody>
                                 </table>
@@ -372,9 +564,9 @@ const SuperAdmin: React.FC = () => {
                                     <Banknote size={16} className="text-green-500" />
                                     <span className="font-bold text-sm text-gray-300">TESORERIA - PAGOS MANUALES</span>
                                 </div>
-                                {manualPayments.filter(p => p.status === 'PENDING').length > 0 && (
+                                {pendingPayments > 0 && (
                                     <span className="bg-green-500 text-white text-[10px] px-2 py-0.5 rounded-full font-bold animate-pulse">
-                                        {manualPayments.filter(p => p.status === 'PENDING').length} PENDIENTES
+                                        {pendingPayments} PENDIENTES
                                     </span>
                                 )}
                             </div>
@@ -403,7 +595,7 @@ const SuperAdmin: React.FC = () => {
                                                     </div>
                                                     <div className="text-right">
                                                         <div className="font-mono font-bold text-green-400 text-lg">
-                                                            {p.currency === 'NIO' ? 'C$' : '$'}{Number(p.amount).toFixed(2)}
+                                                            {formatMoney(p.amount, p.currency === 'NIO' ? 'C$' : '$')}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -411,10 +603,20 @@ const SuperAdmin: React.FC = () => {
                                                     <span className="bg-gray-800 px-2 py-0.5 rounded">Banco: <strong className="text-gray-300">{p.bank}</strong></span>
                                                     <span className="bg-gray-800 px-2 py-0.5 rounded">Ref: <strong className="text-gray-300">{p.referenceNumber}</strong></span>
                                                     {p.notes && <span className="bg-gray-800 px-2 py-0.5 rounded">Nota: {p.notes}</span>}
-                                                    {p.proofUrl && (
-                                                        <a href={p.proofUrl} target="_blank" rel="noreferrer" className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded hover:bg-blue-500/30 transition-colors flex items-center gap-1">
-                                                            <Eye size={10} /> Ver Voucher
+                                                    {/* Hasta el arreglo del formulario de cobro, acá se
+                                                        guardaba el NOMBRE del archivo ("IMG_2841.jpg"),
+                                                        no su URL: el enlace estaba muerto y se aprobaba
+                                                        sin ver nada. Las filas viejas siguen con ese
+                                                        valor, así que solo se enlaza lo que es una URL
+                                                        de verdad y el resto se marca como sin comprobante. */}
+                                                    {/^https?:\/\//.test(p.proofUrl || '') ? (
+                                                        <a href={p.proofUrl!} target="_blank" rel="noreferrer" className="bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded hover:bg-blue-500/30 transition-colors flex items-center gap-1">
+                                                            <Eye size={10} /> Ver voucher
                                                         </a>
+                                                    ) : (
+                                                        <span className="bg-amber-500/15 text-amber-400 px-2 py-0.5 rounded flex items-center gap-1" title={p.proofUrl || 'El cliente no adjuntó comprobante'}>
+                                                            <AlertTriangle size={10} /> Sin comprobante
+                                                        </span>
                                                     )}
                                                 </div>
                                                 {p.status === 'REJECTED' && p.rejectionReason && (
@@ -480,33 +682,33 @@ const SuperAdmin: React.FC = () => {
                                                         </div>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="text-yellow-400 font-bold text-lg">{formatMoney(Number(lr.totalAmount))}</div>
+                                                        <div className="text-yellow-400 font-bold text-lg">{formatMoney(lr.total)}</div>
                                                     </div>
                                                 </div>
 
                                                 {/* Score badge */}
                                                 <div className="flex items-center gap-3 mb-3">
                                                     <div className={`flex items-center gap-1 px-2 py-1 rounded ${
-                                                        lr.tenant.creditScore >= 700 ? 'bg-green-500/10' : 
-                                                        lr.tenant.creditScore >= 500 ? 'bg-yellow-500/10' : 'bg-red-500/10'
+                                                        (lr.tenant.creditScore ?? 0) >= 700 ? 'bg-green-500/10' :
+                                                        (lr.tenant.creditScore ?? 0) >= 500 ? 'bg-yellow-500/10' : 'bg-red-500/10'
                                                     }`}>
                                                         <Target size={12} className={getScoreColor(lr.tenant.creditScore)} />
                                                         <span className={`font-bold text-sm ${getScoreColor(lr.tenant.creditScore)}`}>
-                                                            {lr.tenant.creditScore}
+                                                            {lr.tenant.creditScore ?? 'S/D'}
                                                         </span>
                                                         <span className={`text-[10px] font-bold ${getScoreColor(lr.tenant.creditScore)}`}>
                                                             {getScoreLabel(lr.tenant.creditScore)}
                                                         </span>
                                                     </div>
                                                     <div className="text-[10px] text-gray-500">
-                                                        Wallet: {formatMoney(Number(lr.tenant.walletBalance))} | Limit: {formatMoney(Number(lr.tenant.creditLimit))}
+                                                        Wallet: {formatMoney(lr.tenant.walletBalance)} | Limit: {formatMoney(lr.tenant.creditLimit)}
                                                     </div>
                                                 </div>
 
                                                 {/* Action buttons */}
                                                 <div className="flex gap-2">
                                                     <button
-                                                        onClick={() => handleApproveLoan(lr.id, Number(lr.totalAmount))}
+                                                        onClick={() => handleApproveLoan(lr.id, lr.total)}
                                                         disabled={actionLoading === lr.id}
                                                         className="flex-1 flex items-center justify-center gap-1 px-3 py-2 bg-green-500/20 text-green-400 rounded font-bold text-xs hover:bg-green-500/30 transition-colors disabled:opacity-50"
                                                     >
@@ -527,14 +729,13 @@ const SuperAdmin: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* System status */}
+                        {/* System status — derivado del estado real de SWR (sin mock) */}
                         <div className="bg-gray-900 border border-gray-800 rounded-lg p-4 mt-3">
                             <div className="text-[10px] text-gray-500 font-bold mb-3">SYSTEM STATUS</div>
                             <div className="space-y-2">
-                                <StatusLine label="API Server" status="online" />
-                                <StatusLine label="Database" status="online" />
-                                <StatusLine label="Payment Gateway" status="standby" />
-                                <StatusLine label="Notifications" status="online" />
+                                <StatusLine label="API Server" status={metricsError ? 'offline' : 'online'} />
+                                <StatusLine label="Base de Datos" status={metrics ? 'online' : metricsError ? 'offline' : 'standby'} />
+                                <StatusLine label="Auto-actualización (30s)" status="online" />
                             </div>
                         </div>
                     </div>
@@ -577,7 +778,7 @@ const SuperAdmin: React.FC = () => {
 // SUB-COMPONENTS
 // ==========================================
 
-const KPICard: React.FC<{ icon: React.ReactNode; label: string; value: string; sub: string; color: string; highlight?: boolean }> = 
+const KPICard: React.FC<{ icon: React.ReactNode; label: string; value: string; sub: string; color: string; highlight?: boolean }> =
     ({ icon, label, value, sub, color, highlight }) => {
     const colorMap: Record<string, string> = {
         blue: 'text-blue-400 bg-blue-500/10',

@@ -1,0 +1,80 @@
+{
+  "checkedAt": "2026-09-08T21:33:37.638096+00:00",
+  "candidate": "/tmp/nortex-qa-live-20260908",
+  "sourceBranch": "codex/caja-nica-retention",
+  "baseCommit": "d326c589a756db7977d14c94a625b6c895cb3313",
+  "dirtyCandidate": true,
+  "ownChanges": [
+    "scripts/qa/nortexgpt-verify-run.ts",
+    "tests/qaVerifyRunAttribution.test.ts",
+    "tests/assistantOperationsOrchestrator.test.ts",
+    "tests/assistantRuns.integration.test.ts",
+    "docs/NORTEXGPT_HAIKU_CONFIGURACION_2026-09-08.md",
+    "docs/runbooks/nortexgpt-evaluacion-haiku.md"
+  ],
+  "checks": {
+    "prismaGenerate": "passed",
+    "prismaValidate": "passed",
+    "typescript": "passed",
+    "vitest": {
+      "passed": 4814,
+      "skipped": 286,
+      "note": "Los casos omitidos no se cuentan aprobados; integración obligatoria se ejecuta aparte."
+    },
+    "requiredMysqlIntegration": {
+      "suites": 35,
+      "passed": 300,
+      "skipped": 0
+    },
+    "designSystem": "passed",
+    "build": "passed",
+    "launcherMacosSynthetic": {
+      "passed": 21,
+      "total": 21
+    },
+    "operationalCorpus": {
+      "passed": 120,
+      "total": 120
+    },
+    "invoiceCorpus": {
+      "integrityVerified": 100,
+      "modelExtraction": "not_run"
+    },
+    "migrationRunLink": "passed",
+    "mutation": {
+      "status": "passed",
+      "score": 99.88,
+      "requiredThreshold": 99.85,
+      "protectedModules": 53,
+      "counts": {
+        "Ignored": 20,
+        "Killed": 5167,
+        "Survived": 6,
+        "Timeout": 4
+      },
+      "total": 5197,
+      "scopeGuard": "passed",
+      "budgetMutants": {
+        "Killed": 15
+      },
+      "fullReport": "/tmp/nortex-qa-live-20260908/reports/mutation/mutation.json",
+      "fullReportSha256": "0a54870c999c3631de0e9b2d2e6607b4fbc091a0d3b5ce1d91b0652e579ee4e0"
+    }
+  },
+  "provider": {
+    "realCalls": 0,
+    "observedUsd": "0.000000",
+    "credentialStored": false,
+    "workspaceCreated": "Nortex-QA",
+    "workspaceMonthlyLimitUsd": 5,
+    "autoReloadObserved": false,
+    "keyCountObserved": 0,
+    "keyCreation": "user_handoff",
+    "humanExpectedReview": "pending"
+  },
+  "pilot": "not_run",
+  "remoteCi": "not_run",
+  "staging": "not_run",
+  "production": "not_deployed",
+  "demoUrl": "http://127.0.0.1:44174/app/pos"
+}

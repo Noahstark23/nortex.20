@@ -1,0 +1,150 @@
+---
+name: nortex-deploy
+description: Despliegue y operaciones de Nortex — Docker, variables de entorno, migraciones en prod, backups, smoke tests post-deploy. Usar al tocar Dockerfile/docker-compose, preparar un release, o diagnosticar un deploy roto.
+---
+
+# Deploy y operaciones de Nortex
+
+Leer `CLAUDE.md`, `AGENTS.md` y `docs/runbooks/release-promotion.md` antes de actuar.
+Para respaldos o un cambio de schema, aplicar también `nortex-backup-recovery`.
+Revisión documental del 2026-09-19 contra la base
+`67f1832502ee68ef67ac12b0803bdbfce48a4cef`; comprobar nuevamente los contratos si
+los workflows o verificadores cambian. El expediente de preparación vigente es
+`docs/NORTEXGPT_PREPARACION_DEPLOY_2026-09-19.md`: distingue la base remota, el
+candidato local en integración y lo realmente observado en los entornos.
+
+## Imagen y arranque
+
+Desde la integración del paquete, `Dockerfile` fija Node 22.23.2 por digest:
+`npm ci` → generar Prisma 6.4.1 con URL dummy → `npm run build:seo`
+→ `npm prune --omit=dev` → sellar fuentes, cliente y assets.
+El CMD vigente es `sh scripts/nortex-start.sh`: ejecuta el gate de schema de sólo
+lectura y arranca la aplicación. No ejecuta DDL ni `db push`.
+
+Coolify debe usar `nortex-release.sh <staging|production> prepare/start` y los
+overlays versionados según [`deploy/nortex/README.md`](../../../deploy/nortex/README.md).
+Prepare comprueba el gate de la imagen nueva antes del corte, mediante un
+contenedor de sólo diagnóstico sin dependencias ni tráfico de Traefik. CI verify
+ensaya obligatoriamente el Dockerfile/CMD actual con MySQL sintético. Producción
+requiere la expansión comercial revisada en `production.contract.json`: su nuevo
+fingerprint no acredita por sí solo una migración aplicada. El
+[cierre del 2026-10-06](../../../docs/releases/2026-10-06-production-release.md)
+registra el ensayo y la aplicación autorizada de ese día; revalidar la base en
+cada release. Seguir también la cadencia de entregas pequeñas del runbook.
+El entrypoint anterior `scripts/docker-entrypoint.sh` conserva preflights y
+`db push`, pero queda fuera del CMD; no reactivarlo para evitar el gate. Un schema
+nuevo requiere preparación aditiva revisada y respaldo/restauración acreditados.
+Los comandos manuales de QA usan `npx --no-install prisma`; nunca descargar otra versión.
+`db push` no ejecuta los archivos de migración ni sus backfills.
+
+Nunca usar `--accept-data-loss`. Preflight inseguro, timeout o warning destructivo
+cierran el arranque. Esto no garantiza que la instancia anterior siga sirviendo:
+comprobar la estrategia real de reemplazo y rollback de Coolify.
+
+## Contrato de promoción vigente
+
+| Etapa | Ruta y condición |
+|---|---|
+| CI | `ci.yml`: solo verificación, sin staging, producción, webhooks ni secretos de despliegue. |
+| Staging | `release-staging.yml`, dispatch manual en `main`, `candidate_sha` completo y `confirmation=STAGE <SHA>`. Exige CI terminal exitoso del candidato y `NORTEX_DEPLOY_ENABLED=true`. |
+| Producción | `release-production.yml`, dispatch manual en `main`, `candidate_sha` completo, `confirmation=PROMOTE <SHA>` y `sole_owner_confirmation=SOLE_OWNER <SHA>`. Exige autorización de producto separada que acepte la excepción de fundador único, `NORTEX_PRODUCTION_DEPLOY_ENABLED=true`, CI terminal exitoso, staging manual exitoso y salud del mismo SHA. |
+| Revalidación | Después de aprobar el environment se vuelven a comprobar main, candidato, evidencia y destino antes del webhook. El checkout y el health quedan fijados al SHA. |
+
+Un push, merge o dispatch de CI no promueve ningún entorno. No reutilizar la receta
+histórica `production_approved`/`production_sha` dentro de CI. Una autorización de
+producto y una aprobación técnica del environment son evidencias distintas.
+No solicitar de nuevo autorización para una acción ya cubierta explícitamente por
+la sesión; verificar que cubra el candidato y entorno concretos antes de ejecutarla.
+
+El contrato Coolify vive en `scripts/verify-coolify-staging-target.mjs` y
+`scripts/verify-coolify-production-target.mjs`. Cada environment debe configurar:
+
+- Origen HTTPS confiable `COOLIFY_*_API_ORIGIN`, UUID `COOLIFY_*_APPLICATION_UUID`
+  y webhook del mismo origen/UUID. No derivar la identidad desde el webhook.
+- `COOLIFY_*_READ_TOKEN` de solo lectura en su environment. El verificador no sigue
+  redirecciones ni imprime respuestas; el token no debe viajar a CI ni al otro entorno.
+- `git_commit_sha` exactamente igual al candidato, build desde Git **`dockerfile`
+  o `dockercompose`**, y `settings.is_auto_deploy_enabled` booleano `false`.
+- Si el webhook exige bearer, usar el nombre que consume cada workflow:
+  `COOLIFY_TOKEN` en `staging` y `COOLIFY_PROD_DEPLOY_TOKEN` en `production`, con
+  permiso `deploy` y separados de los tokens de lectura. No mezclar lectura con
+  `write`, `read:sensitive` o `root`.
+
+Los webhooks usan POST explícito; no reintentar automáticamente un resultado
+incierto. Coolify 4.1.2 omite `settings` en GET application y no satisface la
+compuerta: no interpretar ausencia como Auto Deploy apagado ni elevar permisos.
+La instancia pasó a 4.3.18 tras respaldo y ensayos independientes; las guardas
+reales de staging y producción pasaron en `07f30c9`. Verificar el estado vivo en
+cada release. Una futura actualización del panel exige acreditar su propia
+recuperación; el respaldo MySQL de Nortex no respalda Coolify.
+Ver `docs/releases/2026-09-08-coolify-compatibility.md` antes de ese cambio.
+
+Tokens distintos por environment no prueban aislamiento entre aplicaciones. Comprobar
+su equipo y alcance efectivo; registrar vencimiento y responsable de renovación.
+Los verificadores leen el pin, nunca lo escriben. Un token existente, una app sana
+con otro SHA o un environment aprobado no subsanan identidad/pin incompletos.
+
+Para una preparación sin despliegue, leer configuración y estado; no ejecutar un
+workflow de promoción como prueba. La prueba determinista de los controles usa
+dobles de red y no acredita la configuración externa. Si una compuerta fue
+rechazada por la revisión automática de permisos, conservar ese bloqueo: no
+reintentar mediante `release:preflight`, otro wrapper o un dispatch remoto. No
+convertir el bloqueo en un resultado aprobado ni reducir el alcance requerido.
+
+La cuenta revisora ya elegida por el usuario no se vuelve a preguntar. Para este
+fundador único, `Noahstark23` puede iniciar y aprobar el run bajo la excepción
+explícita del [runbook](../../../docs/runbooks/release-promotion.md); registrar ambas
+acciones y reconocer que no hubo revisión independiente. No atribuir esa revisión
+a Claude, Codex ni a otra cuenta del mismo dueño. Las dos cadenas del dispatch,
+CI, staging, pin, environment sin bypass y autorización de producto con SHA/alcance
+son condiciones acumulativas. Esta guía no autoriza modificar protecciones
+externas ni desplegar un SHA concreto por inferencia.
+
+## Variables del producto
+
+| Variable | Contrato |
+|---|---|
+| `DATABASE_URL` | MySQL 8 privado. No leer ni mostrar su valor. |
+| `JWT_SECRETS` | Keyring rotable; `JWT_SECRET` sigue siendo compatibilidad legacy. |
+| `NORTEX_LEDGER_KEYS` | Habilita firmas. Sin claves, el código conserva movimientos sin firma; no acreditar integridad criptográfica por salud HTTP. |
+| `NORTEX_DATA_KEYS` | Cifrado de campos sensibles; verificar presencia sin exponer claves. |
+| `ANTHROPIC_API_KEY` | Privada del proceso autorizado. La clave sola no habilita NortexGPT ni acredita evaluación real. |
+| `WHATSAPP_LLM` | Selector del brain comercial; separado de los flags del asistente privado. |
+| `NORTEX_ASSISTANT_*` / `NORTEX_PROMOTIONS_ENABLED` | Interruptores independientes de capacidades; además rigen configuración de tenant, usuario y permisos. |
+| `NORTEX_ASSISTANT_STORAGE_DIR` | Ruta privada absoluta fuera del proyecto; en producción su ausencia bloquea adjuntos. Requiere persistencia y acceso compartido con workers. |
+
+No guardar claves en `.env*` versionados, argumentos, logs, capturas o `VITE_*`.
+El despliegue completo del asistente también requiere declarar sus workers, salud,
+volumen privado y respaldo SQL+originales; el Compose del repo por sí solo no lo acredita.
+
+## Compuertas y cierre
+
+1. Fijar candidato completo, diff de schema, alcance, responsable y recuperación.
+2. Ejecutar Prisma validate/generate, tipos, Vitest, diseño, build/SEO y auditoría
+   de dependencias. Dinero/inventario exige integración MySQL descartable sin casos
+   omitidos y mutación pertinente; no reducir alcance, pisos ni umbral.
+3. Comprobar CI terminal verde del SHA: `verify`, `integration-required`,
+   `deploy-schema-smoke`, `backup-restore-smoke`. El smoke de CI usa datos sintéticos.
+4. Para schema, exigir respaldo real off-site reciente y restore drill vigente
+   conforme a `nortex-backup-recovery`; revisar upgrade, estados parciales y reejecución.
+5. Verificar protecciones GitHub vivas, Auto Deploy apagado, identidad y pin Coolify.
+   Ejecutar la promoción manual y el smoke autenticado de staging en tenant sintético.
+6. Promover producción solo dentro de autorización vigente. Comprobar salud con
+   `scripts/verify-deployed-release.mjs`: HTTP, API/base, `Cache-Control: no-store`
+   y SHA exacto. Verificar SEO y activos cuando corresponda.
+7. Para flujos financieros, conciliar venta/pago/devolución/cierre con stock,
+   Kardex, deuda, asiento, auditoría y recibo, sin usar clientes como fixtures.
+   Observar al menos 30 minutos tras producción autorizada; reportar omisiones.
+
+Registrar por separado código local, CI, staging, autorización, producción sana y
+observación. Un rollback de aplicación conserva la migración aditiva: no borrar
+columnas para volver atrás. Los informes de `docs/releases/` son evidencia histórica;
+la receta vigente es `docs/runbooks/release-promotion.md`.
+
+## Excepción puntual de crédito — cerrada el 2026-10-06
+
+El manifiesto está inactivo tras la promoción por la ruta normal de main.
+La descripción siguiente conserva su alcance histórico, no una ruta habilitada.
+No reactivar sin una nueva decisión y revisión explícitas.
+
+Sólo el manifiesto docs/releases/credit-hotfix-20261001.json activo habilita C=d563c750dd62c9192df1d078c4c13308748f69bd sobre B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 y recuperación explícita a B. Consultar la sección ejecutable del runbook release-promotion. Se conservan los dos workflows, dispatch/environment desde main, controlador M confiable y vigente, CI M/C/B separados, dos confirmaciones, reviewer/bypass/flags, identidad/pin/AutoDeploy false y health. Probar C→B→C en staging y smoke/PWA/recuperación ordinaria antes de producción. La recuperación de C averiado exige recibo de solicitud C a la misma app, no salud ficticia. No pedir de nuevo la autorización genérica ya recibida; tampoco inventar una compuerta superada. No cambiar app/git_branch/ACL/secretos, aceptar data loss, ejecutar controles del candidato con secretos ni usar assets/SSH para eludir el proceso. La ruta normal main permanece intacta y la excepción se deshabilita por PR al cerrar.

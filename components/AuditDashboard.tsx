@@ -1,8 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { formatMoney } from '../utils/money';
 import {
     AlertTriangle, Shield, Package, XCircle, Percent, Clock, User, ChevronDown,
     Loader2, RefreshCw, Filter, Eye, FileSpreadsheet, Download, Stamp
 } from 'lucide-react';
+import { ToastViewport, useToast } from './ui/Toast';
+import { authenticatedRequestErrorMessage, downloadAuthenticatedFile } from '../utils/authenticatedDownload';
+import { currentSessionRole } from '../utils/roleCapabilities';
 
 // Types
 interface AuditAlert {
@@ -49,18 +53,14 @@ interface DiscountAnalysis {
 }
 
 type Tab = 'feed' | 'kardex' | 'voids' | 'discounts' | 'fiscal';
+const FISCAL_DOCUMENT_ROLES = new Set(['OWNER', 'ADMIN', 'ACCOUNTANT']);
 
 const AuditDashboard: React.FC = () => {
-    // ACCOUNTANT role defaults to fiscal tab
-    const getUserRole = () => {
-        try {
-            const t = localStorage.getItem('nortex_token');
-            if (!t) return '';
-            return JSON.parse(atob(t.split('.')[1])).role || '';
-        } catch { return ''; }
-    };
-    const userRole = getUserRole();
-    const defaultTab: Tab = userRole === 'ACCOUNTANT' ? 'fiscal' : 'feed';
+    const userRole = currentSessionRole();
+    const canAccessFiscalDocuments = FISCAL_DOCUMENT_ROLES.has(userRole);
+    // ACCOUNTANT entra directo a sus herramientas; para cualquier rol sin
+    // acceso fiscal el tab inicial siempre es uno permitido.
+    const defaultTab: Tab = canAccessFiscalDocuments && userRole === 'ACCOUNTANT' ? 'fiscal' : 'feed';
 
     const [tab, setTab] = useState<Tab>(defaultTab);
     const [feed, setFeed] = useState<AuditAlert[]>([]);
@@ -69,6 +69,8 @@ const AuditDashboard: React.FC = () => {
     const [discounts, setDiscounts] = useState<DiscountAnalysis[]>([]);
     const [loading, setLoading] = useState(true);
     const [expandedVoid, setExpandedVoid] = useState<string | null>(null);
+    const [downloading, setDownloading] = useState<string | null>(null);
+    const { toast, showToast, dismissToast } = useToast();
 
     // Fiscal tab state
     const now = new Date();
@@ -102,14 +104,37 @@ const AuditDashboard: React.FC = () => {
 
     useEffect(() => { fetchTab(tab); }, [tab]);
 
-    const formatC = (n: number) => `C$${Math.abs(n).toLocaleString('es-NI', { minimumFractionDigits: 2 })}`;
+    const downloadFiscal = async (url: string, filename: string) => {
+        if (!canAccessFiscalDocuments) return;
+        if (downloading) return;
+        setDownloading(url);
+        try {
+            await downloadAuthenticatedFile(url, filename, { token });
+            showToast({
+                tone: 'success',
+                title: 'Documento fiscal generado',
+                message: 'La descarga comenzó correctamente.',
+            });
+        } catch (error) {
+            showToast({
+                tone: 'error',
+                title: 'No se pudo generar la descarga',
+                message: authenticatedRequestErrorMessage(error),
+            });
+        } finally {
+            setDownloading(null);
+        }
+    };
+
+    // Valor absoluto a propósito: el signo lo comunica el ícono de la fila.
+    const formatC = (n: number) => formatMoney(Math.abs(n));
     const formatDate = (d: string) => new Date(d).toLocaleString('es-NI', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
 
     const severityConfig: Record<string, { bg: string; text: string; dot: string; label: string }> = {
-        LOW: { bg: 'bg-slate-50', text: 'text-slate-600', dot: 'bg-slate-400', label: 'Bajo' },
-        MEDIUM: { bg: 'bg-amber-50', text: 'text-amber-700', dot: 'bg-amber-400', label: 'Medio' },
-        HIGH: { bg: 'bg-orange-50', text: 'text-orange-700', dot: 'bg-orange-500', label: 'Alto' },
-        CRITICAL: { bg: 'bg-red-50', text: 'text-red-700', dot: 'bg-red-500', label: 'Crítico' },
+        LOW: { bg: 'bg-surface-800/40', text: 'text-slate-300', dot: 'bg-slate-400', label: 'Bajo' },
+        MEDIUM: { bg: 'bg-amber-500/10', text: 'text-amber-400', dot: 'bg-amber-400', label: 'Medio' },
+        HIGH: { bg: 'bg-orange-500/10', text: 'text-orange-400', dot: 'bg-orange-500', label: 'Alto' },
+        CRITICAL: { bg: 'bg-red-500/10', text: 'text-red-400', dot: 'bg-red-500', label: 'Crítico' },
     };
 
     const riskBadge = (level: string) => {
@@ -123,7 +148,9 @@ const AuditDashboard: React.FC = () => {
     };
 
     const tabs: { key: Tab; label: string; icon: React.ReactNode; count?: number }[] = [
-        { key: 'fiscal', label: 'Exportaciones DGI', icon: <FileSpreadsheet size={16} /> },
+        ...(canAccessFiscalDocuments
+            ? [{ key: 'fiscal' as Tab, label: 'Exportaciones DGI', icon: <FileSpreadsheet size={16} /> }]
+            : []),
         { key: 'feed', label: 'Alertas', icon: <AlertTriangle size={16} />, count: feed.filter(f => f.severity === 'HIGH' || f.severity === 'CRITICAL').length },
         { key: 'kardex', label: 'Kardex Pro', icon: <Package size={16} />, count: kardex.filter(k => k.severity === 'HIGH' || k.severity === 'CRITICAL').length },
         { key: 'voids', label: 'Anulaciones', icon: <XCircle size={16} />, count: voids.filter(v => v.riskLevel === 'HIGH').length },
@@ -131,16 +158,17 @@ const AuditDashboard: React.FC = () => {
     ];
 
     return (
-        <div className="h-full overflow-y-auto bg-slate-50 p-6 custom-scrollbar">
+        <div className="h-full overflow-y-auto bg-surface-800/40 p-6 custom-scrollbar">
+            <ToastViewport toast={toast} onDismiss={dismissToast} />
             {/* Header */}
             <div className="flex items-center justify-between mb-6">
                 <div>
-                    <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
-                        <Shield className="text-red-500" /> Auditoría Forense
+                    <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                        <Shield className="text-red-500" /> Auditoría
                     </h1>
                     <p className="text-sm text-slate-500 mt-1">Detección de anomalías — últimos 30 días</p>
                 </div>
-                <button onClick={() => fetchTab(tab)} className="p-2 rounded-xl hover:bg-white text-slate-400 hover:text-slate-600 border border-transparent hover:border-slate-200 transition-all">
+                <button onClick={() => fetchTab(tab)} className="p-2 rounded-xl hover:bg-surface-900 text-slate-400 hover:text-slate-300 border border-transparent hover:border-white/[0.06] transition-all">
                     <RefreshCw size={18} />
                 </button>
             </div>
@@ -152,8 +180,8 @@ const AuditDashboard: React.FC = () => {
                         key={t.key}
                         onClick={() => setTab(t.key)}
                         className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold whitespace-nowrap transition-all ${tab === t.key
-                                ? 'bg-white text-slate-900 shadow-md border border-slate-200'
-                                : 'text-slate-500 hover:bg-white/60 hover:text-slate-700'
+                                ? 'bg-surface-900 text-white shadow-md border border-white/[0.06]'
+                                : 'text-slate-500 hover:bg-white/60 hover:text-slate-200'
                             }`}
                     >
                         {t.icon}
@@ -168,11 +196,11 @@ const AuditDashboard: React.FC = () => {
             </div>
 
             {/* ── FISCAL TAB ─────────────────────────────── */}
-            {tab === 'fiscal' && (
+            {tab === 'fiscal' && canAccessFiscalDocuments && (
                 <div className="space-y-6">
                     {/* Month / Year picker */}
-                    <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm">
-                        <h2 className="text-sm font-semibold text-slate-700 mb-4 flex items-center gap-2">
+                    <div className="bg-surface-900 rounded-2xl border border-white/[0.06] p-5 shadow-sm">
+                        <h2 className="text-sm font-semibold text-slate-200 mb-4 flex items-center gap-2">
                             <FileSpreadsheet size={16} className="text-indigo-500" />
                             Período fiscal
                         </h2>
@@ -180,7 +208,7 @@ const AuditDashboard: React.FC = () => {
                             <select
                                 value={fiscalMonth}
                                 onChange={e => setFiscalMonth(Number(e.target.value))}
-                                className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-slate-200 bg-surface-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                             >
                                 {['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'].map((m, i) => (
                                     <option key={i+1} value={i+1}>{m}</option>
@@ -191,59 +219,77 @@ const AuditDashboard: React.FC = () => {
                                 value={fiscalYear}
                                 onChange={e => setFiscalYear(Number(e.target.value))}
                                 min={2020} max={2099}
-                                className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-slate-700 w-24 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                                className="border border-white/[0.06] rounded-lg px-3 py-2 text-sm text-slate-200 w-24 bg-surface-900 focus:outline-none focus:ring-2 focus:ring-indigo-400"
                             />
                         </div>
                     </div>
 
                     {/* Download cards */}
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                        <a
-                            href={`/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`}
-                            download
-                            className="flex flex-col items-center gap-3 bg-white border border-emerald-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all group"
+                        <button
+                            type="button"
+                            onClick={() => downloadFiscal(
+                                `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`,
+                                `libro-ventas-${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}.xlsx`
+                            )}
+                            disabled={downloading !== null}
+                            className="flex flex-col items-center gap-3 bg-surface-900 border border-emerald-500/20 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-emerald-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <FileSpreadsheet size={32} className="text-emerald-500 group-hover:scale-110 transition-transform" />
+                            {downloading === `/api/fiscal/libro-ventas/${fiscalMonth}/${fiscalYear}`
+                                ? <Loader2 size={32} className="text-emerald-500 animate-spin" />
+                                : <FileSpreadsheet size={32} className="text-emerald-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
-                                <p className="font-semibold text-slate-800 text-sm">Libro de Ventas</p>
+                                <p className="font-semibold text-slate-100 text-sm">Libro de Ventas</p>
                                 <p className="text-xs text-slate-500 mt-0.5">Excel (.xlsx) — DGI Nicaragua</p>
                             </div>
-                            <span className="text-xs bg-emerald-100 text-emerald-700 px-3 py-1 rounded-full font-medium">Descargar</span>
-                        </a>
+                            <span className="text-xs bg-emerald-500/15 text-emerald-400 px-3 py-1 rounded-full font-medium">Descargar</span>
+                        </button>
 
-                        <a
-                            href={`/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`}
-                            download
-                            className="flex flex-col items-center gap-3 bg-white border border-blue-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-blue-400 transition-all group"
+                        <button
+                            type="button"
+                            onClick={() => downloadFiscal(
+                                `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`,
+                                `libro-compras-${fiscalYear}-${String(fiscalMonth).padStart(2, '0')}.xlsx`
+                            )}
+                            disabled={downloading !== null}
+                            className="flex flex-col items-center gap-3 bg-surface-900 border border-blue-500/20 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-blue-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <FileSpreadsheet size={32} className="text-blue-500 group-hover:scale-110 transition-transform" />
+                            {downloading === `/api/fiscal/libro-compras/${fiscalMonth}/${fiscalYear}`
+                                ? <Loader2 size={32} className="text-blue-500 animate-spin" />
+                                : <FileSpreadsheet size={32} className="text-blue-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
-                                <p className="font-semibold text-slate-800 text-sm">Libro de Compras</p>
+                                <p className="font-semibold text-slate-100 text-sm">Libro de Compras</p>
                                 <p className="text-xs text-slate-500 mt-0.5">Excel (.xlsx) — DGI Nicaragua</p>
                             </div>
-                            <span className="text-xs bg-blue-100 text-blue-700 px-3 py-1 rounded-full font-medium">Descargar</span>
-                        </a>
+                            <span className="text-xs bg-blue-500/15 text-blue-400 px-3 py-1 rounded-full font-medium">Descargar</span>
+                        </button>
 
-                        <a
-                            href={`/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`}
-                            download
-                            className="flex flex-col items-center gap-3 bg-white border border-violet-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-violet-400 transition-all group"
+                        <button
+                            type="button"
+                            onClick={() => downloadFiscal(
+                                `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`,
+                                `VET-${fiscalYear}${String(fiscalMonth).padStart(2, '0')}.txt`
+                            )}
+                            disabled={downloading !== null}
+                            className="flex flex-col items-center gap-3 bg-surface-900 border border-violet-200 rounded-2xl p-6 shadow-sm hover:shadow-md hover:border-violet-400 transition-all group disabled:opacity-60 disabled:cursor-not-allowed"
                         >
-                            <Download size={32} className="text-violet-500 group-hover:scale-110 transition-transform" />
+                            {downloading === `/api/fiscal/vet-export/${fiscalMonth}/${fiscalYear}`
+                                ? <Loader2 size={32} className="text-violet-500 animate-spin" />
+                                : <Download size={32} className="text-violet-500 group-hover:scale-110 transition-transform" />}
                             <div className="text-center">
-                                <p className="font-semibold text-slate-800 text-sm">Archivo VET</p>
-                                <p className="text-xs text-slate-500 mt-0.5">TXT pipe-delimited — DGI VET</p>
+                                <p className="font-semibold text-slate-100 text-sm">Resumen para la VET</p>
+                                <p className="text-xs text-slate-500 mt-0.5">TXT para transcribir — no se sube a la VET</p>
                             </div>
                             <span className="text-xs bg-violet-100 text-violet-700 px-3 py-1 rounded-full font-medium">Descargar</span>
-                        </a>
+                        </button>
                     </div>
 
                     {/* Constancias note */}
-                    <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-4 flex items-start gap-3">
+                    <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-2xl p-4 flex items-start gap-3">
                         <Stamp size={20} className="text-indigo-500 mt-0.5 flex-shrink-0" />
                         <div>
-                            <p className="text-sm font-semibold text-indigo-800">Constancias de Retención</p>
-                            <p className="text-xs text-indigo-600 mt-1">
+                            <p className="text-sm font-semibold text-indigo-300">Constancias de Retención</p>
+                            <p className="text-xs text-indigo-400 mt-1">
                                 Las constancias individuales se generan desde el módulo <strong>Compras</strong> — botón violeta <Stamp size={11} className="inline" /> junto a cada factura de proveedor.
                             </p>
                         </div>
@@ -290,17 +336,17 @@ const AuditDashboard: React.FC = () => {
                             {kardex.length === 0 ? (
                                 <EmptyState message="Sin movimientos sospechosos detectados" />
                             ) : kardex.map(k => (
-                                <div key={k.movementId} className="bg-white rounded-xl border border-slate-200 p-4 hover:shadow-sm transition-shadow">
+                                <div key={k.movementId} className="bg-surface-900 rounded-xl border border-white/[0.06] p-4 hover:shadow-sm transition-shadow">
                                     <div className="flex items-center justify-between mb-2">
-                                        <span className="font-semibold text-sm text-slate-800">{k.productName}</span>
+                                        <span className="font-semibold text-sm text-slate-100">{k.productName}</span>
                                         {riskBadge(k.severity)}
                                     </div>
                                     <div className="grid grid-cols-3 gap-2 text-xs text-slate-500 mb-2">
-                                        <span>Stock antes: <strong className="text-slate-700">{k.stockBefore}</strong></span>
-                                        <span>Stock después: <strong className="text-slate-700">{k.stockAfter}</strong></span>
-                                        <span>Cantidad: <strong className={`${Number(k.quantity) < 0 ? 'text-red-600' : 'text-emerald-600'}`}>{k.quantity}</strong></span>
+                                        <span>Stock antes: <strong className="text-slate-200">{k.stockBefore}</strong></span>
+                                        <span>Stock después: <strong className="text-slate-200">{k.stockAfter}</strong></span>
+                                        <span>Cantidad: <strong className={`${Number(k.quantity) < 0 ? 'text-red-400' : 'text-emerald-400'}`}>{k.quantity}</strong></span>
                                     </div>
-                                    <p className="text-xs text-orange-600 font-medium">{k.riskReason}</p>
+                                    <p className="text-xs text-orange-400 font-medium">{k.riskReason}</p>
                                     {k.reason && <p className="text-xs text-slate-400 mt-1">Razón: {k.reason}</p>}
                                     <div className="flex items-center gap-3 mt-2 text-[11px] text-slate-400">
                                         <span className="flex items-center gap-1"><User size={10} /> {k.userName}</span>
@@ -317,17 +363,17 @@ const AuditDashboard: React.FC = () => {
                             {voids.length === 0 ? (
                                 <EmptyState message="Sin anulaciones registradas" />
                             ) : voids.map(v => (
-                                <div key={v.userId} className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                                <div key={v.userId} className="bg-surface-900 rounded-xl border border-white/[0.06] overflow-hidden">
                                     <button
                                         onClick={() => setExpandedVoid(expandedVoid === v.userId ? null : v.userId)}
-                                        className="w-full flex items-center justify-between p-4 hover:bg-slate-50 transition-colors"
+                                        className="w-full flex items-center justify-between p-4 hover:bg-surface-800/40 transition-colors"
                                     >
                                         <div className="flex items-center gap-3">
-                                            <div className="w-10 h-10 rounded-xl bg-slate-100 flex items-center justify-center">
+                                            <div className="w-10 h-10 rounded-xl bg-white/[0.04] flex items-center justify-center">
                                                 <User size={18} className="text-slate-500" />
                                             </div>
                                             <div className="text-left">
-                                                <div className="font-semibold text-sm text-slate-800">{v.userName}</div>
+                                                <div className="font-semibold text-sm text-slate-100">{v.userName}</div>
                                                 <div className="text-xs text-slate-400">{v.totalVoids} anulaciones — {formatC(v.totalAmountVoided)}</div>
                                             </div>
                                         </div>
@@ -337,15 +383,15 @@ const AuditDashboard: React.FC = () => {
                                         </div>
                                     </button>
                                     {expandedVoid === v.userId && (
-                                        <div className="border-t border-slate-100 p-4 bg-slate-50 space-y-2">
+                                        <div className="border-t border-white/[0.04] p-4 bg-surface-800/40 space-y-2">
                                             {v.voids.map(vo => (
-                                                <div key={vo.id} className="flex items-center justify-between text-xs bg-white rounded-lg p-3 border border-slate-200">
+                                                <div key={vo.id} className="flex items-center justify-between text-xs bg-surface-900 rounded-lg p-3 border border-white/[0.06]">
                                                     <div>
-                                                        <span className="font-medium text-slate-700">{vo.category}</span>
+                                                        <span className="font-medium text-slate-200">{vo.category}</span>
                                                         <span className="text-slate-400 ml-2">{vo.reason || 'SIN RAZÓN'}</span>
                                                     </div>
                                                     <div className="text-right">
-                                                        <div className="font-bold text-red-600">{formatC(vo.amount)}</div>
+                                                        <div className="font-bold text-red-400">{formatC(vo.amount)}</div>
                                                         <div className="text-slate-400">{formatDate(vo.voidedAt)}</div>
                                                     </div>
                                                 </div>
@@ -363,9 +409,9 @@ const AuditDashboard: React.FC = () => {
                             {discounts.length === 0 ? (
                                 <EmptyState message="Sin descuentos registrados" />
                             ) : (
-                                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                                <div className="bg-surface-900 rounded-xl border border-white/[0.06] overflow-hidden">
                                     <table className="w-full text-sm">
-                                        <thead className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wider">
+                                        <thead className="bg-surface-800/40 text-xs text-slate-500 uppercase tracking-wider">
                                             <tr>
                                                 <th className="text-left px-4 py-3">Cajero</th>
                                                 <th className="text-center px-4 py-3">Ventas c/Desc</th>
@@ -376,15 +422,15 @@ const AuditDashboard: React.FC = () => {
                                         </thead>
                                         <tbody>
                                             {discounts.map(d => (
-                                                <tr key={d.userId} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                                                    <td className="px-4 py-3 font-medium text-slate-800">{d.userName}</td>
-                                                    <td className="px-4 py-3 text-center text-slate-600">
+                                                <tr key={d.userId} className="border-t border-white/[0.04] hover:bg-surface-800/40 transition-colors">
+                                                    <td className="px-4 py-3 font-medium text-slate-100">{d.userName}</td>
+                                                    <td className="px-4 py-3 text-center text-slate-300">
                                                         {d.salesWithDiscount} / {d.totalSales}
                                                     </td>
-                                                    <td className="px-4 py-3 text-center text-slate-600">
+                                                    <td className="px-4 py-3 text-center text-slate-300">
                                                         {d.avgDiscountPercent.toFixed(1)}%
                                                     </td>
-                                                    <td className="px-4 py-3 text-right font-bold text-red-600">
+                                                    <td className="px-4 py-3 text-right font-bold text-red-400">
                                                         {formatC(d.totalDiscountGiven)}
                                                     </td>
                                                     <td className="px-4 py-3 text-center">
@@ -408,7 +454,7 @@ const EmptyState = ({ message }: { message: string }) => (
     <div className="text-center py-16 text-slate-400">
         <Shield size={40} className="mx-auto mb-3 opacity-40" />
         <p className="text-sm">{message}</p>
-        <p className="text-xs mt-1">🟢 Todo en orden</p>
+        <p className="text-xs mt-1">Todo en orden</p>
     </div>
 );
 

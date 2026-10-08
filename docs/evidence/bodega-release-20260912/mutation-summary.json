@@ -1,0 +1,24 @@
+{
+  "scope": "six affected modules/ranges; not global",
+  "files": {
+    "backend/validation/schemas.ts": {
+      "Killed": 8
+    },
+    "utils/bodegaReceivingInput.ts": {
+      "Killed": 27
+    },
+    "utils/posActivation.ts": {
+      "Killed": 192
+    },
+    "utils/productQuantityRules.ts": {
+      "Killed": 38
+    },
+    "utils/purchasePackaging.ts": {
+      "Killed": 99
+    },
+    "utils/stockTransferQuantity.ts": {
+      "Killed": 1
+    }
+  },
+  "command": "mise exec -- npx stryker run stryker.bodega.config.mjs"
+}

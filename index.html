@@ -2,7 +2,9 @@
 <html lang="es">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=0" />
+    <!-- Sin maximum-scale/user-scalable: el público es mayormente présbita y
+         necesita poder hacer zoom (WCAG 1.4.4). iOS moderno igual lo ignoraba. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     
     <!-- ===== SEO PRIMARIO ===== -->
     <title>Nortex | Sistema POS, Inventario y Facturación para Nicaragua</title>
@@ -10,10 +12,10 @@
     <meta name="keywords" content="sistema facturación nicaragua, POS nicaragua, software inventario nicaragua, sistema punto de venta nicaragua, facturación DGI nicaragua, software ferretería nicaragua, sistema farmacia nicaragua, programa contable nicaragua" />
     <meta name="author" content="Nortex Inc." />
     <meta name="robots" content="index, follow" />
-    <meta name="google-site-verification" content="XXXXXXXXXX" /> <!-- TODO: Replace XXXXXXXXXX with actual Google Search Console token -->
     <link rel="canonical" href="https://somosnortex.com/" />
     
     <!-- ===== GEO TARGETING NICARAGUA ===== -->
+    <meta name="google-site-verification" content="I8d4Xx8N-eIMf7IQWEYOYqS4jvDMkiPRa7KTorB9jWA" />
     <meta name="geo.region" content="NI" />
     <meta name="geo.placename" content="Managua, Nicaragua" />
     <meta name="geo.position" content="12.1328;-86.2504" />
@@ -25,7 +27,7 @@
     <meta property="og:url" content="https://somosnortex.com/" />
     <meta property="og:title" content="Nortex | Sistema POS y Facturación Nicaragua" />
     <meta property="og:description" content="Facturación DGI, inventario y punto de venta para PyMES en Nicaragua. Sin papeleos. Prueba gratis." />
-    <meta property="og:image" content="https://somosnortex.com/og-image.svg" />
+    <meta property="og:image" content="https://somosnortex.com/og-image.png" />
     <meta property="og:locale" content="es_NI" />
     <meta property="og:site_name" content="Nortex" />
     
@@ -33,47 +35,63 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Nortex | Sistema POS Nicaragua" />
     <meta name="twitter:description" content="El sistema financiero para ferreterías y farmacias de Nicaragua." />
-    <meta name="twitter:image" content="https://somosnortex.com/og-image.svg" />
+    <meta name="twitter:image" content="https://somosnortex.com/og-image.png" />
     
     <!-- ===== FAVICON ===== -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
     <!-- ===== PWA ===== -->
-    <meta name="theme-color" content="#09090b" />
+    <meta name="theme-color" content="#F4F5F7" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="Nortex POS" />
+
+    <!-- Tema antes del primer paint. Usa el mismo key aislado por tenant/usuario
+         que el workspace y las superficies públicas para evitar un destello
+         oscuro en login, registro, blog o landings Día. -->
+    <script>
+      (function () {
+        var baseKey = 'nortex_workspace_theme';
+        var storageKey = baseKey;
+        var theme = 'light';
+        try {
+          try {
+            var user = JSON.parse(localStorage.getItem('nortex_user') || '{}');
+            var tenantId = user && user.tenant && typeof user.tenant.id === 'string' && user.tenant.id.trim()
+              ? user.tenant.id
+              : localStorage.getItem('nortex_tenant_id');
+            if (user && typeof user.id === 'string' && user.id.trim() && typeof tenantId === 'string' && tenantId.trim()) {
+              storageKey = baseKey + ':' + encodeURIComponent(tenantId) + ':' + encodeURIComponent(user.id);
+            }
+          } catch (error) {}
+          theme = localStorage.getItem(storageKey) === 'dark' ? 'dark' : 'light';
+        } catch (error) {}
+        document.documentElement.setAttribute('data-nx-theme', theme);
+        var themeColor = document.querySelector('meta[name="theme-color"]');
+        if (themeColor) themeColor.setAttribute('content', theme === 'dark' ? '#0B0D10' : '#F4F5F7');
+      })();
+    </script>
     
-    <!-- ===== FONTS ===== -->
-    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+    <!-- Tipografía propia, no de un CDN. El porqué: public/fonts/fuentes.css -->
+    <link rel="preload" href="/fonts/plus-jakarta-sans-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
+    <link rel="preload" href="/fonts/jetbrains-mono-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin>
 
 
     <style>
-      /* Anti-flash: el tema Obsidian aplica antes de que cargue el CSS bundle */
+      /* Anti-flash coherente con Día/Noche antes de que cargue el CSS bundle. */
       body {
-        background-color: #09090b;
-        color: #f4f4f5;
+        background-color: #F4F5F7;
+        color: #171A1F;
+      }
+      html[data-nx-theme="dark"] body {
+        background-color: #0B0D10;
+        color: #E8EBF0;
       }
     </style>
-  <script type="importmap">
-{
-  "imports": {
-    "react/": "https://esm.sh/react@^19.2.4/",
-    "react": "https://esm.sh/react@^19.2.4",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.4/",
-    "react-router-dom": "https://esm.sh/react-router-dom@6.22.0",
-    "recharts": "https://esm.sh/recharts@^3.7.0",
-    "lucide-react": "https://esm.sh/lucide-react@^0.563.0",
-    "express": "https://esm.sh/express@^5.2.1",
-    "@prisma/client": "https://esm.sh/@prisma/client@^7.3.0",
-    "cors": "https://esm.sh/cors@^2.8.6",
-    "bcryptjs": "https://esm.sh/bcryptjs@^3.0.3",
-    "jsonwebtoken": "https://esm.sh/jsonwebtoken@^9.0.3"
-  }
-}
-</script>
+<!-- El importmap a esm.sh que vivía aquí era código muerto (Vite bundlea todo)
+     y una superficie de supply-chain innecesaria; se eliminó. -->
 <link rel="stylesheet" href="/index.css">
 
   <!-- ===== SCHEMA.ORG STRUCTURED DATA ===== -->
@@ -128,16 +146,19 @@
         "availableLanguage": "Spanish",
         "areaServed": "NI"
       }
-    },
-    "aggregateRating": {
-      "@type": "AggregateRating",
-      "ratingValue": "4.8",
-      "ratingCount": "47",
-      "bestRating": "5",
-      "worstRating": "1"
     }
   }
   </script>
+  <!--
+    SIN aggregateRating a propósito. Acá había un 4.8 sobre 47 calificaciones que
+    no corresponde a ninguna reseña verificable, y el prerender lo heredaba
+    IDÉNTICO en las 72 páginas estáticas: cada guía de aguinaldo se declaraba
+    ante Google con el rating del POS. El marcado de reseñas no verificable es
+    causa de acción manual por "structured data spam", y la sanción cae sobre los
+    rich results de todo el dominio — justo el activo que el SEO está
+    construyendo. No reponerlo hasta que existan reseñas reales, y cuando existan
+    emitirlo SOLO en la página del producto, nunca heredado en el shell.
+  -->
 
   <script type="application/ld+json">
   {
@@ -159,6 +180,13 @@
     ]
   }
   </script>
+
+  <!-- ===== Analytics (GA4 G-Q1L0ZWF7SM) ===== -->
+  <!-- Loader compartido public/analytics.js: carga gtag.js con Consent Mode v2
+       e IP anonimizada, y expone window.nxTrack para conversiones. Este mismo
+       <head> es el shell que scripts/prerender.ts usa para las 70+ páginas de
+       marketing, así que el tag queda en TODAS ellas y en el SPA. -->
+  <script src="/analytics.js" defer></script>
 </head>
   <body>
     <div id="root"></div>

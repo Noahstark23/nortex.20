@@ -1,5 +1,21 @@
 import React from 'react';
+import { createPortal } from 'react-dom';
+import Decimal from 'decimal.js';
 import { CartItem } from '../types';
+import {
+    FISCAL_REGIME_CUOTA_FIJA,
+    normalizeFiscalRegime,
+    type FiscalRegime,
+} from '../utils/fiscalRegime';
+import { formatQuantityValue } from '../utils/quantity';
+
+export type ReceiptLineItem = Omit<CartItem, 'presentation'> & {
+    unit?: string | null;
+    saleMode?: 'COUNTED' | 'MEASURED' | string | null;
+    presentation?: CartItem['presentation'] | string | null;
+    presentationQuantity?: Decimal.Value | null;
+    presentationUnit?: string | null;
+};
 
 interface ReceiptTicketProps {
     data: {
@@ -14,19 +30,85 @@ interface ReceiptTicketProps {
         invoiceSeries?: string; // Serie (A, B, etc.)
         customerName: string;
         customerRuc?: string;   // Cédula/RUC del cliente
-        items: CartItem[];
+        items: ReceiptLineItem[];
         subtotal: number;
+        discount?: number; // monto rebajado; el IVA va incluido en los precios
         tax: number;
         total: number;
         paymentMethod: string;
+        // Efectivo recibido y vuelto. El recibido queda incluso en pago exacto;
+        // el vuelto solo aparece cuando existió de verdad.
+        cashReceived?: number;
+        change?: number;
         user: string;
+        fiscalRegime?: FiscalRegime;
     } | null;
 }
 
 const pad = (n: number, len = 6) => String(n).padStart(len, '0');
 
+const finiteDecimal = (value: Decimal.Value, field: string): Decimal => {
+    let parsed: Decimal;
+    try {
+        parsed = new Decimal(value);
+    } catch {
+        throw new Error(`Valor decimal invalido en ${field}`);
+    }
+    if (!parsed.isFinite()) throw new Error(`Valor decimal invalido en ${field}`);
+    return parsed;
+};
+
+const money = (value: Decimal.Value, field: string): string =>
+    finiteDecimal(value, field).toDecimalPlaces(2).toFixed(2);
+
+const receiptLine = (item: ReceiptLineItem, index: number) => {
+    const baseQuantity = finiteDecimal(item.quantity, `items[${index}].quantity`);
+    const baseUnitPrice = finiteDecimal(item.price, `items[${index}].price`);
+    const total = baseUnitPrice.times(baseQuantity);
+    const presentationObject = item.presentation && typeof item.presentation === 'object'
+        ? item.presentation
+        : null;
+    const presentationCode = typeof item.presentation === 'string'
+        ? item.presentation.trim()
+        : '';
+    const isPack = presentationCode.toUpperCase() === 'PACK';
+    const namedPresentation = presentationCode !== ''
+        && presentationCode.toUpperCase() !== 'BASE'
+        && !isPack;
+    const hasPresentation = Boolean(
+        presentationObject
+        || isPack
+        || item.presentationQuantity !== undefined && item.presentationQuantity !== null,
+    );
+    const visibleQuantity = presentationObject
+        ? finiteDecimal(presentationObject.quantity, `items[${index}].presentation.quantity`)
+        : item.presentationQuantity !== undefined && item.presentationQuantity !== null
+            ? finiteDecimal(item.presentationQuantity, `items[${index}].presentationQuantity`)
+            : baseQuantity;
+    if (!visibleQuantity.greaterThan(0)) throw new Error(`Cantidad visible invalida en items[${index}]`);
+
+    const unit = String(
+        presentationObject?.unit
+        || item.presentationUnit
+        || isPack && item.packUnit
+        || namedPresentation && presentationCode
+        || item.unit
+        || '',
+    ).trim();
+    const quantity = formatQuantityValue(visibleQuantity);
+    const visibleUnitPrice = hasPresentation ? total.dividedBy(visibleQuantity) : baseUnitPrice;
+    const quantityLabel = unit ? `${quantity} ${unit}` : `${quantity} x`;
+    const equation = unit
+        ? `${quantityLabel} × C$ ${money(visibleUnitPrice, `items[${index}].unitPrice`)}/${unit}`
+        : `${quantityLabel} C$ ${money(visibleUnitPrice, `items[${index}].unitPrice`)}`;
+
+    return { equation, total: money(total, `items[${index}].total`) };
+};
+
 export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
-    return (
+    const isFixedQuota = data !== null
+        && normalizeFiscalRegime(data.fiscalRegime) === FISCAL_REGIME_CUOTA_FIJA;
+    const receipt = (
         <div id="receipt-area" className="fixed top-0 left-0 w-full bg-white text-black font-mono text-[11px] leading-tight p-2 opacity-0 h-0 overflow-hidden pointer-events-none print:opacity-100 print:h-auto print:overflow-visible print:pointer-events-auto print:z-[9999]">
             {!data ? null : <>
                 {/* 80mm Container */}
@@ -43,7 +125,19 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                     </div>
 
                     {/* ═══ NÚMERO DE FACTURA ═══ */}
-                    {data.invoiceNumber && (
+                    {isFixedQuota ? (
+                        <>
+                            <div className="text-center font-bold text-xs bg-gray-100 py-1 my-1 border border-gray-300">
+                                FACTURA SIMPLIFICADA
+                                {data.invoiceNumber && (
+                                    <span className="block text-[10px]">
+                                        {data.invoiceSeries ? `Serie ${data.invoiceSeries} ` : ''}No. {pad(data.invoiceNumber)}
+                                    </span>
+                                )}
+                            </div>
+                            <p className="text-center text-[10px] font-bold">Régimen de Cuota Fija</p>
+                        </>
+                    ) : data.invoiceNumber && (
                         <div className="text-center font-bold text-xs bg-gray-100 py-1 my-1 border border-gray-300">
                             FACTURA {data.invoiceSeries ? `Serie ${data.invoiceSeries} ` : ''}No. {pad(data.invoiceNumber)}
                         </div>
@@ -87,39 +181,80 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
                     <table className="w-full text-left">
                         <thead>
                             <tr className="uppercase text-[9px]">
-                                <th className="w-8">Cant</th>
-                                <th>Desc</th>
+                                <th colSpan={2}>Artículo / cantidad / P. unit.</th>
                                 <th className="text-right">Total</th>
                             </tr>
                         </thead>
                         <tbody>
-                            {data.items.map((item, i) => (
-                                <tr key={i}>
-                                    <td className="align-top py-0.5">{item.quantity}</td>
-                                    <td className="align-top py-0.5">{item.name}</td>
-                                    <td className="align-top text-right py-0.5">
-                                        {(item.price * item.quantity).toFixed(2)}
-                                    </td>
-                                </tr>
-                            ))}
+                            {data.items.map((item, i) => {
+                                const line = receiptLine(item, i);
+                                return (
+                                    <React.Fragment key={item.cartLineId || `${item.id}-${i}`}>
+                                        <tr>
+                                            <td colSpan={3} className="align-top pt-1 font-bold">{item.name}</td>
+                                        </tr>
+                                        <tr>
+                                            <td colSpan={2} className="align-top pb-1 text-[10px]">{line.equation}</td>
+                                            <td className="align-top text-right pb-1 whitespace-nowrap">C$ {line.total}</td>
+                                        </tr>
+                                    </React.Fragment>
+                                );
+                            })}
                         </tbody>
                     </table>
 
                     <div className="border-b border-black border-dashed my-1"></div>
 
-                    {/* ═══ TOTALES ═══ */}
-                    <div className="flex justify-between">
-                        <span>Subtotal:</span>
-                        <span>C$ {data.subtotal.toFixed(2)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                        <span>IVA (15%):</span>
-                        <span>C$ {data.tax.toFixed(2)}</span>
-                    </div>
+                    {/* ═══ TOTALES ═══
+                        R2.9 · NX-12 — antes se imprimía "Subtotal" con el mismo
+                        número que "TOTAL" y el IVA suelto en medio: sin descuento
+                        el ticket mostraba dos veces la misma cifra y no había
+                        forma de verificar el IVA a ojo. Ahora se imprime el
+                        desglose fiscal real: base imponible + IVA = total. */}
+                    {(data.discount ?? 0) > 0 && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Subtotal:</span>
+                                <span>C$ {money(data.subtotal, 'subtotal')}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>Descuento:</span>
+                                <span>-C$ {money(data.discount ?? 0, 'discount')}</span>
+                            </div>
+                        </>
+                    )}
+                    {!isFixedQuota && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Base imponible:</span>
+                                <span>C$ {money(new Decimal(data.total).minus(data.tax), 'taxBase')}</span>
+                            </div>
+                            <div className="flex justify-between">
+                                <span>IVA (15%):</span>
+                                <span>C$ {money(data.tax, 'tax')}</span>
+                            </div>
+                        </>
+                    )}
                     <div className="flex justify-between font-bold text-sm mt-1">
                         <span>TOTAL:</span>
-                        <span>C$ {data.total.toFixed(2)}</span>
+                        <span>C$ {money(data.total, 'total')}</span>
                     </div>
+
+                    {/* ═══ EFECTIVO Y VUELTO ═══ */}
+                    {typeof data.cashReceived === 'number' && data.cashReceived > 0 && (
+                        <>
+                            <div className="flex justify-between">
+                                <span>Efectivo recibido:</span>
+                                <span>C$ {money(data.cashReceived, 'cashReceived')}</span>
+                            </div>
+                            {typeof data.change === 'number' && data.change > 0 && (
+                                <div className="flex justify-between font-bold">
+                                    <span>Vuelto:</span>
+                                    <span>C$ {money(data.change, 'change')}</span>
+                                </div>
+                            )}
+                        </>
+                    )}
 
                     <div className="border-b border-black border-dashed my-1"></div>
 
@@ -143,4 +278,9 @@ export const ReceiptTicket: React.FC<ReceiptTicketProps> = ({ data }) => {
             </>}
         </div>
     );
+
+    // Fuera de #root: al imprimir, los contenedores del dashboard quedan con
+    // altura 0/overflow hidden. Como hijo directo de body el ticket no puede
+    // quedar recortado por ninguno de esos ancestros.
+    return typeof document === 'undefined' ? receipt : createPortal(receipt, document.body);
 };

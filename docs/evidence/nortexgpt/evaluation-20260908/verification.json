@@ -1,0 +1,362 @@
+{
+  "version": 1,
+  "createdAt": "2026-09-08",
+  "source": "/Users/stark/Documents/GitHub/nortex.20",
+  "branch": "codex/caja-nica-retention",
+  "status": "configuration_implemented_cost_link_added_gates_pending_on_mac",
+  "worktree": {
+    "branchChanged": false,
+    "worktreesTouched": false,
+    "indexOrCommitsTouched": false,
+    "existingChangesPreserved": true
+  },
+  "originManifest": {
+    "path": "docs/evidence/nortexgpt/evaluation-20260907/verification.json",
+    "filesChecked": 19,
+    "allHashesIntact": true,
+    "rewritten": false
+  },
+  "files": [
+    {
+      "path": "scripts/qa/provider-credential.mjs",
+      "beforeSha256": null,
+      "sha256": "ac8105c38c34d4d533bc9d93de61ac0dd435d2e71d6b500db35a30d8b5089bc8",
+      "beforeLines": 0,
+      "afterLines": 58,
+      "deltaLines": 58
+    },
+    {
+      "path": "scripts/qa/nortexgpt-credential.sh",
+      "beforeSha256": null,
+      "sha256": "171917914dae6518cd5bfd3c16cf26281f54cd4f119b6bbac70d296a26d6c064",
+      "beforeLines": 0,
+      "afterLines": 77,
+      "deltaLines": 77
+    },
+    {
+      "path": "scripts/qa/nortexgpt-qa-run.sh",
+      "beforeSha256": null,
+      "sha256": "22c81bf89c49f7f49aa639ead5a9883f34e983f920c319948920cf55d8f17a29",
+      "beforeLines": 0,
+      "afterLines": 53,
+      "deltaLines": 53
+    },
+    {
+      "path": "scripts/qa/nortexgpt-credential-probe.mjs",
+      "beforeSha256": null,
+      "sha256": "d723fb3940ca309e8dba0a3ff18dd0ce196f98225cf0971235cc9f311d7c642d",
+      "beforeLines": 0,
+      "afterLines": 23,
+      "deltaLines": 23
+    },
+    {
+      "path": "scripts/qa/nortexgpt-launcher-selftest.mjs",
+      "beforeSha256": null,
+      "sha256": "6e9ddd80c1173389eaf7c057aff77f3592c38aa0914bff1d8dbd81734da3ebe0",
+      "beforeLines": 0,
+      "afterLines": 214,
+      "deltaLines": 214
+    },
+    {
+      "path": "scripts/qa/testdouble/security",
+      "beforeSha256": null,
+      "sha256": "1ca1a9a0108db7df6219c45c3c3b75510bf6fa339e7e1380b76cbe565816d7ab",
+      "beforeLines": 0,
+      "afterLines": 38,
+      "deltaLines": 38
+    },
+    {
+      "path": "scripts/qa/nortexgpt-eval-server.mjs",
+      "beforeSha256": null,
+      "sha256": "17023d4017a5879de8f975cf08838a039ef2b022c6c6e1811d376def13164967",
+      "beforeLines": 0,
+      "afterLines": 125,
+      "deltaLines": 125
+    },
+    {
+      "path": "scripts/qa/nortexgpt-enable-synthetic.ts",
+      "beforeSha256": null,
+      "sha256": "67466207babe0447d05370ee453f26e9e8361eac02a08923c6d05f268c9a2496",
+      "beforeLines": 0,
+      "afterLines": 69,
+      "deltaLines": 69
+    },
+    {
+      "path": "scripts/qa/nortexgpt-qa-session.mjs",
+      "beforeSha256": null,
+      "sha256": "3b2a1cad5b51f1cfac059b07c40549f58bcd734e09414977aed027e4d9e52e01",
+      "beforeLines": 0,
+      "afterLines": 34,
+      "deltaLines": 34
+    },
+    {
+      "path": "scripts/qa/nortexgpt-prepare-review.ts",
+      "beforeSha256": null,
+      "sha256": "ff2aa8c1a55534e0ca512e8d6aad094579267ac6032be596fea86d4665fb9233",
+      "beforeLines": 0,
+      "afterLines": 147,
+      "deltaLines": 147
+    },
+    {
+      "path": "scripts/qa/nortexgpt-verify-run.ts",
+      "beforeSha256": null,
+      "sha256": "eff06355dc5a05849b2deb014c28fb1d032504a0f6556d462c18f7db760aff82",
+      "beforeLines": 0,
+      "afterLines": 218,
+      "deltaLines": 218
+    },
+    {
+      "path": "scripts/qa/nortexgpt-verify-local.sh",
+      "beforeSha256": null,
+      "sha256": "cfade85b30ff100958eb925d882f20fb8d7a2f8257a0129cb6fb14b093077fed",
+      "beforeLines": 0,
+      "afterLines": 55,
+      "deltaLines": 55
+    },
+    {
+      "path": "tests/qaProviderCredential.test.ts",
+      "beforeSha256": null,
+      "sha256": "ceacec1e3b0e0d758577a21ab4223be853f3c9951ffd9ab86e4dff74320af53e",
+      "beforeLines": 0,
+      "afterLines": 130,
+      "deltaLines": 130
+    },
+    {
+      "path": "docs/runbooks/nortexgpt-evaluacion-haiku.md",
+      "beforeSha256": null,
+      "sha256": "9db22390cb035a4adf1c74adae2947f8ea7ddd99df1e7d82cbaeb654dc071a5b",
+      "beforeLines": 0,
+      "afterLines": 222,
+      "deltaLines": 222
+    },
+    {
+      "path": "docs/evidence/nortexgpt/evaluation-20260908/launcher-selftest-simulated.json",
+      "beforeSha256": null,
+      "sha256": "c953f0bb31efbb013c0bbaef03fa22ec319a9212a431ab320ce4a16a26820904",
+      "beforeLines": 0,
+      "afterLines": 217,
+      "deltaLines": 217
+    },
+    {
+      "path": "scripts/run-quality-integration.mjs",
+      "beforeSha256": "ac0a190be7ba923d50106ef4329c4b573b4f7e03f8d17825776a9c03ce541725",
+      "sha256": "8542a4e17ad5371492592057f35ef4cad78f16d4adf017ad9923ffb3009cd31f",
+      "beforeLines": 89,
+      "afterLines": 95,
+      "deltaLines": 6
+    },
+    {
+      "path": ".gitignore",
+      "beforeSha256": "fe99fe8e65357f4d5ddac5fd7257bde00e0675a4052f92aacb577a9fd0661814",
+      "sha256": "37646dd880322aabb16371b2b98095d74f41808f3987b5373b7ed65d05f45e8e",
+      "beforeLines": 43,
+      "afterLines": 46,
+      "deltaLines": 3
+    },
+    {
+      "path": "docs/NORTEXGPT_HAIKU_CONFIGURACION_2026-09-08.md",
+      "beforeSha256": null,
+      "sha256": "3e8b56a9b74a2ab6916eceb776b93227673e257737ce828da47de3f2696f103c",
+      "beforeLines": 0,
+      "afterLines": 278,
+      "deltaLines": 278
+    },
+    {
+      "path": "tests/qaVerifyRunAttribution.test.ts",
+      "beforeSha256": null,
+      "beforeLines": 0,
+      "sha256": "c96e748c1d7d2fea50f13d397413fe876f86e4c0f36a9557e64081140db93cbb",
+      "afterLines": 168,
+      "deltaLines": 168
+    },
+    {
+      "path": "tests/qaUsageRunLink.test.ts",
+      "beforeSha256": null,
+      "beforeLines": 0,
+      "sha256": "3582f449b696821e9be1e6f5692fa33aa65c08116c44bc392e4cdeda0ac05d45",
+      "afterLines": 73,
+      "deltaLines": 73
+    },
+    {
+      "path": "backend/prisma/migrations/20260908_assistant_usage_run_link/migration.sql",
+      "beforeSha256": null,
+      "beforeLines": 0,
+      "sha256": "656d53cd9376a59cca6eb81b7a5b0384dbec053cceb44355162ba018394a068b",
+      "afterLines": 6,
+      "deltaLines": 6
+    },
+    {
+      "path": "backend/services/assistant/budget.ts",
+      "beforeSha256": "f97ea23e5a32a1c677f008a05d34b83a49ffee6c98e2c26844dbb60c876a00e4",
+      "beforeLines": 75,
+      "sha256": "6ee979be94bbbf9943a42aae62e2c7a1b3dd89499b677c23353efb91ee305dc5",
+      "afterLines": 86,
+      "deltaLines": 11
+    },
+    {
+      "path": "backend/services/assistant/operations/orchestrator.ts",
+      "beforeSha256": "54653c7a74def415887225bfc58db4aea600443ac1b792c1c088dd703c773957",
+      "beforeLines": 138,
+      "sha256": "354bd2fa9bba5b0333eaa06af3541fcf2226775246a1e21ee1afafd59ffe6352",
+      "afterLines": 138,
+      "deltaLines": 0
+    },
+    {
+      "path": "backend/prisma/schema.prisma",
+      "beforeSha256": "cedbda5ebed2557d49dbabaf040ffec3e9969281a6f2c65f80bf1e61d4cb5dd1",
+      "beforeLines": 3631,
+      "sha256": "cbdf23a99dd6af1945eeb6da900483aae9a587726740dac73ff804f4db0e6531",
+      "afterLines": 3637,
+      "deltaLines": 6
+    }
+  ],
+  "manifestExcludesItself": true,
+  "tests": {
+    "typescriptNewFiles": "passed_scoped_project_node_22_23_2",
+    "typescriptFullRepo": "passed_on_mac_reported_by_codex",
+    "qaProviderCredentialOnMac": "passed_7_reported_by_codex_before_hardening",
+    "attributionAssertions": {
+      "passed": 13,
+      "failed": 0,
+      "scope": "funciones puras con budgetMonth extraído del original"
+    },
+    "pinningAssertions": {
+      "passed": 17,
+      "failed": 0
+    },
+    "launcherSelfTestSimulated": {
+      "passed": 21,
+      "failed": 0,
+      "keychain": "simulated"
+    },
+    "faultInjection": {
+      "missingCommand": "failed_as_expected_exit_1",
+      "unreadableTarget": "failed_as_expected_exit_1",
+      "healthy": "exit_0"
+    },
+    "launcherSelfTestMacos": "not_run_requires_local_keychain",
+    "vitestFullSuite": "not_run_native_modules_are_darwin_arm64",
+    "repoGates": "not_run_requires_local_toolchain",
+    "mysqlRequired": "PENDING_required_after_money_domain_change",
+    "mutation": "PENDING_required_after_money_domain_change",
+    "usageRunLinkAssertions": {
+      "passed": 10,
+      "failed": 0,
+      "scope": "reserva/liquidación con base falsa, cliente con y sin el campo (5+5)"
+    },
+    "mutationScopeBudget": "rango 16-19 idéntico al original, verificado por diff"
+  },
+  "realModel": {
+    "status": "not_run",
+    "paidCalls": 0,
+    "observedSpendUsd": "0.000000",
+    "configuration": "launcher_ready_key_not_stored_by_agent",
+    "humanReview": "pending"
+  },
+  "budgets": {
+    "serverGlobalUsd": "20",
+    "serverPerTenantUsd": "10",
+    "serverConstantsChanged": false,
+    "qaTenantConfigUsd": "5",
+    "consoleWorkspaceLimitUsd": "5",
+    "consoleActionsPending": true
+  },
+  "enablement": {
+    "conversation": "prepared",
+    "operations": "prepared",
+    "moneyOrInventoryExecution": "disabled",
+    "actionPrepare": "disabled",
+    "documentExtraction": "disabled",
+    "whatsappBusiness": "disabled",
+    "privateWhatsapp": "disabled",
+    "applied": false,
+    "reason": "requires_disposable_mysql_on_local_machine"
+  },
+  "scope": {
+    "domainChanges": true,
+    "schemaChanges": true,
+    "frontendChanges": false,
+    "serverLineDelta": 0,
+    "posLineDelta": 0,
+    "budgetsRaised": false,
+    "productSourcesModified": false
+  },
+  "limitations": [
+    "El agente no almacenó ninguna credencial ni creó el workspace ni la clave: eso lo hace la persona.",
+    "La prueba del lanzador con el llavero real la ejecutó Codex en la Mac: 21/21.",
+    "Se tocó dominio de dinero (schema aditivo + reserva). Las compuertas MySQL y de mutación NO se ejecutaron; deben correr en la Mac antes de cerrar.",
+    "Hasta correr la migración y `prisma generate`, el consumo por ejecución sigue sin acreditarse; el sistema se degrada a no acreditar, no a no responder.",
+    "Cero llamadas al proveedor. Una respuesta del servidor no acreditaría calidad; la revisión humana sigue pendiente."
+  ],
+  "codexReview": {
+    "date": "2026-09-08",
+    "confirmedOnMac": [
+      "typescript_full_repo_passed",
+      "qaProviderCredential_7_passed",
+      "origin_19_hashes_intact"
+    ],
+    "corrections": [
+      {
+        "file": "scripts/qa/nortexgpt-verify-run.ts",
+        "defect": "Atribuía consumo por usuario, mes corriente y createdAt>=run.createdAt. Con dos consultas del mismo usuario la primera se llevaba ambas; con concurrencia dependía del orden; un lote de un mes anterior se declaraba falsamente respaldo determinista.",
+        "rootCause": "AssistantUsage no guarda el identificador de la ejecución y AssistantRun no guarda nada del proveedor: no existe clave de unión.",
+        "fix": "Correlación sólo por enlace explícito; sin él declara consumo_por_ejecucion_no_acreditado y observedUsdForThisRun=null. Mes tomado de la ejecución. Veredicto del modelo separado del consumo. Totales rotulados mes_completo_no_por_ejecucion.",
+        "tests": "tests/qaVerifyRunAttribution.test.ts"
+      },
+      {
+        "file": "scripts/qa/nortexgpt-launcher-selftest.mjs",
+        "defect": "grep -rIl recorría todo el repositorio, abriendo archivos ajenos a la prueba incluido .env; y la condición grep.status!==0 APROBABA cuando grep fallaba (status 2).",
+        "fix": "Lista explícita de objetivos con guarda de rutas prohibidas, cero recorrido. Fallo de lectura o de comando hunde la comprobación. La ausencia de fuga en argv sólo se afirma si ps respondió. Entorno controlado por lista blanca, sin heredar la credencial del operador. El informe se inspecciona antes de escribirse.",
+        "tests": "tests/qaProviderCredential.test.ts (2 pruebas de fijación añadidas)"
+      }
+    ],
+    "round2": {
+      "date": "2026-09-08",
+      "confirmedOnMac": [
+        "19_new_tests_passed",
+        "21_of_21_real_keychain_checks",
+        "typescript_full_repo_passed",
+        "zero_haiku_calls",
+        "no_access_to_real_key"
+      ],
+      "corrections": [
+        {
+          "topic": "runId escrito en la reserva",
+          "detail": "AssistantUsage.runId (nullable + índice) escrito al crear la reserva, antes de llamar al proveedor, y conservado al liquidar. Vincula también fallos, reinicios y costos UNKNOWN.",
+          "guard": "USAGE_SUPPORTS_RUN_LINK consulta el DMMF: sin prisma generate el campo no se manda. Sin la guarda, cada reserva fallaría y el orquestador caería al respaldo determinista en silencio.",
+          "files": [
+            "backend/prisma/schema.prisma",
+            "backend/prisma/migrations/20260908_assistant_usage_run_link/migration.sql",
+            "backend/services/assistant/budget.ts",
+            "backend/services/assistant/operations/orchestrator.ts"
+          ]
+        },
+        {
+          "topic": "el verificador no seleccionaba runId",
+          "detail": "Mi afirmación de que el campo se activaría automáticamente era falsa: el select de Prisma enumera columnas. Ahora detecta el campo, lo agrega al select sólo si existe y consulta por ejecución SIN filtro de mes, para no perder consultas que cruzan el borde del mes.",
+          "files": [
+            "scripts/qa/nortexgpt-verify-run.ts"
+          ]
+        },
+        {
+          "topic": "degraded:true no es ausencia de llamadas",
+          "detail": "Los cierres parciales ocurren después de llamadas pagadas y liquidadas. Tres clases por iterations: respuesta_del_modelo, incompleta_con_llamadas_al_proveedor y respaldo_determinista_sin_llamadas. Aviso explícito para no contar como gasto cero.",
+          "files": [
+            "scripts/qa/nortexgpt-verify-run.ts",
+            "docs/runbooks/nortexgpt-evaluacion-haiku.md"
+          ]
+        }
+      ]
+    }
+  },
+  "moneyDomainChange": {
+    "changed": true,
+    "additiveOnly": true,
+    "budgetsRaised": false,
+    "gatesPending": [
+      "npm run test:integration:required",
+      "npm run test:mutation"
+    ],
+    "note": "Cambio en dominio de dinero: no se declara cerrado hasta que esas compuertas corran en la Mac."
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "revokedBeforeProvider": true,
+  "providerCalls": 0,
+  "providerSawPriorData": false,
+  "rejected": "SESSION_REVOKED",
+  "settled": [
+    {
+      "inputTokens": 0,
+      "outputTokens": 0
+    }
+  ],
+  "paidCalls": 0
+}

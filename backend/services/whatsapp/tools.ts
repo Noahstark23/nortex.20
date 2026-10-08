@@ -8,10 +8,13 @@
  *    del usuario → prompt injection no puede cruzar tenants ni clientes.
  *  - llama a datos tenant-scoped y devuelve texto listo para WhatsApp.
  *
- * `scope` filtra qué tools ve el agente según el canal (B2C/B2B/BOTH).
+ * El scope del canal organiza el catálogo; no autentica al remitente como
+ * personal. Las herramientas internas requieren una identidad de personal
+ * verificada, que este canal todavía no proporciona.
  */
 
 import { z } from 'zod';
+import Decimal from 'decimal.js';
 import { prisma } from './db';
 import { catalogRetriever } from './rag';
 
@@ -30,7 +33,7 @@ export interface AgentTool {
     run(ctx: ToolContext, rawArgs: unknown): Promise<string>;
 }
 
-const money = (n: number) => `C$${n.toFixed(2)}`;
+const money = (n: Decimal.Value) => `C$${new Decimal(n).toFixed(2)}`;
 
 // ── consultarInventario ──────────────────────────────────────────────────────
 const buscarProducto: AgentTool = {
@@ -45,8 +48,8 @@ const buscarProducto: AgentTool = {
     },
     async run(ctx, rawArgs) {
         const { query } = (this.zod as z.ZodType<{ query: string }>).parse(rawArgs);
-        const publicOnly = ctx.botScope === 'B2C';
-        const hits = await catalogRetriever.search(ctx.tenantId, query, { publicOnly, limit: 5 });
+        // B2B/BOTH identifica al canal, no concede acceso a inventario privado.
+        const hits = await catalogRetriever.search(ctx.tenantId, query, { publicOnly: true, limit: 5 });
         if (hits.length === 0) {
             return `No encontré productos para "${query}". ¿Querés que lo busque de otra forma?`;
         }
@@ -75,38 +78,20 @@ const consultarDeuda: AgentTool = {
         });
         if (!customer) return 'No pude encontrar tu cuenta. Contactá a la tienda, por favor.';
 
-        const debt = Number(customer.currentDebt);
-        const limit = Number(customer.creditLimit);
-        const available = Math.max(0, limit - debt);
-        if (debt <= 0) return `${customer.name}, no tenés saldo pendiente. ¡Estás al día! ✅`;
+        const debt = new Decimal(customer.currentDebt.toString());
+        const limit = new Decimal(customer.creditLimit.toString());
+        const availableRaw = limit.minus(debt);
+        const available = availableRaw.lessThan(0) ? new Decimal(0) : availableRaw;
+        if (debt.lessThanOrEqualTo(0)) return `${customer.name}, no tenés saldo pendiente. ¡Estás al día! ✅`;
         const blocked = customer.isBlocked ? '\n⚠️ Tu cuenta está bloqueada por mora; regularizá para seguir comprando a crédito.' : '';
         return `${customer.name}, tu saldo pendiente es ${money(debt)}.\nCrédito disponible: ${money(available)}.${blocked}`;
     },
 };
 
-// ── consultarVentasHoy (B2B: dueño) ─────────────────────────────────────────
-const ventasHoy: AgentTool = {
-    name: 'ventas_hoy',
-    description: 'Resume las ventas del día de hoy del negocio (uso del dueño).',
-    scope: 'B2B',
-    zod: z.object({}),
-    jsonSchema: { type: 'object', properties: {} },
-    async run(ctx) {
-        const start = new Date();
-        start.setHours(0, 0, 0, 0);
-        const agg = await prisma.sale.aggregate({
-            where: { tenantId: ctx.tenantId, createdAt: { gte: start }, status: { not: 'CANCELLED' } },
-            _sum: { total: true },
-            _count: { _all: true },
-        });
-        const total = Number(agg._sum.total ?? 0);
-        const count = agg._count._all;
-        if (count === 0) return 'Hoy todavía no hay ventas registradas.';
-        return `📊 Hoy: ${count} ventas por un total de ${money(total)}.`;
-    },
-};
-
-const ALL_TOOLS: AgentTool[] = [buscarProducto, consultarDeuda, ventasHoy];
+// ventas_hoy se retira incluso del lookup por nombre. Su futura activación
+// exige vincular y revalidar personal; botScope, waId o argumentos del modelo
+// nunca son prueba de ese permiso. El dueño consulta su dashboard autenticado.
+const ALL_TOOLS: AgentTool[] = [buscarProducto, consultarDeuda];
 
 /** Tools visibles para un canal según su scope. */
 export function toolsForScope(botScope: string): AgentTool[] {

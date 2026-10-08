@@ -1,0 +1,80 @@
+{
+  "status": "candidate_local_reviewed_not_deployed",
+  "sourceSnapshot": "9247626",
+  "integratedRemote": "64edea85bdd9275916f6460279f5684d33247455",
+  "qa": {
+    "prismaGenerate": "passed",
+    "prismaValidate": "passed",
+    "typescript": "passed",
+    "buildSeo": "passed",
+    "designSystem": "passed",
+    "npmAuditProductionVulnerabilities": 0,
+    "general": {
+      "passed": 5736,
+      "failed": 0,
+      "skipped": 318
+    },
+    "mandatoryMysql": {
+      "status": "passed",
+      "suites": 37,
+      "passed": 332,
+      "failed": 0,
+      "skipped": 0,
+      "engine": "MySQL 8 disposable"
+    },
+    "mutation": {
+      "status": "passed",
+      "score": 100,
+      "modules": 64,
+      "killed": 5759,
+      "timeout": 4,
+      "survived": 0,
+      "noCoverage": 0,
+      "historicalIgnored": 20,
+      "reportSha256": "7adbae764a170d7d81b130f2efde8bf2747e1a58aa4c5160df1c449069b13ea6"
+    },
+    "reportHashes": {
+      "general": "742b963795c27d0664a550ccbed34ac329d60c888aa21c74dc663cc0d89640c2",
+      "mandatoryMysqlLog": "fa1aac3da13619ad9e293ecd961d267d009c0bd6c8969652c3101a2ef6cf7a0f",
+      "mutationLog": "186e6b19687115254fe4a641ebfccbb5fffdc15fc33193686143c1f1af7c9dbc"
+    }
+  },
+  "fiscalExtraction": {
+    "behaviorBefore": 8,
+    "behaviorAfter": 8,
+    "serverBefore": 14674,
+    "serverAfter": 14131,
+    "retentionCertificate": 244,
+    "fiscalExports": 330,
+    "aggregateDelta": 31,
+    "budgetBefore": 14266,
+    "budgetAfter": 14131
+  },
+  "backup": {
+    "timestamp": "2026-09-08T09:15:09Z",
+    "bytes": 1150696,
+    "tables": 111,
+    "sha256": "497fbfa8ac219fd8ddbb51f21ed19e354496592bdb80a79d9b8ca4c713dbfac3",
+    "remoteMetadataMatches": true,
+    "remoteObjectHashMatches": true,
+    "restoreDrill": "not_verified"
+  },
+  "deployment": "not_performed",
+  "infrastructureSnapshot": {
+    "memoryMiB": {
+      "total": 3915,
+      "used": 2220,
+      "available": 1695
+    },
+    "swapMiB": {
+      "total": 2047,
+      "used": 879
+    },
+    "rootDiskGiB": {
+      "size": 77,
+      "used": 16,
+      "available": 61
+    },
+    "capacityConclusion": "instantaneous_snapshot_not_load_capacity"
+  }
+}

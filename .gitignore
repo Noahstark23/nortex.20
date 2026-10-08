@@ -24,3 +24,32 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Artefactos de pruebas de mutación (Stryker)
+.stryker-tmp/
+reports/mutation/
+
+# Evidencia local de QA visual y auditorías (no forma parte del artefacto)
+.codex-audit/
+.codex/audits/
+artifacts/
+design-qa.md
+
+# El pipeline canónico usa npm + package-lock.json
+pnpm-lock.yaml
+pnpm-workspace.yaml
+
+# Dumps locales del smoke de backup (CI y pruebas a mano)
+tmp-backups/
+
+# Informes locales de evaluación de NortexGPT: contienen respuestas privadas
+reports/assistant-evaluation/
+# Evidencia local efímera de integración (fixtures y respuestas de QA).
+reports/quality-*/
+
+# Optional on-device OCR assets, copied from locked npm dependencies.
+/public/product-ocr-v1/
+
+# Identidad de build derivada de Git por el wrapper; nunca contiene entorno.
+.nortex-build-source.json
+deploy/nortex/image-receipt.json

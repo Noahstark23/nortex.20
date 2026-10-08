@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Nortex</string>
+    <string name="title_activity_main">Nortex</string>
+    <string name="package_name">com.somosnortex.app</string>
+    <string name="custom_url_scheme">com.somosnortex.app</string>
+</resources>

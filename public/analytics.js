@@ -12,8 +12,8 @@
   'use strict';
 
   var CONFIG = {
-    GA4_MEASUREMENT_ID: '',   // p. ej. 'G-XXXXXXXXXX' (Google Analytics 4)
-    META_PIXEL_ID:      ''    // p. ej. '123456789012345' (Meta / Facebook Pixel)
+    GA4_MEASUREMENT_ID: 'G-Q1L0ZWF7SM',   // Google Analytics 4 (somosnortex.com)
+    META_PIXEL_ID:      ''                 // p. ej. '123456789012345' (Meta / Facebook Pixel)
   };
 
   // ---------- Google Analytics 4 ----------
@@ -24,6 +24,16 @@
     document.head.appendChild(s);
     window.dataLayer = window.dataLayer || [];
     window.gtag = function () { window.dataLayer.push(arguments); };
+    // Consent Mode v2: solo analítica (IP anonimizada), sin publicidad ni datos
+    // de anuncios. Divulgado en la Política de Privacidad. Si en el futuro se
+    // agrega un banner de cookies, cambiar analytics_storage a 'denied' aquí y
+    // hacer gtag('consent','update',...) cuando el usuario acepte.
+    gtag('consent', 'default', {
+      analytics_storage:  'granted',
+      ad_storage:         'denied',
+      ad_user_data:       'denied',
+      ad_personalization: 'denied'
+    });
     gtag('js', new Date());
     gtag('config', CONFIG.GA4_MEASUREMENT_ID, {
       anonymize_ip: true
@@ -61,11 +71,29 @@
     var a = e.target.closest('a');
     if (!a) return;
     var href = a.getAttribute('href') || '';
+    var sector = a.getAttribute('data-sector-cta');
+    if ((sector === 'farmacia' || sector === 'ferreteria') &&
+        (a.getAttribute('data-page-kind') === 'blog' || a.getAttribute('data-page-kind') === 'landing')) {
+      var ctaLocation = a.getAttribute('data-cta-location');
+      if (ctaLocation === 'nav' || ctaLocation === 'hero' || ctaLocation === 'footer') {
+        window.nxTrack('sector_cta_click', {
+          vertical: sector,
+          page_kind: a.getAttribute('data-page-kind'),
+          cta_location: ctaLocation
+        });
+      }
+      return; // Un CTA sectorial no cuenta otra vez como register_cta_click.
+    }
 
     if (href.indexOf('wa.me/') !== -1 || href.indexOf('wa.me%') !== -1) {
       window.nxTrack('whatsapp_click', {
         location: a.getAttribute('data-loc') || 'unknown',
         href: href
+      });
+    } else if (href === '/demo' || href.indexOf('/demo?') === 0) {
+      window.nxTrack('demo_cta_click', {
+        location: a.getAttribute('data-loc') || 'unknown',
+        source: 'landing_html'
       });
     } else if (href === '/register' || href.indexOf('/register?') === 0) {
       window.nxTrack('register_cta_click', {

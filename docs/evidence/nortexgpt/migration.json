@@ -1,0 +1,56 @@
+{
+  "recordedAt": "2026-09-05T21:06:55.682Z",
+  "status": "passed",
+  "database": "nortex_qa_assistant_migration",
+  "engine": "MySQL 8",
+  "container": "nortex-gpt-qa-20260905",
+  "dataOrigin": "new_disposable_database_synthetic_sentinel",
+  "baselineSchemaSha256": "54ad4199ccaf13cb2cd9f7a2fdb0182c38991c986e43d8d14b05b90a51065a61",
+  "finalSchemaSha256": "bf5e0349b721ee22559b0ffd2cea77be0e7780f3c4a85990e88700ddae758488",
+  "migrationSha256": "c97364c2c5847249df462722ce27614e790b9de0a5e82a1c3acf9f0baeee5d6c",
+  "migrationPath": "backend/prisma/migrations/20260905_nortex_assistant/migration.sql",
+  "staticAdditiveCheck": {
+    "passed": true,
+    "newTables": 9,
+    "newIndexesOnExistingTables": 5,
+    "newForeignKeys": 9
+  },
+  "steps": [
+    {
+      "label": "baseline_db_push",
+      "exitCode": 0,
+      "durationMs": 11835
+    },
+    {
+      "label": "exact_migration_sql",
+      "exitCode": 0,
+      "durationMs": 1263
+    },
+    {
+      "label": "live_database_vs_final_schema",
+      "exitCode": 0,
+      "durationMs": 1039
+    }
+  ],
+  "limitations": [
+    "No valida datos históricos reales ni volumen de producción.",
+    "No ejecutó deploy, staging ni cambios en bases existentes."
+  ],
+  "schemaDiff": {
+    "empty": true,
+    "summary": "-- This is an empty migration."
+  },
+  "existingTablesPreserved": {
+    "before": 109,
+    "after": 118,
+    "removed": 0,
+    "newTables": 9
+  },
+  "sentinelPreserved": true,
+  "safeDefaults": {
+    "enabled": false,
+    "extractionEnabled": false,
+    "executionEnabled": false,
+    "monthlyBudgetUsd": "10.000000"
+  }
+}

@@ -1,0 +1,96 @@
+/** Suites obligatorias: no se acepta un verde producido por describe.skip. */
+export const REQUIRED_INTEGRATION_SUITES = [
+  'tests/journalSingleConnection.mysql.test.ts',
+  'tests/whatsappIdentity.mysql.test.ts',
+  'tests/cashCloseJournal.mysql.test.ts',
+  'tests/posIntegrity.integration.test.ts',
+  'tests/posCredit.integration.test.ts',
+  'tests/manualCashMovementVoid.integration.test.ts',
+  'tests/customerFlow.integration.test.ts',
+  'tests/hrAccess.integration.test.ts',
+  'tests/productRefresh.integration.test.ts',
+  'tests/fiscalFlow.integration.test.ts',
+  'tests/inventoryAdjust.integration.test.ts',
+  'tests/bodegaAdjustment.integration.test.ts',
+  'tests/bodegaReorder.integration.test.ts',
+  'tests/productImport.integration.test.ts',
+  'tests/productDeletion.integration.test.ts',
+  'tests/warehouseTopology.integration.test.ts',
+  'tests/bodegaStockCountHistory.integration.test.ts',
+  'tests/bodegaPurchaseCashAuthority.integration.test.ts',
+  'tests/batchWarehouseManualMovements.test.ts',
+  'tests/purchaseFlow.integration.test.ts',
+  'tests/purchaseRegistration.integration.test.ts',
+  'tests/assistantFlow.integration.test.ts',
+  'tests/assistantBudgetRequests.integration.test.ts',
+  'tests/assistantBudgetOwnership.integration.test.ts',
+  'tests/assistantWeeklyCashReview.integration.test.ts',
+  'tests/assistantCashCloseInvestigation.integration.test.ts',
+  'tests/assistantTextPurchase.integration.test.ts',
+  'tests/assistantWorkerRecovery.integration.test.ts',
+  'tests/assistantAnalytics.integration.test.ts',
+  'tests/assistantInventory.integration.test.ts',
+  'tests/assistantCatalog.integration.test.ts',
+  'tests/assistantRuns.integration.test.ts',
+  'tests/assistantWorkItems.integration.test.ts',
+  'tests/assistantStatus.integration.test.ts',
+  'tests/assistantActions.integration.test.ts',
+  'tests/assistantActionsHttp.integration.test.ts',
+  'tests/assistantOperationsRetention.integration.test.ts',
+  'tests/purchaseOrderDraft.integration.test.ts',
+  'tests/promotions.integration.test.ts',
+  'tests/promotionsFlow.integration.test.ts',
+  'tests/promotionsShiftClose.integration.test.ts',
+  'tests/assistantPrivateWhatsapp.integration.test.ts',
+  'tests/productBulkEdit.integration.test.ts',
+  'tests/purchaseSalePrice.integration.test.ts',
+  'tests/procurementPhaseOne.integration.test.ts',
+  'tests/procurementPhaseTwo.integration.test.ts',
+  'tests/procurementPhaseTwoB.integration.test.ts',
+  'tests/returnIdempotency.integration.test.ts',
+  'tests/stockCountWarehouse.integration.test.ts',
+  'tests/productWarehouseSnapshot.integration.test.ts',
+  'tests/productBrandCamera.integration.test.ts',
+  'tests/productEnrollment.integration.test.ts',
+  'tests/delivery.mysql.integration.test.ts',
+  'tests/whatsappCommerceTransport.mysql.test.ts',
+  'tests/whatsappCommerceRecovery.mysql.test.ts',
+  'tests/whatsappCommerceQuotes.mysql.test.ts',
+  'tests/whatsappCommercePolicy.mysql.test.ts',
+  'tests/whatsappCommerceActivation.mysql.test.ts',
+  'tests/whatsappCommerceOperations.mysql.test.ts',
+  'tests/whatsappCommerceSupport.mysql.test.ts',
+  'tests/whatsappCommerceAttempts.mysql.test.ts',
+  'tests/whatsappCommerceFlow.integration.test.ts',
+  'tests/quotationTotalsHttp.integration.test.ts',
+  'tests/whatsappCommerceReceiptRace.mysql.test.ts',
+];
+
+export function validateQualityDatabase(raw, acknowledgement) {
+  if (acknowledgement !== 'disposable-database') throw new Error('Requiere una base descartable explícita.');
+  let url;
+  try { url = new URL(raw); } catch { throw new Error('Falta una URL MySQL de QA válida.'); }
+  if (url.protocol !== 'mysql:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
+      || !/^\/nortex_(qa|quality|test)(?:_[a-z0-9_]+)?$/.test(url.pathname)) {
+    throw new Error('La compuerta solo admite MySQL local y una base nortex_qa, nortex_quality o nortex_test.');
+  }
+  return url;
+}
+
+export function assertExecutedSuite(report, filename) {
+  const matching = report?.testResults?.filter(result => result.name?.replaceAll('\\', '/').endsWith('/' + filename)) ?? [];
+  if (report?.success !== true || matching.length !== 1) throw new Error(`No se ejecutó la suite requerida: ${filename}`);
+  const counters = ['numTotalTests', 'numPassedTests', 'numFailedTests', 'numPendingTests', 'numTodoTests', 'numTotalTestSuites', 'numFailedTestSuites', 'numPendingTestSuites'];
+  if (counters.some(key => !Number.isInteger(report[key]) || report[key] < 0)
+      || report.numTotalTests === 0 || report.numPassedTests !== report.numTotalTests
+      || report.numFailedTests || report.numPendingTests || report.numTodoTests
+      || report.numFailedTestSuites || report.numPendingTestSuites) {
+    throw new Error(`Contadores incompletos, fallidos u omitidos: ${filename}`);
+  }
+  const suite = matching[0];
+  if (suite.status !== 'passed' || !suite.assertionResults?.length || suite.assertionResults.length !== report.numTotalTests
+      || suite.assertionResults.some(test => test.status !== 'passed')) {
+    throw new Error(`Suite incompleta, fallida u omitida: ${filename}`);
+  }
+  return suite.assertionResults.length;
+}

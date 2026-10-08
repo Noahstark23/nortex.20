@@ -1,0 +1,794 @@
+{
+  "date": "2026-09-08",
+  "productCandidate": "484f58a4e31ad74ba5bdbcfaee390ee3f3d1284b",
+  "scope": "Classification is not semantic validation of every historical claim.",
+  "counts": {
+    "reference_or_runbook": 35,
+    "agent_instructions": 32,
+    "plan_or_design": 26,
+    "dated_report_or_audit": 29,
+    "evidence": 8
+  },
+  "files": [
+    {
+      "path": ".agents/skills/nortex.20/SKILL.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "36f2453a6e30ba1f1bc9e5c784ac9aeb94975677446f240fa04ba284150974b3"
+    },
+    {
+      "path": ".claude/agents/github-pr-steward.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "52231e156e00cd67f000a1906c995d1e7d86f15218a3ad9d593bc42af01ab9e6"
+    },
+    {
+      "path": ".claude/agents/nortex-clean-code.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "00f2a6de5a712cce5e419b8709e42d09aaca26976f4c2451933c24392e2a722f"
+    },
+    {
+      "path": ".claude/agents/nortex-finance.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "aac0d0c370ede998a1e1820525450f3144441c9c20d4cf7711915635d8e763ec"
+    },
+    {
+      "path": ".claude/agents/nortex-integrator.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "75a9c593105917a772d0eff27c349111668f8a9b3f09c64cac642f5807c0a73b"
+    },
+    {
+      "path": ".claude/agents/nortex-intelligence.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "738cbfc639895698bb134fee20ea235d18f7d85f3880fd592e1578786d56c215"
+    },
+    {
+      "path": ".claude/agents/nortex-platform.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "92e30f853956f849e9f887c14a8ee3859a8d117cb983b4d2046a033882e18f17"
+    },
+    {
+      "path": ".claude/agents/nortex-pos.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "5ef4509e0ab5cd8575a2366b1097cb6471cef5bd0c632abe66366efbbda0eb88"
+    },
+    {
+      "path": ".claude/agents/nortex-qa.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "d297728788732ece676d0664decfb6ff7277a56eed6a06ea2210212b0169e5a9"
+    },
+    {
+      "path": ".claude/skills/frontend-design/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "2cedea0d136072477ddb2532896c31dbc4aff395a63297a427ac56f92138bc0c"
+    },
+    {
+      "path": ".claude/skills/nortex-backup-recovery/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "aefbc31fac30cd3c71deddcf9aa501948dfdc2087362d4c0babd0e6893522a6a"
+    },
+    {
+      "path": ".claude/skills/nortex-blue-team/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "c03134b474345116f1e4be2b8293cfa75d9a5e5bda429679a02795a1dc175ed7"
+    },
+    {
+      "path": ".claude/skills/nortex-clean-code/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "eb405f00cae8b17bd83adc1ef5f25db9e7776d8920218bb74346e671e848c8ba"
+    },
+    {
+      "path": ".claude/skills/nortex-contador/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "41f3fdd1fa5e03ac983f49a2b916b234c60c5d7a1a18c265df4957923e205068"
+    },
+    {
+      "path": ".claude/skills/nortex-deploy/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "73bc88171de7780a18652ee7fa876706612a4c1c5fece067e7c1c541976dd2e8"
+    },
+    {
+      "path": ".claude/skills/nortex-feature/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "5f52e62c0908340be025be424eed0164a3bfea168ef0c16a5ba76fd974d75ce2"
+    },
+    {
+      "path": ".claude/skills/nortex-migration/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "3fa3ef4122616ab003cc9876b3a5faa079b0d5be0a9ee4154c4e45f87a3fdf89"
+    },
+    {
+      "path": ".claude/skills/nortex-qa/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "b28cf722b17e72e85c269d51a07c8fcd3280b00f2303a064fb9d8ac94bfc8451"
+    },
+    {
+      "path": ".claude/skills/nortex-rag/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "4bf5512da0c7005365c068797f2b6d2df9cf8ed4a93dbddf87fbd43b7fc88922"
+    },
+    {
+      "path": ".claude/skills/nortex-rag/references/ruta-de-escala.md",
+      "category": "agent_instructions",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "9e07ab47d8eac739443bb1208e54f7de8bbec3e9113b7ca50a6a9b28bf846e0f"
+    },
+    {
+      "path": ".claude/skills/nortex-red-team/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "756519c17bc8971851ba1786657bceebed89ddb57d8951cb7172381a6f532809"
+    },
+    {
+      "path": ".claude/skills/nortex-rrhh/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "2d4366d842965fd3f569be0217f53b3ac501746f10d8861e5e03dbe0c4749e1d"
+    },
+    {
+      "path": ".claude/skills/nortex-security-audit/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "0596e57de7e2f6354f1e02a4d1832b5b6eefa6c2b9baa1a74c8f15301538600e"
+    },
+    {
+      "path": ".claude/skills/nortex-seo/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "1b85dd79fdc902f7397b1ee82ff90e6da2bf449cfffe668d57e350c05b838278"
+    },
+    {
+      "path": ".claude/skills/nortex.20/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "e91967284cefcd75a1edfa64a9de668f5a3da2df4131e653bcc637009124a6ef"
+    },
+    {
+      "path": ".claude/skills/run-nortex/SKILL.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "c358b402bd75667de0df3f3ac1bdcc446c1521c5508ee4fccdc601eb01896472"
+    },
+    {
+      "path": ".codex/AGENTS.md",
+      "category": "agent_instructions",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "6a513f91f4d54492136570b2696a523e0d1602b42838d67168603e131d9b34da"
+    },
+    {
+      "path": ".opencode/agents/content_brand.md",
+      "category": "agent_instructions",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "f0741e78b9a520d766464de208aa1d84ebd9cfd12fc2988678811d904c0d2360"
+    },
+    {
+      "path": ".opencode/agents/growth_analyst.md",
+      "category": "agent_instructions",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "8a205dc802a34db51f8c2cc5597715009ac627e8c134717147487c6bbfb39775"
+    },
+    {
+      "path": ".opencode/agents/marketing_lead.md",
+      "category": "agent_instructions",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "fd27cc2ac1c8e8eb96bb5e37c721c1e0f3c7ab1e3775edf110bec329061d6bbe"
+    },
+    {
+      "path": ".opencode/agents/seo_social_email.md",
+      "category": "agent_instructions",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ffd614a145b62109688736802fd53d339e0dfdb1653b0b689fb9e4921528068c"
+    },
+    {
+      "path": "AGENTS.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "cf0d81d99a7794eaffd3d6ab0c70e9d6a608779d4a70f09df1db9149db23072d"
+    },
+    {
+      "path": "CLAUDE.md",
+      "category": "agent_instructions",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "b68e621407688a932bfe7516ab4a6ef166234ad5ed960a4574e282c7cc293eab"
+    },
+    {
+      "path": "DEPLOY_GUIDE.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "988dc21ff7f6afe75aa4804e0b1e3e1eb45c969ab4876a769ee15c10b171beee"
+    },
+    {
+      "path": "GEMINI.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "32cd49e4e0203d70f7d618bdfc6c427c189ef9b8808416d3c766648d2cd1c318"
+    },
+    {
+      "path": "README.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "03c9fea08875727904a538abdbd228a028ad6dde9f7feffaeea5276aa298ab1c"
+    },
+    {
+      "path": "docs/ACTIVACION_Y_MODULARIDAD_2026-09-04.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "feab8b05e8796b282dc5eeece9366875bd39820e7aae47b215d2207ce8ab2d47"
+    },
+    {
+      "path": "docs/ADR_PROCUREMENT_DEVOLUCIONES_NOTAS_CREDITO.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "adc8ec2962460e07e09d6801e03d1591707b1fc9d90b8d6b17c6ec86279cf629"
+    },
+    {
+      "path": "docs/APPLE_HIG_LANDING_PRUEBAS.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "63af02e0177d46eef3f0e8da3cdfa3d4e552174d1039483db7ed0c907d2e6207"
+    },
+    {
+      "path": "docs/ARQUITECTURA_BLINDAJE.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "a90f859a05cd2751e95f67bd3756ead4b3eb65795b0013c5e0556f510a320d06"
+    },
+    {
+      "path": "docs/AUDITORIA_DGI.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "fe8e29707b3b08ad80ee2949594a46b1a41f2cacd0b408c8677269b2a4bea693"
+    },
+    {
+      "path": "docs/AUDITORIA_GENERAL_2026-09-04.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "0d5ee4fcb0179de3859e813d628851744d7e5c6607dfc814842a7752a8b7a075"
+    },
+    {
+      "path": "docs/AUDITORIA_UX_PROFUNDA.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "12d84a6f8c45aa204de8aeb0e5e3bd53e6936e0ee9d7d97b78a9e5664219788c"
+    },
+    {
+      "path": "docs/AUDITORIA_UX_RETENCION.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "74a3c31e8d1e6e2b4c03561435a275ae881ffd16cf3c05485137e4094f055103"
+    },
+    {
+      "path": "docs/AUDITORIA_VISUAL_2026-09-05.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ae765b0ffa0cced7d87c29577c040d9e43e5bbd1ea9806116620718722ef3193"
+    },
+    {
+      "path": "docs/BUILD_ANDROID.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "4b5ff938fb7a5ffa54dc8eb57562e26d34f2d67657adcfa93314a2a070f53520"
+    },
+    {
+      "path": "docs/CAPACIDAD_DROPLET_NORTEX_2026-09-08.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "bc9192076463371ea378773207e9e735248c83703d8bf587f93bd67244593ae5"
+    },
+    {
+      "path": "docs/EQUIPO_DESARROLLO_NORTEX.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "2c8db47fc0c6569adfb2bf9e6666fe3b2f13a395ed4f35e141b43cd43311b305"
+    },
+    {
+      "path": "docs/ESTADO_ACTUAL_NORTEX.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "e6a2d178dde3a726128829e5eade32ab67e1458230dde70a61d323c094289c79"
+    },
+    {
+      "path": "docs/GUIA_FACTURAR_CARNE_CON_BALANZA.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "54f4b19f287ce5bb31d6be8d1904839b62ed5c769bd6be81c488fcf816ab56b8"
+    },
+    {
+      "path": "docs/IMPLEMENTACION_COMERCIOS_MEDIDOS_BALANZAS.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "baded621ce54774560146696ae1157efeb14e7ef035795e9ba6a07937b385b9e"
+    },
+    {
+      "path": "docs/MANTENIMIENTO_DOCUMENTAL_NORTEX.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "1c320b7822bd5982f99317b67f785b92b93e4bf5fa228a3b7420df244d78d947"
+    },
+    {
+      "path": "docs/MANUAL_TECNICO_DGI.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "0c482eebf0068f965377be80bf754c4511464b71dc7dcc1dd24d066c58a82373"
+    },
+    {
+      "path": "docs/MARKETING_INFRAESTRUCTURA.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "f13f5a092ec74bfa35e1b8357b7e0a0a6024dd289b51fa4ea44d3c644804ab99"
+    },
+    {
+      "path": "docs/MATRIZ_AUTORIZACION_OPERACIONES_MEDIDAS.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "9049680212f348a7fd0ee111219a8052173ae497012d3c27337750d8716c661d"
+    },
+    {
+      "path": "docs/NORTEXGPT_AVISO_Y_CONFIGURACION_2026-09-08.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "6308819cb4e1eda8ea092d0dc746cb67089177f40c55ba5632cbdde16f7f6e72"
+    },
+    {
+      "path": "docs/NORTEXGPT_CIERRE_Y_DEUDA_2026-09-08.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "4a41d81332b21c5bddfab83cda26f63ec9a697a3f3eac4df1e702e4c026a55eb"
+    },
+    {
+      "path": "docs/NORTEXGPT_CONVERSACION_2026-09-05.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "70d59fbb54679dd008efb7faea5fcc108f34a124b1ff15b33de94211448cc3a8"
+    },
+    {
+      "path": "docs/NORTEXGPT_EVALUACION.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "aaca30653de8e025170874fb3f312109b7b8aab720523586c1a59b8aa25bc89b"
+    },
+    {
+      "path": "docs/NORTEXGPT_EVALUACION_CONTINUIDAD_2026-09-07.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "82cc5b428a8263b6fb5a7d8c1b1cb329ae7ed904078995318b2e854ca10fd6b3"
+    },
+    {
+      "path": "docs/NORTEXGPT_EVALUACION_OPERATIVA_2026-09-05.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "30c944b82553670214fe4571ad84d4abf13c2200d853e9a5d3bdd4708d986b87"
+    },
+    {
+      "path": "docs/NORTEXGPT_HAIKU_CONFIGURACION_2026-09-08.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "b5198ec4a1f7ca7a06de3c66750e77c88e5162b462ec8ebdad6d690deb654ce7"
+    },
+    {
+      "path": "docs/NORTEXGPT_IMPLEMENTACION_2026-09-05.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "b41aa23aab39ea99f2e0df880b85355044b62a9d1195c9d90af4eef9bbb2dc0d"
+    },
+    {
+      "path": "docs/NORTEXGPT_OPERATIVO_2026-09-05.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "cc42e533734db3bf58578ac1e3ac8edbc95efe6e574be5d8147be0fb54d8e82a"
+    },
+    {
+      "path": "docs/ONBOARDING_RETENCION.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "77d41de64c7c56948dbf481bddcbefc6b140dfcdcd6916727cad1cd86e3a0065"
+    },
+    {
+      "path": "docs/PLAN_AGENTE_BANCARIO.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "98fd062159a43acf369846a48d7ca4655587231e41c32c3322491a612294196a"
+    },
+    {
+      "path": "docs/PLAN_APP_MOVIL.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "49f24342b4bd78638d827dae14ba37cc287187fbbd769b0dc0e6b3ca6bc75421"
+    },
+    {
+      "path": "docs/PLAN_BALANZAS_DIGITALES_Y_ETIQUETAS.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "9ea76aff6cd5e8f55ab1a485b948d846a87f96dd876480c5f9af99b39b2de0ae"
+    },
+    {
+      "path": "docs/PLAN_BODEGA_CONFIABLE_2026.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "c3d24c59c164144dfa98f56a97b7970b82a5c5f0ab82004254b0a9dbe8e9b25c"
+    },
+    {
+      "path": "docs/PLAN_BODEGUERO_EXPERTO.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "c143d677bdb7feb770448b98ecbc28b75814480626da390cd1a5c6c43ab368b3"
+    },
+    {
+      "path": "docs/PLAN_BODEGUERO_FASE_B.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "a57dfc56134ea5f35537c9108fa35789290737adb1ea05fd4a49dbb81fb50e37"
+    },
+    {
+      "path": "docs/PLAN_CAMARA_CODIGOS_BODEGA.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "1c24f2a46b54c01d4a0be38f8382e1e9be14b2a81ed0b60bf5b7e0be2d11f801"
+    },
+    {
+      "path": "docs/PLAN_CIERRE_CAJA_PROFESIONAL_DGI_CONTABILIDAD.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "77a6afc252798b57bd4bb97760fb16b5419c709cdc7104a02d037392c21d2698"
+    },
+    {
+      "path": "docs/PLAN_COBRANZA_DEFINITIVA.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "b2934406e407a785fd7d9d685b00b58f632321571229eda0b015e5d4040a0043"
+    },
+    {
+      "path": "docs/PLAN_COMERCIOS_HIBRIDOS_CARNES_AGROPECUARIA.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "48759a3871a9f955c0ff7404e44f158aa230351422e478d87062db8a91d39b2c"
+    },
+    {
+      "path": "docs/PLAN_DESACOPLE_ESCALABILIDAD.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "b2e084f51820099e12be0ae1407f256148d8b39d83607c6159610c2ce3ab5024"
+    },
+    {
+      "path": "docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md",
+      "category": "plan_or_design",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "dc0930628928c3c1c11ad25b5375f6902119e549653958a5a4b290e5fcc868de"
+    },
+    {
+      "path": "docs/PLAN_DIRECCION_UX_Y_VALIDACION_2026.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "dc89ce44d10840c4b16e8120c8a947718e4f8f38954b91daa5017438e58c890f"
+    },
+    {
+      "path": "docs/PLAN_FRONTEND_SPATIAL_COUNTER.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "15bd06c8633d2814fae00692a66a6a8ebf3098d33e878ee3d28e7e0e67a76e82"
+    },
+    {
+      "path": "docs/PLAN_MIGRACION_RAG_WHATSAPP_ESCALA.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "4e77bcf58fa631a9ba463f897dbaf853f39b87b584fb0a5964dea109026e5ed8"
+    },
+    {
+      "path": "docs/PLAN_MOBILE_STORES.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "aac5b6a00004f2ea33cd367943228fd8f4f48fa5c2813143e24203e3d264c5b7"
+    },
+    {
+      "path": "docs/PLAN_PRESTAMISTAS.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "848f2b6a22ce185fb884238ef1f6e0efe9bf62082ff3815e592010496a201993"
+    },
+    {
+      "path": "docs/PLAN_REDISENO_VISUAL.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "190e6deea24302fbde14dd947e5acbc419bd70ee86ec29f8a3c56d36151d37cb"
+    },
+    {
+      "path": "docs/PLAN_REFACTOR_POS_CAJA_NICA.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "a09cb7aa6d263c0e6f938cad3fe162bad8d4fd510e6295d62a99be6a702f2f00"
+    },
+    {
+      "path": "docs/PLAN_RRHH_NICARAGUA.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "a386dba23e26114880282582b08a8a0e1e03b8be905358c12e77b7f4389a540a"
+    },
+    {
+      "path": "docs/PLAN_STOCK_RAG_CAMARA_2026-09-04.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "472ea03a8f29c09191e11d413c107eeb8c47244f2e10c64182cb60aeeeff9ef4"
+    },
+    {
+      "path": "docs/PLAN_TRANSFORMACION_TOTAL_2026.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "879355ddc9f1cfaea8a8d099db27d4aea62bbed7e6e8308a7c58944bbc593daa"
+    },
+    {
+      "path": "docs/PLAN_UX_SIMPLE.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ef1e3f108a549e2469ec703f43946375d1ff55d0474a6c627a83953848b673d8"
+    },
+    {
+      "path": "docs/POS_Y_AVISOS_2026-09-04.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "bf817034602b685e341194fe76632816bee80d67a853a79767f88aefaa2c27ed"
+    },
+    {
+      "path": "docs/QA_REPORT.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "e37bc5d1a9518476a68aed795e8f9f27cfe031ca9f84ceb8df8c3f41f5316cd1"
+    },
+    {
+      "path": "docs/README.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "eba9ddd945f73a57d6926d9f869127984893b16dddcb0e0af6ffeeabf0d5db30"
+    },
+    {
+      "path": "docs/REDISENO_POS_2026-09-04.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "6251ea6526edd8e6a1e4e9783f5f5160bbc7559c489edf6c5c36b2104712f79b"
+    },
+    {
+      "path": "docs/SCALING_AUDIT.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "ff6e6e179697ff668e070df09566eee92d43207f7cb5b1ebc1941b799a20f1aa"
+    },
+    {
+      "path": "docs/SECURITY_AUDIT.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "57a695630f40e15a790581b049650938a1cfaa5fb8f080d9aa786312b2d915a6"
+    },
+    {
+      "path": "docs/SECURITY_REMEDIATION_PLAN.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "04286d54f53c7de884accd7ca679b0217087148f08541c7671aadb8a0ba589a4"
+    },
+    {
+      "path": "docs/VERIFICACION_MODULOS_2026-09-04.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "7db8e73834d42dbb7ec3620f683834e37404f5b973c44492319761d51dff9e57"
+    },
+    {
+      "path": "docs/WHATSAPP_INFRA.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "cca74e4b756347cf9eb721265396f7ff94a7211767da2ac0812294f8e6278f87"
+    },
+    {
+      "path": "docs/architecture/ADR-2026-08-27-backups-rag-scaling.md",
+      "category": "plan_or_design",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "572970acba52f9c59ea53e11af69497ee1e9df108a229904e75a0b7b9b3c74e5"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/conversation-panel.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ab44a9187c71256cf2906c3aefff6a40c4e5677b066443dcbdebfc4fc7014303"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-independent-review.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "7f1c41f6c37ffc360bcaab1d36c74340c37830f1c85fd3a9b81f8b322c2ad8a2"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-metrics-review.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "e070ab87979d4be117d91e94965cbb0d9ee24b6fa4868ec01a4d1e6455635ef1"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/operational-panel.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "c3c9ca91d3bf35872f8496dc5c357b961da42e57fecaa36972bdfb980e428839"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/panel.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "6dc0f2457320e74dcd42439d14ecbfecb32ef088ae519d43f77a4af395e9434b"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/qa-live-20260908/README.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "e590dc0f6547d467f9a28b5a5f39ba82c8fedfcf604d946e4f3f5381af345b25"
+    },
+    {
+      "path": "docs/evidence/nortexgpt/worker-recovery.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "8ca74d941e3a8697e9ba7c43183f958b3a8898cff8e9d1f61bd6a72301ceb134"
+    },
+    {
+      "path": "docs/product/apple-route-coverage-2026-09-01.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "46e2e0b4372e12c31440ec752d2fbd0b56fb365d28c3971b390552ecbf96ffd6"
+    },
+    {
+      "path": "docs/product/decision-checklist-activation-2026-08-25.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ade6ee2fa9f1de96362983b9c0cb266b6e6f47eeb004f7108eed40c01334410d"
+    },
+    {
+      "path": "docs/product/saas-blueprint-clientes-cobranza-contabilidad-2026-08-22.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "37fca64fb914ca45859bb523a174a022d29cd902f1b9e434ee3bd779871f77f0"
+    },
+    {
+      "path": "docs/releases/2026-08-22-bodeguero-deploy.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "b67e199bb463bb06f822e351a5fbc11889026052f19696fba21beeb726767a50"
+    },
+    {
+      "path": "docs/releases/2026-08-22-measured-scales-release.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "da45f396c9aa5bb8604e7dd76fca76b2bed73c8caac37db6eb62c748e40983fd"
+    },
+    {
+      "path": "docs/releases/2026-08-25-activation-retention-release.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "8ed60330b44fdf84d77bf8e4efa5ee4f243f6d8c05bd01cb20cace71a35fc3e4"
+    },
+    {
+      "path": "docs/releases/2026-08-30-sales-reports-close-z-release.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "4b730763c0a950e30696874ae9b362beaf275a3ee69d6d8a63a219a7f68bd057"
+    },
+    {
+      "path": "docs/releases/2026-09-01-frontend-audit-remediation.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "8694c83ac614964f5917bba79b00e1cdf16f59e46b940cea749dd3935d2ffde3"
+    },
+    {
+      "path": "docs/releases/2026-09-01-local-auth-cors-fix.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "05b6944355d36fd04e8328ea761ea78a711b7aaad6033db30129ac65d6066761"
+    },
+    {
+      "path": "docs/releases/2026-09-02-public-apple-unification.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "845e3473b30cb197f23d46be08b40d575ee3f6a7037e722aedc15448997b639c"
+    },
+    {
+      "path": "docs/releases/2026-09-04-pos-release-candidate.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "297fa5cbd2ca45152e63b758afcf74eee2d9a5cdd65408010a9e96bb09a10560"
+    },
+    {
+      "path": "docs/releases/2026-09-04-production-gate.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "1662b7f9b3a837a9aec8d751bdb5588311981c5dd097fd5981f4988260c87071"
+    },
+    {
+      "path": "docs/releases/2026-09-05-capital-off-score-admin.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "554dd4933615d7e595d24351feca9c2736a4e656c4e93abbc68a06987d42be9c"
+    },
+    {
+      "path": "docs/releases/2026-09-05-pos-publication-ci.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "59d6cdb83f34f4edac35e225678954de945e4bb5e9606e68fef7501afcf14436"
+    },
+    {
+      "path": "docs/releases/2026-09-05-release-gate-audit.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "dc02d137f2abae3aa0d72049bbe40d3a15ac50b79dbe42d691ddfd98a8135224"
+    },
+    {
+      "path": "docs/releases/2026-09-08-cajas-recuperacion.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "16276342b045f0c3ba65ab3851a7cb547f0d688fbae8e3fd14daedd870c50c8b"
+    },
+    {
+      "path": "docs/releases/2026-09-08-consolidated-candidate.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "10116919d76020133f8b52263771613b59ecade64e9bea6257354f4ed8e7c430"
+    },
+    {
+      "path": "docs/releases/evidence/2026-09-07/README.md",
+      "category": "evidence",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "0a4b9bfca4968a436c106ecb00534f1fd4419f9040a399030f2286535cd9e081"
+    },
+    {
+      "path": "docs/runbooks/assistant-private-whatsapp.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "d59a6d9d771f82d0d6d84f69c53fb05dc8be0b1231c90a2077d8264b4ac27a2e"
+    },
+    {
+      "path": "docs/runbooks/frontend-preprod-audit.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ffe8cf26a014573471b002410df321bccd668102928d8357d833c1b5055caf42"
+    },
+    {
+      "path": "docs/runbooks/integration-required.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "41e1812dab449ca84fc61050c1eb32cc29c7988774d69c7deefc108e17631284"
+    },
+    {
+      "path": "docs/runbooks/nortexgpt-evaluacion-haiku.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "c38a221f5e1938ca8031ad0a5f88123207e543eb605a8eac3953b5d7839d8e6e"
+    },
+    {
+      "path": "docs/runbooks/release-promotion.md",
+      "category": "reference_or_runbook",
+      "review": "reconciled_or_created_this_delivery",
+      "sha256": "7715fd0aa8de030af61aa639ee6797782758d4a3844e4a13184360b332e84c17"
+    },
+    {
+      "path": "docs/templates/CONTRATO_ENTREGA_VERIFICADA.md",
+      "category": "dated_report_or_audit",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "9086318bc4c6b11ae403413c0555e17bc747386c32788507e893d39566297c32"
+    },
+    {
+      "path": "tools/camera-barcode-phase0/README.md",
+      "category": "reference_or_runbook",
+      "review": "indexed_not_semantically_revalidated",
+      "sha256": "ee0e159a425a273a28a6d21ef96890c89bd8a7477ffad56fdf10b6a6136a63b4"
+    }
+  ]
+}

@@ -1,0 +1,710 @@
+// @vitest-environment jsdom
+import 'fake-indexeddb/auto';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { render, screen, cleanup, within, fireEvent, act, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import '@testing-library/jest-dom/vitest';
+import { MemoryRouter, useLocation } from 'react-router-dom';
+import React from 'react';
+import POS from '../components/POS';
+import { claveCarrito, serializarCarrito } from '../utils/cartPersistence';
+
+/**
+ * CARACTERIZACIÓN DEL CAMINO CRÍTICO DEL POS — la red del refactor.
+ *
+ * POR QUÉ EXISTE ESTE ARCHIVO
+ * ---------------------------
+ * `components/POS.tsx` es un componente de ~6.900 líneas con 122 `useState`.
+ * Hay que desarmarlo, pero hasta hoy NADA verificaba que siga vendiendo: no
+ * había un solo test de render en el repo. Los tests que nombran al POS leen su
+ * CÓDIGO FUENTE como texto y afirman que ciertos strings están adentro del
+ * archivo — o sea que clavan el monolito en su lugar y no cubren ni una venta.
+ *
+ * Esto es una red de CARACTERIZACIÓN, no de especificación: describe lo que el
+ * POS hace HOY, no lo que debería hacer. Se escribió contra el componente sin
+ * tocarlo. Su trabajo es fallar si un refactor cambia la conducta de la venta,
+ * y quedarse callado si solo se movió código de lugar. Por eso no asevera
+ * estructura (qué archivo, qué componente, qué hook) sino lo que ve el cajero:
+ * el producto entra, el total suma, el vuelto sale, la venta se registra.
+ *
+ * QUÉ FIJA, EXPLÍCITAMENTE
+ *   1. El escáner matchea contra el **SKU**. El POS no mapea ningún campo
+ *      `barcode` del backend: `indexarProductos` arma su índice con
+ *      name + sku + category y el match exacto es por SKU. Si un refactor
+ *      "arregla" eso, este test lo cuenta.
+ *   2. El total del carrito y el monto del botón de cobro son el mismo número.
+ *   3. El vuelto se calcula sobre el efectivo recibido.
+ *   4. La venta se postea a `/api/sales` con su total, y con `offlineId` para
+ *      que el backend pueda deduplicar el reintento.
+ *
+ * NOTA DE ENTORNO: corre en jsdom con `fake-indexeddb` (la cola offline usa
+ * IndexedDB) y con `fetch` doblado. No toca red ni base de datos.
+ */
+
+const PRODUCTO = {
+    id: 'p1',
+    name: 'Coca Cola 500ml',
+    sku: '7501055363018',
+    price: 25,
+    cost: 15,
+    stock: 40,
+    minStock: 5,
+    unit: 'unidad',
+    category: 'Bebidas',
+    ivaExento: false,
+    isPublished: true,
+};
+
+const TURNO_ABIERTO = {
+    id: 's1',
+    status: 'OPEN',
+    initialCash: '500',
+    userId: 'u1',
+    startTime: '2026-08-27T12:00:00.000Z',
+};
+
+/** Respuestas por defecto: catálogo con un producto y una caja abierta. */
+const respuestasBase = (): Record<string, unknown> => ({
+    '/api/products': [PRODUCTO],
+    '/api/customers': [],
+    // Forma REAL del endpoint: el turno viaja aplanado (no envuelto en `shift`),
+    // con `esTurnoPropio`. Sin turno abierto el backend devuelve `null` pelado.
+    '/api/shifts/current': { ...TURNO_ABIERTO, esTurnoPropio: true, turnoDe: null },
+    '/api/cash-movements': [],
+    '/api/cash-movements/balance': { efectivo: 500, efectivoNIO: 500 },
+    '/api/pos/pulso': {},
+    '/api/tenant/fiscal-settings': {},
+    '/api/tenant/cashier-settings': {},
+    '/api/tenant/inventory-settings': {},
+    '/api/accounting/exchange-rate/latest': {},
+    '/api/agent-banking/agreements': [],
+    '/api/scale-labels/active-context': {},
+    '/api/scale-labels/preview': { data: { classification: 'SKU' } },
+});
+
+let respuestas: Record<string, unknown>;
+/** Cuerpos posteados, para aseverar QUÉ se registró y no solo que se llamó. */
+let posteos: Array<{ ruta: string; cuerpo: any }>;
+let pausarRespuestaVenta: boolean;
+let resolverRespuestaVenta: (() => void) | null;
+
+function doblarFetch() {
+    vi.stubGlobal('fetch', vi.fn(async (url: any, init?: any) => {
+        const ruta = String(url).split('?')[0];
+        if (ruta === '/api/promotions/checkout/quote') return respuestaOk({ enabled: false, quote: null });
+        if (init?.method === 'POST') {
+            let cuerpo: any = null;
+            try { cuerpo = JSON.parse(init.body); } catch { /* sin cuerpo JSON */ }
+            posteos.push({ ruta, cuerpo });
+            if (ruta === '/api/sales') {
+                const respuesta = respuestaOk({ id: 'venta-1', total: cuerpo?.total, invoiceNumber: '0001' });
+                if (pausarRespuestaVenta) {
+                    return new Promise((resolve) => {
+                        resolverRespuestaVenta = () => resolve(respuesta);
+                    });
+                }
+                return respuesta;
+            }
+        }
+        // OJO con el `??`: varios endpoints devuelven `null` a propósito
+        // (`/api/shifts/current` sin turno abierto). Un `?? {}` convertiría ese
+        // null en un objeto truthy y el doble mentiría, mostrando "Caja abierta"
+        // donde no hay ninguna. Se distingue "no configurado" de "configurado
+        // como null" con `in`.
+        const cuerpo = ruta in respuestas ? respuestas[ruta] : {};
+        return respuestaOk(cuerpo);
+    }));
+}
+
+const respuestaOk = (cuerpo: unknown) => ({
+    ok: true,
+    status: 200,
+    json: async () => cuerpo,
+    text: async () => JSON.stringify(cuerpo),
+});
+
+beforeEach(() => {
+    respuestas = respuestasBase();
+    posteos = [];
+    pausarRespuestaVenta = false;
+    resolverRespuestaVenta = null;
+    // El giro va EXPLÍCITO. Esta caracterización describe el POS en modo simple
+    // y el modo simple depende del giro (resolvePosSimple): sin `type`, el
+    // fixture se apoyaba en que el POS arrancaba simple para todos —que era
+    // justo el bug del descuento (ver tests/posDescuentoModoSimple.test.tsx)—.
+    // La pulpería es la que este fixture dice ser desde su primer día.
+    localStorage.setItem('nortex_tenant_data', JSON.stringify({ id: 't1', businessName: 'Pulpería QA', type: 'PULPERIA' }));
+    localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', name: 'Cajera', role: 'CASHIER', tenant: { id: 't1', type: 'PULPERIA' } }));
+    localStorage.setItem('token', 'tok-qa');
+    doblarFetch();
+});
+
+afterEach(() => {
+    resolverRespuestaVenta?.();
+    cleanup();
+    localStorage.clear();
+    vi.unstubAllGlobals();
+});
+
+const RutaActual = () => <output data-testid="ruta-actual">{useLocation().pathname}</output>;
+const montarPOS = () => render(<MemoryRouter initialEntries={['/app/pos']}><POS /><RutaActual /></MemoryRouter>);
+
+/** El buscador es el control donde el cajero pasa el turno; tiene autoFocus. */
+const buscador = () => screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i);
+
+/** Deja que corran los efectos y las promesas del fetch doblado. */
+const asentar = (ms = 250) => new Promise((r) => setTimeout(r, ms));
+
+const installResponsiveMedia = (initialDesktop = true) => {
+    const desktopQuery = '(min-width: 1024px)';
+    let desktop = initialDesktop;
+    const listeners = new Set<(event: MediaQueryListEvent) => void>();
+
+    vi.stubGlobal('matchMedia', vi.fn((query: string) => ({
+        media: query,
+        onchange: null,
+        get matches() { return query === desktopQuery ? desktop : false; },
+        addEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+        removeEventListener: (_type: string, listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
+        addListener: (listener: (event: MediaQueryListEvent) => void) => listeners.add(listener),
+        removeListener: (listener: (event: MediaQueryListEvent) => void) => listeners.delete(listener),
+        dispatchEvent: () => true,
+    })));
+
+    return {
+        setDesktop(matches: boolean) {
+            desktop = matches;
+            act(() => listeners.forEach(listener => listener({ matches, media: desktopQuery } as MediaQueryListEvent)));
+        },
+    };
+};
+
+describe('POS · escanear y armar la venta', () => {
+    it('caja legacy rechaza 1.5 en el ticket y recupera el cobro al corregir a 2', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, name: 'Caja QA', unit: 'caja', saleMode: null, quantityStep: null }];
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        const input = await screen.findByRole('textbox', { name: 'Cantidad de Caja QA en caja' });
+        expect(screen.getByRole('button', { name: 'Agregar 1 caja de Caja QA' })).toBeTruthy();
+        fireEvent.change(input, { target: { value: '1.5' } });
+        fireEvent.blur(input);
+        expect(await screen.findByRole('alert')).toHaveTextContent('enteros');
+        expect(screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i })).toBeDisabled();
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+        fireEvent.change(input, { target: { value: '2' } });
+        fireEvent.blur(input);
+        expect(await screen.findByRole('button', { name: /Cobrar C\$ 50\.00 en efectivo/i })).toBeEnabled();
+        expect(screen.queryByRole('alert')).toBeNull();
+    });
+    it('respeta sellableStock=0 aunque la existencia física sea positiva', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, stock: 40, sellableStock: 0 }];
+        const user = userEvent.setup();
+        montarPOS();
+
+        await waitFor(() => expect(fetch).toHaveBeenCalledWith(
+            '/api/products?includeSellableStock=true',
+            expect.objectContaining({ headers: expect.any(Object) }),
+        ));
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain(`${PRODUCTO.name} está agotado`);
+        expect(cuerpo).toContain('Tu venta está vacía');
+        expect(screen.queryByRole('textbox', { name: /Cantidad de Coca Cola/ })).not.toBeInTheDocument();
+    });
+
+    it('usa stock físico como fallback cuando sellableStock no viene en la respuesta', async () => {
+        respuestas['/api/products'] = [{ ...PRODUCTO, stock: 1 }];
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain(`${PRODUCTO.name} agregado`);
+        expect(screen.getByRole('textbox', { name: /Cantidad de Coca Cola/ })).toHaveValue('1');
+        expect(screen.getByRole('button', { name: /^Cobrar C\$ 25\.00 en efectivo/ })).toBeInTheDocument();
+    });
+
+    it('abre Nuevo y Excel desde una sola barra sin perder la venta al cerrar', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+        expect(screen.getAllByRole('button', { name: /^Nuevo$/ })).toHaveLength(1);
+        expect(screen.getAllByRole('button', { name: /^Excel$/ })).toHaveLength(1);
+        await user.click(screen.getByRole('button', { name: /^Nuevo$/ }));
+        expect(await screen.findByPlaceholderText('Ej. Taladro Percutor 500W')).toBeVisible();
+        await user.keyboard('{Escape}');
+        expect(screen.queryByPlaceholderText('Ej. Taladro Percutor 500W')).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: /^Excel$/ }));
+        expect(await screen.findByRole('heading', { name: /Importar/i })).toBeVisible();
+        await user.keyboard('{Escape}');
+        expect(screen.queryByRole('heading', { name: /Importar/i })).not.toBeInTheDocument();
+        expect(screen.getByRole('textbox', { name: /Cantidad de Coca Cola/ })).toHaveValue('1');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('presenta el reporte Z autoritativo al cerrar y conserva su folio para reimpresión', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        respuestas['/api/shifts/close'] = {
+            systemExpectedCash: '9999', difference: '9999',
+            closeReport: {
+                id: 'report-qa', shiftId: 's1', folio: 'Z-QA-0001', businessDate: '2026-09-04',
+                version: 1, contentHash: 'a'.repeat(64), createdAt: '2026-09-04T23:00:00.000Z',
+                documentUrl: '/api/reports/shifts/s1/document',
+                report: {
+                    version: 1, folio: 'Z-QA-0001', businessDate: '2026-09-04',
+                    timeZone: 'America/Managua', generatedAt: '2026-09-04T23:00:00.000Z',
+                    summary: { grossSales: '0', returnsTotal: '0', netSales: '0', transactionCount: 0,
+                        returnCount: 0, itemQuantityGross: '0', itemQuantityReturned: '0', itemQuantityNet: '0',
+                        discountTotal: '0', vatCollected: '0', cogs: '0', grossProfit: '0', averageTicket: '0' },
+                    paymentMethods: [], products: [],
+                    cash: { openingNio: '500', cashSalesNio: '0', cashRefundsNio: '0', paidInNio: '0',
+                        paidOutNio: '0', expectedNio: '500', countedNio: '499.99', differenceNio: '-0.01',
+                        openingUsd: '0', paidInUsd: '0', paidOutUsd: '0', expectedUsd: '0',
+                        countedUsd: '0', differenceUsd: '0' },
+                },
+            },
+        };
+        const user = userEvent.setup();
+        montarPOS();
+        await user.click(await screen.findByRole('button', { name: 'Cerrar caja' }));
+        await user.type(screen.getByRole('textbox', { name: 'Efectivo contado en la gaveta' }), '499.99');
+        await user.click(screen.getByRole('button', { name: 'REALIZAR CORTE Z' }));
+        expect(await screen.findByRole('heading', { name: 'Resumen de cierre' })).toBeVisible();
+        expect(screen.getByText('Faltante de efectivo')).toBeVisible();
+        expect(screen.getByText('Folio Z-QA-0001')).toBeVisible();
+        expect(screen.getByRole('button', { name: /Ver \/ imprimir reporte completo/ })).toBeVisible();
+        expect(posteos.filter(p => p.ruta === '/api/shifts/close')).toEqual([
+            { ruta: '/api/shifts/close', cuerpo: { shiftId: 's1', declaredCash: 499.99 } },
+        ]);
+    });
+
+    it('una respuesta tardía del lector no agrega a otra sesión', async () => {
+        const originalFetch = globalThis.fetch;
+        let release!: (value: unknown) => void;
+        vi.stubGlobal('fetch', vi.fn((url: any, init?: any) => String(url) === '/api/scale-labels/preview'
+            ? new Promise(resolve => { release = resolve; }) : originalFetch(url, init)));
+        montarPOS(); await buscador(); await asentar(80);
+        fireEvent.click(screen.getByRole('button', { name: 'Escanear con cámara' }));
+        fireEvent.change(screen.getByRole('textbox', { name: 'Código de barras manual' }), { target: { value: PRODUCTO.sku } });
+        fireEvent.click(screen.getByRole('button', { name: 'Usar código' }));
+        await waitFor(() => expect(release).toBeTypeOf('function'));
+        localStorage.setItem('nortex_token', 'otra-sesion-qa');
+        await act(async () => { release(respuestaOk({ data: { classification: 'SKU' } })); });
+        expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
+    });
+    it('cámara usa el lector del POS una vez y bloquea el lector de atrás mientras está abierta', async () => {
+        montarPOS(); await buscador(); await asentar(80);
+        fireEvent.click(screen.getByRole('button', { name: 'Escanear con cámara' }));
+        for (const key of PRODUCTO.sku) fireEvent.keyDown(window, { key });
+        fireEvent.keyDown(window, { key: 'Enter' });
+        expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
+        fireEvent.change(screen.getByRole('textbox', { name: 'Código de barras manual' }), { target: { value: PRODUCTO.sku } });
+        fireEvent.click(screen.getByRole('button', { name: 'Usar código' }));
+        await waitFor(() => expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1'));
+        expect(document.querySelector('[data-camera-scanner]')).toBeNull();
+        expect(posteos.find(p => p.ruta === '/api/sales')).toBeUndefined();
+    });
+    it('mantiene legibles y táctiles las acciones rápidas de producto', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        montarPOS();
+
+        const rapido = await screen.findByRole('button', { name: /Rápido/i });
+        const nuevo = await screen.findByRole('button', { name: /Nuevo/i });
+
+        expect(rapido).toHaveClass('nx-fluid-press', 'min-h-tap', 'bg-amber-400', 'text-slate-950');
+        expect(nuevo).toHaveClass('nx-fluid-press', 'min-h-tap', 'bg-nortex-500', 'text-brand-on');
+    });
+
+    it('escanear un SKU exacto mete el producto y el total refleja su precio', async () => {
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain('Coca Cola 500ml agregado');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
+        // El total y el botón de cobro dicen el MISMO número: es la cifra que el
+        // cajero le canta al cliente.
+        expect(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i })).toBeTruthy();
+    });
+
+    it('escanear dos veces el mismo código acumula cantidad en una sola línea', async () => {
+        const user = userEvent.setup();
+        montarPOS();
+
+        const campo = await buscador();
+        await user.type(campo, `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.type(campo, `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        // OJO — se asevera "2 unidad", en singular, porque es LO QUE DICE HOY:
+        // la línea no pluraliza la unidad. Es un defecto de copy que este test
+        // deja registrado en vez de tapar. Cuando se arregle, hay que cambiar
+        // esta línea A PROPÓSITO; lo que no puede pasar es que se arregle o se
+        // rompa sin que nadie se entere.
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('2');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
+        expect(await screen.findByRole('button', { name: /Cobrar C\$ 50\.00 en efectivo/i })).toBeTruthy();
+    });
+
+    it('un código que no existe no ensucia el carrito y lo dice con el código adentro', async () => {
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), '0000000000000{Enter}');
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain('No encontramos');
+        expect(cuerpo).toContain('0000000000000');
+        expect(cuerpo).toContain('Tu venta está vacía');
+    });
+});
+
+describe('POS · correcciones de venta aprobadas', () => {
+    it('lleva al expediente con aprobación, sin ejecutar una devolución o anulación desde el POS', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.click(await screen.findByTitle('Acciones de caja'));
+        const menu = await screen.findByRole('menu', { name: 'Acciones de caja' });
+        const corrections = within(menu).getByRole('button', { name: 'Correcciones y aprobaciones' });
+        expect(corrections).toHaveAttribute(
+            'title',
+            'Solicitá y aprobá devoluciones o anulaciones antes de ejecutarlas',
+        );
+
+        await user.click(corrections);
+
+        expect(screen.getByTestId('ruta-actual')).toHaveTextContent('/app/sales');
+        expect(posteos.filter((posteo) => (
+            posteo.ruta === '/api/returns' || /\/api\/sales\/[^/]+\/cancel$/.test(posteo.ruta)
+        ))).toEqual([]);
+    });
+});
+
+describe('POS · cobrar en efectivo', () => {
+    it('abre el panel de efectivo con el total de la venta', async () => {
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i }));
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain('Efectivo recibido');
+        expect(cuerpo).toContain('Confirmá el vuelto antes de registrar');
+    });
+
+    it('calcula el vuelto sobre el efectivo recibido', async () => {
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i }));
+        await asentar(150);
+        // Billete de C$50 sobre una venta de C$25.
+        await user.click(await screen.findByRole('button', { name: /^C\$ 50$/ }));
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        expect(cuerpo).toContain('Vuelto');
+        expect(cuerpo).toContain('C$ 25.00');
+    });
+
+    it('registra la venta con el total y con clave de idempotencia', async () => {
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i }));
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /^C\$ 50$/ }));
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /Registrar efectivo y seguir/i }));
+        await asentar(400);
+
+        const venta = posteos.find((p) => p.ruta === '/api/sales');
+        expect(venta, 'la venta tiene que llegar a /api/sales').toBeTruthy();
+        expect(Number(venta!.cuerpo.total)).toBe(25);
+        expect(venta!.cuerpo.paymentMethod).toBe('CASH');
+        // `offlineId` es la clave con la que el backend deduplica el reintento
+        // (`executeSale`). Sin ella, un reintento por lie-fi cobra dos veces.
+        expect(typeof venta!.cuerpo.offlineId).toBe('string');
+        expect(venta!.cuerpo.offlineId.length).toBeGreaterThan(0);
+        // La línea vendida viaja con su producto y su cantidad. Dos detalles del
+        // contrato real que conviene tener fijados: la línea identifica el
+        // producto con `id` (no `productId`), y `quantity` viaja como STRING —
+        // el dominio de cantidades del repo es decimal exacto (utils/quantity.ts),
+        // así que mandarlo como número sería perder precisión en balanza.
+        expect(venta!.cuerpo.items).toHaveLength(1);
+        expect(venta!.cuerpo.items[0]).toMatchObject({ id: 'p1', quantity: '1' });
+        fireEvent(window, new Event('pagehide'));
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toBeNull();
+    });
+});
+
+describe('POS · efectivo clásico seguro', () => {
+    it('no postea ni cierra el sheet al presionar Enter con efectivo insuficiente', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        installResponsiveMedia();
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /EFECTIVO.*C\$ 25\.00/i }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: 'Efectivo' });
+        const amountInput = within(dialog).getByRole('textbox', { name: 'Efectivo recibido en córdobas' });
+        await user.type(amountInput, '10{Enter}');
+        await asentar(100);
+
+        expect(posteos.find((posteo) => posteo.ruta === '/api/sales')).toBeUndefined();
+        expect(screen.getByRole('dialog', { name: 'Efectivo' })).toBe(dialog);
+        expect(within(dialog).getByRole('status')).toHaveTextContent(/Falta\s*C\$ 15\.00/);
+        expect(amountInput).toHaveAttribute('aria-invalid', 'true');
+        expect(within(dialog).getByRole('button', { name: /Cobrar C\$ 25\.00/i })).toBeDisabled();
+    });
+
+    it('mantiene los atajos operativos detrás del diálogo mientras se captura el pago', async () => {
+        localStorage.setItem('nortex_ui_mode', 'full');
+        const media = installResponsiveMedia();
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /EFECTIVO.*C\$ 25\.00/i }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: 'Efectivo' });
+        const amountInput = within(dialog).getByRole('textbox', { name: 'Efectivo recibido en córdobas' });
+        expect(document.activeElement).toBe(amountInput);
+
+        fireEvent.keyDown(window, { key: 'F2' });
+        fireEvent.keyDown(window, { key: 'F7' });
+        fireEvent.keyDown(window, { key: 'k', ctrlKey: true });
+
+        expect(document.activeElement).toBe(amountInput);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(screen.getByRole('dialog', { name: 'Efectivo' })).toBe(dialog);
+
+        media.setDesktop(false);
+        await asentar(50);
+
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(screen.getByRole('dialog', { name: 'Efectivo' })).toBe(dialog);
+        expect(screen.queryByRole('dialog', { name: 'Ticket' })).toBeNull();
+    });
+});
+
+describe('POS · selector de pago seguro', () => {
+    it('bloquea F2, F7 y Ctrl+K detrás del PosPaymentSheet y conserva un solo diálogo', async () => {
+        installResponsiveMedia();
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: 'Otro pago' }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: /C\$ 25\.00/ });
+        const initialAction = within(dialog).getByRole('button', { name: 'Registrar transferencia' });
+        expect(document.activeElement).toBe(initialAction);
+
+        expect(fireEvent.keyDown(window, { key: 'F2' })).toBe(false);
+        expect(fireEvent.keyDown(window, { key: 'F7' })).toBe(false);
+        expect(fireEvent.keyDown(window, { key: 'k', ctrlKey: true })).toBe(false);
+
+        expect(document.activeElement).toBe(initialAction);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(screen.getByRole('dialog', { name: /C\$ 25\.00/ })).toBe(dialog);
+    });
+
+    it('mantiene Cerrar, Escape y backdrop bloqueados mientras la venta está en processing', async () => {
+        installResponsiveMedia();
+        pausarRespuestaVenta = true;
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: 'Otro pago' }));
+        await asentar(150);
+
+        const dialog = await screen.findByRole('dialog', { name: /C\$ 25\.00/ });
+        await user.click(within(dialog).getByRole('button', { name: 'Registrar transferencia' }));
+
+        await waitFor(() => expect(resolverRespuestaVenta).toEqual(expect.any(Function)));
+        await waitFor(() => expect(
+            dialog.querySelector('.nx-pos-payment-sheet-content'),
+        ).toHaveAttribute('aria-busy', 'true'));
+        expect(within(dialog).getByRole('button', { name: 'Cerrar' })).toBeDisabled();
+
+        fireEvent.keyDown(document, { key: 'Escape' });
+        const root = dialog.closest<HTMLElement>('[data-fluid-sheet-root]')!;
+        fireEvent.click(root.querySelector<HTMLElement>('[data-fluid-sheet-backdrop]')!);
+
+        expect(screen.getByRole('dialog', { name: /C\$ 25\.00/ })).toBe(dialog);
+        expect(screen.getAllByRole('dialog')).toHaveLength(1);
+        expect(document.body.style.overflow).toBe('hidden');
+
+        const resolve = resolverRespuestaVenta;
+        resolverRespuestaVenta = null;
+        await act(async () => {
+            resolve?.();
+            await Promise.resolve();
+        });
+        await asentar(400);
+    });
+});
+
+describe('POS · sin caja abierta', () => {
+    it('conserva un carrito de otro turno hasta decidir recuperarlo', async () => {
+        respuestas['/api/shifts/current'] = null;
+        const crudo = serializarCarrito({ shiftId: 'turno-anterior', lineas: [{ ...PRODUCTO, quantity: 1 }], clienteId: null, descuentoGlobal: '', ahoraMs: Date.now() });
+        localStorage.setItem(claveCarrito('t1', 'u1'), crudo as string);
+        montarPOS();
+        expect(await screen.findByText('Tenés una venta sin terminar')).toBeVisible();
+        await asentar(400);
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toBe(crudo);
+        await userEvent.setup().type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        expect(screen.queryByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).not.toBeInTheDocument();
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toBe(crudo);
+        fireEvent.click(screen.getByRole('button', { name: 'Recuperar' }));
+        expect(await screen.findByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        await asentar(400);
+        expect(JSON.parse(localStorage.getItem(claveCarrito('t1', 'u1')) as string).shiftId).toBeNull();
+        expect(posteos.some(p => p.ruta === '/api/sales')).toBe(false);
+    });
+
+    it('conserva el carrito previo al turno al salir y volver sin atribuir una venta', async () => {
+        respuestas['/api/shifts/current'] = null;
+        const user = userEvent.setup();
+        const view = montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        view.unmount();
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toContain('Coca Cola 500ml');
+        montarPOS();
+        expect(await screen.findByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(posteos.some(p => p.ruta === '/api/sales')).toBe(false);
+    });
+
+    it('avisa que la caja está cerrada y no ofrece el saldo de la gaveta', async () => {
+        // El backend devuelve `null` PELADO cuando no hay turno abierto
+        // (`server.ts`: `if (!shift) return res.json(null)`).
+        respuestas['/api/shifts/current'] = null;
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar();
+
+        const cuerpo = document.body.textContent ?? '';
+        // El estado de la caja se dice en la cabecera, no se adivina.
+        expect(cuerpo).toContain('Caja cerrada');
+        expect(cuerpo).not.toContain('Caja abierta');
+        // El carrito SÍ se arma: la cajera puede ir marcando mientras se abre
+        // la caja. Lo que no puede es cerrar la venta sin turno.
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Coca Cola 500ml en unidad' })).toHaveValue('1');
+        expect(cuerpo).toContain('C$ 25.00 / unidad');
+    });
+
+    it('intentar cobrar sin turno no manda la venta al servidor', async () => {
+        respuestas['/api/shifts/current'] = null;
+        const user = userEvent.setup();
+        montarPOS();
+
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await asentar(150);
+        await user.click(await screen.findByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo/i }));
+        await asentar(400);
+
+        // Sea cual sea la pantalla que muestre, lo que NO puede pasar es que se
+        // registre una venta que el backend va a rechazar por NO_SHIFT y que
+        // después nadie sepa reconciliar contra la gaveta.
+        expect(posteos.find((p) => p.ruta === '/api/sales')).toBeUndefined();
+    });
+});
+
+
+describe('POS · regresión crédito Decimal de la API', () => {
+    const elegirCliente = async (debt: unknown = '900', limit: unknown = '30000', extra: Record<string, unknown> = {}, legacyArray = false) => {
+        installResponsiveMedia(true);
+        localStorage.setItem('nortex_token', 'token-sintetico-qa');
+        localStorage.setItem('nortex_ui_mode', 'full');
+        respuestas['/api/products'] = [{ ...PRODUCTO, name: 'Artículo sintético QA', price: 1960 }];
+        const rows = [{ id: 'cliente-qa', name: 'Cliente sintético QA', creditLimit: limit, currentDebt: debt, isBlocked: false, ...extra }];
+        respuestas['/api/customers'] = legacyArray ? rows : { customers: rows, total: 1, page: 1, pageSize: 20 };
+        const user = userEvent.setup();
+        montarPOS();
+        await user.type(await buscador(), `${PRODUCTO.sku}{Enter}`);
+        await user.click(await screen.findByRole('button', { name: /^CRÉDITO/ }));
+        await user.click(await screen.findByText('Cliente sintético QA'));
+        return user;
+    };
+
+    it.each([['900', '30000', false], ['900.00', '30000.00', false], [900, 30000, true]])('registra 1960 con deuda %s y límite %s sin denegar crédito', async (debt, limit, legacyArray) => {
+        const user = await elegirCliente(debt, limit, {}, legacyArray);
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).not.toHaveTextContent('C$ 9,001,960.00 (30007%)');
+        await waitFor(() => expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(1));
+        expect(posteos.find(p => p.ruta === '/api/sales')?.cuerpo).toMatchObject({ customerId: 'cliente-qa', paymentMethod: 'CREDIT', total: 1960 });
+        expect(document.body).not.toHaveTextContent('CRÉDITO DENEGADO');
+    });
+
+    it('muestra 2860/143% y conserva PIN cuando realmente supera el límite', async () => {
+        const user = await elegirCliente('900', '2000');
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).toHaveTextContent('C$ 2,860.00 (143%)');
+        expect(document.body).toHaveTextContent('CRÉDITO DENEGADO');
+        expect(screen.getByRole('button', { name: /Autorizar Override/ })).toBeDisabled();
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('cliente bloqueado conserva denegación aunque su límite alcance', async () => {
+        const user = await elegirCliente('900', '30000', { isBlocked: true });
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).toHaveTextContent('C$ 2,860.00 (10%)');
+        expect(document.body).toHaveTextContent('CRÉDITO DENEGADO');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it.each([null, 'inválido'])('deuda %s detiene el cobro y pide volver a consultar', async (debt) => {
+        const user = await elegirCliente(debt);
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        expect(document.body).toHaveTextContent('No se pudo verificar el crédito');
+        expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(0);
+    });
+
+    it('saldo a favor reduce solamente la deuda nueva, como executeSale', async () => {
+        const user = await elegirCliente('900', '2400', { storeCreditBalance: '500' });
+        await user.click(await screen.findByRole('button', { name: /Usar saldo a favor/ }));
+        await user.click(await screen.findByRole('button', { name: /^Fiado$/ }));
+        await waitFor(() => expect(posteos.filter(p => p.ruta === '/api/sales')).toHaveLength(1));
+        expect(posteos.find(p => p.ruta === '/api/sales')?.cuerpo).toMatchObject({ paymentMethod: 'CREDIT', storeCreditAmount: '500.00' });
+        expect(document.body).not.toHaveTextContent('CRÉDITO DENEGADO');
+    });
+});

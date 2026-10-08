@@ -1,21 +1,69 @@
 import React, { useState, useEffect } from 'react';
-import { TrendingUp, TrendingDown, DollarSign, Activity, AlertCircle, CreditCard, PieChart, Banknote, X, Check, Clock, Lock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings, Timer } from 'lucide-react';
+import { TrendingUp, TrendingDown, Activity, AlertCircle, CreditCard, Banknote, X, Clock, RefreshCw, ShoppingCart, ArrowRight, ShieldAlert, FileText, Settings, Timer } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Loan, Tenant } from '../types';
+import { Tenant } from '../types';
+import { formatMoney } from '../utils/money';
+import { chartColors, gridProps, axisProps, tooltipProps } from '../utils/chartTheme';
 import { useNavigate } from 'react-router-dom';
+import LenderDashboard from './LenderMode/LenderDashboard';
+import MotorizadosPanel from './LenderMode/MotorizadosPanel';
+import { fetchOnboardingStatus } from '../utils/onboardingStatus';
+import {
+  FISCAL_REGIME_GENERAL,
+  type FiscalRegime,
+  normalizeFiscalRegime,
+} from '../utils/fiscalRegime';
 
-const Dashboard: React.FC = () => {
+interface FiscalData {
+  taxId: string;
+  address: string;
+  phone: string;
+  dgiAuthCode: string;
+  fiscalRegime: FiscalRegime;
+}
+
+const EMPTY_FISCAL_DATA: FiscalData = {
+  taxId: '',
+  address: '',
+  phone: '',
+  dgiAuthCode: '',
+  fiscalRegime: FISCAL_REGIME_GENERAL,
+};
+
+/** Lee el tipo de tenant del usuario guardado (LENDER = prestamista). */
+function getTenantType(): string {
+  try {
+    const u = localStorage.getItem('nortex_user');
+    if (u) return JSON.parse(u)?.tenant?.type || '';
+  } catch { /* ignore */ }
+  return '';
+}
+
+/**
+ * Número finito que MANDÓ el backend, o null si el campo no vino.
+ *
+ * Los campos de ganancia y retiro seguro son NUEVOS en /api/dashboard/stats.
+ * Si el SPA corre contra un backend que todavía no los manda, la pantalla
+ * muestra "—": jamás un número inventado ni el ingreso bruto haciéndose pasar
+ * por ganancia, que es exactamente el error que esta pantalla venía cometiendo.
+ */
+function numeroDelBackend(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) ? v : null;
+}
+
+/** Lee el rol del JWT (fuente autoritativa; el backend lo re-verifica). */
+function getUserRole(): string {
+  try {
+    const t = localStorage.getItem('nortex_token');
+    if (t) return JSON.parse(atob(t.split('.')[1]))?.role || '';
+  } catch { /* ignore */ }
+  return '';
+}
+
+const RetailDashboard: React.FC = () => {
   const navigate = useNavigate();
-  // State for Lending
-  const [showLoanModal, setShowLoanModal] = useState(false);
-  const [loanAmount, setLoanAmount] = useState('');
-  const [loadingLoan, setLoadingLoan] = useState(false);
   const [tenantData, setTenantData] = useState<Tenant | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeLoans, setActiveLoans] = useState<Loan[]>([]);
-  const [processingSub, setProcessingSub] = useState(false);
-  const [refreshingScore, setRefreshingScore] = useState(false);
-  const [scoreFactors, setScoreFactors] = useState<string[]>([]);
 
   // Real Chart Data
   const [chartData, setChartData] = useState<any[]>([]);
@@ -25,11 +73,33 @@ const Dashboard: React.FC = () => {
 
   // Fiscal Settings State
   const [showFiscalModal, setShowFiscalModal] = useState(false);
-  const [fiscalData, setFiscalData] = useState({ taxId: '', address: '', phone: '', dgiAuthCode: '' });
+  const [fiscalData, setFiscalData] = useState<FiscalData>(EMPTY_FISCAL_DATA);
   const [savingFiscal, setSavingFiscal] = useState(false);
+  // Va acá arriba con el resto de los hooks a propósito: más abajo el componente
+  // tiene dos returns tempranos (spinner de carga y estado de error), y un
+  // useState después de ellos rompe el orden de hooks —pantalla en blanco con
+  // "Minified React error #310"—. Lo usa `elegirRegimenFiscal`.
+  const [guardandoRegimen, setGuardandoRegimen] = useState(false);
+
+  // Deep-link del onboarding: el paso fiscal apunta a /app/dashboard?config=fiscal
+  // para abrir directo el modal de Configuración DGI (la pantalla real del paso).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('config') === 'fiscal') setShowFiscalModal(true);
+  }, []);
 
   // 📊 Today Stats & Alerts
-  const [todayStats, setTodayStats] = useState<{ totalSales: number; totalExpenses: number; netProfit: number } | null>(null);
+  // Los campos nuevos (NX-01) van OPCIONALES a propósito: el SPA se despliega
+  // por separado del backend y no puede asumir que ya existen.
+  const [todayStats, setTodayStats] = useState<{
+    totalSales: number;
+    totalExpenses: number;
+    netProfit: number;
+    gananciaBruta?: number;
+    ingresoNeto?: number;
+    costoVendido?: number;
+    lineasSinCosto?: number;
+  } | null>(null);
   const [theftAlerts, setTheftAlerts] = useState<any[]>([]);
 
   // 🛡️ Survival Data (NIIF PyMES)
@@ -38,6 +108,23 @@ const Dashboard: React.FC = () => {
   // ⚠️ Expiring Batches
   const [expiringBatches, setExpiringBatches] = useState<any[]>([]);
 
+  // 🚀 "Empezá acá" (retención R2): con CERO productos y CERO ventas, el panel
+  // financiero era puros ceros sin un solo CTA hacia vender (auditoría C9).
+  // Los conteos salen de GET /api/onboarding (ya deriva de datos reales).
+  const [starterSteps, setStarterSteps] = useState<{ product: boolean; sale: boolean } | null>(null);
+  useEffect(() => {
+    const token = localStorage.getItem('nortex_token');
+    if (!token) return;
+    fetchOnboardingStatus(token)
+      .then(d => {
+        if (!d?.steps) return;
+        const product = d.steps.find((s: any) => s.key === 'product');
+        const sale = d.steps.find((s: any) => s.key === 'sale');
+        // Solo giros que venden productos (LENDER no trae estos pasos).
+        if (product && sale) setStarterSteps({ product: product.done, sale: sale.done });
+      })
+      .catch(() => { /* el bloque de arranque nunca rompe el panel */ });
+  }, []);
   // FETCH REAL DATA
   useEffect(() => {
     const initDashboard = async () => {
@@ -56,7 +143,8 @@ const Dashboard: React.FC = () => {
             taxId: data.tenant.taxId || '',
             address: data.tenant.address || '',
             phone: data.tenant.phone || '',
-            dgiAuthCode: data.tenant.dgiAuthCode || ''
+            dgiAuthCode: data.tenant.dgiAuthCode || '',
+            fiscalRegime: normalizeFiscalRegime(data.tenant.fiscalRegime),
           });
           setChartData(data.chartData);
           if (data.todayStats) setTodayStats(data.todayStats);
@@ -65,8 +153,11 @@ const Dashboard: React.FC = () => {
           localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
         }
 
-        // 2. Refresh Credit Score (Algorithm)
-        await refreshCreditScore();
+        // El paso 2 era `await refreshCreditScore()`: cada apertura del panel
+        // recalculaba el Nortex Score (balance + estado de resultados completos)
+        // solo para pintar una tarjeta que ya no existe. Ahora el recálculo lo
+        // dispara el SUPER_ADMIN desde su panel, y abrir el Dashboard dejó de
+        // arrastrar ese trabajo.
 
         // 3. Low Stock Items (Real API)
         const lowStockRes = await fetch('/api/inventory/low-stock', {
@@ -95,37 +186,43 @@ const Dashboard: React.FC = () => {
     initDashboard();
   }, []);
 
-  const refreshCreditScore = async () => {
-    setRefreshingScore(true);
-    try {
-      const token = localStorage.getItem('nortex_token');
-      const res = await fetch('/api/fintech/score', {
-        headers: { 'Authorization': `Bearer ${token}` }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setTenantData(data.tenant);
-        localStorage.setItem('nortex_tenant_data', JSON.stringify(data.tenant));
-        if (data.analysis && data.analysis.factors) {
-          setScoreFactors(data.analysis.factors);
-        }
-      }
-    } catch (e) {
-      console.error("Failed to refresh score", e);
-    } finally {
-      setRefreshingScore(false);
-    }
-  };
-
-  const activeDebt = activeLoans.reduce((acc, loan) => acc + Number(loan.totalDue), 0);
 
   // Loading spinner
-  if (isLoading || !tenantData) {
+  if (isLoading) {
     return (
-      <div className="h-full flex items-center justify-center bg-slate-50">
+      <div className="nx-light-context nx-workspace h-full flex items-center justify-center bg-slate-50">
         <div className="flex flex-col items-center gap-3">
-          <RefreshCw className="animate-spin text-slate-400" size={32} />
-          <span className="text-sm text-slate-500 font-medium">Cargando panel financiero...</span>
+          <div className="flex h-12 w-12 items-center justify-center rounded-pill border border-slate-200 bg-white shadow-sm">
+            <RefreshCw className="animate-spin text-brand" size={20} aria-hidden="true" />
+          </div>
+          <span className="text-sm text-slate-600 font-medium">Cargando tu negocio…</span>
+        </div>
+      </div>
+    );
+  }
+
+  // Estado de error con reintento: si la carga TERMINÓ pero no hay datos del
+  // tenant, la primera llamada (/api/dashboard/stats) falló (red inestable, 500,
+  // timeout — común en 3G nica). Antes el guard `!tenantData` dejaba el spinner
+  // colgado PARA SIEMPRE, y este es el primer pantallazo tras registrarse
+  // (rompe-primer-uso). Mostramos un reintento en vez de un spinner eterno.
+  if (!tenantData) {
+    return (
+      <div className="nx-light-context nx-workspace h-full flex items-center justify-center bg-slate-50 p-6">
+        <div className="nx-canvas-card flex max-w-sm flex-col items-center gap-4 p-8 text-center">
+          <div className="flex h-12 w-12 items-center justify-center rounded-pill bg-slate-100 text-slate-600">
+            <RefreshCw size={20} aria-hidden="true" />
+          </div>
+          <div>
+            <h3 className="text-slate-950 font-semibold">No pudimos cargar tu panel</h3>
+            <p className="text-sm text-slate-600 mt-1">Revisá tu conexión e intentá de nuevo.</p>
+          </div>
+          <button
+            onClick={() => window.location.reload()}
+            className="nx-fluid-press h-touch rounded-control bg-brand px-5 text-sm font-semibold text-brand-on shadow-sm hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+          >
+            Reintentar
+          </button>
         </div>
       </div>
     );
@@ -136,109 +233,47 @@ const Dashboard: React.FC = () => {
     ? Math.ceil((new Date(tenantData.trialEndsAt).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
     : 0;
 
-  const handleReactivate = async () => {
-    setProcessingSub(true);
+  // Los CTAs de pago llevan a la pantalla de pago real. Antes esto hacía
+  // POST /api/billing/subscribe — una ruta que NUNCA existió en el backend
+  // (404 → "Error al procesar la suscripción"): los dos únicos botones de
+  // conversión del producto estaban rotos, y encima marcaban el tenant como
+  // ACTIVE en localStorage sin que hubiera pago alguno.
+  const handleReactivate = () => navigate('/app/billing');
+
+  // El RÉGIMEN se guarda solo, al elegirlo, sin pasar por "GUARDAR DATOS".
+  //
+  // EL PORQUÉ (medido en la pantalla real, no leído en el JSX): el formulario
+  // marca RUC y DIRECCIÓN FÍSICA como `required`, así que el submit se bloquea
+  // en silencio si están vacíos —el navegador muestra "Please fill out this
+  // field." sobre la dirección y el modal se queda abierto—. Y el negocio de
+  // CUOTA FIJA es justamente el que no tiene esos datos cargados: elegía su
+  // régimen, apretaba GUARDAR y no pasaba nada. Guardar al instante es además
+  // como se comportan las otras políticas del negocio (PIN de caja, stock
+  // negativo), y no afloja los datos que la factura sí necesita.
+  const elegirRegimenFiscal = async (fiscalRegime: FiscalRegime) => {
+    if (fiscalRegime === fiscalData.fiscalRegime) return;
+    const previo = fiscalData.fiscalRegime;
+    setFiscalData(prev => ({ ...prev, fiscalRegime }));  // optimista: el radio responde ya
+    setGuardandoRegimen(true);
     try {
       const token = localStorage.getItem('nortex_token');
-      const res = await fetch('/api/billing/subscribe', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ planId: 'PRO_MONTHLY' })
+      const res = await fetch('/api/tenant/fiscal', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ fiscalRegime }),
       });
-
-      if (!res.ok) throw new Error('Falló el pago simulado');
-
-      // Update Local State immediately
-      const updatedTenant = {
-        ...tenantData,
-        subscriptionStatus: 'ACTIVE' as const,
-        trialEndsAt: '' // Clear trial
-      };
+      if (!res.ok) throw new Error('No se pudo cambiar el régimen fiscal. Reintentá.');
+      const updatedTenant = await res.json();
       setTenantData(updatedTenant);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
-
-      alert("✅ ¡Cuenta Reactivada! El sistema está operativo.");
-
-    } catch (e) {
-      alert("Error al procesar la suscripción.");
-    } finally {
-      setProcessingSub(false);
-    }
-  };
-
-  const handleRequestLoan = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const amount = parseFloat(loanAmount);
-
-    if (isNaN(amount) || amount <= 0) {
-      alert("Ingrese un monto válido");
-      return;
-    }
-
-    if (amount > tenantData.creditLimit) {
-      alert("El monto excede su línea de crédito disponible");
-      return;
-    }
-
-    setLoadingLoan(true);
-
-    try {
-      const token = localStorage.getItem('nortex_token');
-      // REAL API CALL
-      const res = await fetch('/api/loans/request', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ amount })
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        if (res.status === 402) {
-          alert("⛔ BLOQUEADO: Suscripción vencida. Pague para continuar.");
-          return;
-        }
-        throw new Error(data.error);
-      }
-
-      // Optimistic Update
-      const interest = amount * 0.05;
-      const totalDue = amount + interest;
-
-      const newLoan: Loan = {
-        id: `loan_${Date.now()}`,
-        amount,
-        interest,
-        totalDue,
-        status: 'ACTIVE',
-        dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        createdAt: new Date().toISOString()
-      };
-
-      const updatedTenant = {
-        ...tenantData,
-        walletBalance: tenantData.walletBalance + amount,
-        creditLimit: tenantData.creditLimit - amount
-      };
-
-      setTenantData(updatedTenant);
-      setActiveLoans(prev => [newLoan, ...prev]);
-      localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
-
-      setShowLoanModal(false);
-      setLoanAmount('');
-      alert("🚀 ¡Fondos desembolsados exitosamente!");
-
+      setFiscalData(prev => ({ ...prev, fiscalRegime: normalizeFiscalRegime(updatedTenant.fiscalRegime) }));
     } catch (error: any) {
-      alert(error.message || "Error al procesar el préstamo");
+      // Volver atrás: dejar el radio marcado en algo que no se guardó le diría
+      // al dueño que ya no cobra IVA mientras el sistema lo sigue cobrando.
+      setFiscalData(prev => ({ ...prev, fiscalRegime: previo }));
+      alert(error.message);
     } finally {
-      setLoadingLoan(false);
+      setGuardandoRegimen(false);
     }
   };
 
@@ -261,8 +296,15 @@ const Dashboard: React.FC = () => {
       const updatedTenant = await res.json();
       setTenantData(updatedTenant);
       localStorage.setItem('nortex_tenant_data', JSON.stringify(updatedTenant));
+      setFiscalData({
+        taxId: updatedTenant.taxId || '',
+        address: updatedTenant.address || '',
+        phone: updatedTenant.phone || '',
+        dgiAuthCode: updatedTenant.dgiAuthCode || '',
+        fiscalRegime: normalizeFiscalRegime(updatedTenant.fiscalRegime),
+      });
       setShowFiscalModal(false);
-      alert('✅ Configuración Fiscal (DGI) actualizada correctamente.');
+      alert('Configuración Fiscal (DGI) actualizada correctamente.');
     } catch (error: any) {
       alert(error.message);
     } finally {
@@ -270,484 +312,538 @@ const Dashboard: React.FC = () => {
     }
   };
 
+  // ── NX-01 · La ganancia del día ────────────────────────────────────────────
+  // Product.price es precio de GÓNDOLA: trae el IVA (15%) adentro, y ese IVA es
+  // del fisco, no del dueño. Por eso la ganancia es ingreso NETO menos costo, y
+  // la calcula el backend (gananciaBruta). Acá solo se lee, defensivamente.
+  const gananciaBrutaHoy = numeroDelBackend(todayStats?.gananciaBruta);
+  const costoVendidoHoy = numeroDelBackend(todayStats?.costoVendido);
+  const utilidadHoy = numeroDelBackend(todayStats?.netProfit);
+  const lineasSinCostoRaw = numeroDelBackend(todayStats?.lineasSinCosto);
+  const lineasSinCosto = lineasSinCostoRaw !== null && lineasSinCostoRaw > 0 ? Math.trunc(lineasSinCostoRaw) : 0;
+
+  // ── NX-02 · Retiro seguro ──────────────────────────────────────────────────
+  // Efectivo − cuentas por pagar − costo de reponer lo vendido. NO es
+  // `liquidezLibre` (que ignora la reposición y le decía al dueño que se
+  // llevara el capital de trabajo).
+  const retiroSeguro = numeroDelBackend(survivalData?.retiroSeguro);
+
+
   return (
-    <div className="p-6 h-full overflow-y-auto bg-slate-50 text-slate-800 relative">
+    <div className="nx-light-context nx-workspace h-full overflow-y-auto bg-slate-50 text-slate-950 relative">
+      <div className="mx-auto w-full max-w-[1600px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">
+        <header className="nx-module-header mb-6 flex min-h-0 flex-col justify-between gap-4 border-b border-slate-200 pb-6 sm:flex-row sm:items-end">
+          <div>
+            <p className="nx-label mb-1 text-slate-500">Resumen del negocio</p>
+            {/* El menú dice "Mi Plata"; si la pantalla dijera otra cosa, el usuario
+                cree que se equivocó de link (auditoría D1). */}
+            <h1 className="text-display font-bold tracking-[-0.035em] text-slate-950">Mi Plata</h1>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+              <span className="font-semibold text-slate-700">{tenantData.name}</span>
+              <span aria-hidden="true" className="text-slate-300">·</span>
+              <span className="text-slate-500">{tenantData.type}</span>
+              <span className={`rounded-pill px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.08em] ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-500/10 text-green-700' :
+                tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-500/10 text-red-700' : 'bg-yellow-500/10 text-yellow-700'
+                }`}>
+                {tenantData.subscriptionStatus}
+              </span>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => setShowFiscalModal(true)}
+            className="nx-fluid-press inline-flex h-touch items-center justify-center gap-2 self-start rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 shadow-sm hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring sm:self-auto"
+          >
+            <Settings size={17} aria-hidden="true" /> Configuración DGI
+          </button>
+        </header>
+
+        <nav aria-label="Accesos directos" className="nx-list-surface mb-6 grid grid-cols-2 gap-px overflow-hidden bg-slate-200 md:grid-cols-4">
+          <button
+            type="button"
+            onClick={() => navigate('/app/pos')}
+            className="nx-fluid-press flex min-h-[72px] items-center gap-3 bg-white px-4 text-left hover:bg-slate-100 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-ring"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-brand text-brand-on"><ShoppingCart size={18} aria-hidden="true" /></span>
+            <span><span className="block text-sm font-semibold text-slate-900">Nueva venta</span><span className="block text-xs text-slate-500">Abrir el POS</span></span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/app/inventory')}
+            className="nx-fluid-press flex min-h-[72px] items-center gap-3 bg-white px-4 text-left hover:bg-slate-100 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-ring"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-slate-100 text-slate-700"><FileText size={18} aria-hidden="true" /></span>
+            <span><span className="block text-sm font-semibold text-slate-900">Inventario</span><span className="block text-xs text-slate-500">Productos y costos</span></span>
+          </button>
+          <button
+            type="button"
+            onClick={() => navigate('/app/smart-purchases')}
+            className="nx-fluid-press flex min-h-[72px] items-center gap-3 bg-white px-4 text-left hover:bg-slate-100 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-ring"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-slate-100 text-slate-700"><CreditCard size={18} aria-hidden="true" /></span>
+            <span><span className="block text-sm font-semibold text-slate-900">Compras</span><span className="block text-xs text-slate-500">Reabastecer</span></span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setShowFiscalModal(true)}
+            className="nx-fluid-press flex min-h-[72px] items-center gap-3 bg-white px-4 text-left hover:bg-slate-100 focus-visible:z-10 focus-visible:outline focus-visible:outline-2 focus-visible:outline-brand-ring"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-control bg-slate-100 text-slate-700"><Settings size={18} aria-hidden="true" /></span>
+            <span><span className="block text-sm font-semibold text-slate-900">Facturación</span><span className="block text-xs text-slate-500">Datos DGI</span></span>
+          </button>
+        </nav>
 
       {/* BILLING BANNERS */}
-      {tenantData.subscriptionStatus === 'TRIALING' && (
-        <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg flex items-center justify-between">
-          <div className="flex items-center gap-3 text-yellow-700">
-            <Clock size={20} />
-            <span className="font-medium">
+      {/* El estado real es 'TRIAL' (schema.prisma / server.ts), no 'TRIALING':
+          con el typo, el contador de días y el CTA "ACTIVAR PLAN PRO" NUNCA se
+          renderizaban → el usuario en prueba jamás veía el reloj ni la palanca
+          de conversión durante su ventana de máximo valor. */}
+      {tenantData.subscriptionStatus === 'TRIAL' && (
+        <div role="status" className="nx-list-surface mb-6 flex flex-col gap-4 border-yellow-500/25 bg-yellow-500/[0.06] p-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-3 text-yellow-800">
+            <Clock size={20} aria-hidden="true" />
+            <span className="text-sm font-medium">
               Modo Prueba: Quedan <span className="font-bold">{daysLeftInTrial} días</span> gratis.
             </span>
           </div>
-          <button onClick={handleReactivate} className="px-4 py-2 bg-yellow-500 hover:bg-yellow-600 text-white text-sm font-bold rounded shadow-sm transition-colors">
-            ACTIVAR PLAN PRO
+          <button type="button" onClick={handleReactivate} className="nx-warning-cta nx-fluid-press h-touch rounded-control px-4 text-sm font-semibold shadow-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-yellow-600">
+            Activar plan Pro
           </button>
         </div>
       )}
 
       {(tenantData.subscriptionStatus === 'PAST_DUE' || tenantData.subscriptionStatus === 'CANCELLED') && (
-        <div className="mb-6 p-4 bg-red-600 text-white rounded-lg shadow-lg flex items-center justify-between animate-pulse">
+        <div role="alert" className="nx-list-surface mb-6 flex flex-col gap-4 border-amber-500/30 bg-amber-500/[0.07] p-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex items-center gap-3">
-            <Lock size={24} />
+            <Clock size={22} className="shrink-0 text-amber-700" aria-hidden="true" />
             <div>
-              <h3 className="font-bold text-lg">SERVICIO SUSPENDIDO</h3>
-              <p className="text-red-100 text-sm">No puedes registrar nuevas ventas ni solicitar préstamos.</p>
+              <h3 className="font-semibold text-slate-950">Tu prueba venció — seguí vendiendo</h3>
+              {/* P1: NUNCA se bloquea el POS por billing. Se degrada lo accesorio,
+                  no el acto de vender. El texto refleja esa política. */}
+              <p className="mt-0.5 text-sm text-slate-600">Podés seguir facturando con normalidad. Activá el plan para recuperar reportes, préstamos y contabilidad.</p>
             </div>
           </div>
           <button
+            type="button"
             onClick={handleReactivate}
-            disabled={processingSub}
-            className="px-6 py-3 bg-white text-red-600 font-bold rounded shadow-lg hover:bg-slate-100 transition-colors"
+            className="nx-warning-cta nx-fluid-press h-touch shrink-0 rounded-control px-5 text-sm font-semibold focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-600"
           >
-            {processingSub ? 'PROCESANDO...' : 'REACTIVAR SERVICIO ($50)'}
+            Activar plan
           </button>
         </div>
       )}
 
-      <header className="mb-8 flex justify-between items-start">
-        <div>
-          <h1 className="text-3xl font-bold text-nortex-900">Panel Financiero</h1>
-          <div className="flex items-center gap-2 mt-2">
-            <span className="px-2 py-1 bg-blue-100 text-blue-700 rounded text-xs font-bold uppercase tracking-wider">{tenantData.type}</span>
-            <span className="text-slate-500">{tenantData.name}</span>
-            <span className={`px-2 py-1 rounded text-xs font-bold uppercase tracking-wider ${tenantData.subscriptionStatus === 'ACTIVE' ? 'bg-green-100 text-green-700' :
-              tenantData.subscriptionStatus === 'PAST_DUE' ? 'bg-red-100 text-red-700' : 'bg-yellow-100 text-yellow-700'
-              }`}>
-              {tenantData.subscriptionStatus}
-            </span>
-          </div>
-        </div>
-        <button
-          onClick={() => setShowFiscalModal(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-white border border-slate-200 text-sm font-bold text-slate-700 rounded-lg hover:bg-slate-50 shadow-sm transition-colors"
-        >
-          <Settings size={16} /> Configuración DGI
-        </button>
-      </header>
-
-      {/* --- SMART RESTOCK AI WIDGET --- */}
-      {lowStockItems.length > 0 && (
-        <div className="mb-8 bg-nortex-900 rounded-xl p-6 shadow-xl border border-nortex-800 relative overflow-hidden">
-          <div className="absolute top-0 right-0 w-64 h-64 bg-nortex-accent blur-[100px] opacity-10"></div>
-          <div className="relative z-10 flex flex-col md:flex-row justify-between items-center gap-6">
-            <div className="flex items-start gap-4">
-              <div className="p-3 bg-red-500/20 text-red-400 rounded-lg animate-pulse">
-                <AlertCircle size={32} />
-              </div>
-              <div>
-                <h3 className="text-xl font-bold text-white mb-1">Nortex AI: Alerta de Quiebre de Stock</h3>
-                <p className="text-slate-400 text-sm max-w-xl">
-                  Tus ventas proyectan que <span className="text-white font-bold">{lowStockItems[0].name}</span> se agotará en <span className="text-red-400 font-bold">48 horas</span>.
-                  {lowStockItems.length > 1 && ` Además, otros ${lowStockItems.length - 1} productos están en nivel crítico.`}
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={() => navigate('/app/marketplace')}
-              className="px-6 py-3 bg-white text-nortex-900 font-bold rounded-lg hover:bg-nortex-accent transition-colors flex items-center gap-2 shadow-lg"
-            >
-              <ShoppingCart size={18} /> Pedir Reabastecimiento <ArrowRight size={18} />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* 🚨 THEFT ALERT BANNER */}
-      {theftAlerts.length > 0 && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-xl">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-red-100 text-red-600 rounded-lg">
-              <ShieldAlert size={20} />
-            </div>
+      {/* 🚀 EMPEZÁ ACÁ — arriba de TODO cuando el negocio aún no arrancó. */}
+      {starterSteps && !starterSteps.sale && (
+        <section aria-labelledby="starter-heading" className="nx-canvas-card mb-6 overflow-hidden border-brand/25 bg-brand-soft p-5 sm:p-6">
+          <div className="mb-4 flex items-start gap-3">
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-brand text-brand-on"><ShoppingCart size={19} aria-hidden="true" /></span>
             <div>
-              <h3 className="font-bold text-red-700">⚠️ Alerta de Auditoría</h3>
-              <p className="text-xs text-red-500">{theftAlerts.length} discrepancia(s) detectada(s) en los últimos 7 días</p>
+              <h2 id="starter-heading" className="text-title font-bold text-slate-950">Empezá acá</h2>
+              <p className="mt-1 text-sm text-slate-600">
+            {starterSteps.product
+              ? 'Ya tenés productos. Te falta lo mejor: cobrar tu primera venta.'
+              : 'Aprendé con ejemplos o empezá a cargar los productos de tu negocio.'}
+              </p>
             </div>
           </div>
-          <div className="space-y-1">
-            {theftAlerts.slice(0, 3).map((alert: any) => (
-              <div key={alert.id} className="text-xs bg-red-100 text-red-700 px-3 py-1.5 rounded-lg flex justify-between">
-                <span>{alert.details?.cajero || 'Cajero'}: {alert.details?.tipo}</span>
-                <span className="font-bold">C${Math.abs(alert.details?.diferencia || 0).toFixed(2)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* ⚠️ EXPIRING BATCHES ALERT BANNER */}
-      {expiringBatches.length > 0 && (
-        <div className="mb-6 p-4 bg-orange-50 border border-orange-200 rounded-xl">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-orange-100 text-orange-600 rounded-lg">
-              <Timer size={20} />
-            </div>
-            <div>
-              <h3 className="font-bold text-orange-700">⚠️ Alerta de Vencimiento</h3>
-              <p className="text-xs text-orange-500">{expiringBatches.length} lote(s) próximo(s) a vencer (≤ 90 días)</p>
-            </div>
-          </div>
-          <div className="space-y-1">
-            {expiringBatches.slice(0, 3).map((batch: any) => {
-              const isExpired = new Date(batch.expiryDate) < new Date();
-              return (
-                <div key={batch.id} className={`text-xs px-3 py-1.5 rounded-lg flex justify-between ${isExpired ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-700'}`}>
-                  <span>{batch.productName} (Lote: {batch.batchNumber})</span>
-                  <span className="font-bold">{new Date(batch.expiryDate).toLocaleDateString()} • {batch.stock} uds</span>
-                </div>
-              );
-            })}
-            {expiringBatches.length > 3 && (
-              <div className="text-xs text-orange-600 font-semibold px-3 py-1">
-                + {expiringBatches.length - 3} lotes más... Ve al Inventario para más detalles.
-              </div>
+          <div className="flex flex-col sm:flex-row gap-3">
+            {starterSteps.product ? (
+              <button
+                onClick={() => navigate('/app/pos?tour=pos')}
+                className="nx-fluid-press flex h-touch flex-1 items-center justify-center gap-2 rounded-control bg-brand px-6 font-semibold text-brand-on shadow-sm hover:bg-brand-hover focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+              >
+                <ShoppingCart size={19} aria-hidden="true" /> Hacer mi primera venta
+              </button>
+            ) : (
+              <>
+                <button
+                  onClick={() => navigate('/demo?source=onboarding')}
+                  className="nx-fluid-press flex h-touch flex-1 items-center justify-center gap-2 rounded-control bg-brand px-6 font-semibold text-brand-on shadow-sm hover:bg-brand-hover disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+                >
+                  <ShoppingCart size={19} aria-hidden="true" />
+                  Practicar sin guardar datos
+                </button>
+                <button
+                  onClick={() => navigate('/app/inventory?tour=inv')}
+                  className="nx-fluid-press flex h-touch flex-1 items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-6 font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+                >
+                  <FileText size={19} aria-hidden="true" /> Cargar mi primer producto
+                </button>
+              </>
             )}
           </div>
-        </div>
+        </section>
       )}
 
-      {/* 📊 TODAY'S PERFORMANCE KPIs */}
+      {(lowStockItems.length > 0 || theftAlerts.length > 0 || expiringBatches.length > 0) && (
+        <section aria-labelledby="attention-heading" className="mb-8">
+          <div className="mb-3 flex items-baseline justify-between gap-4">
+            <h2 id="attention-heading" className="text-title font-bold text-slate-950">Requiere atención</h2>
+            <span className="text-xs font-medium text-slate-500">Información de hoy</span>
+          </div>
+          <div className="nx-list-surface divide-y divide-slate-200 overflow-hidden">
+            {/* --- SMART RESTOCK AI WIDGET --- */}
+            {lowStockItems.length > 0 && (
+              <article className="flex flex-col gap-4 p-4 sm:p-5 md:flex-row md:items-center md:justify-between">
+                <div className="flex min-w-0 items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-brand-soft text-brand">
+                    <AlertCircle size={20} aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <h3 className="font-semibold text-slate-950">Stock por agotarse</h3>
+                    <p className="mt-0.5 text-sm text-slate-600">
+                      <span className="font-semibold text-slate-800">{lowStockItems[0].name}</span> podría agotarse en 48 horas.
+                      {lowStockItems.length > 1 && ` Hay otros ${lowStockItems.length - 1} productos en nivel crítico.`}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  // Antes iba a /app/marketplace → "Próximamente": la alerta más
+                  // urgente del dashboard creaba urgencia y cerraba la puerta.
+                  onClick={() => navigate('/app/smart-purchases')}
+                  className="nx-fluid-press inline-flex h-touch shrink-0 items-center justify-center gap-2 rounded-control border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+                >
+                  Pedir reabastecimiento <ArrowRight size={16} aria-hidden="true" />
+                </button>
+              </article>
+            )}
+
+            {/* 🚨 THEFT ALERT BANNER */}
+            {theftAlerts.length > 0 && (
+              <article className="p-4 sm:p-5">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-red-500/10 text-red-700">
+                    <ShieldAlert size={20} aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-slate-950">Alerta de auditoría</h3>
+                    <p className="mt-0.5 text-sm text-slate-600">{theftAlerts.length} discrepancia(s) detectada(s) en los últimos 7 días</p>
+                    <ul className="mt-3 divide-y divide-slate-200 border-t border-slate-200">
+                      {theftAlerts.slice(0, 3).map((alert: any) => (
+                        <li key={alert.id} className="flex items-center justify-between gap-4 py-2 text-sm">
+                          <span className="truncate text-slate-600">{alert.details?.cajero || 'Cajero'}: {alert.details?.tipo}</span>
+                          <span className="nx-num shrink-0 font-semibold text-red-700">{formatMoney(Math.abs(alert.details?.diferencia || 0))}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+              </article>
+            )}
+
+            {/* ⚠️ EXPIRING BATCHES ALERT BANNER */}
+            {expiringBatches.length > 0 && (
+              <article className="p-4 sm:p-5">
+                <div className="flex items-start gap-3">
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-control bg-orange-500/10 text-orange-700">
+                    <Timer size={20} aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="font-semibold text-slate-950">Lotes próximos a vencer</h3>
+                    <p className="mt-0.5 text-sm text-slate-600">{expiringBatches.length} lote(s) vencidos o dentro de los próximos 90 días</p>
+                    <ul className="mt-3 divide-y divide-slate-200 border-t border-slate-200">
+                      {expiringBatches.slice(0, 3).map((batch: any) => {
+                        const isExpired = batch.status === 'EXPIRED' || Number(batch.daysUntilExpiry) < 0;
+                        const expiryLabel = isExpired
+                          ? 'Vencido'
+                          : Number(batch.daysUntilExpiry) === 0
+                            ? 'Vence hoy'
+                            : `${batch.daysUntilExpiry} días`;
+                        return (
+                          <li key={batch.id} className="flex flex-col justify-between gap-1 py-2 text-sm sm:flex-row sm:items-center sm:gap-4">
+                            <span className="truncate text-slate-700">{batch.productName} <span className="text-slate-500">· Lote {batch.batchNumber}</span></span>
+                            <span className={`nx-num shrink-0 font-semibold ${isExpired ? 'text-red-700' : 'text-orange-700'}`}>
+                              {new Date(batch.expiryDate).toLocaleDateString('es-NI', { timeZone: 'UTC' })} · {expiryLabel} · {batch.physicalStock ?? batch.stock} uds
+                              {Number(batch.heldStock) > 0 ? ` · ${batch.heldStock} retenidas` : ''}
+                            </span>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                    {expiringBatches.length > 3 && (
+                      <p className="mt-2 text-xs font-medium text-orange-700">
+                        Hay {expiringBatches.length - 3} lotes más en Inventario.
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </article>
+            )}
+          </div>
+        </section>
+      )}
+
+      {/* ── LA RESPUESTA ÚNICA ───────────────────────────────────────────────
+          Es el motivo por el que el usuario vuelve mañana: cuánto ganó hoy.
+          Antes vivía como la 3.ª tarjeta de una grilla de 3, del mismo tamaño
+          que "Ventas Hoy" y con la card entera teñida de verde o rojo. Ahora va
+          arriba, en tamaño display y en color de texto principal: el color no
+          se usa para decorar la cifra, solo para calificar el resultado. */}
       {todayStats && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs font-medium text-slate-500 uppercase">Ventas Hoy</p>
-                <h3 className="text-xl font-bold text-slate-800">C${todayStats.totalSales.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-              </div>
-              <div className="p-2 bg-blue-100 text-blue-600 rounded-lg"><TrendingUp size={18} /></div>
+        <section aria-labelledby="profit-heading" className="nx-canvas-card mb-6 overflow-hidden p-5 sm:p-6 lg:p-8">
+          <p className="nx-label mb-2 text-slate-500">Resultado de hoy</p>
+          <h2 id="profit-heading" className="sr-only">Ganancia de hoy</h2>
+          {gananciaBrutaHoy === null ? (
+            /* Backend sin el cálculo nuevo: guion. Mostrar acá las ventas como
+               si fueran ganancia es el error que costaba la credibilidad. */
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="nx-total text-slate-950">—</span>
+              <span className="text-sm text-slate-600">Calculando tu ganancia…</span>
             </div>
-          </div>
-          <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200">
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs font-medium text-slate-500 uppercase">Gastos Hoy</p>
-                <h3 className="text-xl font-bold text-red-600">C${todayStats.totalExpenses.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-              </div>
-              <div className="p-2 bg-red-100 text-red-600 rounded-lg"><TrendingDown size={18} /></div>
+          ) : (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+              <span className="text-slate-600">
+                {gananciaBrutaHoy >= 0 ? 'Ganaste' : 'Perdiste'}
+              </span>
+              <span className="nx-total text-slate-950">{formatMoney(Math.abs(gananciaBrutaHoy))}</span>
+              <span className={`rounded-pill px-2.5 py-1 text-xs font-semibold ${gananciaBrutaHoy >= 0 ? 'bg-green-500/10 text-green-700' : 'bg-red-500/10 text-red-700'}`}>
+                {gananciaBrutaHoy >= 0 ? 'Positivo' : 'Negativo'}
+              </span>
             </div>
-          </div>
-          <div className={`p-4 rounded-xl shadow-sm border ${todayStats.netProfit >= 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'}`}>
-            <div className="flex justify-between items-center">
-              <div>
-                <p className="text-xs font-medium text-slate-500 uppercase">Utilidad Neta Hoy</p>
-                <h3 className={`text-xl font-bold ${todayStats.netProfit >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                  C${todayStats.netProfit.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </h3>
-              </div>
-              <div className={`p-2 rounded-lg ${todayStats.netProfit >= 0 ? 'bg-emerald-100 text-emerald-600' : 'bg-red-100 text-red-600'}`}>
-                <DollarSign size={18} />
-              </div>
+          )}
+          <p className="mt-2 max-w-2xl text-sm text-slate-600">
+            Lo que vendiste, sin el IVA que es del fisco, menos lo que te costó la mercadería.
+          </p>
+          {/* Sin costo cargado, la ganancia sale INFLADA. Se avisa y se ofrece
+              el camino para arreglarlo, en vez de dar un número que el dueño
+              sabe que está mal (NX-01). */}
+          {lineasSinCosto > 0 && (
+            <button
+              onClick={() => navigate('/app/inventory')}
+              className="nx-fluid-press mt-2 inline-flex min-h-tap items-center rounded-control text-left text-xs font-medium text-amber-700 underline underline-offset-4 hover:text-amber-800 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
+            >
+              Ganancia estimada — faltan costos en {lineasSinCosto} producto{lineasSinCosto === 1 ? '' : 's'}
+            </button>
+          )}
+          {/* El desglose queda debajo, en jerarquía menor y sin colorear cifras. */}
+          <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-5 border-t border-slate-200 pt-5 lg:grid-cols-4">
+            <div className="min-w-0">
+              <dt className="nx-label text-slate-500">Ventas</dt>
+              <dd className="nx-num mt-1 truncate text-lg font-semibold text-slate-950">{formatMoney(todayStats.totalSales)}</dd>
             </div>
-          </div>
-        </div>
+            {costoVendidoHoy !== null && (
+              <div className="min-w-0">
+                <dt className="nx-label text-slate-500">Costo de lo vendido</dt>
+                <dd className="nx-num mt-1 truncate text-lg font-semibold text-slate-950">{formatMoney(costoVendidoHoy)}</dd>
+              </div>
+            )}
+            <div className="min-w-0">
+              <dt className="nx-label text-slate-500">Gastos</dt>
+              <dd className="nx-num mt-1 truncate text-lg font-semibold text-slate-950">{formatMoney(todayStats.totalExpenses)}</dd>
+            </div>
+            {/* netProfit solo es utilidad real cuando el backend nuevo está
+                arriba (misma señal que gananciaBruta). */}
+            {gananciaBrutaHoy !== null && utilidadHoy !== null && (
+              <div className="min-w-0">
+                <dt className="nx-label text-slate-500">Después de gastos</dt>
+                <dd className="nx-num mt-1 truncate text-lg font-semibold text-slate-950">{formatMoney(utilidadHoy)}</dd>
+              </div>
+            )}
+          </dl>
+        </section>
       )}
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {/* Las cuatro tarjetas de Nortex Capital vivían acá: billetera, Nortex
+          Score, línea disponible y deuda activa. Se quitaron enteras.
 
-        {/* Wallet Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Saldo en Billetera</p>
-              <h3 className="text-2xl font-bold text-slate-900 transition-all duration-500">${tenantData.walletBalance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-            </div>
-            <div className="p-2 bg-green-100 text-green-600 rounded-lg">
-              <DollarSign size={20} />
-            </div>
-          </div>
-          <div className="text-xs text-green-600 font-medium flex items-center gap-1">
-            <TrendingUp size={14} /> +12.5% vs mes anterior
-          </div>
-        </div>
+          POR QUÉ: Nortex no presta plata hoy. Tres de esas tarjetas prometían
+          crédito que nunca llega —la propia home pública ya lo aclara— y la
+          cuarta ("Deuda activa") mostraba C$0.00 en todas las cuentas porque
+          `activeLoans` nunca se cargó: era un `useState([])` sin un solo
+          `setActiveLoans` en el archivo. Lo primero que veía el dueño al abrir
+          Nortex eran cuatro números de un producto financiero inexistente, y no
+          el estado de su negocio, que es lo que sí está más abajo (ventas del
+          día, cuánto puede retirar, stock bajo, lotes por vencer).
 
-        {/* Credit Score Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 relative overflow-hidden group">
-          <button
-            onClick={refreshCreditScore}
-            className={`absolute top-2 right-2 p-1.5 rounded-full hover:bg-slate-100 text-slate-400 ${refreshingScore ? 'animate-spin' : ''}`}
-            title="Recalcular Score"
-          >
-            <RefreshCw size={14} />
-          </button>
-          <div className="absolute top-0 right-0 w-16 h-16 bg-gradient-to-br from-blue-500 to-indigo-600 opacity-10 rounded-bl-full"></div>
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Nortex Score</p>
-              <h3 className="text-2xl font-bold text-blue-600">{tenantData.creditScore} <span className="text-sm text-slate-400 font-normal">/ 850</span></h3>
-            </div>
-            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg">
-              <Activity size={20} />
-            </div>
-          </div>
-          <div className="w-full bg-slate-100 h-2 rounded-full overflow-hidden mb-2">
-            <div className="bg-blue-500 h-full rounded-full transition-all duration-1000" style={{ width: `${(tenantData.creditScore / 850) * 100}%` }}></div>
-          </div>
-          {scoreFactors.length > 0 ? (
-            <p className="text-[10px] text-slate-500 truncate" title={scoreFactors.join(', ')}>
-              Factores: {scoreFactors[0]} {scoreFactors.length > 1 && `+${scoreFactors.length - 1}`}
-            </p>
-          ) : (
-            <p className="text-xs text-slate-400">Sin historial suficiente</p>
-          )}
-        </div>
-
-        {/* Credit Line Card */}
-        <div className="bg-gradient-to-br from-nortex-900 to-nortex-800 text-white p-6 rounded-xl shadow-sm border border-nortex-800 ring-1 ring-white/10 relative overflow-hidden group">
-          <div className="absolute -right-6 -top-6 w-24 h-24 bg-nortex-accent blur-[50px] opacity-20 group-hover:opacity-30 transition-opacity"></div>
-
-          <div className="flex justify-between items-start mb-4 relative z-10">
-            <div>
-              <p className="text-sm font-medium text-slate-400">Línea Disponible</p>
-              <h3 className="text-2xl font-bold text-white">${tenantData.creditLimit.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-            </div>
-            <div className="p-2 bg-white/10 text-white rounded-lg">
-              <CreditCard size={20} />
-            </div>
-          </div>
-          <button
-            onClick={() => setShowLoanModal(true)}
-            disabled={tenantData.creditLimit <= 100 || tenantData.creditScore < 500}
-            className="relative z-10 w-full py-2 bg-nortex-accent hover:bg-emerald-400 disabled:bg-slate-700 disabled:text-slate-500 text-nortex-900 text-sm font-bold rounded transition-colors flex items-center justify-center gap-2"
-          >
-            {tenantData.creditScore < 500 ? <Lock size={16} /> : <Banknote size={16} />}
-            {tenantData.creditScore < 500 ? 'MEJORA TU SCORE' : 'SOLICITAR DESEMBOLSO'}
-          </button>
-        </div>
-
-        {/* Active Debt Card */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <div className="flex justify-between items-start mb-4">
-            <div>
-              <p className="text-sm font-medium text-slate-500">Deuda Activa</p>
-              <h3 className="text-2xl font-bold text-red-600">${activeDebt.toLocaleString(undefined, { minimumFractionDigits: 2 })}</h3>
-            </div>
-            <div className="p-2 bg-red-100 text-red-600 rounded-lg">
-              <AlertCircle size={20} />
-            </div>
-          </div>
-          <p className="text-xs text-slate-500">
-            {activeLoans.length > 0 ? `${activeLoans.length} préstamos activos` : 'Sin deudas pendientes'}
-          </p>
-        </div>
-      </div>
+          El score se sigue calculando: ahora se recalcula desde el panel de
+          SUPER_ADMIN (POST /api/admin/tenants/:id/score), que es donde sirve
+          para decidir, sin prometerle nada a nadie en la pantalla del cliente. */}
 
       {/* 🛡️ DASHBOARD DE SUPERVIVENCIA (NIIF PyMES) */}
       {survivalData && (
-        <div className="mb-8 border-t border-slate-200 pt-8">
-          <h2 className="text-2xl font-bold text-nortex-900 mb-6 flex items-center gap-2">
-            <ShieldAlert className="text-emerald-600" /> Dashboard de Supervivencia
-          </h2>
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <section aria-labelledby="survival-heading" className="mb-8">
+          <div className="mb-4">
+            <p className="nx-label mb-1 text-slate-500">Salud financiera</p>
+            <h2 id="survival-heading" className="text-title font-bold text-slate-950">Capacidad del negocio</h2>
+          </div>
+          <div className="grid grid-cols-1 gap-5 lg:grid-cols-3">
 
-            {/* Safe Withdrawal Widget */}
-            <div className={`p-6 rounded-xl shadow-lg text-white relative overflow-hidden flex flex-col justify-center border
-              ${survivalData.liquidezLibre > 0 ? 'bg-emerald-600 border-emerald-500' : 'bg-red-600 border-red-500'}
-            `}>
-              <div className="absolute -top-10 -right-10 w-48 h-48 bg-white blur-[60px] opacity-10 rounded-full"></div>
-              <h3 className="text-lg font-bold text-white/90 mb-1 relative z-10 flex items-center gap-2">
-                {survivalData.liquidezLibre > 0 ? <Check size={18} /> : <AlertCircle size={18} />} Retiro Seguro Permitido
-              </h3>
-              <p className="text-sm text-white/80 mb-6 relative z-10">
-                Efectivo real menos proveedores. Esto puedes sacarlo sin quebrar el negocio.
+            {/* Safe Withdrawal Widget — NX-02.
+                Antes decía "Retiro Seguro Permitido: esto puedes sacarlo sin
+                quebrar el negocio" sobre `liquidezLibre` (efectivo − proveedores),
+                que ignora que hay que RECOMPRAR lo que se vendió: era una promesa
+                que empujaba a descapitalizar el negocio. Ahora es una estimación,
+                dicha como estimación, sobre `retiroSeguro` (que ya descuenta la
+                reposición). La cifra va en color neutro: el color califica el
+                resultado, no decora el número. */}
+            <article className="nx-canvas-card relative flex flex-col justify-center overflow-hidden p-5 sm:p-6">
+              <span className="mb-5 flex h-10 w-10 items-center justify-center rounded-control bg-slate-100 text-slate-700"><Banknote size={19} aria-hidden="true" /></span>
+              <h3 className="text-lg font-semibold text-slate-950">Cuánto podrías retirar</h3>
+              <p className="mb-6 mt-1 text-sm text-slate-600">
+                Tu efectivo, menos lo que le debés a proveedores, menos lo que cuesta reponer lo que vendiste.
               </p>
-              <h2 className="text-4xl font-extrabold mb-2 relative z-10 tracking-tight">
-                C${survivalData.liquidezLibre > 0 ? survivalData.liquidezLibre.toLocaleString(undefined, { minimumFractionDigits: 2 }) : '0.00'}
-              </h2>
-              {survivalData.liquidezLibre <= 0 && (
-                <div className="text-sm font-bold bg-white/20 px-3 py-1 rounded w-fit mt-2 border border-white/30 backdrop-blur-sm relative z-10">
-                  Faltan C${Math.abs(survivalData.liquidezLibre).toLocaleString(undefined, { minimumFractionDigits: 2 })} para cubrir deudas
-                </div>
+              {retiroSeguro === null ? (
+                <p className="nx-total text-slate-950">—</p>
+              ) : (
+                <>
+                  <p className="nx-total text-slate-950">{formatMoney(Math.max(retiroSeguro, 0))}</p>
+                  {retiroSeguro <= 0 && (
+                    <p className="mt-3 w-fit rounded-control border border-slate-200 bg-slate-100 px-3 py-2 text-sm text-slate-700">
+                      Hoy no sobra para retirar: primero hay que cubrir proveedores y reponer mercadería.
+                    </p>
+                  )}
+                </>
               )}
-            </div>
+              <p className="mt-4 text-xs text-slate-500">Estimación — no es consejo financiero.</p>
+            </article>
 
             {/* Survival Chart */}
-            <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-              <h3 className="text-lg font-bold text-slate-800 mb-1">Efectivo vs Créditos vs Deudas</h3>
-              <p className="text-xs text-slate-500 mb-6">Muestra dónde está la plata (NIIF PyMES)</p>
+            <article className="nx-canvas-card p-5 sm:p-6 lg:col-span-2">
+              <h3 className="text-lg font-semibold text-slate-950">Dónde está la plata</h3>
+              <p className="mb-6 mt-1 text-sm text-slate-600">Efectivo, cuentas por cobrar, deudas e inventario.</p>
               <div className="h-64 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={[
-                    { name: 'Efectivo Físico', monto: survivalData.efectivoTotal, fill: '#10b981' },
-                    { name: 'Cuentas x Cobrar', monto: survivalData.cuentasPorCobrar, fill: '#f59e0b' },
-                    { name: 'Deuda Proveedor (CxP)', monto: survivalData.cuentasPorPagar, fill: '#ef4444' },
-                    { name: 'Inventario (Valor)', monto: survivalData.inventario, fill: '#3b82f6' }
+                    { name: 'Efectivo Físico', monto: survivalData.efectivoTotal, fill: chartColors.brand },
+                    { name: 'Cuentas x Cobrar', monto: survivalData.cuentasPorCobrar, fill: chartColors.warning },
+                    { name: 'Deuda Proveedor (CxP)', monto: survivalData.cuentasPorPagar, fill: chartColors.danger },
+                    { name: 'Inventario (Valor)', monto: survivalData.inventario, fill: chartColors.warning }
                   ]}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 13, fontWeight: 500 }} dy={10} />
-                    <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                    <CartesianGrid {...gridProps} />
+                    <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 13, fontWeight: 500 }} dy={10} />
+                    <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 12 }} />
                     <Tooltip
-                      cursor={{ fill: '#f1f5f9' }}
-                      contentStyle={{ borderRadius: '12px', border: '1px solid #e2e8f0', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
-                      formatter={(value: number) => [`C$${value.toLocaleString(undefined, { minimumFractionDigits: 2 })}`, 'Total']}
+                      {...tooltipProps()}
+                      formatter={(value: number) => [formatMoney(value), 'Total']}
                     />
                     <Bar dataKey="monto" radius={[6, 6, 0, 0]} barSize={50} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
-            </div>
+            </article>
 
           </div>
-        </div>
+        </section>
       )}
 
       {/* Charts Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Flujo de Caja Real (Últimos 7 días)</h3>
+      <section aria-labelledby="activity-heading" className="mb-8">
+        <div className="mb-4">
+          <p className="nx-label mb-1 text-slate-500">Últimos 7 días</p>
+          <h2 id="activity-heading" className="text-title font-bold text-slate-950">Actividad y caja</h2>
+        </div>
+        {/* El gráfico ocupaba 2 de 3 columnas; la tercera era un panel
+            "Préstamos activos" que SIEMPRE estaba vacío (`activeLoans` nunca se
+            cargó) y que además pertenecía a Nortex Capital. Retirado el panel,
+            el flujo de caja —el dato que el dueño sí mira— se lleva el ancho. */}
+        <article className="nx-canvas-card p-5 sm:p-6">
+          <h3 className="mb-6 text-lg font-semibold text-slate-950">Flujo de caja real</h3>
           <div className="h-64 min-h-[300px] w-full">
             <ResponsiveContainer width="100%" height="100%">
               <BarChart data={chartData}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#e2e8f0" />
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} dy={10} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fill: '#64748b', fontSize: 12 }} />
+                <CartesianGrid {...gridProps} />
+                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 12 }} dy={10} />
+                <YAxis axisLine={false} tickLine={false} tick={{ fill: chartColors.muted, fontSize: 12 }} />
                 <Tooltip
-                  cursor={{ fill: '#f1f5f9' }}
-                  contentStyle={{ borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                  {...tooltipProps()}
                 />
-                <Bar dataKey="sales" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="sales" fill={chartColors.brand} radius={[4, 4, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </div>
+        </article>
 
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Préstamos Activos</h3>
-          <div className="h-64 overflow-y-auto custom-scrollbar pr-2">
-            {activeLoans.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-400">
-                <PieChart size={48} className="mb-2 opacity-20" />
-                <p className="text-sm">No hay actividad reciente</p>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {activeLoans.map(loan => (
-                  <div key={loan.id} className="p-3 bg-slate-50 border border-slate-100 rounded-lg flex justify-between items-center">
-                    <div>
-                      <div className="text-xs text-slate-400 flex items-center gap-1">
-                        <Clock size={10} /> Vence: {new Date(loan.dueDate).toLocaleDateString()}
-                      </div>
-                      <div className="font-bold text-slate-700">${loan.amount.toFixed(2)}</div>
-                    </div>
-                    <span className="text-xs font-bold bg-green-100 text-green-700 px-2 py-1 rounded-full">ACTIVE</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      </section>
+
       </div>
-
-      {/* LENDING MODAL */}
-      {showLoanModal && (
-        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
-            <div className="bg-nortex-900 p-6 relative overflow-hidden">
-              <div className="absolute top-0 right-0 w-32 h-32 bg-nortex-accent blur-[60px] opacity-20"></div>
-              <button
-                onClick={() => setShowLoanModal(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
-              >
-                <X size={20} />
-              </button>
-              <h3 className="text-xl font-bold text-white flex items-center gap-2 relative z-10">
-                <Banknote size={24} className="text-nortex-accent" /> Solicitar Capital
-              </h3>
-              <p className="text-slate-400 text-sm mt-1 relative z-10">Inyección de liquidez inmediata</p>
-            </div>
-
-            <form onSubmit={handleRequestLoan} className="p-6">
-              <div className="mb-6">
-                <label className="block text-xs font-mono text-slate-500 mb-2 font-bold">MONTO A SOLICITAR</label>
-                <div className="relative">
-                  <DollarSign className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={24} />
-                  <input
-                    type="number"
-                    min="1"
-                    step="0.01"
-                    max={tenantData.creditLimit}
-                    required
-                    className="w-full pl-12 pr-4 py-4 text-3xl font-bold text-slate-900 border border-slate-200 rounded-xl focus:ring-2 focus:ring-nortex-500 focus:border-nortex-500 outline-none transition-all"
-                    placeholder="0.00"
-                    value={loanAmount}
-                    onChange={e => setLoanAmount(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <div className="flex justify-between mt-2 text-xs">
-                  <span className="text-slate-500">Disponible: <span className="font-bold text-slate-700">${tenantData.creditLimit.toFixed(2)}</span></span>
-                  {Number(loanAmount) > tenantData.creditLimit && (
-                    <span className="text-red-500 font-bold">Excede el límite</span>
-                  )}
-                </div>
-              </div>
-
-              {/* Loan Breakdown */}
-              {Number(loanAmount) > 0 && Number(loanAmount) <= tenantData.creditLimit && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 mb-6 space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Capital</span>
-                    <span className="font-medium text-slate-900">${Number(loanAmount).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Interés (5% Flat)</span>
-                    <span className="font-medium text-slate-900">${(Number(loanAmount) * 0.05).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between text-sm">
-                    <span className="text-slate-500">Plazo</span>
-                    <span className="font-medium text-slate-900">30 Días</span>
-                  </div>
-                  <div className="border-t border-slate-200 pt-2 mt-2 flex justify-between items-center">
-                    <span className="font-bold text-slate-700">Total a Pagar</span>
-                    <span className="font-bold text-nortex-900 text-lg">${(Number(loanAmount) * 1.05).toFixed(2)}</span>
-                  </div>
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={loadingLoan || !loanAmount || Number(loanAmount) > tenantData.creditLimit}
-                className="w-full py-4 bg-nortex-900 hover:bg-nortex-800 text-white font-bold rounded-xl shadow-lg shadow-nortex-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex justify-center items-center gap-2"
-              >
-                {loadingLoan ? 'PROCESANDO...' : (
-                  <>
-                    CONFIRMAR Y RECIBIR <Check size={20} />
-                  </>
-                )}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* FISCAL SETTINGS MODAL */}
       {showFiscalModal && (
-        <div className="absolute inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden border border-slate-200">
-            <div className="bg-slate-800 p-6 relative overflow-hidden">
+        <div className="fixed inset-0 z-modal flex items-center justify-center bg-slate-950/55 p-4 backdrop-blur-sm">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="fiscal-settings-title"
+            aria-describedby="fiscal-settings-description"
+            className="w-full max-w-md max-h-[calc(100dvh-2rem)] overflow-y-auto rounded-card border border-slate-200 bg-white shadow-2xl"
+          >
+            <div className="relative overflow-hidden border-b border-slate-200 p-6">
               <button
+                type="button"
                 onClick={() => setShowFiscalModal(false)}
-                className="absolute top-4 right-4 text-slate-400 hover:text-white transition-colors"
+                aria-label="Cerrar configuración fiscal"
+                className="nx-fluid-press absolute right-4 top-4 flex h-touch w-touch items-center justify-center rounded-control text-slate-500 hover:bg-slate-100 hover:text-slate-900 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
               >
-                <X size={20} />
+                <X size={19} aria-hidden="true" />
               </button>
-              <h3 className="text-xl font-bold text-white flex items-center gap-2 relative z-10">
-                <FileText size={24} className="text-blue-400" /> Facturación DGI
+              <span className="mb-4 flex h-10 w-10 items-center justify-center rounded-control bg-brand-soft text-brand"><FileText size={19} aria-hidden="true" /></span>
+              <h3 id="fiscal-settings-title" className="relative z-10 text-title font-bold text-slate-950">
+                Facturación DGI
               </h3>
-              <p className="text-slate-300 text-sm mt-1 relative z-10">Configura los datos fiscales para tus recibos.</p>
+              <p id="fiscal-settings-description" className="relative z-10 mt-1 text-sm text-slate-600">Configurá los datos fiscales para tus recibos.</p>
             </div>
 
             <form onSubmit={handleSaveFiscalData} className="p-6 space-y-4">
+              <fieldset aria-describedby="fiscal-regime-help" className="space-y-2">
+                <legend className="nx-label mb-2 block text-slate-600">
+                  Régimen fiscal
+                  {guardandoRegimen && <span aria-live="polite" className="ml-2 font-normal normal-case text-slate-500">guardando…</span>}
+                </legend>
+
+                <label className={`flex cursor-pointer items-start gap-3 rounded-control border p-3 transition-colors ${
+                  fiscalData.fiscalRegime === 'GENERAL'
+                    ? 'border-brand bg-brand-soft'
+                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                }`}>
+                  <input
+                    type="radio"
+                    name="fiscalRegime"
+                    value="GENERAL"
+                    checked={fiscalData.fiscalRegime === 'GENERAL'}
+                    disabled={guardandoRegimen}
+                    onChange={() => elegirRegimenFiscal('GENERAL')}
+                    className="mt-1 h-4 w-4 accent-brand disabled:opacity-50"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-950">Régimen general</span>
+                    <span className="mt-0.5 block text-xs text-slate-600">La factura calcula y desglosa el IVA.</span>
+                  </span>
+                </label>
+
+                <label className={`flex cursor-pointer items-start gap-3 rounded-control border p-3 transition-colors ${
+                  fiscalData.fiscalRegime === 'CUOTA_FIJA'
+                    ? 'border-brand bg-brand-soft'
+                    : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                }`}>
+                  <input
+                    type="radio"
+                    name="fiscalRegime"
+                    value="CUOTA_FIJA"
+                    checked={fiscalData.fiscalRegime === 'CUOTA_FIJA'}
+                    disabled={guardandoRegimen}
+                    onChange={() => elegirRegimenFiscal('CUOTA_FIJA')}
+                    className="mt-1 h-4 w-4 accent-brand disabled:opacity-50"
+                  />
+                  <span>
+                    <span className="block text-sm font-semibold text-slate-950">Cuota fija</span>
+                    <span className="mt-0.5 block text-xs text-slate-600">La factura no calcula ni muestra un desglose de IVA.</span>
+                  </span>
+                </label>
+
+                <p id="fiscal-regime-help" className="rounded-control border border-amber-500/20 bg-amber-500/[0.07] p-3 text-xs text-amber-800">
+                  Este cambio aplica solo a ventas nuevas. No modifica ni reescribe facturas anteriores.
+                </p>
+              </fieldset>
+
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">RUC DE LA EMPRESA</label>
+                <label htmlFor="fiscal-tax-id" className="nx-label mb-1.5 block text-slate-600">RUC de la empresa</label>
                 <input
+                  id="fiscal-tax-id"
                   type="text"
                   required
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="h-touch w-full rounded-control border border-slate-300 bg-white px-3 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-brand focus:ring-2 focus:ring-brand-ring"
                   placeholder="Ej. J0310000123456"
                   value={fiscalData.taxId}
                   onChange={e => setFiscalData({ ...fiscalData, taxId: e.target.value })}
@@ -755,11 +851,12 @@ const Dashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">DIRECCIÓN FÍSICA</label>
+                <label htmlFor="fiscal-address" className="nx-label mb-1.5 block text-slate-600">Dirección física</label>
                 <input
+                  id="fiscal-address"
                   type="text"
                   required
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="h-touch w-full rounded-control border border-slate-300 bg-white px-3 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-brand focus:ring-2 focus:ring-brand-ring"
                   placeholder="Dirección del local para la factura"
                   value={fiscalData.address}
                   onChange={e => setFiscalData({ ...fiscalData, address: e.target.value })}
@@ -767,10 +864,11 @@ const Dashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">TELÉFONO</label>
+                <label htmlFor="fiscal-phone" className="nx-label mb-1.5 block text-slate-600">Teléfono</label>
                 <input
+                  id="fiscal-phone"
                   type="text"
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
+                  className="h-touch w-full rounded-control border border-slate-300 bg-white px-3 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-brand focus:ring-2 focus:ring-brand-ring"
                   placeholder="Teléfono (Opcional)"
                   value={fiscalData.phone}
                   onChange={e => setFiscalData({ ...fiscalData, phone: e.target.value })}
@@ -778,31 +876,32 @@ const Dashboard: React.FC = () => {
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-slate-600 mb-1">RESOLUCIÓN DGI (AUTORIZACIÓN)</label>
+                <label htmlFor="fiscal-auth-code" className="nx-label mb-1.5 block text-slate-600">Resolución DGI (autorización)</label>
                 <input
+                  id="fiscal-auth-code"
                   type="text"
-                  className="w-full p-3 border border-slate-300 rounded focus:ring-2 focus:ring-blue-500 outline-none bg-yellow-50"
+                  className="h-touch w-full rounded-control border border-slate-300 bg-white px-3 text-slate-950 outline-none transition-colors placeholder:text-slate-400 focus:border-brand focus:ring-2 focus:ring-brand-ring"
                   placeholder="Ej. Autorización DGI No. 12345"
                   value={fiscalData.dgiAuthCode}
                   onChange={e => setFiscalData({ ...fiscalData, dgiAuthCode: e.target.value })}
                 />
-                <p className="text-xs text-slate-500 mt-1">Este código aparecerá al pie de tus tickets para darle validez fiscal.</p>
+                <p className="mt-1.5 text-xs text-slate-500">Este código aparecerá al pie de tus tickets para darle validez fiscal.</p>
               </div>
 
-              <div className="pt-4 border-t border-slate-100 flex gap-3">
+              <div className="flex gap-3 border-t border-slate-200 pt-5">
                 <button
                   type="button"
                   onClick={() => setShowFiscalModal(false)}
-                  className="flex-1 py-3 text-slate-600 font-bold hover:bg-slate-100 rounded transition-colors"
+                  className="nx-fluid-press h-touch flex-1 rounded-control border border-slate-300 bg-white px-4 font-semibold text-slate-800 hover:bg-slate-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                 >
-                  CANCELAR
+                  Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={savingFiscal}
-                  className="flex-1 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded transition-colors"
+                  className="nx-fluid-press h-touch flex-1 rounded-control bg-brand px-4 font-semibold text-brand-on hover:bg-brand-hover disabled:cursor-not-allowed disabled:opacity-45 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                 >
-                  {savingFiscal ? 'GUARDANDO...' : 'GUARDAR DATOS'}
+                  {savingFiscal ? 'Guardando…' : 'Guardar datos'}
                 </button>
               </div>
             </form>
@@ -811,6 +910,22 @@ const Dashboard: React.FC = () => {
       )}
     </div>
   );
+};
+
+/**
+ * Enrutador del dashboard.
+ *  - Tenant LENDER + rol COLLECTOR (motorizado) → SOLO su pantalla de ruta de
+ *    cobro (MotorizadosPanel). Nunca ve capital, CRM ni bóveda del inversor
+ *    (Fase 0 blindaje H1). El backend además le niega esos endpoints (H2).
+ *  - Tenant LENDER (dueño/admin) → cartera de préstamos (LenderDashboard).
+ *  - Resto → dashboard retail.
+ * Wrapper sin hooks → no rompe las Reglas de Hooks. [Cobranza A3]
+ */
+const Dashboard: React.FC = () => {
+  if (getTenantType() === 'LENDER') {
+    return getUserRole() === 'COLLECTOR' ? <MotorizadosPanel /> : <LenderDashboard />;
+  }
+  return <RetailDashboard />;
 };
 
 export default Dashboard;
