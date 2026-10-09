@@ -57,7 +57,7 @@ function ingresoNetoDeVenta(
     const dExentoCrudo = exento == null ? new Decimal(0) : new Decimal(exento);
     const dExento = Decimal.min(Decimal.max(dExentoCrudo, new Decimal(0)), dTotal);
     const gravado = dTotal.minus(dExento);
-    const netoGravado = gravado.dividedBy(ivaFactor()).toDecimalPlaces(4);
+    const netoGravado = gravado.dividedBy(ivaFactor()).toDecimalPlaces(2); // H1: centavos
     return netoGravado.plus(dExento).toDecimalPlaces(4);
 }
 

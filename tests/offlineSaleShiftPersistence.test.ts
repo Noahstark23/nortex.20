@@ -50,6 +50,14 @@ vi.mock('../backend/services/productBatchWarehouseLedgerService.js', () => ({
     resolveBatchWarehouseLedgerMode,
 }));
 
+// H3: la numeración DGI tiene su propio servicio y pruebas (b5HallazgosFiscales).
+const allocateSaleInvoiceNumber = vi.hoisted(() => vi.fn());
+vi.mock('../backend/services/invoiceNumberingService.js', () => ({
+    InvoiceNumberingError: class InvoiceNumberingError extends Error {},
+    ensureDefaultSaleInvoiceSeries: vi.fn(),
+    allocateSaleInvoiceNumber,
+}));
+
 import { executeSaleWithResult } from '../backend/services/salesService';
 
 const rawSale = (employeeId: string | null = null) => ({
@@ -148,6 +156,7 @@ describe('identidad autoritativa al persistir replay offline', () => {
             unallocatedQuantity: new Decimal(1),
         });
         recordSale.mockResolvedValue(undefined);
+        allocateSaleInvoiceNumber.mockResolvedValue({ series: 'B', number: 501 });
     });
 
     it('persiste employeeId del Shift aunque la fila legacy lo omita', async () => {
@@ -169,8 +178,11 @@ describe('identidad autoritativa al persistir replay offline', () => {
                 shiftId: 'shift-a',
                 soldById: 'user-a',
                 employeeId: 'employee-authoritative',
+                invoiceSeries: 'B',
+                invoiceNumber: 501,
             }),
         }));
+        expect(allocateSaleInvoiceNumber).toHaveBeenCalledWith(tx, 'tenant-a');
         const lockQuery = queryRaw.mock.calls
             .map(([query]) => query)
             .find((query) => query.sql.includes('FROM `Shift`'));

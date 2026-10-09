@@ -65,8 +65,8 @@ export function desglosarVentaConExoneracion(total: Decimal.Value, exento: Decim
         dTotal
     );
     const gravado = dTotal.minus(dExento);
-    const netoGravado = gravado.dividedBy(IVA_FACTOR).toDecimalPlaces(4);
-    const iva = gravado.minus(netoGravado).toDecimalPlaces(4);
+    const netoGravado = gravado.dividedBy(IVA_FACTOR).toDecimalPlaces(2); // H1: a centavos, como el ticket
+    const iva = gravado.minus(netoGravado).toDecimalPlaces(2);
     return {
         exonerado: dExento.toDecimalPlaces(4),
         gravado: gravado.toDecimalPlaces(4),
@@ -436,6 +436,12 @@ export async function generateMonthlyReport(
     const imiAlcaldia = salesNetasSinIVA.mul(imiRateCfg).toDecimalPlaces(4);
 
     // B1 — Retenciones SUFRIDAS del mes (crédito contra anticipo IR / IMI).
+    // R1 (verificado en B5, no cambiar sin base legal): la retención IR 2% se
+    // acredita SOLO contra el anticipo IR/PMD, porque el art. 63 LCT (Ley 822) y
+    // el art. 51 de su Reglamento permiten acreditar al PMD únicamente las
+    // retenciones "a cuenta del IR". El IMI 1% es un impuesto MUNICIPAL (Plan de
+    // Arbitrios, Decreto 455; Managua Decreto 10-91) que se entera en la Alcaldía:
+    // su retención se acredita solo contra el IMI del mes, nunca contra el IR.
     let retIR = new Decimal(0);
     let retIMI = new Decimal(0);
     for (const r of retenciones) {
