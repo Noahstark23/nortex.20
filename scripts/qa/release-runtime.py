@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -18,6 +19,40 @@ E.mkdir(parents=True, exist_ok=True)
 
 def docker(parts, **kwargs):
     return subprocess.check_output(['docker', *parts], text=True, stderr=subprocess.PIPE, **kwargs).strip()
+
+_BUILD_DIAGNOSTICS = {
+    'unclassified': '[docker build] cause unclassified; inspect image-build.log',
+    'unavailable': '[docker build] diagnostic unavailable; build failure preserved',
+    'timeout': '[docker build] transport timeout reported',
+    'dns': '[docker build] DNS resolution failure reported',
+    'registry_429': '[docker build] registry HTTP 429 reported',
+    'npm_install': '[docker build] npm install step failed',
+    'frontend': '[docker build] frontend build step failed',
+    'seal': '[docker build] image seal step failed',
+}
+
+def _build_diagnostic_kind(path):
+    # Only classify bounded BuildKit error records. Never return source text.
+    with path.open('rb') as log:
+        log.seek(0, os.SEEK_END)
+        log.seek(max(0, log.tell() - 65536))
+        tail = log.read(65536).decode('utf-8', errors='replace')
+    signals = set()
+    for line in tail.splitlines():
+        if not re.match(r'^(?:ERROR: failed to solve:|#\d+ ERROR:)', line):
+            continue
+        line = line.lower()
+        if any(marker in line for marker in ('i/o timeout', 'tls handshake timeout', 'context deadline exceeded')):
+            signals.add('timeout')
+        if any(marker in line for marker in ('no such host', 'temporary failure in name resolution')):
+            signals.add('dns')
+        if '429 too many requests' in line and any(marker in line for marker in ('failed to authorize', 'failed to fetch oauth token', 'failed to resolve source metadata')):
+            signals.add('registry_429')
+        if 'process "/bin/sh -c ' in line and 'did not complete successfully' in line:
+            for marker, kind in [('npm ci', 'npm_install'), ('npm run build:seo', 'frontend'), ('node scripts/nortex-seal-image.mjs', 'seal')]:
+                if marker in line:
+                    signals.add(kind)
+    return next(iter(signals)) if len(signals) == 1 else 'unclassified'
 
 sha = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
 prefix = 'nortex-runtime-' + str(os.getpid()) + '-' + str(time.time_ns())
@@ -92,8 +127,19 @@ try:
     prepare_dispatch_checks()
     if not args.image:
         (ROOT / '.nortex-build-source.json').write_text(json.dumps({'version': 1, 'commit': sha}) + '\n')
-        with (E / 'image-build.log').open('w') as log:
-            subprocess.run(['docker', 'build', '-t', image, str(ROOT)], stdout=log, stderr=subprocess.STDOUT, check=True)
+        try:
+            with (E / 'image-build.log').open('w') as log:
+                subprocess.run(['docker', 'build', '-t', image, str(ROOT)], stdout=log, stderr=subprocess.STDOUT, check=True)
+        except subprocess.CalledProcessError:
+            try:
+                diagnostic = _BUILD_DIAGNOSTICS[_build_diagnostic_kind(E / 'image-build.log')]
+            except BaseException:
+                diagnostic = '[docker build] diagnostic unavailable; build failure preserved'
+            try:
+                print(diagnostic, flush=True)
+            except BaseException:
+                pass
+            raise
     receipt = json.loads(docker(['run', '--rm', '--network', 'none', '--entrypoint', 'cat', image, '/app/deploy/nortex/image-receipt.json']))
     assert receipt['previousCommit'] == sha
     identity = json.loads(docker(['image', 'inspect', '--format', '{"id":{{json .Id}},"os":{{json .Os}},"arch":{{json .Architecture}},"cmd":{{json .Config.Cmd}}}', image]))
