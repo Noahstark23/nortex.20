@@ -14,6 +14,7 @@ function Scanner({ onCode, onClose, onCreateProduct }: Props & { onClose: () => 
     const session = useRef(localStorage.getItem('nortex_token'));
     const [attempt, setAttempt] = useState(0);
     const [error, setError] = useState('');
+    const [hint, setHint] = useState('');
     const [manual, setManual] = useState('');
     const [missingCode, setMissingCode] = useState('');
     const [processing, setProcessing] = useState(false);
@@ -30,7 +31,8 @@ function Scanner({ onCode, onClose, onCreateProduct }: Props & { onClose: () => 
     const acceptRef = useRef(accept); acceptRef.current = accept;
     useEffect(() => {
         alive.current = true;
-        capture.current = startCameraBarcode(video.current!, code => { void acceptRef.current(code); }, setError);
+        setHint('');
+        capture.current = startCameraBarcode(video.current!, code => { void acceptRef.current(code); }, setError, undefined, undefined, setHint);
         const pause = () => { capture.current?.stop(); setError('Cámara pausada. Tocá Reintentar cámara para continuar.'); };
         const visibility = () => { if (document.hidden) pause(); };
         const changedSession = () => { if (localStorage.getItem('nortex_token') !== session.current) onClose(); };
@@ -46,6 +48,7 @@ function Scanner({ onCode, onClose, onCreateProduct }: Props & { onClose: () => 
             <header><h2>Escanear código</h2><button type="button" className="nx-fluid-press" aria-label="Cerrar cámara" onClick={onClose}><X size={22}/></button></header>
             <p>Apuntá al código de barras. Leemos un producto por captura.</p>
             <video ref={video} hidden={!!error} muted playsInline aria-label="Vista de la cámara" />
+            {hint && !error && !processing && <p role="status">{hint}</p>}
             {processing && <p role="status">Buscando producto…</p>}
             {error && <p role="alert">{error}</p>}
             {missingCode && onCreateProduct && <button type="button" className="nx-fluid-press nx-camera-primary" onClick={() => { if (session.current !== localStorage.getItem('nortex_token')) { onClose(); return; } onCreateProduct(missingCode); onClose(); }}>Crear producto con código {missingCode}</button>}

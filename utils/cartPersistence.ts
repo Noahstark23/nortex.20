@@ -83,8 +83,8 @@ export const esReescaneoRapido = (params: {
 
 export interface CarritoGuardado {
     v: number;
-    /** A qué turno de caja pertenece esta venta a medias. */
-    shiftId: string;
+    /** Turno de la venta; null indica borrador armado antes de abrir caja. */
+    shiftId: string | null;
     guardadoEn: number;
     lineas: LineaGuardada[];
     /** Solo el id: el cliente se re-resuelve contra la lista viva. Si lo
@@ -282,7 +282,7 @@ export function leerCarritoGuardado(crudo: string | null): CarritoGuardado | nul
 
     const o = dato as Record<string, unknown>;
     if (o.v !== VERSION_CARRITO && o.v !== VERSION_CARRITO_LEGACY) return null;
-    if (!esTextoUtil(o.shiftId)) return null;
+    if (o.shiftId === null ? o.v !== VERSION_CARRITO : !esTextoUtil(o.shiftId)) return null;
     if (!esNumero(o.guardadoEn)) return null;
     if (!Array.isArray(o.lineas)) return null;
 
@@ -293,7 +293,7 @@ export function leerCarritoGuardado(crudo: string | null): CarritoGuardado | nul
 
     return {
         v: VERSION_CARRITO,
-        shiftId: o.shiftId,
+        shiftId: o.shiftId as string | null,
         guardadoEn: o.guardadoEn,
         lineas,
         clienteId: esTextoUtil(o.clienteId) ? o.clienteId : null,
@@ -310,13 +310,13 @@ export function serializarCarrito(entrada: {
     descuentoGlobal: string;
     ahoraMs: number;
 }): string | null {
-    if (!esTextoUtil(entrada.shiftId)) return null;
+    if (entrada.shiftId !== null && !esTextoUtil(entrada.shiftId)) return null;
     const lineas = entrada.lineas.filter(lineaValida);
     if (lineas.length === 0) return null;
 
     const payload: CarritoGuardado = {
         v: VERSION_CARRITO,
-        shiftId: entrada.shiftId as string,
+        shiftId: entrada.shiftId,
         guardadoEn: entrada.ahoraMs,
         lineas,
         clienteId: esTextoUtil(entrada.clienteId) ? entrada.clienteId : null,
@@ -328,8 +328,8 @@ export function serializarCarrito(entrada: {
 /**
  * Qué hacer con lo que había guardado.
  *
- * `shiftIdActual` en `null` significa que no hay caja abierta: nada se restaura
- * solo, porque no hay turno al cual atribuir la venta.
+ * Un borrador sin turno sólo vuelve automáticamente mientras sigue sin caja;
+ * si se abrió un turno, la persona debe decidir si lo incorpora a esa caja.
  */
 export function decidirRestauracion(params: {
     guardado: CarritoGuardado | null;
@@ -343,7 +343,9 @@ export function decidirRestauracion(params: {
     // reloj de la máquina cambió (pasa, y más en equipos de mostrador). Ahí no
     // se restaura en silencio — se pregunta.
     const edad = Math.abs(ahoraMs - guardado.guardadoEn);
-    const mismoTurno = esTextoUtil(shiftIdActual) && guardado.shiftId === shiftIdActual;
+    const mismoTurno = guardado.shiftId === null
+        ? shiftIdActual === null
+        : esTextoUtil(shiftIdActual) && guardado.shiftId === shiftIdActual;
 
     if (mismoTurno && edad <= ventanaFrescaMs()) return 'RESTAURAR';
     return 'OFRECER';

@@ -14,16 +14,18 @@ function errorResponse(error:unknown,res:Response) {
   res.status(503).json({code:'OPERATIONS_UNAVAILABLE',error:'No pudimos completar la consulta. Conservá su referencia y volvé a comprobar el estado.'});
 }
 export function createAssistantOperationsRouter(deps:RunDependencies={}) {
+  // El canal de entrega lo determina la ruta autenticada, nunca el navegador.
+  const webDeps:RunDependencies={...deps,channel:'WEB_INTERNAL'};
   const router=Router();router.use(authenticate);router.use((_req,res,next)=>{res.set('Cache-Control','private, no-store');next();});
   router.post('/conversations/:id/runs',async(req,res)=>{try{
-    const principal=actor(req),run=await createAssistantRun(principal,idSchema.parse(req.params.id),req.body,deps);
+    const principal=actor(req),run=await createAssistantRun(principal,idSchema.parse(req.params.id),req.body,webDeps);
     res.status(run.status==='PENDING'?202:200).json(run);
-    if(run.status==='PENDING')void processAssistantRun(principal,run.id,deps).catch(()=>undefined);
+    if(run.status==='PENDING')void processAssistantRun(principal,run.id,webDeps).catch(()=>undefined);
   }catch(error){errorResponse(error,res);}});
-  router.get('/conversations/:id/runs',async(req,res)=>{try{res.json({runs:await listAssistantRuns(actor(req),idSchema.parse(req.params.id),deps)});}catch(error){errorResponse(error,res);}});
-  router.get('/runs/:id',async(req,res)=>{try{res.json(await getAssistantRun(actor(req),idSchema.parse(req.params.id),deps));}catch(error){errorResponse(error,res);}});
-  router.post('/runs/:id/cancel',async(req,res)=>{try{const {version}=z.object({version:z.number().int().nonnegative()}).strict().parse(req.body);res.json(await cancelAssistantRun(actor(req),idSchema.parse(req.params.id),version,deps));}catch(error){errorResponse(error,res);}});
-  router.post('/runs/:id/recover',async(req,res)=>{try{z.object({}).strict().parse(req.body??{});res.json(await recoverAssistantRun(actor(req),idSchema.parse(req.params.id),deps));}catch(error){errorResponse(error,res);}});
+  router.get('/conversations/:id/runs',async(req,res)=>{try{res.json({runs:await listAssistantRuns(actor(req),idSchema.parse(req.params.id),webDeps)});}catch(error){errorResponse(error,res);}});
+  router.get('/runs/:id',async(req,res)=>{try{res.json(await getAssistantRun(actor(req),idSchema.parse(req.params.id),webDeps));}catch(error){errorResponse(error,res);}});
+  router.post('/runs/:id/cancel',async(req,res)=>{try{const {version}=z.object({version:z.number().int().nonnegative()}).strict().parse(req.body);res.json(await cancelAssistantRun(actor(req),idSchema.parse(req.params.id),version,webDeps));}catch(error){errorResponse(error,res);}});
+  router.post('/runs/:id/recover',async(req,res)=>{try{z.object({}).strict().parse(req.body??{});res.json(await recoverAssistantRun(actor(req),idSchema.parse(req.params.id),webDeps));}catch(error){errorResponse(error,res);}});
   router.get('/daily-brief',async(req,res)=>{try{res.json(await getDailyBrief(actor(req),deps));}catch(error){errorResponse(error,res);}});
   router.post('/daily-brief/:id/dismiss',async(req,res)=>{try{const {itemId}=z.object({itemId:idSchema}).strict().parse(req.body);res.json(await dismissDailyBriefItem(actor(req),idSchema.parse(req.params.id),itemId,deps));}catch(error){errorResponse(error,res);}});
   return router;

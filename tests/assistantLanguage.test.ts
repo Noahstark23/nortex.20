@@ -1,7 +1,7 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import type { PrismaClient } from '@prisma/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createAssistantLanguage } from '../backend/services/assistant/language';
+import { assistantMessageUsageKey, createAssistantLanguage } from '../backend/services/assistant/language';
 import type { reserveAssistantBudget, settleAssistantBudget } from '../backend/services/assistant/budget';
 
 const principal = { tenantId: 'tenant-a', userId: 'user-a', role: 'OWNER' };
@@ -63,6 +63,15 @@ describe('NortexGPT: interpretación opcional con límites y autoridad cerrada',
         expect(db.user.findFirst).toHaveBeenCalledTimes(2);
         expect(db.purchase.create).not.toHaveBeenCalled();
         expect(db.$executeRaw).not.toHaveBeenCalled();
+    });
+
+    it('vincula la reserva y la liquidación a la solicitud exacta del mensaje', async () => {
+        const { interpret, reserve, settle } = harness();
+        const key = assistantMessageUsageKey('conversation-a', '3b69d59c-08a7-4b17-a2d8-2bf2c37fd140');
+        expect(key).toBe('message:conversation-a:3b69d59c-08a7-4b17-a2d8-2bf2c37fd140');
+        await interpret(principal, '¿Cómo reponer?', [], key);
+        expect(reserve).toHaveBeenCalledExactlyOnceWith(principal, undefined, expect.objectContaining({ capability: 'help', runId: key }));
+        expect(settle).toHaveBeenCalledExactlyOnceWith(principal, 'usage-a', expect.any(Object), expect.objectContaining({ runId: key }));
     });
 
     it.each([

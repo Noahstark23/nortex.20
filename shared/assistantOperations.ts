@@ -1,3 +1,4 @@
+import type { AssistantKnowledgeReference } from './assistantKnowledge.js';
 /** Contratos del asistente operativo; números financieros se conservan como texto decimal. */
 export type AssistantJson = null | boolean | number | string | AssistantJson[] | { [key: string]: AssistantJson };
 export type AssistantJsonObject = { [key: string]: AssistantJson };
@@ -27,6 +28,7 @@ export interface AssistantRunStep {
 }
 export interface AssistantRunResult {
   text: string; evidence: AssistantToolEvidence[]; actionProposalIds: string[]; degraded: boolean;
+  knowledgeReferences?: AssistantKnowledgeReference[]; knowledgeUnavailable?: boolean;
 }
 export interface AssistantRunDTO {
   id: string; conversationId: string; requestId: string;

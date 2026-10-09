@@ -13,6 +13,22 @@ on:
         description: Escribe exactamente PROMOTE <candidate_sha>
         required: true
         type: string
+      sole_owner_confirmation:
+        description: Excepción fundador único; escribe exactamente SOLE_OWNER <candidate_sha>
+        required: true
+        type: string
+
+      credit_hotfix_20261001:
+        description: Excepción puntual crédito C y recuperación B; no habilita otros SHAs
+        required: false
+        default: false
+        type: boolean
+      credit_hotfix_action:
+        description: Operación de la excepción; recover siempre exige B fijo
+        required: false
+        default: promote
+        type: choice
+        options: [promote, recover]
 
 permissions:
   contents: read
@@ -38,15 +54,26 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22.23.2
+      - name: Validar modo de promoción
+        env:
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+        run: node --input-type=module -e "import { hotfixAction } from './scripts/verify-credit-hotfix-release.mjs'; hotfixAction(process.env);"
       - name: Verificar intención, main y staging del candidato
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          SOLE_OWNER_CONFIRMATION: ${{ inputs.sole_owner_confirmation }}
           NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
           STAGING_URL: ${{ vars.STAGING_URL }}
+          PROD_URL: ${{ vars.PROD_URL }}
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+          CREDIT_HOTFIX_PHASE: production
         run: node scripts/authorize-production-release.mjs
 
       - name: Verificar CI terminal y exitoso del candidato
+        if: ${{ inputs.credit_hotfix_20261001 == false }}
         uses: actions/github-script@v9
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -84,6 +111,7 @@ jobs:
       # `release-staging.yml`; así un Auto Deploy u otra ruta externa no sustituye
       # la intención STAGE ni sus revalidaciones.
       - name: Verificar staging manual exitoso del candidato
+        if: ${{ inputs.credit_hotfix_20261001 == false }}
         uses: actions/github-script@v9
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -116,6 +144,25 @@ jobs:
               throw new Error('MANUAL_STAGING_SUCCESS_REQUIRED');
             }
 
+      - name: Verificar evidencia puntual de crédito
+        if: ${{ inputs.credit_hotfix_20261001 == true }}
+        uses: actions/github-script@v9
+        env:
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+          CREDIT_HOTFIX_PHASE: production
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PROD_URL: ${{ vars.PROD_URL }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          COOLIFY_STAGING_APPLICATION_UUID: ${{ vars.COOLIFY_STAGING_APPLICATION_UUID }}
+          COOLIFY_PROD_APPLICATION_UUID: ${{ vars.COOLIFY_PROD_APPLICATION_UUID }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { verifyHotfixCi, prepareHotfixReleaseEvidence } = await import(process.env.GITHUB_WORKSPACE + '/scripts/verify-credit-hotfix-run-evidence.mjs');
+            await verifyHotfixCi({ github });
+            await prepareHotfixReleaseEvidence({ github, phase: 'production' });
+
   deploy-production:
     name: deploy-production
     needs: [preflight]
@@ -124,11 +171,11 @@ jobs:
       name: production
       url: ${{ vars.PROD_URL }}
     steps:
-      # Se vuelve a fijar el checkout al candidato explícito, no a un SHA que
-      # haya cambiado mientras se esperaba la aprobación del environment.
+      # Ruta normal: checkout del candidato. Excepción: control M confiable;
+      # C/B se validan como objetos Git, nunca ejecutan estos controles.
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.candidate_sha }}
+          ref: ${{ inputs.credit_hotfix_20261001 && github.sha || inputs.candidate_sha }}
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
@@ -140,11 +187,17 @@ jobs:
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
           PRODUCTION_CONFIRMATION: ${{ inputs.confirmation }}
+          SOLE_OWNER_CONFIRMATION: ${{ inputs.sole_owner_confirmation }}
           NORTEX_PRODUCTION_DEPLOY_ENABLED: ${{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}
           STAGING_URL: ${{ vars.STAGING_URL }}
+          PROD_URL: ${{ vars.PROD_URL }}
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+          CREDIT_HOTFIX_PHASE: production
         run: node scripts/authorize-production-release.mjs
 
       - name: Verificar CI terminal y exitoso del candidato
+        if: ${{ inputs.credit_hotfix_20261001 == false }}
         uses: actions/github-script@v9
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -180,6 +233,7 @@ jobs:
       # Repetir la procedencia después de la aprobación: un staging sano no
       # reemplaza la prueba de que la ruta manual exacta fue la que lo acreditó.
       - name: Revalidar staging manual exitoso del candidato
+        if: ${{ inputs.credit_hotfix_20261001 == false }}
         uses: actions/github-script@v9
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -214,6 +268,24 @@ jobs:
 
       # El webhook por sí solo despliega lo que tenga configurado Coolify. Antes
       # de tocarlo, la aplicación debe estar fijada al mismo SHA y sin Auto Deploy.
+      - name: Verificar evidencia puntual de crédito
+        if: ${{ inputs.credit_hotfix_20261001 == true }}
+        uses: actions/github-script@v9
+        env:
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+          CREDIT_HOTFIX_PHASE: production
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          PROD_URL: ${{ vars.PROD_URL }}
+          STAGING_URL: ${{ vars.STAGING_URL }}
+          COOLIFY_STAGING_APPLICATION_UUID: ${{ vars.COOLIFY_STAGING_APPLICATION_UUID }}
+          COOLIFY_PROD_APPLICATION_UUID: ${{ vars.COOLIFY_PROD_APPLICATION_UUID }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const { verifyHotfixCi, prepareHotfixReleaseEvidence } = await import(process.env.GITHUB_WORKSPACE + '/scripts/verify-credit-hotfix-run-evidence.mjs');
+            await verifyHotfixCi({ github });
+            await prepareHotfixReleaseEvidence({ github, phase: 'production' });
       - name: Verificar destino Coolify fijado al candidato
         env:
           CANDIDATE_SHA: ${{ inputs.candidate_sha }}
@@ -280,8 +352,44 @@ jobs:
           fi
           echo "🚀 Deploy de prod disparado"
 
+      - name: Registrar solicitud puntual
+        if: ${{ inputs.credit_hotfix_20261001 == true }}
+        env:
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          HOTFIX_APP_URL: ${{ vars.PROD_URL }}
+          HOTFIX_APP_UUID: ${{ vars.COOLIFY_PROD_APPLICATION_UUID }}
+        run: |
+          node --input-type=module -e "import { mkdirSync } from 'node:fs'; import { recordHotfixEvidence } from './scripts/verify-credit-hotfix-run-evidence.mjs'; mkdirSync('credit-hotfix-attempt', { recursive: true }); recordHotfixEvidence({ phase: 'requested', environment: 'production', output: 'credit-hotfix-attempt/evidence.json' });"
+      - name: Conservar evidencia requested
+        if: ${{ inputs.credit_hotfix_20261001 == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: credit-hotfix-production-attempt
+          path: credit-hotfix-attempt/evidence.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Verificar PROD sano y en el candidato esperado
         env:
           APP_URL: ${{ vars.PROD_URL }}
           EXPECTED_COMMIT: ${{ inputs.candidate_sha }}
         run: node scripts/verify-deployed-release.mjs "$APP_URL" "$EXPECTED_COMMIT"
+      - name: Registrar salud puntual
+        if: ${{ inputs.credit_hotfix_20261001 == true }}
+        env:
+          CREDIT_HOTFIX_20261001: ${{ inputs.credit_hotfix_20261001 }}
+          CREDIT_HOTFIX_ACTION: ${{ inputs.credit_hotfix_action }}
+          CANDIDATE_SHA: ${{ inputs.candidate_sha }}
+          HOTFIX_APP_URL: ${{ vars.PROD_URL }}
+          HOTFIX_APP_UUID: ${{ vars.COOLIFY_PROD_APPLICATION_UUID }}
+        run: |
+          node --input-type=module -e "import { mkdirSync } from 'node:fs'; import { recordHotfixEvidence } from './scripts/verify-credit-hotfix-run-evidence.mjs'; mkdirSync('credit-hotfix-health', { recursive: true }); recordHotfixEvidence({ phase: 'healthy', environment: 'production', output: 'credit-hotfix-health/evidence.json' });"
+      - name: Conservar evidencia healthy
+        if: ${{ inputs.credit_hotfix_20261001 == true }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: credit-hotfix-production-health
+          path: credit-hotfix-health/evidence.json
+          if-no-files-found: error
+          retention-days: 7

@@ -1,12 +1,17 @@
+import { saveAssistantProposal } from './assistantProposalRecovery';
+import { assistantKnowledgeCapabilityScope } from '../shared/assistantKnowledgeScope';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { AssistantCatalogIdentity } from '../shared/assistantCatalog';
+import type { AssistantDocumentDecision } from '../shared/assistantDocumentReview';
+import { hideMessageKnowledge } from './useAssistantKnowledge';
 import { useAssistantOperations } from './useAssistantOperations';
 import { readActivationSession, useActivationSession } from './useActivationJourney';
 import type { AssistantAttachmentDTO, AssistantCapabilities, AssistantConversationDTO, AssistantJobDTO, AssistantMessageDTO, AssistantOperationDTO, AssistantProposalDTO, InvoiceDraft } from '../shared/assistant';
 
 export class AssistantRequestError extends Error {
-    constructor(message: string, public status = 0) { super(message); }
+    constructor(message: string, public status = 0, public code?: string) { super(message); }
 }
-export interface AssistantCatalogItem { id: string; label: string; detail?: string; sourceType?: string; productId?: string; warehouseId?: string; supplierId?: string; items?: Array<{ id: string; productId: string; label: string }> }
+export interface AssistantCatalogItem extends AssistantCatalogIdentity { sourceType?: string; productId?: string; warehouseId?: string; supplierId?: string; items?: Array<{ id: string; productId: string; label: string }> }
 export type AssistantCatalogKind = 'products' | 'suppliers' | 'warehouses' | 'purchaseOrders' | 'batches' | 'supplierReturnSources' | 'returnSuppliers';
 export type AssistantRequest = <T>(path: string, options?: RequestInit) => Promise<T>;
 const empty = { messages: [] as AssistantMessageDTO[], pendingMessage: null as AssistantMessageDTO | null, purchaseIntake: null as AssistantConversationDTO['purchaseIntake'], actions: [] as NonNullable<AssistantMessageDTO['actions']>, attachments: [] as AssistantAttachmentDTO[], job: null as AssistantJobDTO | null, proposal: null as AssistantProposalDTO | null, operation: null as AssistantOperationDTO | null, error: '', busy: false, confirmationRejected: false };
@@ -18,6 +23,7 @@ export function useNortexAssistant() {
     const session = useActivationSession();
     const [state, setState] = useState({ ...empty, key: session.key });
     const [capabilities, setCapabilities] = useState<{ key: string; value: AssistantCapabilities | null; failed: boolean }>({ key: session.key, value: null, failed: false });
+    const knowledgeEpoch = useRef(0);
     const authorizationEpoch = useRef(0); const capabilityGeneration = useRef(0);
     const lastCapabilities = useRef<AssistantCapabilities | null>(null);
     const conversation = useRef<string | null>(null);
@@ -51,7 +57,7 @@ export function useNortexAssistant() {
                     setCapabilities({ key: session.key, value: null, failed: true });
                 }
                 const body = await response.json().catch(() => null);
-                throw new AssistantRequestError(typeof body?.error === 'string' ? body.error : 'No pudimos completar la consulta.', response.status);
+                throw new AssistantRequestError(typeof body?.error === 'string' ? body.error : 'No pudimos completar la consulta.', response.status, typeof body?.code === 'string' ? body.code : undefined);
             }
             const result = await response.json();
             if (!current() || epoch !== authorizationEpoch.current) throw new AssistantRequestError('La sesión o los permisos cambiaron.', 401);
@@ -67,6 +73,10 @@ export function useNortexAssistant() {
             const value = await request<AssistantCapabilities>('/capabilities');
             if (!current() || generation !== capabilityGeneration.current) return;
             const previous = lastCapabilities.current;
+            if (previous && assistantKnowledgeCapabilityScope(previous) !== assistantKnowledgeCapabilityScope(value)) {
+                knowledgeEpoch.current += 1;
+                setState(currentState => ({ ...currentState, messages: currentState.messages.map(hideMessageKnowledge) }));
+            }
             const readPermissions: Array<keyof AssistantCapabilities> = ['enabled', 'help', 'overview', 'inventory', 'invoiceRead', 'operations', 'dailyBrief'];
             if (previous && (previous.accessScope !== value.accessScope || readPermissions.some(key => previous[key] && !value[key]))) {
                 authorizationEpoch.current += 1; busyRef.current = false; confirming.current = false; controllers.current.forEach(controller => controller.abort());
@@ -94,6 +104,7 @@ export function useNortexAssistant() {
         finally { if (current() && epoch === authorizationEpoch.current) { busyRef.current = false; update({ busy: false }, epoch); } }
     }, [current, update]);
     const send = useCallback((text: string) => run(async epoch => {
+        const helpEpoch = knowledgeEpoch.current;
         if (!text.trim()) return;
         if (state.pendingMessage && state.pendingMessage.text !== text.trim()) throw new AssistantRequestError('Retomá el mensaje pendiente antes de enviar otro.');
         const user: AssistantMessageDTO = state.pendingMessage ?? { id: crypto.randomUUID(), role: 'user', text: text.trim(), createdAt: new Date().toISOString() };
@@ -105,6 +116,7 @@ export function useNortexAssistant() {
         let answer: AssistantMessageDTO;
         try { answer = await request<AssistantMessageDTO>(`/conversations/${encodeURIComponent(conversation.current)}/messages`, { method: 'POST', body: JSON.stringify({ requestId: user.id, text: user.text }) }); }
         catch (error) { if (error instanceof AssistantRequestError && [400, 422].includes(error.status)) update({ pendingMessage: null }, epoch); throw error; }
+        if (helpEpoch !== knowledgeEpoch.current) answer = hideMessageKnowledge(answer);
         if (current() && epoch === authorizationEpoch.current) setState(previous => epoch === authorizationEpoch.current ? ({ ...previous, messages: [...previous.messages.filter(message => message.id !== answer.id), answer], pendingMessage: null,
             ...((answer.purchaseIntake && answer.purchaseIntake.id !== previous.purchaseIntake?.id) || (answer.purchaseIntake === null && previous.purchaseIntake && !previous.operation) ? { attachments: [], proposal: null, job: null, operation: null, confirmationRejected: false } : {}),
             ...(answer.purchaseIntake !== undefined ? { purchaseIntake: answer.purchaseIntake, actions: answer.purchaseIntake === null ? [] : actionsFor(answer) } : answer.actions !== undefined || answer.proposalId ? { actions: actionsFor(answer) } : {}) }) : previous);
@@ -136,9 +148,9 @@ export function useNortexAssistant() {
         const job = await request<AssistantJobDTO>(`/extractions/${encodeURIComponent(state.job.id)}`); update({ job }, epoch);
         if (job.status === 'SUCCEEDED' && job.proposalId) await loadProposal(job.proposalId, epoch);
     }), [loadProposal, request, run, session.key, state.job, state.key, update]);
-    const save = useCallback((draft: InvoiceDraft) => run(async epoch => {
+    const save = useCallback((draft: InvoiceDraft, documentDecisions?: AssistantDocumentDecision[]) => run(async epoch => {
         if (state.key !== session.key || !state.proposal) return;
-        const proposal = await request<AssistantProposalDTO>(`/proposals/${encodeURIComponent(state.proposal.id)}`, { method: 'PATCH', body: JSON.stringify({ version: state.proposal.version, draft }) }); update({ proposal, operation: proposal.result ?? null }, epoch);
+        const proposal = await saveAssistantProposal(request, state.proposal, draft, documentDecisions); update({ proposal, operation: proposal.result ?? null }, epoch);
     }), [request, run, session.key, state.key, state.proposal, update]);
     const confirm = useCallback((idempotencyKey: string) => run(async epoch => {
         if (confirming.current || state.key !== session.key || !state.proposal) return;
@@ -168,16 +180,32 @@ export function useNortexAssistant() {
         }
     }), [loadProposal, request, run, update]);
     const recoverConversation = useCallback((id: string) => run(async epoch => {
+        const helpEpoch = knowledgeEpoch.current;
         if (state.pendingMessage) throw new AssistantRequestError('Retomá el mensaje pendiente antes de recuperar otra conversación.');
         const result = await request<AssistantConversationDTO>(`/conversations/${encodeURIComponent(id.trim())}`);
         if (!current() || epoch !== authorizationEpoch.current) return;
         const latestIntake = [...result.messages].reverse().find(message => message.purchaseIntake !== undefined);
         const changedConversation = conversation.current !== result.id;
         const purchaseIntake = result.purchaseIntake !== undefined ? result.purchaseIntake : latestIntake?.purchaseIntake ?? null;
-        conversation.current = result.id; update({ messages: result.messages, pendingMessage: null,
+        conversation.current = result.id; update({ messages: helpEpoch === knowledgeEpoch.current ? result.messages : result.messages.map(hideMessageKnowledge), pendingMessage: null,
             ...(changedConversation || (purchaseIntake === null && state.purchaseIntake && !state.operation) ? { attachments: [], proposal: null, job: null, operation: null, confirmationRejected: false } : {}),
             purchaseIntake, actions: purchaseIntake === null ? [] : actionsFor({ actions: result.actions ?? latestIntake?.actions, proposalId: result.proposalId ?? latestIntake?.proposalId }) }, epoch);
     }), [current, request, run, state.operation, state.pendingMessage, state.purchaseIntake, update]);
+    const refreshKnowledge = useCallback(async () => {
+        const helpEpoch = ++knowledgeEpoch.current; const epoch = authorizationEpoch.current; const id = conversation.current;
+        if (!id) return;
+        const result = await request<AssistantConversationDTO>(`/conversations/${encodeURIComponent(id)}`);
+        if (!current() || epoch !== authorizationEpoch.current || helpEpoch !== knowledgeEpoch.current || conversation.current !== id) return;
+        const refreshed = new Map(result.messages.map(message => [message.id, message]));
+        setState(previous => {
+            if (epoch !== authorizationEpoch.current || helpEpoch !== knowledgeEpoch.current) return previous;
+            return { ...previous, messages: previous.messages.map(message => {
+                const fresh = refreshed.get(message.id);
+                // La vigencia de ayuda no reemplaza captura, revisión, adjuntos ni mensajes en vuelo.
+                return fresh && message.role === 'assistant' ? { ...message, text: fresh.text, citations: fresh.citations, knowledgeReferences: fresh.knowledgeReferences, knowledgeUnavailable: fresh.knowledgeUnavailable } : hideMessageKnowledge(message);
+            }) };
+        });
+    }, [current, request]);
     const openProposal = useCallback(async (id: string) => {
         let loaded = false;
         await run(async epoch => { await loadProposal(id, epoch); loaded = true; });
@@ -189,6 +217,6 @@ export function useNortexAssistant() {
     const access = capabilities.key === session.key && current() ? capabilities.value : null;
     const operations = useAssistantOperations(request, `${session.key}:${authorizationEpoch.current}`, !!access?.enabled && !!access.operations, visible.messages.flatMap(message => message.operationalRunId ? [message.operationalRunId] : []));
     return { ...visible, operations, capabilities: capabilities.key === session.key && current() ? capabilities.value : null, capabilitiesFailed: capabilities.key === session.key && capabilities.failed,
-        sessionKey: session.key, conversationId: current() ? conversation.current : null, recoverConversation, request, refreshCapabilities, send, upload, refreshJob, loadProposal, openProposal, save, confirm, recover, newInvoice };
+        sessionKey: session.key, conversationId: current() ? conversation.current : null, recoverConversation, refreshKnowledge, request, refreshCapabilities, send, upload, refreshJob, loadProposal, openProposal, save, confirm, recover, newInvoice };
 }
 export type NortexAssistantController = ReturnType<typeof useNortexAssistant>;

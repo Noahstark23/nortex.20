@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { hideRunKnowledge } from './useAssistantKnowledge';
 import type { AssistantRequest } from './useNortexAssistant';
 import type { AssistantActionProposalDTO, AssistantDailyBriefDTO, AssistantJsonObject, AssistantRunDTO } from '../shared/assistantOperations';
 const initial = { runs: {} as Record<string, AssistantRunDTO>, brief: null as AssistantDailyBriefDTO | null, proposal: null as AssistantActionProposalDTO | null, draft: null as AssistantJsonObject | null, dirty: false, uncertain: false, busy: false, error: '' };
@@ -7,6 +8,8 @@ const post = (body: unknown = {}) => ({ method: 'POST', body: JSON.stringify(bod
 export function useAssistantOperations(request: AssistantRequest, scope: string, enabled: boolean, runIds: string[]) {
     const [state, setState] = useState({ ...initial, scope });
     const generation = useRef(0); const activeScope = useRef(scope); activeScope.current = scope;
+    const knowledgeEpoch = useRef(0);
+    const runIdsRef = useRef(runIds); runIdsRef.current = runIds;
     const terminalRuns = useRef(new Set<string>());
     const lock = useRef(false); const confirmation = useRef<{ id: string; version: number; key: string } | null>(null);
     useEffect(() => { generation.current++; terminalRuns.current.clear(); lock.current = false; confirmation.current = null; setState({ ...initial, scope }); }, [scope]);
@@ -16,7 +19,8 @@ export function useAssistantOperations(request: AssistantRequest, scope: string,
         try { await task(epoch); } catch { update({ error: 'No pudimos completar la consulta. Tu revisión sigue aquí; comprobá el resultado antes de repetir.' }, epoch); }
         finally { if (generation.current === epoch) { lock.current = false; update({ busy: false }, epoch); } }
     }, [enabled, update]);
-    const mergeRun = useCallback((run: AssistantRunDTO, epoch: number) => {
+    const mergeRun = useCallback((incoming: AssistantRunDTO, epoch: number, helpEpoch: number) => {
+        const run = helpEpoch === knowledgeEpoch.current ? incoming : hideRunKnowledge(incoming);
         if (epoch !== generation.current || activeScope.current !== scope) return;
         setState(previous => {
             if ((previous.runs[run.id]?.version ?? -1) > run.version) return previous;
@@ -25,10 +29,19 @@ export function useAssistantOperations(request: AssistantRequest, scope: string,
         });
     }, [scope]);
     const refreshRun = useCallback(async (id: string) => {
-        const epoch = generation.current;
-        try { const run = await request<AssistantRunDTO>(`/runs/${encodeURIComponent(id)}`); mergeRun(run, epoch); }
+        const epoch = generation.current; const helpEpoch = knowledgeEpoch.current;
+        try { const run = await request<AssistantRunDTO>(`/runs/${encodeURIComponent(id)}`); mergeRun(run, epoch, helpEpoch); }
         catch { update({ error: 'No pudimos comprobar el avance. Podés retomar la misma consulta.' }, epoch); }
     }, [mergeRun, request, update]);
+    const refreshKnowledge = useCallback(async () => {
+        const epoch = generation.current; const helpEpoch = ++knowledgeEpoch.current;
+        // Incluso los resultados terminados deben comprobar fuentes retiradas.
+        const ids = [...new Set<string>(runIdsRef.current)];
+        await Promise.all(ids.map(async id => {
+            const run = await request<AssistantRunDTO>(`/runs/${encodeURIComponent(id)}`);
+            mergeRun(run, epoch, helpEpoch);
+        }));
+    }, [mergeRun, request]);
     const ids = runIds.join('|');
     useEffect(() => {
         if (!enabled) return; let stopped = false; let timer: ReturnType<typeof setTimeout>;
@@ -36,9 +49,10 @@ export function useAssistantOperations(request: AssistantRequest, scope: string,
         void poll(); return () => { stopped = true; clearTimeout(timer); };
     }, [enabled, ids, refreshRun]);
     const changeRun = useCallback((id: string, action: 'cancel' | 'recover') => execute(async epoch => {
+        const helpEpoch = knowledgeEpoch.current;
         try {
             const run = await request<AssistantRunDTO>(`/runs/${encodeURIComponent(id)}/${action}`, post(action === 'cancel' ? { version: state.runs[id]?.version } : {}));
-            mergeRun(run, epoch);
+            mergeRun(run, epoch, helpEpoch);
         } catch (error) { await refreshRun(id); throw error; }
     }), [execute, mergeRun, refreshRun, request, state.runs]);
     const loadBrief = useCallback(() => execute(async epoch => {
@@ -84,6 +98,6 @@ export function useAssistantOperations(request: AssistantRequest, scope: string,
         if (!state.proposal) return; const proposal = await request<AssistantActionProposalDTO>(`/action-proposals/${encodeURIComponent(state.proposal.id)}`);
         if (proposal.result) accept(proposal, epoch); else update({ error: 'Todavía no hay comprobante. Conservamos la misma referencia; no prepares otra operación.' }, epoch);
     }), [accept, execute, request, state.proposal, update]);
-    return { ...(state.scope === scope && enabled ? state : { ...initial, scope }), refreshRun, changeRun, loadBrief, dismiss, openProposal, edit, preview, confirm, recover };
+    return { ...(state.scope === scope && enabled ? state : { ...initial, scope }), refreshKnowledge, refreshRun, changeRun, loadBrief, dismiss, openProposal, edit, preview, confirm, recover };
 }
 export type AssistantOperationsController = ReturnType<typeof useAssistantOperations>;

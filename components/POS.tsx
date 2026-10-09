@@ -4,6 +4,7 @@ import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
+
 import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
@@ -91,6 +92,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
+import { resolvePosCredit, isUnverifiableCreditSale } from '../utils/posCredit';
 import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
@@ -286,8 +288,8 @@ interface Customer {
     id: string;
     name: string;
     phone?: string;
-    creditLimit: number;
-    currentDebt: number;
+    creditLimit: number | string;
+    currentDebt: number | string;
     storeCreditBalance?: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
@@ -608,8 +610,8 @@ const POS: React.FC = () => {
 
     // POST-SALE MODAL STATE
     const [completedSale, setCompletedSale] = useState<CompletedSale | null>(null);
+    const completedSaleRef = useRef(completedSale); completedSaleRef.current = completedSale;
     const [cashReceived, setCashReceived] = useState('');
-
     // PRE-SALE CASH MODAL STATE
     const [showCashPreModal, setShowCashPreModal] = useState(false);
 
@@ -769,6 +771,8 @@ const POS: React.FC = () => {
             const response = await fetch(`/api/customers?${params.toString()}`, { headers });
             if (!response.ok) return;
             const payload = await response.json();
+            // Los Decimal de Prisma llegan serializados como texto: se pasan
+            // crudos a resolvePosCredit, que falla cerrado si son inválidos.
             setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
         } catch (error) {
             console.error('Failed to fetch customers', error);
@@ -923,19 +927,17 @@ const POS: React.FC = () => {
     // ── P0-1 · Guardar (con debounce) ──────────────────────────────────────
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
+        if (ventaPendiente) return; // La venta anterior espera una decisión; no se borra ni se pisa.
         const clave = claveCarrito(identidad.tenantId, identidad.userId);
         const claveLegacy = claveCarritoLegacy(identidad.tenantId, identidad.userId);
-
-        // Venta YA COBRADA: se borra sin esperar el debounce. Si no, navegar
-        // entre el "¡Venta completada!" y "Nueva venta" dejaría guardado un
-        // carrito de mercadería ya vendida — y al volver se cobraría dos veces.
+        // Venta cobrada: borrar sin debounce evita recuperar mercadería ya vendida.
         if (completedSale) {
             localStorage.removeItem(clave);
             localStorage.removeItem(claveLegacy);
             return;
         }
-
-        const t = setTimeout(() => {
+        const guardar = () => {
+            if (completedSaleRef.current) { localStorage.removeItem(clave); localStorage.removeItem(claveLegacy); return; }
             const payload = serializarCarrito({
                 shiftId: currentShift?.id ?? null,
                 lineas: cart.map(aLineaGuardada),
@@ -943,7 +945,7 @@ const POS: React.FC = () => {
                 descuentoGlobal: globalDiscount,
                 ahoraMs: Date.now(),
             });
-            // Sin payload (carrito vacío o sin turno) se BORRA la clave: nunca
+            // Sin payload (carrito vacío) se BORRA la clave: nunca
             // se deja un `[]` guardado que después haya que interpretar.
             if (payload) {
                 localStorage.setItem(clave, payload);
@@ -952,10 +954,11 @@ const POS: React.FC = () => {
                 localStorage.removeItem(clave);
                 localStorage.removeItem(claveLegacy);
             }
-        }, 300);
-        return () => clearTimeout(t);
-    }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad]);
-
+        };
+        const t = setTimeout(guardar, 300);
+        window.addEventListener('pagehide', guardar);
+        return () => { clearTimeout(t); window.removeEventListener('pagehide', guardar); guardar(); }; // Salida antes de 300 ms.
+    }, [cart, selectedCustomer?.id, globalDiscount, currentShift?.id, completedSale, persistenciaLista, identidad, ventaPendiente]);
     // Aparcados: cambian de a uno (F4 / restaurar / quitar), sin debounce.
     useEffect(() => {
         if (!persistenciaLista || !identidad) return;
@@ -1605,7 +1608,10 @@ const POS: React.FC = () => {
             },
         });
     }, [navigate, showToast]);
-
+    const bloquearPorPendiente = useCallback(() => {
+        if (!ventaPendiente) return false;
+        setShowMobileCart(true); setParkingNotice({ tone: 'warning', message: 'Resolvé primero la venta pendiente antes de agregar productos.' }); return true;
+    }, [ventaPendiente]);
     const appendMeasuredLine = useCallback((params: {
         product: Product;
         baseQuantity: string;
@@ -1614,6 +1620,7 @@ const POS: React.FC = () => {
         measurement: CartItem['measurement'];
         overrideUnitPrice?: string;
     }) => {
+        if (bloquearPorPendiente()) return;
         const mode = effectiveSaleMode(params.product);
         const step = effectiveQuantityStep(params.product);
         const validated = validateQuantity(params.baseQuantity, { saleMode: mode, quantityStep: step });
@@ -1647,11 +1654,10 @@ const POS: React.FC = () => {
             measurement: params.measurement,
         }]);
         signalCartAddition(params.product.id);
-    }, [selectedCustomer?.isWholesale, signalCartAddition]);
-
+    }, [selectedCustomer?.isWholesale, signalCartAddition, bloquearPorPendiente]);
     const addToCart = useCallback((product: Product) => {
-        // Solo MEASURED explícito abre captura. Legacy null/undefined conserva
-        // el flujo histórico de +1/fusión, pero su editor admite fracciones D6.
+        if (bloquearPorPendiente()) return;
+        // MEASURED abre captura; legacy conserva +1/fusión y su editor admite fracciones.
         if (product.saleMode === 'MEASURED') {
             setManualMeasuredProduct(product);
             setManualQuantityDraft('');
@@ -1661,9 +1667,7 @@ const POS: React.FC = () => {
 
         signalCartAddition(product.id);
         const wholesaleCustomer = Boolean(selectedCustomer?.isWholesale);
-        // Un producto contado puede venderse únicamente en múltiplos (p. ej.
-        // paquetes de 6). La primera pulsación también debe respetar ese paso;
-        // iniciar en 1 y luego sumar 6 producía cantidades inválidas 1, 7, 13…
+        // La primera pulsación respeta el paso del paquete, no inicia en 1.
         const initialQuantity = repeatedCatalogAddIncrement(product);
         setCart(prev => {
             const existing = prev.find(item => (
@@ -1692,9 +1696,9 @@ const POS: React.FC = () => {
             const price = effectiveUnitPrice({ basePrice: product.price, wholesalePrice: product.wholesalePrice, wholesaleMinQty: product.wholesaleMinQty, packSize: product.packSize, packPrice: product.packPrice }, initialQuantity, wholesaleCustomer, 'BASE');
             return [...prev, { ...product, quantity: initialQuantity, cartLineId: product.id, basePrice: product.price, price }];
         });
-    }, [selectedCustomer?.isWholesale, signalCartAddition]);
-
+    }, [selectedCustomer?.isWholesale, signalCartAddition, bloquearPorPendiente]);
     const addPackToCart = useCallback((product: Product) => {
+        if (bloquearPorPendiente()) return;
         const packUnit = product.packUnit?.trim();
         const packSize = Number(product.packSize);
         const configuredBasePrice = (product as CartLine).basePrice ?? product.price;
@@ -1765,7 +1769,7 @@ const POS: React.FC = () => {
         });
         signalCartAddition(product.id);
         playBeep();
-    }, [selectedCustomer?.isWholesale, signalCartAddition]);
+    }, [selectedCustomer?.isWholesale, signalCartAddition, bloquearPorPendiente]);
 
     const confirmManualMeasured = useCallback((event: React.FormEvent) => {
         event.preventDefault();
@@ -2687,7 +2691,7 @@ const POS: React.FC = () => {
             showToast({
                 tone: 'success',
                 title: 'Cliente creado y seleccionado',
-                message: created.creditLimit > 0
+                message: new Decimal(created.creditLimit).gt(0)
                     ? 'Podés continuar con el cobro.'
                     : canManageCustomerCreateControls
                         ? 'Para venderle fiado, definí primero su límite de crédito.'
@@ -2819,27 +2823,9 @@ const POS: React.FC = () => {
     // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
     useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
 
-    // SMART CREDIT CHECK
-    const isCreditBlocked = useMemo(() => {
-        if (creditOverrideAuthorized) return false; // Owner override
-        if (!selectedCustomer) return true; // Cannot use credit without customer
-        if (selectedCustomer.isBlocked) return true;
-        if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
-        return false;
-    }, [selectedCustomer, grandTotal, creditOverrideAuthorized]);
-
-    // CREDIT THERMOMETER DATA
-    const creditInfo = useMemo(() => {
-        if (!selectedCustomer) return null;
-        const limit = selectedCustomer.creditLimit;
-        const currentDebt = selectedCustomer.currentDebt;
-        const debtPct = limit > 0 ? (currentDebt / limit) * 100 : 100;
-        const projectedDebt = currentDebt + grandTotal;
-        const projectedPct = limit > 0 ? (projectedDebt / limit) * 100 : 100;
-        const color = debtPct >= 80 || selectedCustomer.isBlocked ? 'red' : debtPct >= 50 ? 'yellow' : 'green';
-        const projectedColor = projectedPct >= 100 ? 'red' : projectedPct >= 80 ? 'yellow' : 'green';
-        return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
-    }, [selectedCustomer, grandTotal]);
+    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, amountDueD), [selectedCustomer, amountDueD]);
+    const isCreditBlocked = !creditInfo || (!creditOverrideAuthorized &&
+        (!selectedCustomer || selectedCustomer.isBlocked || creditInfo.exceedsLimit));
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT') => {
         if (!currentShift) {
@@ -2901,6 +2887,14 @@ const POS: React.FC = () => {
         }
         setShowMobileCart(false);
         trackEvent('sale_checkout_started', { payment_method: method, cart_items: cart.length });
+
+        // Crédito no verificable: se rechaza antes del override y del panel.
+        // Igual que el hotfix C′: un override autoriza exceder el límite,
+        // nunca vender fiado sin números verificables.
+        if (isUnverifiableCreditSale(method, creditInfo)) {
+            showToast({ tone: 'error', title: 'No se pudo verificar el crédito', message: 'Volvé a seleccionar el cliente con conexión antes de venderle fiado.' });
+            return;
+        }
 
         // Front-end Block (skip if override authorized)
         if (method === 'CREDIT' && isCreditBlocked && !creditOverrideAuthorized) {
@@ -5004,13 +4998,13 @@ const POS: React.FC = () => {
                         <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-500/10 border-red-300 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
                             <div className="flex justify-between font-bold mb-1.5">
                                 <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
-                                {!selectedCustomer.isBlocked && <span className="text-sm">{formatMoney((selectedCustomer.creditLimit - selectedCustomer.currentDebt))}</span>}
+                                {!selectedCustomer.isBlocked && <span className="text-sm">{creditInfo ? formatMoney(creditInfo.available) : 'No disponible'}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
                                     <div
                                         className="bg-blue-500 h-full transition-[width]"
-                                        style={{ width: `${customerCreditUsagePct(selectedCustomer.creditLimit, selectedCustomer.currentDebt)}%` }}
+                                        style={{ width: `${Math.min(creditInfo?.debtPct ?? 0, 100)}%` }}
                                     />
                                 </div>
                             )}
@@ -5545,7 +5539,7 @@ const POS: React.FC = () => {
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(grandTotal)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(amountDueD.toNumber())}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>

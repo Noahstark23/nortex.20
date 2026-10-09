@@ -112,7 +112,6 @@ const RetailDashboard: React.FC = () => {
   // financiero era puros ceros sin un solo CTA hacia vender (auditoría C9).
   // Los conteos salen de GET /api/onboarding (ya deriva de datos reales).
   const [starterSteps, setStarterSteps] = useState<{ product: boolean; sale: boolean } | null>(null);
-  const [seedingStarter, setSeedingStarter] = useState(false);
   useEffect(() => {
     const token = localStorage.getItem('nortex_token');
     if (!token) return;
@@ -126,23 +125,6 @@ const RetailDashboard: React.FC = () => {
       })
       .catch(() => { /* el bloque de arranque nunca rompe el panel */ });
   }, []);
-  const seedStarterCatalog = async () => {
-    setSeedingStarter(true);
-    try {
-      const token = localStorage.getItem('nortex_token');
-      const res = await fetch('/api/onboarding/seed-catalog', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      });
-      if (res.ok) {
-        window.dispatchEvent(new CustomEvent('nortex:data-changed'));
-        navigate('/app/pos?tour=pos'); // directo a probar la primera venta
-      }
-    } catch { /* silencioso */ } finally {
-      setSeedingStarter(false);
-    }
-  };
-
   // FETCH REAL DATA
   useEffect(() => {
     const initDashboard = async () => {
@@ -462,7 +444,7 @@ const RetailDashboard: React.FC = () => {
               <p className="mt-1 text-sm text-slate-600">
             {starterSteps.product
               ? 'Ya tenés productos. Te falta lo mejor: cobrar tu primera venta.'
-              : 'Dos caminos para ver a Nortex funcionando en menos de 2 minutos:'}
+              : 'Aprendé con ejemplos o empezá a cargar los productos de tu negocio.'}
               </p>
             </div>
           </div>
@@ -477,12 +459,11 @@ const RetailDashboard: React.FC = () => {
             ) : (
               <>
                 <button
-                  onClick={seedStarterCatalog}
-                  disabled={seedingStarter}
+                  onClick={() => navigate('/demo?source=onboarding')}
                   className="nx-fluid-press flex h-touch flex-1 items-center justify-center gap-2 rounded-control bg-brand px-6 font-semibold text-brand-on shadow-sm hover:bg-brand-hover disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-ring"
                 >
                   <ShoppingCart size={19} aria-hidden="true" />
-                  {seedingStarter ? 'Cargando…' : 'Probar con un catálogo de ejemplo'}
+                  Practicar sin guardar datos
                 </button>
                 <button
                   onClick={() => navigate('/app/inventory?tour=inv')}

@@ -3,6 +3,8 @@ import prisma from '../../lib/prisma.js';
 import { ACCOUNTING_READ_ROLES, POS_SALE_ROLES, PURCHASE_WRITE_ROLES, SUPPLIER_RETURN_WRITE_ROLES } from '../../middleware/accessPolicies.js';
 import type { AssistantCapabilities, AssistantPrincipal } from '../../../shared/assistant.js';
 import { getAssistantFlags } from './config.js';
+import { canManageAssistantBudget } from './budgetAuthority.js';
+import { canReadShiftReport } from '../../lib/salesReport.js';
 
 export class AssistantAccessError extends Error {
     constructor(public statusCode: number, public code: string, message: string) {
@@ -54,8 +56,10 @@ export async function getAssistantCapabilities(
     const inventory = ASSISTANT_INVENTORY_ROLES.includes(current.role);
     const operations = Boolean(flags.operationsEnabled && config.operationsEnabled);
     const actionPrepare = Boolean(flags.actionsEnabled && config.actionsEnabled && SUPPLIER_RETURN_WRITE_ROLES.includes(current.role));
+    const budgetManage = current.role === 'OWNER' || (current.role === 'ADMIN' && await canManageAssistantBudget(principal, db));
     return {
-        accessScope: current.role,
+        accessScope: `${current.role}:budget:${budgetManage}`,
+        budgetManage,
         enabled: true, help: true,
         overview: ASSISTANT_BUSINESS_SALES_ROLES.includes(current.role) || ASSISTANT_OWN_SALES_ROLES.includes(current.role) || inventory,
         inventory,
@@ -66,6 +70,7 @@ export async function getAssistantCapabilities(
         extractionEnabled: purchases && extractionEnabled,
         executionEnabled: purchases && executionEnabled,
         operations,
+        cashReview: operations && canReadShiftReport(current.role),
         dailyBrief: operations && (ASSISTANT_BUSINESS_SALES_ROLES.includes(current.role) || ASSISTANT_OWN_SALES_ROLES.includes(current.role) || inventory),
         actionPrepare,
         actionConfirm: actionPrepare && executionEnabled,

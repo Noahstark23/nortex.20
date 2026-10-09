@@ -9,8 +9,11 @@ import { parseDocument } from 'yaml';
 
 type Workflow = Record<string, any>;
 
+const legacyOnly = '$' + '{{ inputs.credit_hotfix_20261001 == false }}';
+const trustedCheckout = '$' + '{{ inputs.credit_hotfix_20261001 && github.sha || inputs.candidate_sha }}';
 const inputSha = '$' + '{{ inputs.candidate_sha }}';
 const inputConfirmation = '$' + '{{ inputs.confirmation }}';
+const inputSoleOwnerConfirmation = '$' + '{{ inputs.sole_owner_confirmation }}';
 const githubToken = '$' + '{{ github.token }}';
 const stagingWebhook = '$' + '{{ secrets.COOLIFY_STAGING_WEBHOOK }}';
 const stagingReadToken = '$' + '{{ secrets.COOLIFY_STAGING_READ_TOKEN }}';
@@ -55,7 +58,7 @@ const validateRootOrigin = (validator: string, appUrl: string) => spawnSync(
 );
 
 const assertManualStagingGate = (gate: Workflow, scope: string) => {
-    assert.equal(gate.if, undefined, scope + ': gate opcional');
+    assert.equal(gate.if, legacyOnly, scope + ': la ruta normal siempre conserva su compuerta');
     assert.equal(gate['continue-on-error'], undefined, scope + ': gate ignora errores');
     assert.deepEqual(gate.env, {
         CANDIDATE_SHA: inputSha,
@@ -80,7 +83,7 @@ const assertManualStagingGate = (gate: Workflow, scope: string) => {
 
 const assertTerminalCiGate = (gate: Workflow, scope: string) => {
     assert.equal(gate.uses, 'actions/github-script@v9', scope + ': usa el cliente GitHub oficial');
-    assert.equal(gate.if, undefined, scope + ': gate opcional');
+    assert.equal(gate.if, legacyOnly, scope + ': la ruta normal siempre conserva su compuerta');
     assert.equal(gate['continue-on-error'], undefined, scope + ': gate ignora errores');
     assert.deepEqual(gate.env, { CANDIDATE_SHA: inputSha });
     assert.equal(gate.with['github-token'], githubToken);
@@ -111,7 +114,7 @@ const assertTerminalCiGate = (gate: Workflow, scope: string) => {
 
 const assertSuccessfulManualStagingGate = (gate: Workflow, scope: string) => {
     assert.equal(gate.uses, 'actions/github-script@v9', scope + ': usa el cliente GitHub oficial');
-    assert.equal(gate.if, undefined, scope + ': gate opcional');
+    assert.equal(gate.if, legacyOnly, scope + ': la ruta normal siempre conserva su compuerta');
     assert.equal(gate['continue-on-error'], undefined, scope + ': gate ignora errores');
     assert.deepEqual(gate.env, { CANDIDATE_SHA: inputSha });
     assert.equal(gate.with['github-token'], githubToken);
@@ -213,7 +216,7 @@ const assertStaging = (workflow: Workflow) => {
     });
     const checkout = deploy.steps.find((item: Workflow) => item.uses === 'actions/checkout@v4');
     assert.ok(checkout, 'checkout de candidato requerido');
-    assert.equal(checkout.with.ref, inputSha);
+    assert.equal(checkout.with.ref, trustedCheckout);
     assert.equal(checkout.with['fetch-depth'], 0);
 
     const postApproval = step(deploy.steps, 'Revalidar candidato después de la aprobación');
@@ -297,6 +300,10 @@ const assertProduction = (workflow: Workflow) => {
         { required: inputs.confirmation.required, type: inputs.confirmation.type },
         { required: true, type: 'string' },
     );
+    assert.deepEqual(
+        { required: inputs.sole_owner_confirmation.required, type: inputs.sole_owner_confirmation.type },
+        { required: true, type: 'string' },
+    );
     assert.deepEqual(workflow.permissions, { contents: 'read', actions: 'read' });
     assert.deepEqual(workflow.concurrency, {
         group: 'nortex-production-promotion',
@@ -317,8 +324,13 @@ const assertProduction = (workflow: Workflow) => {
     assert.deepEqual(preflightGate.env, {
         CANDIDATE_SHA: inputSha,
         PRODUCTION_CONFIRMATION: inputConfirmation,
+        SOLE_OWNER_CONFIRMATION: inputSoleOwnerConfirmation,
         NORTEX_PRODUCTION_DEPLOY_ENABLED: '$' + '{{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}',
         STAGING_URL: '$' + '{{ vars.STAGING_URL }}',
+        PROD_URL: '$' + '{{ vars.PROD_URL }}',
+        CREDIT_HOTFIX_20261001: '$' + '{{ inputs.credit_hotfix_20261001 }}',
+        CREDIT_HOTFIX_ACTION: '$' + '{{ inputs.credit_hotfix_action }}',
+        CREDIT_HOTFIX_PHASE: 'production',
     });
     assertTerminalCiGate(preflightCi, 'preflight CI de producción');
     assertSuccessfulManualStagingGate(preflightStagingProvenance, 'preflight de procedencia staging');
@@ -335,7 +347,7 @@ const assertProduction = (workflow: Workflow) => {
     });
     const checkout = deploy.steps.find((item: Workflow) => item.uses === 'actions/checkout@v4');
     assert.ok(checkout, 'checkout de candidato requerido');
-    assert.equal(checkout.with.ref, inputSha);
+    assert.equal(checkout.with.ref, trustedCheckout);
     const postApproval = step(deploy.steps, 'Revalidar candidato después de la aprobación');
     const postApprovalCi = step(deploy.steps, 'Verificar CI terminal y exitoso del candidato');
     const postApprovalStagingProvenance = step(deploy.steps, 'Revalidar staging manual exitoso del candidato');
@@ -435,7 +447,7 @@ const assertNoOtherReleaseRoute = () => {
 
 describe('contrato de separación CI, staging y producción', () => {
     it('fija el runtime de Node de las promociones al mismo patch de CI', () => {
-        expect(stagingSource.match(/node-version: 22\.23\.2/g)).toHaveLength(1);
+        expect(stagingSource.match(/node-version: 22\.23\.2/g)).toHaveLength(2);
         expect(productionSource.match(/node-version: 22\.23\.2/g)).toHaveLength(2);
         expect(stagingSource).not.toMatch(/node-version: 22\s*$/m);
         expect(productionSource).not.toMatch(/node-version: 22\s*$/m);
@@ -446,8 +458,8 @@ describe('contrato de separación CI, staging y producción', () => {
         assertStaging(parse(stagingSource));
         assertProduction(parse(productionSource));
         assertNoOtherReleaseRoute();
-        expect(stagingSource).not.toContain('github.sha');
-        expect(productionSource).not.toContain('github.sha');
+        expect(stagingSource.match(/github\.sha/g)).toHaveLength(1); // sólo checkout confiable de la excepción
+        expect(productionSource.match(/github\.sha/g)).toHaveLength(1);
         expect(productionSource).not.toContain('secrets.COOLIFY_TOKEN');
     });
 
@@ -618,6 +630,14 @@ describe('contrato de separación CI, staging y producción', () => {
         }],
         ['confirmación de producción eliminada', (production: Workflow) => {
             delete production.on.workflow_dispatch.inputs.confirmation;
+        }],
+        ['excepción de fundador único eliminada', (production: Workflow) => {
+            delete production.on.workflow_dispatch.inputs.sole_owner_confirmation;
+        }],
+        ['excepción de fundador único ausente en preflight', (production: Workflow) => {
+            const gate = production.jobs.preflight.steps
+                .find((item: Workflow) => item.name === 'Verificar intención, main y staging del candidato');
+            delete gate.env.SOLE_OWNER_CONFIRMATION;
         }],
         ['preflight de producción protegido prematuramente', (production: Workflow) => {
             production.jobs.preflight.environment = { name: 'production' };

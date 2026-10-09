@@ -30,6 +30,7 @@ export interface InventoryCatalogFilters {
 
 export interface InventoryCatalogActions {
     create?: () => void;
+    cameraCreate?: () => void;
     import?: () => void;
     fullCreate?: () => void;
     export?: () => void;
@@ -137,6 +138,7 @@ export function InventoryCatalog({ onCreateScannedProduct, onCameraCode, title, 
                 </div>
             </div>
             {onCameraCode && <CameraScanButton onCode={onCameraCode} onCreateProduct={onCreateScannedProduct}/>}
+            {actions.cameraCreate && <button data-learning="product-create" type="button" className="nx-inventory-catalog-create nx-fluid-press" onClick={actions.cameraCreate}>Agregar con cámara</button>}
             {actions.create && <button type="button" className="nx-inventory-catalog-create nx-fluid-press" onClick={actions.create}><Plus size={18} /> Nuevo producto</button>}
         </div>
 

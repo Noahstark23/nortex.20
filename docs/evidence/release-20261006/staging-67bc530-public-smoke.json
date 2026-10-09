@@ -1,0 +1,41 @@
+{
+  "status": "PASS",
+  "scope": "Public entrypoints/assets only; no authenticated transactional smoke",
+  "checks": [
+    {
+      "path": "/",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "cacheControl": "no-cache, no-store, must-revalidate",
+      "bytes": 73297
+    },
+    {
+      "path": "/index.html",
+      "status": 200,
+      "contentType": "text/html; charset=utf-8",
+      "cacheControl": "public, max-age=0",
+      "bytes": 8932
+    },
+    {
+      "path": "/sw.js",
+      "status": 200,
+      "contentType": "text/javascript; charset=utf-8",
+      "cacheControl": "no-store, no-cache, must-revalidate",
+      "bytes": 10956
+    },
+    {
+      "path": "/assets/index-BMuNsX__.js",
+      "status": 200,
+      "contentType": "text/javascript; charset=utf-8",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "bytes": 445894
+    },
+    {
+      "path": "/assets/index-CHBQwCpu.css",
+      "status": 200,
+      "contentType": "text/css; charset=utf-8",
+      "cacheControl": "public, max-age=31536000, immutable",
+      "bytes": 230523
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import { formatMoney } from '../utils/money';
 import { PinPadClock } from './PinPadClock';
 import { useVentaEnCurso } from './VentaEnCursoContext';
 import OnboardingHub from './OnboardingHub';
+import TaskGuide from './learning/TaskGuide';
 import InstallPrompt from './InstallPrompt';
 import FluidSheet from './ui/FluidSheet';
 import { buildNavigation, groupBySection, navPathForRoute, esRutaDe, type NavEntry, type NavSection } from '../utils/navigation';
@@ -150,6 +151,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
 
     return (
       <div className="nx-app-shell flex h-dvh w-full overflow-hidden" data-nx-theme={workspaceTheme}>
+        <TaskGuide />
         <main className={`nx-workspace ${collectorWorkspaceModeClass} relative min-h-0 flex-1 overflow-y-auto`}>
           <header className="nx-dark-chrome nx-shell-border sticky top-0 z-sticky flex min-h-[calc(3.75rem+env(safe-area-inset-top))] items-end justify-between gap-3 border-b px-4 pb-2.5 pt-[calc(.625rem+env(safe-area-inset-top))]">
             <div className="min-w-0">
@@ -573,6 +575,7 @@ const Layout: React.FC<LayoutProps> = ({ children }) => {
           </div>
         </header>
 
+        <TaskGuide />
         <main className={`nx-workspace ${workspaceModeClass} relative min-h-0 flex-1 overflow-hidden`}>
           {children}
         </main>

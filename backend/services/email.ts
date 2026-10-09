@@ -6,10 +6,14 @@ if (process.env.RESEND_API_KEY) {
   resendClient = new Resend(process.env.RESEND_API_KEY);
   console.log('✅ Resend email service initialized');
 } else {
-  console.log('⚠️ RESEND_API_KEY not set — emails will be logged to console');
+  console.warn('⚠️ RESEND_API_KEY no configurada — envío de correos deshabilitado');
 }
 
-const FROM_EMAIL = process.env.EMAIL_FROM || 'Nortex <onboarding@resend.dev>';
+// El remitente de pruebas de Resend no sirve para recuperar cuentas de clientes.
+const FROM_EMAIL = process.env.EMAIL_FROM?.trim();
+if (resendClient && (!FROM_EMAIL || FROM_EMAIL.includes('@resend.dev'))) {
+  console.error('❌ EMAIL_FROM debe usar un dominio verificado en Resend para enviar a clientes.');
+}
 
 // ============================================================================
 // Plantilla base de marca (mismo look del email de reset) — un solo lugar
@@ -65,16 +69,18 @@ function esc(s: string): string {
 }
 
 async function deliver(to: string, subject: string, html: string): Promise<boolean> {
-  if (!resendClient) {
-    console.log(`📧 [DEV] Email "${subject}" para ${to} (RESEND_API_KEY no seteada)`);
+  if (!resendClient || !FROM_EMAIL || FROM_EMAIL.includes('@resend.dev')) {
     return false;
   }
   try {
-    await resendClient.emails.send({ from: FROM_EMAIL, to, subject, html });
-    console.log(`✅ Email "${subject}" enviado a ${to}`);
+    const { data, error } = await resendClient.emails.send({ from: FROM_EMAIL, to, subject, html });
+    if (error || !data?.id) {
+      console.error(`❌ Resend rechazó email "${subject}":`, error?.name || 'sin identificador');
+      return false;
+    }
     return true;
   } catch (error) {
-    console.error(`❌ Error enviando email "${subject}" a ${to}:`, error);
+    console.error(`❌ Error enviando email "${subject}":`, error instanceof Error ? error.name : 'desconocido');
     return false;
   }
 }
@@ -171,13 +177,12 @@ export async function sendPasswordResetEmail(
   resetLink: string,
   userName: string
 ): Promise<boolean> {
-  if (!resendClient) {
-    console.log(`📧 [DEV] Reset link para ${to}: ${resetLink}`);
+  if (!resendClient || !FROM_EMAIL || FROM_EMAIL.includes('@resend.dev')) {
     return false;
   }
 
   try {
-    await resendClient.emails.send({
+    const { data, error } = await resendClient.emails.send({
       from: FROM_EMAIL,
       to,
       subject: 'Recupera tu contraseña — Nortex',
@@ -202,7 +207,7 @@ export async function sendPasswordResetEmail(
     <div style="background:#111827;border:1px solid #1f2937;border-radius:16px;padding:32px;text-align:center;">
       <h2 style="color:#fff;font-size:18px;margin:0 0 8px;">Recuperar Contraseña</h2>
       <p style="color:#94a3b8;font-size:14px;margin:0 0 24px;line-height:1.5;">
-        Hola <strong style="color:#fff;">${userName}</strong>, recibimos una solicitud para restablecer tu contraseña.
+        Hola <strong style="color:#fff;">${esc(userName)}</strong>, recibimos una solicitud para restablecer tu contraseña.
       </p>
 
       <!-- Button -->
@@ -225,10 +230,13 @@ export async function sendPasswordResetEmail(
 </html>
             `,
     });
-    console.log(`✅ Email de reset enviado a ${to}`);
+    if (error || !data?.id) {
+      console.error('❌ Resend rechazó email de recuperación:', error?.name || 'sin identificador');
+      return false;
+    }
     return true;
   } catch (error) {
-    console.error('❌ Error enviando email:', error);
+    console.error('❌ Error enviando email de recuperación:', error instanceof Error ? error.name : 'desconocido');
     return false;
   }
 }

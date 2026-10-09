@@ -7,12 +7,18 @@ import { db } from '../lib/db';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
-import { MemoryRouter, useLocation } from 'react-router-dom';
+import { MemoryRouter, Route as RouterRoute, Routes, useLocation, useNavigate } from 'react-router-dom';
 import NortexAssistantLauncher from '../components/assistant/NortexAssistantLauncher';
 import { VentaEnCursoProvider, useReportarVenta, useVentaEnCurso } from '../components/VentaEnCursoContext';
+import { claveCarrito } from '../utils/cartPersistence';
+import type { AssistantRunDTO } from '../shared/assistantOperations';
+import { cashCloseInvestigationMessage } from '../shared/assistantCashCloseInvestigation';
 import type { AssistantCapabilities, AssistantMessageDTO, AssistantProposalDTO } from '../shared/assistant';
+import type { AssistantWorkItemDTO } from '../shared/assistantWorkItems';
 
 const caps: AssistantCapabilities = { enabled: true, help: true, overview: true, inventory: true, invoiceRead: true, invoicePrepare: true, invoiceConfirm: true, extractionEnabled: true, executionEnabled: true, purchasePrepare: true, accessScope: 'OWNER' };
+const tokenA = `header.${btoa(JSON.stringify({ tenantId: 't1', userId: 'u1' }))}.signature`;
+const tokenB = `header.${btoa(JSON.stringify({ tenantId: 't2', userId: 'u2' }))}.signature`;
 const ok = (value: unknown) => ({ ok: true, status: 200, json: async () => value });
 const denied = { ok: false, status: 403, json: async () => ({ error: 'Acceso no permitido' }) };
 const ready = (): AssistantProposalDTO => ({ id: 'p1', version: 1, status: 'READY', attachmentIds: ['a1'], expiresAt: '2026-10-01T00:00:00Z', issues: [],
@@ -29,14 +35,24 @@ function Route() { const location = useLocation(); const sale = useVentaEnCurso(
 function CurrentSale() { const report = useReportarVenta(); React.useEffect(() => report({ hayVenta: true, lineas: 3, total: 150 }), [report]); return <NortexAssistantLauncher />; }
 
 beforeEach(() => {
-    localStorage.clear(); localStorage.setItem('nortex_token', 'token-a'); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', tenant: { id: 't1' } }));
+    localStorage.clear(); sessionStorage.clear(); localStorage.setItem('nortex_token', tokenA); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', tenant: { id: 't1' } }));
     vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })));
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true);
+    const storedMessages: unknown[] = [];
     fetcher = vi.fn(async (url: string) => {
+        if (url.endsWith('/knowledge/revision')) return ok({ available: true, revision: '0:legacy' });
+        if (url.endsWith('/conversations/c1')) return ok({ id: 'c1', messages: storedMessages });
         if (url.endsWith('/capabilities')) return ok(caps);
-        if (url.includes('/catalog?')) return ok({ items: [] });
+        if (url.includes('/catalog?')) {
+            const query = new URL(url, 'http://qa.local').searchParams;
+            const kind = query.get('kind'); const selectedId = query.get('selectedId');
+            // Lecturas sintéticas de las identidades guardadas en ready(); no autoriza por una lista vacía.
+            if (kind === 'suppliers' && selectedId === 's1') return ok({ items: [{ id: 's1', label: 'Proveedor QA', ruc: 'QA-RUC-S1' }], warnings: [] });
+            if (kind === 'products' && selectedId === 'x1') return ok({ items: [{ id: 'x1', label: 'Tornillo', sku: 'TOR-QA-1', unit: 'unidad' }], warnings: [] });
+            return ok({ items: [], warnings: [] });
+        }
         if (url.endsWith('/conversations')) return ok({ id: 'c1', messages: [] });
-        if (url.endsWith('/messages')) return ok({ id: 'm1', role: 'assistant', text: 'Ventas no son utilidad.', createdAt: '2026-09-05T12:00:00Z', citations: [{ id: 'd1', title: 'Ayuda de Nortex', section: 'Ventas', version: '2026-09-05', path: 'help/sales' }], overview: { checkedAt: '2026-09-05T12:00:00Z', startDate: '2026-09-05', endDate: '2026-09-05', scope: 'Tu negocio', metrics: [{ key: 'expense', label: 'Gastos', value: null, status: 'unavailable', unit: 'money', source: 'Gastos registrados' }] } });
+        if (url.endsWith('/messages')) { const message = { id: 'm1', role: 'assistant', text: 'Ventas no son utilidad.', createdAt: '2026-09-05T12:00:00Z', citations: [{ id: 'd1', title: 'Ayuda de Nortex', section: 'Ventas', version: '2026-09-05', path: 'help/sales' }], overview: { checkedAt: '2026-09-05T12:00:00Z', startDate: '2026-09-05', endDate: '2026-09-05', scope: 'Tu negocio', metrics: [{ key: 'expense', label: 'Gastos', value: null, status: 'unavailable', unit: 'money', source: 'Gastos registrados' }] } }; storedMessages.push(message); return ok(message); }
         if (url.endsWith('/attachments') || url.endsWith('/attachments/a1')) return ok({ id: 'a1', name: 'factura.png', mediaType: 'image/png', bytes: 100, pages: 1, status: 'AVAILABLE' });
         if (url.endsWith('/extractions')) return ok({ id: 'j1', status: 'PENDING' });
         if (url.endsWith('/extractions/j1')) return ok({ id: 'j1', status: 'SUCCEEDED', proposalId: 'p1' });
@@ -47,7 +63,132 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); localStorage.clear(); });
 
+function installCashReview(status: AssistantRunDTO['status'] = 'SUCCEEDED') {
+    const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+    const run: AssistantRunDTO = { id: 'run-cash', conversationId: 'c1', requestId: 'request-cash', status, version: 1, iterations: 0, steps: [], createdAt: '2026-09-09T15:00:00Z', updatedAt: '2026-09-09T15:00:00Z',
+        result: { text: 'Cierre disponible para revisar.', degraded: true, actionProposalIds: [], evidence: [{ id: 'e1', tool: 'review_weekly_cash', label: 'Caja', data: {
+            kind: 'WEEKLY_CASH_REVIEW', status: 'ok', checkedAt: '2026-09-09T15:00:00Z', scope: 'business', truncated: false,
+            period: { startDate: '2026-09-02', endDate: '2026-09-08', cutoff: '2026-09-09T06:00:00Z', timeZone: 'America/Managua', completeDays: true },
+            rows: [{ shiftId: 'shift-qa', status: 'BALANCED', closedAt: '2026-09-09T02:00:00Z', businessDate: '2026-09-08', folio: 'Z-QA', message: 'Reporte guardado.', source: { id: 'report-qa', version: 1, contentHash: 'a'.repeat(64), documentUrl: '/api/reports/shifts/shift-qa/document' }, cash: { expectedNio: '100.00', countedNio: '100.00', differenceNio: '0.00', expectedUsd: '0.0000', countedUsd: '0.0000', differenceUsd: '0.0000' } }],
+            counts: { closed: 1, verified: 1, differences: 0, missingReports: 0, invalidReports: 0, open: 0 }, totals: { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' }, warnings: [], evidence: [],
+        } }] } };
+    fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+        if (url.endsWith('/capabilities')) return ok({ ...caps, operations: true, cashReview: true });
+        if (url.endsWith('/runs/run-cash')) return ok(run);
+        if (url.endsWith('/messages') && JSON.parse(String(options?.body)).text === 'Revisar caja QA') return ok({ id: 'message-cash', role: 'assistant', text: 'Consulta de caja.', operationalRunId: 'run-cash', createdAt: '2026-09-09T15:00:00Z' });
+        return base(url, options);
+    });
+}
+
 describe('NortexGPT dentro del negocio', () => {
+    it('investiga el cierre por el mismo chat y conserva borrador, carrito y ruta al cerrar y retomar', async () => {
+        installCashReview();
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
+        await open(); await sendMessage('Revisar caja QA');
+        const button = await screen.findByRole('button', { name: 'Investigar este cierre' });
+        await waitFor(() => expect(button).toBeEnabled());
+        fireEvent.change(screen.getByLabelText('Tu consulta'), { target: { value: 'Mi siguiente consulta pendiente' } });
+        fireEvent.click(button); await screen.findByText('Ventas no son utilidad.');
+        const requests = fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'));
+        expect(requests).toHaveLength(2);
+        expect(requests[1][0]).toBe('/api/assistant/conversations/c1/messages');
+        expect(JSON.parse(String(requests[1][1].body)).text).toBe(cashCloseInvestigationMessage('shift-qa', 'a'.repeat(64)));
+        expect(screen.getByLabelText('Tu consulta')).toHaveValue('Mi siguiente consulta pendiente');
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' })); await open();
+        expect(screen.getByLabelText('Tu consulta')).toHaveValue('Mi siguiente consulta pendiente');
+        expect(screen.getByLabelText('Carrito')).toHaveTextContent('3:150'); expect(screen.getByLabelText('Ruta')).toHaveTextContent('/app/pos');
+        expect(fetcher.mock.calls.some(([url]) => /\/confirm$|\/shifts\/close$|\/purchases$|\/document$/.test(String(url)))).toBe(false);
+    });
+    it.each(['PENDING', 'RUNNING'] as const)('bloquea investigar mientras la consulta está %s', async status => {
+        installCashReview(status); mount(); await open(); await sendMessage('Revisar caja QA');
+        const button = await screen.findByRole('button', { name: 'Investigar este cierre' }); expect(button).toBeDisabled(); fireEvent.click(button);
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(1);
+    });
+    it('bloquea investigar con una revisión de compra editada y conserva sus cambios', async () => {
+        installCashReview(); mount(); await open(); await sendMessage('Revisar caja QA'); await screen.findByRole('button', { name: 'Investigar este cierre' });
+        fireEvent.click(screen.getByRole('tab', { name: 'Factura' }));
+        fireEvent.click(screen.getByText('Retomar una lectura o comprobar una compra'));
+        fireEvent.change(screen.getByLabelText('Referencia'), { target: { value: 'p1' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Consultar referencia' }));
+        await waitFor(() => expect(screen.getByLabelText('Cantidad 1')).toBeEnabled()); fireEvent.change(screen.getByLabelText('Cantidad 1'), { target: { value: '50' } });
+        fireEvent.click(screen.getByRole('tab', { name: 'Consultar' }));
+        const button = screen.getByRole('button', { name: 'Investigar este cierre' }); expect(button).toBeDisabled(); fireEvent.click(button);
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(1);
+        fireEvent.click(screen.getByRole('tab', { name: 'Factura' })); expect(screen.getByLabelText('Cantidad 1')).toHaveValue('50');
+    });
+    it('bloquea un cierre anterior mientras otra consulta del chat sigue activa', async () => {
+        installCashReview(); const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url.endsWith('/messages') && JSON.parse(String(options?.body)).text === 'Otra consulta') return ok({ id: 'm-active', role: 'assistant', text: 'Consulta pendiente.', operationalRunId: 'run-active', createdAt: '2026-09-09T15:00:00Z' });
+            if (url.endsWith('/runs/run-active')) return ok({ id: 'run-active', conversationId: 'c1', requestId: 'request-active', status: 'RUNNING', version: 1, iterations: 0, steps: [], createdAt: '2026-09-09T15:00:00Z', updatedAt: '2026-09-09T15:00:00Z' });
+            return base(url, options);
+        });
+        mount(); await open(); await sendMessage('Revisar caja QA'); await screen.findByRole('button', { name: 'Investigar este cierre' });
+        await sendMessage('Otra consulta'); await screen.findByText('NortexGPT está trabajando');
+        expect(screen.getByRole('button', { name: 'Investigar este cierre' })).toBeDisabled();
+    });
+    it('bloquea investigar mientras se lee una factura sin abandonar el turno consultado', async () => {
+        installCashReview(); mount(); await open(); await sendMessage('Revisar caja QA'); await screen.findByRole('button', { name: 'Investigar este cierre' });
+        fireEvent.click(screen.getByRole('tab', { name: 'Factura' }));
+        fireEvent.change(screen.getByLabelText('Adjuntar factura'), { target: { files: [new File(['synthetic'], 'qa.png', { type: 'image/png' })] } });
+        await screen.findByText('Factura en espera para lectura.'); fireEvent.click(screen.getByRole('tab', { name: 'Consultar' }));
+        expect(screen.getByRole('button', { name: 'Investigar este cierre' })).toBeDisabled();
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(1);
+    });
+    it('bloquea otra investigación después de una respuesta perdida conservando la identidad pendiente', async () => {
+        installCashReview(); const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => { if (url.endsWith('/messages') && JSON.parse(String(options?.body)).text.startsWith('Investigá')) throw new Error('Respuesta perdida'); return base(url, options); });
+        mount(); await open(); await sendMessage('Revisar caja QA'); fireEvent.click(await screen.findByRole('button', { name: 'Investigar este cierre' }));
+        await screen.findByRole('button', { name: 'Reintentar mensaje pendiente' });
+        const button = screen.getByRole('button', { name: 'Investigar este cierre' }); expect(button).toBeDisabled(); fireEvent.click(button);
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/messages'))).toHaveLength(2);
+    });
+
+    it('el acceso a revisión de caja envía la consulta y conserva carrito y ruta', async () => {
+        const original = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url.endsWith('/capabilities')) return ok({ ...caps, operations: true, cashReview: true });
+            return original(url, options);
+        });
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
+        await open();
+        fireEvent.click(screen.getByRole('button', { name: 'Revisar cierres de caja' }));
+        await waitFor(() => expect(fetcher.mock.calls.some(([url, options]) => String(url).endsWith('/messages') && JSON.parse(String(options?.body)).text === 'Revisá mis cierres de caja de la última semana')).toBe(true));
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' }));
+        expect(screen.getByLabelText('Carrito')).toHaveTextContent('3:150');
+        expect(screen.getByLabelText('Ruta')).toHaveTextContent('/app/pos');
+        expect(fetcher.mock.calls.some(([url]) => /\/confirm$|\/shifts\/close$|\/purchases$/.test(String(url)))).toBe(false);
+    });
+    it('sin permiso de caja oculta el acceso sugerido', async () => {
+        mount(); await open();
+        expect(screen.queryByRole('button', { name: 'Revisar cierres de caja' })).not.toBeInTheDocument();
+    });
+    it('solicitar presupuesto desde el panel conserva la venta y no registra una compra', async () => {
+        const original = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        const budget = { month: '2026-09', limitUsd: '2.000000', spentUsd: '0.050000', reservedUsd: '0.000000', remainingUsd: '1.950000', blocked: false,
+            platformAvailable: true, availabilityReason: null, canRequest: true, maxLimitUsd: '10', requests: [] };
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url.endsWith('/capabilities')) return ok({ ...caps, budgetManage: true });
+            if (url.endsWith('/budget')) return ok(budget);
+            if (url.endsWith('/budget/requests')) {
+                const input = JSON.parse(String(options?.body));
+                return ok({ id: 'request-budget-qa', requestedUsd: input.requestedUsd, reason: input.reason, status: 'PENDING', createdAt: '2026-09-09T06:00:00Z', decidedAt: null, decisionReason: null });
+            }
+            return original!(url, options);
+        });
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
+        await open();
+        fireEvent.click(screen.getByText('Uso y presupuesto de NortexGPT'));
+        await screen.findByText('US$ 1.95');
+        fireEvent.change(screen.getByLabelText('Nuevo límite mensual en US$'), { target: { value: '5.00' } });
+        fireEvent.change(screen.getByLabelText('Motivo del aumento'), { target: { value: 'Necesitamos revisar más productos del negocio.' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Solicitar aumento a Nortex' }));
+        await waitFor(() => expect(fetcher.mock.calls.filter(([url, options]) => String(url).endsWith('/budget/requests') && options?.method === 'POST')).toHaveLength(1));
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' }));
+        expect(screen.getByLabelText('Carrito')).toHaveTextContent('3:150');
+        expect(screen.getByLabelText('Ruta')).toHaveTextContent('/app/pos');
+        expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/confirm') || String(url).endsWith('/purchases'))).toBe(false);
+    });
     it('conserva la captura y ofrece foto o texto al cerrar y retomar el panel', async () => {
         const base = fetcher.getMockImplementation() as (...args: any[]) => any;
         fetcher.mockImplementation((url, options) => url.endsWith('/messages') ? Promise.resolve(ok(captured())) : base(url, options));
@@ -234,7 +375,7 @@ describe('NortexGPT dentro del negocio', () => {
         expect(screen.getByText(/Período: 2026-09-05 al 2026-09-05/)).toBeVisible(); expect(screen.queryByText('C$ 0.00')).not.toBeInTheDocument();
         const messageCall = fetcher.mock.calls.find(([url]) => url.endsWith('/messages'));
         expect(JSON.parse(messageCall![1].body)).toEqual({ requestId: expect.any(String), text: '¿Cómo va mi negocio hoy?' });
-        expect(messageCall![1]).toMatchObject({ cache: 'no-store', headers: { Authorization: 'Bearer token-a' } });
+        expect(messageCall![1]).toMatchObject({ cache: 'no-store', headers: { Authorization: `Bearer ${tokenA}` } });
     });
     it('mantiene la conversación al cerrar y nunca guarda texto en almacenamiento local', async () => {
         const persist = vi.spyOn(localStorage, 'setItem');
@@ -245,7 +386,7 @@ describe('NortexGPT dentro del negocio', () => {
     it('todo rol puede abrir su ayuda y quien no lee costos no recibe controles de factura', async () => {
         fetcher.mockImplementation(async () => ok({ ...caps, overview: false, invoiceRead: false, invoicePrepare: false, invoiceConfirm: false }));
         mount(); await invoice(); expect(screen.getByText(/Tu rol no tiene acceso a facturas y costos/)).toBeVisible();
-        expect(screen.queryByLabelText('Adjuntar factura')).not.toBeInTheDocument(); expect(fetcher.mock.calls.every(([url]) => url.endsWith('/capabilities'))).toBe(true);
+        expect(screen.queryByLabelText('Adjuntar factura')).not.toBeInTheDocument(); expect(fetcher.mock.calls.every(([url]) => url.endsWith('/capabilities') || url.endsWith('/knowledge/revision'))).toBe(true);
     });
     it('abrir Compras conserva carrito y ruta cuando existe una venta', async () => {
         render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><CurrentSale /><Route /></VentaEnCursoProvider></MemoryRouter>);
@@ -259,7 +400,7 @@ describe('NortexGPT dentro del negocio', () => {
         let finish!: (value: unknown) => void; const deferred = new Promise(resolve => { finish = resolve; });
         const base = fetcher.getMockImplementation() as (...args: any[]) => any; fetcher.mockImplementation((url, options) => url.endsWith('/messages') ? deferred : base(url, options));
         mount(); await open(); fireEvent.click(screen.getByRole('button', { name: '¿Cómo va mi negocio hoy?' })); await waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith('/messages'))).toBe(true));
-        localStorage.setItem('nortex_token', 'token-b'); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u2', tenant: { id: 't2' } })); fireEvent(window, new Event('storage'));
+        localStorage.setItem('nortex_token', tokenB); localStorage.setItem('nortex_user', JSON.stringify({ id: 'u2', tenant: { id: 't2' } })); fireEvent(window, new Event('storage'));
         await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
         finish(ok({ id: 'private', role: 'assistant', text: 'Dato privado del negocio anterior', createdAt: '2026-09-05T12:00:00Z' })); await open();
         expect(screen.queryByText('Dato privado del negocio anterior')).not.toBeInTheDocument(); expect(screen.queryByText('¿Cómo va mi negocio hoy?', { selector: 'p' })).not.toBeInTheDocument();
@@ -358,12 +499,6 @@ describe('NortexGPT dentro del negocio', () => {
         });
         const user = userEvent.setup();
         render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><POS /><NortexAssistantLauncher /></VentaEnCursoProvider></MemoryRouter>);
-        // Buscador y botón de cobro cambian de rótulo entre POS simple y
-        // completo, y este caso trata del bloqueo de atajos de NortexGPT, no
-        // del modo. Se aceptan los dos rótulos —conservando el monto, que sí
-        // importa— igual que en tests/posVentaCritica.test.tsx. Antes esto
-        // dependía de que TODA ferretería arrancara en POS simple, que era el
-        // bug del descuento (tests/posDescuentoModoSimple.test.tsx).
         await user.type(await screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i), 'TOR-1{Enter}');
         const quantity = screen.getByRole('textbox', { name: 'Cantidad de Tornillo QA en unidad' }); expect(quantity).toHaveValue('1');
         await open(); const close = screen.getByRole('button', { name: 'Cerrar NortexGPT' }); await waitFor(() => expect(close).toHaveFocus());
@@ -371,6 +506,66 @@ describe('NortexGPT dentro del negocio', () => {
         await user.click(close); await waitFor(() => expect(screen.queryByRole('dialog', { name: 'NortexGPT' })).not.toBeInTheDocument());
         screen.getByRole('button', { name: /Cobrar C\$ 25\.00 en efectivo|EFECTIVO.*C\$ 25\.00/ }).focus(); await user.keyboard('TOR-1{Enter}');
         await waitFor(() => expect(quantity).toHaveValue('2')); expect(fetcher.mock.calls.some(([url]) => url === '/api/sales')).toBe(false);
+    });
+    it('retoma un trabajo W01 guardado tras salir y volver al POS sin perder el carrito', async () => {
+        await db.offline_sales.clear(); installCashReview();
+        localStorage.setItem('nortex_tenant_data', JSON.stringify({ id: 't1', businessName: 'Ferretería QA', type: 'FERRETERIA' }));
+        localStorage.setItem('nortex_user', JSON.stringify({ id: 'u1', name: 'Dueña QA', role: 'OWNER', tenant: { id: 't1' } }));
+        localStorage.setItem('token', 'token-a');
+        const period = { startDate: '2026-09-02', endDate: '2026-09-08', cutoff: '2026-09-09T06:00:00Z', timeZone: 'America/Managua' as const, completeDays: true };
+        const counts = { closed: 1, verified: 1, differences: 0, missingReports: 0, invalidReports: 0, open: 0 };
+        const totals = { shortageNio: '0.00', surplusNio: '0.00', shortageUsd: '0.0000', surplusUsd: '0.0000' };
+        const review = { kind: 'WEEKLY_CASH_REVIEW' as const, status: 'ok' as const, checkedAt: '2026-09-09T15:00:00Z', scope: 'business' as const, truncated: false, period, rows: [], counts, totals, warnings: [], evidence: [] };
+        const initial: AssistantWorkItemDTO = { id: 'work-qa', kind: 'W01_CASH_REVIEW', status: 'IN_REVIEW', version: 0,
+            conversationId: 'c1', createdAt: '2026-09-09T15:00:00Z', updatedAt: '2026-09-09T15:00:00Z', expiresAt: '2026-10-09T15:00:00Z',
+            source: { runId: 'run-cash', evidenceId: 'e1', contentHash: 'a'.repeat(64), period, checkedAt: review.checkedAt, scope: 'business', reviewStatus: 'ok', truncated: false, counts },
+            review, report: { kind: 'W01_CASH_REPORT', workItemId: 'work-qa', workItemVersion: 0, sourceHash: 'a'.repeat(64), period,
+                checkedAt: review.checkedAt, scope: 'business', completeness: 'ok', truncated: false, counts, totals, rows: [], exceptions: [], noteEventIds: [],
+                notesHash: 'b'.repeat(64), notesTruncated: false, warnings: [], evidence: ['Cierre sintético'], reportHash: 'c'.repeat(64) },
+            events: [], eventsTruncated: false };
+        let stored = initial;
+        const base = fetcher.getMockImplementation() as (url: string, options?: RequestInit) => Promise<unknown>;
+        fetcher.mockImplementation(async (url: string, options?: RequestInit) => {
+            if (url === '/api/assistant/work-items' && options?.method === 'POST') return ok(stored);
+            if (url === '/api/assistant/work-items') return ok({ items: [stored], nextCursor: null });
+            if (url === '/api/assistant/work-items/work-qa') return ok(stored);
+            if (url === '/api/assistant/work-items/work-qa/events' && options?.method === 'POST') {
+                const input = JSON.parse(String(options.body));
+                stored = { ...stored, version: 1, receiptEventId: input.eventId,
+                    events: [{ id: input.eventId, type: 'ADD_NOTE', note: input.note, fromStatus: 'IN_REVIEW', status: 'IN_REVIEW', version: 1, createdAt: '2026-09-09T15:01:00Z' }] };
+                return ok(stored);
+            }
+            if (url.startsWith('/api/assistant')) return base(url, options);
+            const path = new URL(url, 'http://test').pathname;
+            const product = { id: 'x1', name: 'Tornillo QA', sku: 'TOR-1', price: 25, cost: 10, stock: 20, category: 'General', unit: 'unidad', saleMode: 'COUNTED', quantityStep: 1, minStock: 5 };
+            const responses: Record<string, unknown> = { '/api/products': [product], '/api/customers': [], '/api/shifts/current': { id: 'shift-a', status: 'OPEN', initialCash: '500', userId: 'u1', startTime: '2026-09-04T12:00:00Z', esTurnoPropio: true, turnoDe: null },
+                '/api/cash-movements': [], '/api/cash-movements/balance': { efectivo: 500, efectivoNIO: 500 }, '/api/tenant/inventory-settings': { allowNegativeStock: false }, '/api/agent-banking/agreements': [], '/api/operational-alerts': { checkedAt: '2026-09-05T12:00:00Z', sections: [] } };
+            return ok(responses[path] ?? {});
+        });
+        function Journey() { const navigate = useNavigate(); return <><button onClick={() => navigate('/app/dashboard')}>Ir al panel</button><button onClick={() => navigate('/app/pos')}>Volver al POS</button>
+            <Routes><RouterRoute path="/app/pos" element={<POS />} /><RouterRoute path="/app/dashboard" element={<p>Panel de prueba</p>} /></Routes><NortexAssistantLauncher /></>; }
+        const user = userEvent.setup();
+        render(<MemoryRouter initialEntries={['/app/pos']}><VentaEnCursoProvider><Journey /></VentaEnCursoProvider></MemoryRouter>);
+        await open(); await sendMessage('Revisar caja QA');
+        fireEvent.click(await screen.findByRole('button', { name: 'Guardar revisión como trabajo' }));
+        await screen.findByRole('region', { name: 'Revisión guardada' });
+        fireEvent.change(screen.getByLabelText('Nota de la revisión'), { target: { value: 'Falta revisar el recibo' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Guardar nota' }));
+        await screen.findByText('Falta revisar el recibo');
+        fireEvent.click(screen.getByRole('button', { name: 'Cerrar NortexGPT' }));
+        await user.type(await screen.findByPlaceholderText(/Escaneá o buscá un producto|Buscar o escanear/i), 'TOR-1{Enter}');
+        expect(screen.getByRole('textbox', { name: 'Cantidad de Tornillo QA en unidad' })).toHaveValue('1');
+        fireEvent(window, new Event('pagehide'));
+        expect(localStorage.getItem(claveCarrito('t1', 'u1'))).toContain('Tornillo QA');
+        await user.click(screen.getByRole('button', { name: 'Ir al panel' }));
+        expect(await screen.findByText('Panel de prueba')).toBeVisible();
+        await user.click(screen.getByRole('button', { name: 'Volver al POS' }));
+        expect(await screen.findByRole('textbox', { name: 'Cantidad de Tornillo QA en unidad' })).toHaveValue('1');
+        await open(); fireEvent.click(screen.getByRole('tab', { name: 'Trabajos' }));
+        fireEvent.click(await screen.findByRole('button', { name: /2026-09-02 al 2026-09-08/ }));
+        expect(await screen.findByText('Falta revisar el recibo')).toBeVisible();
+        expect(fetcher.mock.calls.filter(([url]) => String(url).endsWith('/work-items/work-qa/events'))).toHaveLength(1);
+        expect(fetcher.mock.calls.some(([url]) => url === '/api/sales')).toBe(false);
     });
     it('una falla transitoria de acceso oculta datos y conserva la corrección hasta reconectar', async () => {
         mount(); await invoice(); fireEvent.change(screen.getByLabelText('Referencia'), { target: { value: 'p1' } }); fireEvent.click(screen.getByRole('button', { name: 'Consultar referencia' })); await waitFor(() => expect(screen.getByLabelText('Cantidad 1')).toBeEnabled());

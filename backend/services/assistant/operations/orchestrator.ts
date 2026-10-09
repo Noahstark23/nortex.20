@@ -6,6 +6,10 @@ import type { AssistantPrincipal } from '../../../../shared/assistant.js';
 import { reserveAssistantBudget, settleAssistantBudget } from '../budget.js';
 import { AssistantRunError, type OperationTool, type RunCheckpoint, type RunResult, type JsonValue } from './contracts.js';
 import { deterministicRunFallback } from './fallback.js';
+import type { AssistantKnowledgeChannel } from '../../../../shared/assistantKnowledge.js';
+import { validateAssistantKnowledgeReferences } from '../knowledge/service.js';
+import { collectRunKnowledgeReferences, mergeKnowledgeReferences, knowledgeUnavailableResult, type KnowledgeValidator } from './knowledgeProvenance.js';
+import { cashCloseInvestigationRequest } from './cashCloseInvestigationRequest.js';
 
 export const MAX_OPERATION_ITERATIONS = 4;
 export const MAX_OPERATION_DURATION_MS = 60_000;
@@ -13,17 +17,17 @@ const MAX_TOOL_OUTPUT_CHARS = 18_000;
 const finalSchema = z.object({text:z.string().trim().min(1).max(4000),evidenceIds:z.array(z.string().max(64)).min(1).max(8)}).strict();
 const responseSchema = z.object({id:z.string(),stop_reason:z.string().nullable(),usage:z.object({input_tokens:z.number().int().nonnegative(),output_tokens:z.number().int().nonnegative(),cache_creation_input_tokens:z.number().optional(),cache_read_input_tokens:z.number().optional()}),content:z.array(z.unknown()).max(10)});
 const useSchema = z.object({type:z.literal('tool_use'),id:z.string().min(1).max(128),name:z.string().min(1).max(100),input:z.json()});
-interface OrchestratorInput { principal:AssistantPrincipal; conversationId:string; runId:string; text:string; history?:string[]; previousResults?:Array<{runId:string;recordedAt:string;stale:true;refreshRequiredBeforePreparation:true;result:RunResult}>; deadlineAt?:Date; checkpoint?:RunCheckpoint }
+interface OrchestratorInput { channel?:AssistantKnowledgeChannel; principal:AssistantPrincipal; conversationId:string; runId:string; text:string; history?:string[]; previousResults?:Array<{runId:string;recordedAt:string;stale:true;refreshRequiredBeforePreparation:true;result:RunResult}>; deadlineAt?:Date; checkpoint?:RunCheckpoint }
 interface OrchestratorDependencies {
   tools:OperationTool[]; db?:PrismaClient;
   create?:(request:Anthropic.MessageCreateParamsNonStreaming,options:{timeout:number;maxRetries:0;signal:AbortSignal})=>Promise<unknown>;
   reserve?:(principal:AssistantPrincipal)=>Promise<{id:string}>;
   settle?:(principal:AssistantPrincipal,id:string,usage:{inputTokens:number;outputTokens:number;requestId?:string}|null)=>Promise<unknown>;
   assertActive:()=>Promise<void>; onCheckpoint:(checkpoint:RunCheckpoint)=>Promise<void>;
-  enabled?:()=>boolean; now?:()=>Date;
+  enabled?:()=>boolean; now?:()=>Date; validateKnowledge?:KnowledgeValidator;
 }
 function partial(checkpoint:RunCheckpoint):RunResult {
-  return {text:checkpoint.evidence.length?'La consulta quedó incompleta. Conservé las fuentes verificadas y los borradores preparados para que los revisés. Ninguna operación fue confirmada.':'No pude obtener evidencia suficiente para completar la consulta. Podés continuar usando las funciones habituales de Nortex.',evidence:checkpoint.evidence,actionProposalIds:checkpoint.actionProposalIds,degraded:true};
+  return {text:checkpoint.evidence.length?'La consulta quedó incompleta. Conservé las fuentes verificadas y los borradores preparados para que los revisés. Ninguna operación fue confirmada.':'No pude obtener evidencia suficiente para completar la consulta. Podés continuar usando las funciones habituales de Nortex.',evidence:checkpoint.evidence,actionProposalIds:checkpoint.actionProposalIds,degraded:true,knowledgeReferences:checkpoint.knowledgeReferences,knowledgeUnavailable:checkpoint.knowledgeUnavailable};
 }
 function supportedAnswer(text:string,evidence:string):boolean {
   // No aceptar cifras nuevas: los cálculos y sus comparativos pertenecen a los servicios.
@@ -54,25 +58,60 @@ export async function runAssistantOrchestrator(input:OrchestratorInput,deps:Orch
   let client:Anthropic|undefined;
   const create=deps.create??((request,options)=>(client??=new Anthropic({maxRetries:0})).messages.create(request,options));
   const checkpoint:RunCheckpoint=input.checkpoint?structuredClone(input.checkpoint):{iterations:0,messages:[{role:'user',content:JSON.stringify({preguntasAnteriores:(input.history??[]).slice(-4).map(value=>value.slice(0,2000)),resultadosAnteriores:(input.previousResults??[]).slice(0,2),solicitud:input.text.slice(0,4000)})}],steps:[],evidence:[],actionProposalIds:[]};
+  const validateKnowledge=deps.validateKnowledge??(references=>validateAssistantKnowledgeReferences(input.principal,references,db,input.channel??'WEB_INTERNAL'));
+  const inherited=(input.previousResults??[]).map(previous=>collectRunKnowledgeReferences(previous.result));
+  if(!input.checkpoint) {
+    checkpoint.knowledgeReferences=inherited.some(value=>value===null)?undefined:mergeKnowledgeReferences(...inherited.filter(value=>value!==null));
+    if(inherited.some(value=>value===null)||(input.previousResults??[]).some(previous=>previous.result.knowledgeUnavailable))checkpoint.knowledgeUnavailable=true;
+  }
+  const checkKnowledge=async()=>{
+    const references=collectRunKnowledgeReferences(undefined,checkpoint);
+    const valid=!checkpoint.knowledgeUnavailable&&references!==null&&(!references.length||await validateKnowledge(references));
+    if(valid){checkpoint.knowledgeReferences=references!;return true;}
+    checkpoint.knowledgeUnavailable=true;
+    checkpoint.messages=[];
+    checkpoint.evidence=checkpoint.evidence.filter(item=>item.tool!=='search_help');
+    return false;
+  };
+  const saveCheckpoint=async()=>{await checkKnowledge();await deps.onCheckpoint(checkpoint);};
+  const finish=async(result:RunResult):Promise<RunResult>=>{
+    await deps.assertActive();
+    const valid=await checkKnowledge();
+    const annotated={...result,knowledgeReferences:checkpoint.knowledgeReferences};
+    return valid?annotated:knowledgeUnavailableResult(annotated);
+  };
   const tools=new Map(deps.tools.map(tool=>[tool.name,tool]));
   if(tools.size!==deps.tools.length||[...tools.keys()].some(name=>name==='respond_with_evidence'||!/^[a-z_]{1,64}$/.test(name)||/confirm|execute|sql/.test(name)))throw new AssistantRunError(500,'INVALID_TOOL_REGISTRY','El catálogo operativo requiere revisión.');
-  const fallback=()=>deterministicRunFallback(input.text,now(),checkpoint,tools,{assertActive:deps.assertActive,onCheckpoint:deps.onCheckpoint,execute:async(tool,args,stepId)=>{
+  const fallback=async()=>{
+    if(!await checkKnowledge())return finish(partial(checkpoint));
+    const result=await deterministicRunFallback(input.text,now(),checkpoint,tools,{assertActive:deps.assertActive,onCheckpoint:saveCheckpoint,execute:async(tool,args,stepId)=>{
     const assertActive=async()=>{if(now().getTime()>=deadline)throw new AssistantRunError(408,'RUN_TIMEOUT','La consulta alcanzó su tiempo máximo.');await deps.assertActive();};
-    await assertActive();return withinDeadline(tool.execute({principal:input.principal,conversationId:input.conversationId,runId:input.runId,toolCallId:stepId,assertActive},args),deadline-now().getTime());
+    await assertActive();
+    const output = await withinDeadline(tool.execute({principal:input.principal,conversationId:input.conversationId,runId:input.runId,toolCallId:stepId,channel:input.channel,assertActive},args),deadline-now().getTime());
+    await assertActive();
+    checkpoint.knowledgeReferences=mergeKnowledgeReferences(checkpoint.knowledgeReferences??[],output.knowledgeReferences??[]);
+    if(!await checkKnowledge())throw new AssistantRunError(409,'KNOWLEDGE_UNAVAILABLE','La ayuda necesita una nueva consulta.');
+    return output;
   }});
+    return finish(result);
+  };
   // Una clave ausente no produjo consumo incierto: no reservar ni liquidar una llamada inexistente.
+  // La referencia elegida por la persona conserva su identidad y no necesita una interpretación pagada.
+  if (cashCloseInvestigationRequest(input.text) !== undefined) return fallback();
   if(!deps.create&&!process.env.ANTHROPIC_API_KEY)return fallback();
   while(checkpoint.iterations<MAX_OPERATION_ITERATIONS&&now().getTime()<deadline) {
     await deps.assertActive();
+    if(!await checkKnowledge())return finish(partial(checkpoint));
     checkpoint.iterations++;
     // Persistir el intento antes del proveedor: un reinicio no reinicia el presupuesto de iteraciones.
-    await deps.onCheckpoint(checkpoint);
+    await saveCheckpoint();
     let reservation:{id:string};
     try {reservation=await reserve(input.principal);} catch {return fallback();}
     try {await deps.assertActive();}
     catch(error) {await settle(input.principal,reservation.id,{inputTokens:0,outputTokens:0});throw error;}
+    if(!await checkKnowledge()){await settle(input.principal,reservation.id,{inputTokens:0,outputTokens:0});return finish(partial(checkpoint));}
     const remaining=deadline-now().getTime();
-    if(remaining<=0){await settle(input.principal,reservation.id,{inputTokens:0,outputTokens:0});return partial(checkpoint);}
+    if(remaining<=0){await settle(input.principal,reservation.id,{inputTokens:0,outputTokens:0});return finish(partial(checkpoint));}
     const controller=new AbortController();let timer:ReturnType<typeof setTimeout>|undefined;
     const timeout=new Promise<never>((_resolve,reject)=>{timer=setTimeout(()=>{controller.abort();reject(new AssistantRunError(408,'RUN_TIMEOUT','La consulta alcanzó su tiempo máximo.'));},remaining);});
     let settled=false;
@@ -86,29 +125,31 @@ export async function runAssistantOrchestrator(input:OrchestratorInput,deps:Orch
       },{timeout:Math.max(1,remaining),maxRetries:0,signal:controller.signal}),timeout]));
       const unknown=Boolean(response.usage.cache_creation_input_tokens||response.usage.cache_read_input_tokens);
       await settle(input.principal,reservation.id,unknown?null:{inputTokens:response.usage.input_tokens,outputTokens:response.usage.output_tokens,requestId:response.id});settled=true;
-      if(unknown)return partial(checkpoint);
+      if(unknown)return finish(partial(checkpoint));
     } catch {
       if(!settled)await settle(input.principal,reservation.id,null);
-      return partial(checkpoint);
+      return finish(partial(checkpoint));
     } finally {clearTimeout(timer);}
     await deps.assertActive();
-    if(now().getTime()>=deadline)return partial(checkpoint);
+    if(!await checkKnowledge())return finish(partial(checkpoint));
+    if(now().getTime()>=deadline)return finish(partial(checkpoint));
     const blocks=response.content.map(block=>useSchema.safeParse(block)).filter(result=>result.success);
-    if(response.stop_reason!=='tool_use'||blocks.length!==1)return partial(checkpoint);
+    if(response.stop_reason!=='tool_use'||blocks.length!==1)return finish(partial(checkpoint));
     const block=blocks[0].data;
     if(block.name==='respond_with_evidence') {
       const parsed=finalSchema.safeParse(block.input);
-      if(!parsed.success)return partial(checkpoint);
+      if(!parsed.success)return finish(partial(checkpoint));
       const cited=checkpoint.evidence.filter(item=>parsed.data.evidenceIds.includes(item.id));
-      if(new Set(parsed.data.evidenceIds).size!==cited.length||!supportedAnswer(parsed.data.text,JSON.stringify(cited)))return partial(checkpoint);
-      return {text:parsed.data.text,evidence:cited,actionProposalIds:checkpoint.actionProposalIds,degraded:false};
+      if(new Set(parsed.data.evidenceIds).size!==cited.length||!supportedAnswer(parsed.data.text,JSON.stringify(cited)))return finish(partial(checkpoint));
+      return finish({text:parsed.data.text,evidence:cited,actionProposalIds:checkpoint.actionProposalIds,degraded:false});
     }
     const tool=tools.get(block.name);
-    if(!tool)return partial(checkpoint);
+    if(!tool)return finish(partial(checkpoint));
     const step={id:`step${checkpoint.steps.length+1}`,tool:tool.name,label:tool.label,status:'RUNNING' as const};
     checkpoint.steps.push(step);
     checkpoint.messages.push({role:'assistant',content:[{type:'tool_use',id:block.id,name:block.name,input:block.input}]});
-    await deps.onCheckpoint(checkpoint);
+    await saveCheckpoint();
+    if(!await checkKnowledge())return finish(partial(checkpoint));
     let result:JsonValue;
     try {
       const args=tool.schema.parse(block.input);
@@ -117,9 +158,12 @@ export async function runAssistantOrchestrator(input:OrchestratorInput,deps:Orch
       const assertToolActive=async()=>{
         if(now().getTime()>=deadline)throw new AssistantRunError(408,'RUN_TIMEOUT','La consulta alcanzó su tiempo máximo.');
         await deps.assertActive();
+        if(!await checkKnowledge())throw new AssistantRunError(409,'KNOWLEDGE_UNAVAILABLE','La ayuda necesita una nueva consulta.');
       };
-      const output=await withinDeadline(tool.execute({principal:input.principal,conversationId:input.conversationId,runId:input.runId,toolCallId:step.id,assertActive:assertToolActive},args),deadline-now().getTime());
+      const output=await withinDeadline(tool.execute({principal:input.principal,conversationId:input.conversationId,runId:input.runId,toolCallId:step.id,channel:input.channel,assertActive:assertToolActive},args),deadline-now().getTime());
       await deps.assertActive();
+      checkpoint.knowledgeReferences=mergeKnowledgeReferences(checkpoint.knowledgeReferences??[],output.knowledgeReferences??[]);
+      if(!await checkKnowledge())return finish(partial(checkpoint));
       const data=z.json().parse(output.data);
       if(JSON.stringify(data).length>MAX_TOOL_OUTPUT_CHARS)throw new AssistantRunError(422,'TOOL_OUTPUT_LIMIT','La respuesta necesita un alcance menor.');
       const evidence={id:`e${checkpoint.evidence.length+1}`,tool:tool.name,label:tool.label,data};
@@ -132,7 +176,7 @@ export async function runAssistantOrchestrator(input:OrchestratorInput,deps:Orch
       const code=toolFailure(error);checkpoint.steps[checkpoint.steps.length-1]={...step,status:'FAILED',errorCode:code};result={error:code,message:'No se pudo obtener una respuesta autorizada de esta herramienta.'};
     }
     checkpoint.messages.push({role:'user',content:[{type:'tool_result',tool_use_id:block.id,content:JSON.stringify(result)}]});
-    await deps.onCheckpoint(checkpoint);
+    await saveCheckpoint();
   }
-  return partial(checkpoint);
+  return finish(partial(checkpoint));
 }

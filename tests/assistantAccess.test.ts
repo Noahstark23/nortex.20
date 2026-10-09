@@ -3,9 +3,10 @@ import type { PrismaClient } from '@prisma/client';
 import { assertAssistantAccess, getAssistantCapabilities } from '../backend/services/assistant/access';
 
 const principal = { tenantId: 'tenant-a', userId: 'user-a', role: 'OWNER' };
-function database(role = 'OWNER', enabled = true) {
+function database(role = 'OWNER', enabled = true, assistantBudgetOwner = false) {
     const mocks = {
-        user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-a', role, status: 'ACTIVE' }) },
+        user: { findFirst: vi.fn().mockResolvedValue({ id: 'user-a', role, status: 'ACTIVE', assistantBudgetOwner }) },
+        employee: { findFirst: vi.fn().mockResolvedValue(null) },
         assistantTenantConfig: { findUnique: vi.fn().mockResolvedValue({ enabled, extractionEnabled: true, executionEnabled: true }) },
     };
     return { mocks, db: mocks as unknown as PrismaClient };
@@ -19,6 +20,34 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('NortexGPT: acceso vigente y mínimo privilegio', () => {
+    it('revocar el permiso explícito de ADMIN cambia el alcance y conserva ayuda', async () => {
+        const { db, mocks } = database('ADMIN', true, true);
+        const before = await getAssistantCapabilities({ ...principal, role: 'ADMIN' }, db);
+        expect(before.budgetManage).toBe(true);
+        mocks.user.findFirst.mockResolvedValue({ id: 'user-a', role: 'ADMIN', status: 'ACTIVE', assistantBudgetOwner: false });
+        const after = await getAssistantCapabilities({ ...principal, role: 'ADMIN' }, db);
+        expect(after).toMatchObject({ budgetManage: false, help: true });
+        expect(after.accessScope).not.toBe(before.accessScope);
+    });
+    it('una ficha Employee OWNER activa o modificada no concede gestión a ADMIN', async () => {
+        const { db, mocks } = database('ADMIN');
+        for (const employee of [null, { id: 'employee-owner', role: 'OWNER', status: 'ACTIVE' }, { id: 'employee-owner', role: 'ADMIN', status: 'SUSPENDED' }]) {
+            mocks.employee.findFirst.mockResolvedValue(employee);
+            expect(await getAssistantCapabilities({ ...principal, role: 'ADMIN' }, db)).toMatchObject({ budgetManage: false, help: true, accessScope: 'ADMIN:budget:false' });
+        }
+        expect(mocks.employee.findFirst).not.toHaveBeenCalled();
+    });
+    it('ADMIN con permiso explícito no depende de una ficha Employee', async () => {
+        const { db, mocks } = database('ADMIN', true, true);
+        expect(await getAssistantCapabilities({ ...principal, role: 'ADMIN' }, db)).toMatchObject({ budgetManage: true, accessScope: 'ADMIN:budget:true' });
+        expect(mocks.employee.findFirst).not.toHaveBeenCalled();
+    });
+    it('OWNER conserva gestión aunque la bandera esté apagada', async () => {
+        expect(await getAssistantCapabilities(principal, database().db)).toMatchObject({ budgetManage: true, help: true });
+    });
+    it.each(['MANAGER', 'CASHIER', 'ACCOUNTANT', 'VIEWER'])('la bandera no convierte a %s en dueño presupuestario', async role => {
+        expect(await getAssistantCapabilities({ ...principal, role }, database(role, true, true).db)).toMatchObject({ budgetManage: false, help: true });
+    });
     it.each(['false', '', undefined])('apagado global %s no consulta tablas nuevas', async flag => {
         vi.stubEnv('NORTEX_ASSISTANT_ENABLED', flag);
         const { db, mocks } = database();
@@ -59,8 +88,8 @@ describe('NortexGPT: acceso vigente y mínimo privilegio', () => {
         const owner = await getAssistantCapabilities(principal, database().db);
         const manager = await getAssistantCapabilities({ ...principal, role: 'MANAGER' }, database('MANAGER').db);
         expect(owner.purchasePrepare).toBe(manager.purchasePrepare);
-        expect(owner.accessScope).toBe('OWNER');
-        expect(manager.accessScope).toBe('MANAGER');
+        expect(owner.accessScope).toBe('OWNER:budget:true');
+        expect(manager.accessScope).toBe('MANAGER:budget:false');
     });
     it('pausar extracción conserva evidencia y deja ejecución bajo su propio interruptor', async () => {
         vi.stubEnv('NORTEX_ASSISTANT_EXTRACTION_ENABLED', 'false');

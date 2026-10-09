@@ -1,0 +1,39 @@
+.nx-product-enrollment { position:relative; z-index:210; }
+.nx-enrollment-panel { width:min(100%,560px); margin-inline:auto; background:var(--nx-canvas-raised,#fff); color:var(--nx-canvas-text,#172026); display:flex; flex-direction:column; max-height:94dvh; border-radius:24px 24px 0 0; overflow:hidden; }
+.nx-enrollment-panel header { display:flex; align-items:center; justify-content:space-between; padding:20px 24px; border-bottom:1px solid var(--nx-canvas-border,#dce2e5); }
+.nx-enrollment-panel h2 { font-size:1.45rem; font-weight:700; letter-spacing:-.035em; }
+.nx-enrollment-eyebrow { font-size:.7rem; letter-spacing:.12em; opacity:.65; }
+.nx-enrollment-body { padding:20px 24px; overflow-y:auto; min-height:0; }
+.nx-enrollment-panel button { min-height:46px; padding:10px 14px; border:1px solid var(--nx-canvas-border,#dce2e5); border-radius:12px; font-weight:600; }
+.nx-enrollment-panel button:disabled { opacity:.5; }
+.nx-enrollment-panel .nx-enrollment-primary { background:var(--nx-brand,#10b981); color:var(--nx-on-brand,#052e16); border-color:transparent; width:100%; }
+.nx-enrollment-panel label { display:block; font-size:.875rem; font-weight:600; margin:14px 0; }
+.nx-enrollment-panel input:not([type=checkbox]):not([type=file]),.nx-enrollment-panel select { display:block; width:100%; min-height:48px; margin-top:6px; padding:10px 12px; color:inherit; background:var(--nx-canvas,#f5f7f7); border:1px solid var(--nx-canvas-border,#dce2e5); border-radius:12px; font-size:1rem; }
+.nx-enrollment-panel :focus-visible { outline:3px solid var(--nx-brand,#10b981); outline-offset:2px; }
+.nx-enrollment-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.nx-enrollment-hint,.nx-enrollment-photo p { font-size:.8rem; opacity:.75; line-height:1.5; margin:10px 0; }
+.nx-enrollment-panel footer { display:grid; gap:8px; padding:16px 24px max(16px,env(safe-area-inset-bottom)); border-top:1px solid var(--nx-canvas-border,#dce2e5); }
+.nx-enrollment-panel footer small { text-align:center; opacity:.65; }
+.nx-enrollment-view { position:relative; overflow:hidden; border-radius:20px; background:#101719; }
+.nx-enrollment-view video { width:100%; height:220px; object-fit:cover; }
+.nx-enrollment-view span { position:absolute; inset:25% 12%; border:2px solid #fff; border-radius:12px; pointer-events:none; }
+.nx-enrollment-capture>p { margin:12px 0; text-align:center; }
+.nx-enrollment-manual { display:flex; gap:8px; align-items:center; }
+.nx-enrollment-no-code { margin-top:18px; width:100%; }
+.nx-enrollment-confirmed { display:flex; gap:8px; align-items:center; padding:12px; margin-bottom:16px; border-radius:12px; background:var(--nx-canvas,#f5f7f7); font-size:.875rem; }
+.nx-enrollment-error { border:1px solid currentColor; border-radius:12px; padding:12px; margin-bottom:16px; }
+.nx-enrollment-code { display:flex; align-items:center; gap:8px; font-size:.8rem; overflow-wrap:anywhere; opacity:.7; }
+.nx-enrollment-photo { margin:16px 0; padding:14px; border:1px dashed var(--nx-canvas-border,#dce2e5); border-radius:16px; }
+.nx-enrollment-photo .nx-enrollment-photo-trigger { position:relative; min-height:44px; display:flex; align-items:center; justify-content:center; flex-wrap:wrap; gap:8px; cursor:pointer; margin:0; }
+.nx-enrollment-photo input[type=file] { position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:pointer; }
+.nx-enrollment-photo-trigger:focus-within { outline:3px solid var(--nx-brand,#10b981); outline-offset:3px; border-radius:8px; }
+.nx-enrollment-photo img { max-height:160px; width:100%; object-fit:contain; border-radius:12px; margin:12px 0; }
+.nx-enrollment-panel .nx-enrollment-check { display:flex; gap:8px; align-items:center; }
+.nx-enrollment-panel details { margin:14px 0; }
+.nx-enrollment-panel summary { cursor:pointer; padding:10px 0; }
+.nx-enrollment-existing { display:grid; gap:14px; padding:24px 0; text-align:center; justify-items:center; }
+@media(min-width:700px) { .nx-enrollment-panel { border-radius:24px; margin-block:auto; } }
+@media(max-width:380px) { .nx-enrollment-body,.nx-enrollment-panel header,.nx-enrollment-panel footer { padding-inline:16px; }.nx-enrollment-grid { grid-template-columns:1fr; gap:0; } }
+
+.nx-enrollment-code-row { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.nx-enrollment-code-row button { font-size:.75rem; flex-shrink:0; }

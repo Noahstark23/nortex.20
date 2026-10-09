@@ -3,6 +3,10 @@ import useSWR from 'swr';
 import Decimal from 'decimal.js';
 import { AlertTriangle, Shield, Users, Building2, DollarSign, TrendingUp, Ban, CheckCircle, Eye, RefreshCw, Skull, Activity, CreditCard, Clock, BarChart3, Target, XCircle, Banknote, FileCheck, X, Mail, MessageCircle, Download, Moon } from 'lucide-react';
 import AdminMotorizadosKYC from './AdminMotorizadosKYC';
+import { AssistantBudgetRequests } from './admin/AssistantBudgetRequests';
+import { AssistantKnowledgeEditorial } from './admin/AssistantKnowledgeEditorial';
+import { AssistantPilotActivation } from './admin/AssistantPilotActivation';
+import CommerceSupport from './whatsapp/CommerceSupport';
 
 // ── Tipos de respuesta del backend (tipado estricto, sin any) ──
 // El dinero viaja como string con precisión Decimal(18,4); se parsea con Decimal.js en el cliente.
@@ -158,6 +162,8 @@ const getStatusBadge = (status: string) => {
 };
 
 const SuperAdmin: React.FC = () => {
+    const [pendingEditorialWork, setPendingEditorialWork] = useState(false);
+    const [editorialExitBlocked, setEditorialExitBlocked] = useState(false);
     const [rejectModal, setRejectModal] = useState<{ id: string; reason: string } | null>(null);
     const [actionLoading, setActionLoading] = useState<string | null>(null);
     const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -306,6 +312,7 @@ const SuperAdmin: React.FC = () => {
     };
 
     const handleLogout = () => {
+        if (pendingEditorialWork) { setEditorialExitBlocked(true); return; }
         localStorage.removeItem('nortex_token');
         localStorage.removeItem('nortex_user');
         window.location.href = '/login';
@@ -352,6 +359,7 @@ const SuperAdmin: React.FC = () => {
                     <button onClick={handleLogout} className="text-xs text-gray-500 hover:text-red-400 transition-colors">
                         LOGOUT
                     </button>
+                    {editorialExitBlocked && pendingEditorialWork && <p role="alert" className="text-xs text-amber-300">Guardá o descartá tu trabajo editorial antes de salir.</p>}
                 </div>
             </div>
 
@@ -394,6 +402,10 @@ const SuperAdmin: React.FC = () => {
 
                 {/* 🛵 Cola de revisión KYC — Red Nortex de repartidores */}
                 <AdminMotorizadosKYC />
+                <AssistantBudgetRequests />
+                <AssistantKnowledgeEditorial onPendingWorkChange={setPendingEditorialWork} />
+                <AssistantPilotActivation />
+                <div className="mb-6"><CommerceSupport /></div>
 
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                     {/* TENANT TABLE - 2 cols */}

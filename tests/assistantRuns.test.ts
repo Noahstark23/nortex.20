@@ -25,7 +25,7 @@ function harness() {
     assistantRun:{
       findFirst:vi.fn(async({where}:{where:Record<string,unknown>})=>rows.find(row=>matches(row,where))??null),
       findMany:vi.fn().mockResolvedValue([]),
-      create:vi.fn(async({data}:{data:Partial<AssistantRun>})=>{const row={id:`run-${rows.length}`,...principal,roleAtCreation:principal.role,conversationId:conversation.id,requestId,payloadHash:'',inputText:'',status:'PENDING',version:0,iterations:0,leaseToken:null,leaseUntil:null,startedAt:null,deadlineAt:null,checkpoint:null,result:null,errorCode:null,createdAt:now,updatedAt:now,expiresAt:conversation.expiresAt,...data} satisfies AssistantRun;rows.push(row);return {...row};}),
+      create:vi.fn(async({data}:{data:Partial<AssistantRun>})=>{const row={id:`run-${rows.length}`,...principal,roleAtCreation:principal.role,conversationId:conversation.id,requestId,payloadHash:'',inputText:'',knowledgeChannel:'WEB_INTERNAL',status:'PENDING',version:0,iterations:0,leaseToken:null,leaseUntil:null,startedAt:null,deadlineAt:null,checkpoint:null,result:null,errorCode:null,createdAt:now,updatedAt:now,expiresAt:conversation.expiresAt,...data} satisfies AssistantRun;rows.push(row);return {...row};}),
       updateMany:vi.fn(async({where,data}:{where:Record<string,unknown>;data:Record<string,unknown>})=>{const row=rows.find(value=>matches(value,where));if(!row)return {count:0};for(const [key,value]of Object.entries(data)){if(key==='version')row.version+=(value as{increment:number}).increment;else Object.assign(row,{[key]:structuredClone(value)});}return{count:1};}),
     },
     $queryRaw:vi.fn().mockResolvedValue([{id:conversation.id}]),
@@ -85,7 +85,7 @@ describe('ejecuciones durables del asistente operativo',()=>{
     const orchestrate=vi.fn(async()=>({text:'Resultado',evidence:[],actionProposalIds:[],degraded:true}));
     await executeAssistantRun(principal,'conversation-a',input,{...deps,orchestrate,tools:[{name:'get_sales',kind:'READ',label:'Ventas',description:'Ventas autorizadas',schema:z.object({}),execute:async()=>({data:null})}]});
     const call=orchestrate.mock.calls[0] as unknown as [{previousResults:unknown[]},unknown];
-    expect(call[0].previousResults).toEqual([{runId:'prior',recordedAt:now.toISOString(),stale:true,refreshRequiredBeforePreparation:true,result:priorResult}]);
+    expect(call[0].previousResults).toEqual([{runId:'prior',recordedAt:now.toISOString(),stale:true,refreshRequiredBeforePreparation:true,result:{...priorResult,knowledgeReferences:[]}}]);
     expect(h.mocks.assistantRun.findMany).toHaveBeenCalledWith(expect.objectContaining({where:expect.objectContaining({tenantId:principal.tenantId,userId:principal.userId,roleAtCreation:principal.role,conversationId:'conversation-a',status:'SUCCEEDED'}),take:2}));
   });
 });

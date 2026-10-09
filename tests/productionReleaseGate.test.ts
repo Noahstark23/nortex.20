@@ -21,6 +21,7 @@ const approved = {
     NORTEX_PRODUCTION_DEPLOY_ENABLED: 'true',
     CANDIDATE_SHA: SHA,
     PRODUCTION_CONFIRMATION: `PROMOTE ${SHA}`,
+    SOLE_OWNER_CONFIRMATION: `SOLE_OWNER ${SHA}`,
     STAGING_URL: 'https://staging.example.test',
 };
 
@@ -42,6 +43,9 @@ describe('compuerta de producción por candidato explícito, main y staging', ()
         [{ PRODUCTION_CONFIRMATION: '' }, 'TYPED_CONFIRMATION_REQUIRED'],
         [{ PRODUCTION_CONFIRMATION: `PROMOTE ${OTHER_SHA}` }, 'TYPED_CONFIRMATION_REQUIRED'],
         [{ PRODUCTION_CONFIRMATION: `PROMOTE ${SHA} ` }, 'TYPED_CONFIRMATION_REQUIRED'],
+        [{ SOLE_OWNER_CONFIRMATION: '' }, 'SOLE_OWNER_ACK_REQUIRED'],
+        [{ SOLE_OWNER_CONFIRMATION: `SOLE_OWNER ${OTHER_SHA}` }, 'SOLE_OWNER_ACK_REQUIRED'],
+        [{ SOLE_OWNER_CONFIRMATION: `SOLE_OWNER ${SHA} ` }, 'SOLE_OWNER_ACK_REQUIRED'],
     ])('cierra antes de red o git ante %j', async (patch, reason) => {
         const verifyStaging = vi.fn();
         const readMain = vi.fn();

@@ -96,6 +96,12 @@ const OnboardingHub: React.FC = () => {
     if (isEligible) void fetchStatus();
   }, [isEligible, fetchStatus]);
 
+  React.useEffect(() => {
+    const reset = () => { setDismissed(false); setOpen(true); void fetchStatus(true); };
+    window.addEventListener('nortex:onboarding-reset', reset);
+    return () => window.removeEventListener('nortex:onboarding-reset', reset);
+  }, [fetchStatus]);
+
   // El POS (y cualquier pantalla) avisa "cambió la data" tras una venta/alta →
   // el checklist se refresca EN VIVO, sin esperar un remount del Layout.
   React.useEffect(() => {
@@ -253,6 +259,7 @@ const OnboardingHub: React.FC = () => {
             setOpen(next);
             if (next) void fetchStatus(true);
           }}
+          aria-label={`Primeros pasos: ${data.completed} de ${data.total}`}
           aria-expanded={open}
           aria-controls="onboarding-steps-panel"
           className="flex h-touch items-center gap-2 rounded-pill border border-white/[0.08] bg-surface-800 pl-4 pr-5 font-semibold text-white shadow-premium transition-colors hover:bg-surface-700"

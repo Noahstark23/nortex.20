@@ -1,15 +1,15 @@
 import { pathToFileURL } from 'node:url';
 
 // Un reemplazo de contenedor puede devolver 503 mientras el nuevo proceso sube.
-// El reintento tiene una ventana total real de ocho minutos, incluso si cada
-// request consume sus cinco segundos de timeout. Nunca se acepta un 503 como una
-// release sana.
+// Coolify puede tardar más de ocho minutos en construir y sustituir la app.
+// La ventana total es de doce minutos, incluso si cada request consume sus
+// cinco segundos de timeout. Nunca se acepta un 503 como una release sana.
 /** @type {Readonly<{ attempts: number, intervalMs: number, timeoutMs: number, deadlineMs: number }>} */
 export const DEPLOYED_HEALTH_RETRY = Object.freeze({
-    attempts: 97,
+    attempts: 145,
     intervalMs: 5_000,
     timeoutMs: 5_000,
-    deadlineMs: 8 * 60_000,
+    deadlineMs: 12 * 60_000,
 });
 
 const invalidAppUrl = () => new Error('APP_URL_INVALID');

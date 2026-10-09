@@ -1,3 +1,8 @@
+import { getReleaseCommit } from './lib/releaseIdentity';
+import { createQuotationHandler } from './routes/quotationCreate';
+import { buildWhatsappCommerceRouter } from './routes/whatsappCommerce';
+import { executeProductCreation, DuplicateProductCode } from './services/productCreationService';
+import productEnrollmentRouter from './routes/productEnrollment';
 import { registerRetentionCertificate } from './routes/retentionCertificate';
 import { registerFiscalExports } from './routes/fiscalExports';
 import { executeShiftHandover, ShiftHandoverError } from './services/shiftHandoverService';
@@ -19,6 +24,7 @@ import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcryptjs';
 
 import { authenticate, AuthRequest, requireSuperAdmin, invalidateTenantCache, flushAllCache } from './middleware/auth';
+import { registerProductionFrontend } from './productionFrontend';
 import {
     ACCOUNTING_READ_ROLES,
     CUSTOMER_CREATE_ROLES,
@@ -122,7 +128,6 @@ import { encryptField } from './services/crypto';
 import { calcularMargenBruto, calcularRetiroSeguro, calcularEfectivoTurno } from '../utils/margen';
 import Stripe from 'stripe';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import hrRouter from './routes/hr';
 import pedidosRouter from './routes/pedidos';
@@ -268,18 +273,12 @@ import {
 } from '../utils/tenantCapabilities.js';
 import onboardingRouter from './routes/onboarding.js';
 import operationalAlertsRouter from './routes/operationalAlerts.js';
-import assistantRouter from './routes/assistant.js';
-import { buildAssistantDocumentsRouter } from './routes/assistantDocuments.js';
-import { createAssistantProposalsRouter } from './routes/assistantProposals.js';
 import promotionsRouter from './routes/promotions.js';
 import { executeProductBulkEdit, ProductBulkEditError } from './services/productBulkEditService.js';
 import { executeProductImport, ProductImportError } from './services/productImportService.js';
 import { withPromotionPriceVersion } from './services/promotions/productVersion.js';
-import { createAssistantCatalogRouter } from './routes/assistantCatalog.js';
-import { createAssistantActionsRouter } from './routes/assistantActions.js';
-import { createAssistantOperationsRouter } from './routes/assistantOperations.js';
-import { createAssistantStatusRouter } from './routes/assistantStatus.js';
-import { buildAssistantPrivateWhatsappRouter, buildAssistantPrivateWhatsappWebhookRouter } from './routes/assistantPrivateWhatsapp.js';
+import { buildAssistantPrivateWhatsappWebhookRouter } from './routes/assistantPrivateWhatsapp.js';
+import { mountAssistantRoutes } from './routes/assistantMounts.js';
 
 Decimal.set({ precision: 20, rounding: Decimal.ROUND_HALF_UP });
 
@@ -419,8 +418,7 @@ app.get('/api/health', async (_req: any, res: any) => {
         ok: db === 'up',
         db,
         uptimeSeconds: Math.floor((Date.now() - arranqueDelProceso) / 1000),
-        // Coolify inyecta SOURCE_COMMIT en el build: permite ver QUÉ versión corre.
-        commit: process.env.SOURCE_COMMIT ?? null,
+        commit: getReleaseCommit(), // Identidad de imagen; el entorno sólo sirve al QA local.
     });
 });
 
@@ -524,6 +522,7 @@ const invitationAcceptLimiter = rateLimit({
     standardHeaders: true,
     legacyHeaders: false,
 });
+app.use('/api/whatsapp-commerce', buildWhatsappCommerceRouter());
 app.use('/api/hr', hrRouter);
 app.use('/api/v1/pedidos', pedidosRouter);
 app.use('/api/v1/motorizados', motorizadosRouter);
@@ -532,7 +531,7 @@ app.use('/api/purchase-orders', purchaseOrdersRouter); // Órdenes de Compra (pr
 app.use('/api/suppliers', suppliersRouter); // Proveedor 360, contactos y metadata documental
 app.use('/api/procurement/matches', procurementMatchesRouter); // Conciliación OC-recepción-factura
 app.use('/api/serials', serialsRouter); // Control de series (números de serie por unidad)
-app.use('/api/products', productLookupRouter, productCatalogRouter);
+app.use('/api/products', productEnrollmentRouter, productLookupRouter, productCatalogRouter);
 app.use('/api/warehouses', warehousesRouter); // Multi-bodega (Fase 2: fundación)
 app.use('/api/stock-transfers', stockTransfersRouter); // Transferencias entre bodegas (Fase 3)
 app.use('/api/batch-warehouse-ledger', batchWarehouseLedgerRouter);
@@ -632,7 +631,7 @@ app.post('/api/auth/register', validate(RegisterSchema), async (req: any, res: a
                     email: email,
                     password: hashedPassword,
                     name: companyName,
-                    role: 'ADMIN'
+                    role: 'ADMIN', assistantBudgetOwner: true
                 }
             });
 
@@ -1276,8 +1275,7 @@ app.post('/api/auth/forgot-password', forgotPasswordLimiter, async (req: any, re
             // usuario exista o no crea un oráculo de enumeración de cuentas (el caso "email
             // inexistente" ya responde 200 genericMsg). Registrar el fallo solo del lado del
             // servidor y devolver el mismo mensaje genérico.
-            console.error(`❌ FAILED TO SEND RESET EMAIL to ${user.email}`);
-            console.log(`🔗 Reset link (fallback): ${resetLink}`);
+            console.error('❌ No se pudo entregar email de recuperación.');
             return res.json({ message: genericMsg });
         }
 
@@ -1470,14 +1468,7 @@ app.post('/api/onboarding/seed-catalog', authenticate, checkRole(['OWNER', 'ADMI
 app.use('/api/onboarding', onboardingRouter);
 app.use('/api/operational-alerts', operationalAlertsRouter);
 app.use('/api/promotions', promotionsRouter);
-app.use('/api/assistant', assistantRouter);
-app.use('/api/assistant', buildAssistantDocumentsRouter());
-app.use('/api/assistant', createAssistantOperationsRouter());
-app.use('/api/assistant', createAssistantStatusRouter());
-app.use('/api/assistant', createAssistantActionsRouter());
-app.use('/api/assistant/private-whatsapp', buildAssistantPrivateWhatsappRouter());
-app.use('/api/assistant', createAssistantCatalogRouter());
-app.use('/api/assistant', createAssistantProposalsRouter());
+mountAssistantRoutes(app);
 
 // ── Pulso del día del POS (gamificación honesta) ─────────────────────────────
 // Los números REALES del negocio como motor del loop de venta: cuánto llevás
@@ -6009,166 +6000,14 @@ const productQuantityErrorResponse = (res: any, error: unknown, productName?: st
  * lo recibido). Ningún cálculo tocado vuelve a leer este surrogate.
  */
 
-// POST /api/products - Crear producto (OWNER o ADMIN)
+// POST /api/products - autoridad compartida de creación, stock y auditoría.
 app.post('/api/products', authenticate, checkRole(['OWNER', 'ADMIN']), validate(CreateProductSchema), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const {
-        name, sku, description, brand, category, price, cost, stock, minStock, unit,
-        saleMode, quantityStep, productFamily, isPublished, imageUrl,
-        requiresBatchTracking, reorderPoint, maxStock, defaultSupplierId,
-        wholesalePrice, wholesaleMinQty, packUnit, packSize, packPrice, ivaExento,
-    } = req.body;
-
-    const decimalOrNull = (value: unknown): number | null =>
-        value === undefined || value === null || value === '' ? null : new Decimal(value as Decimal.Value).toNumber();
-    const wp = decimalOrNull(wholesalePrice);
-    const wq = decimalOrNull(wholesaleMinQty);
-    const pUnit = typeof packUnit === 'string' && packUnit.trim() !== '' ? packUnit.trim() : null;
-    const pSize = decimalOrNull(packSize);
-    const pPrice = decimalOrNull(packPrice);
-    if (pPrice !== null && pSize === null) {
-        return res.status(400).json({ error: 'El precio de empaque requiere definir el tamaño del empaque (unidades por caja/fardo)' });
-    }
-
     try {
-        const config = { unit, saleMode, quantityStep };
-        const initialStock = contextualProductQuantity(stock ?? '0', config, { allowZero: true });
-        const initialMinStock = contextualProductQuantity(minStock ?? '5', config, { allowZero: true });
-        const reorder = contextualProductQuantity(reorderPoint ?? '0', config, { allowZero: true });
-        const maximum = contextualProductQuantity(maxStock ?? '0', config, { allowZero: true });
-
-        // Verificar que SKU no exista
-        const existing = await prisma.product.findUnique({
-            where: {
-                tenantId_sku: {
-                    tenantId: authReq.tenantId!,
-                    sku: sku.toUpperCase(),
-                }
-            }
-        });
-
-        if (existing) {
-            return res.status(400).json({ error: 'SKU ya existe en tu inventario' });
-        }
-
-        if (initialStock > 0 && Boolean(requiresBatchTracking)) {
-            const batchWarehouseLedgerMode = await resolveBatchWarehouseLedgerMode(prisma, authReq.tenantId!);
-            assertAggregateBatchMutationAllowed({
-                mode: batchWarehouseLedgerMode,
-                requiresBatchTracking: true,
-                delta: initialStock,
-            });
-        }
-
-        // La bodega default se materializa antes de la tx para evitar la carrera
-        // de creación bajo REPEATABLE READ documentada en stockService.
-        if (initialStock > 0) await asegurarBodegaPorDefecto(prisma, authReq.tenantId!);
-
-        const product = await prisma.$transaction(async (tx: any) => {
-            if (initialStock > 0 && Boolean(requiresBatchTracking)) {
-                const authoritativeBatchMode = await resolveBatchWarehouseLedgerMode(tx, authReq.tenantId!);
-                assertAggregateBatchMutationAllowed({
-                    mode: authoritativeBatchMode,
-                    requiresBatchTracking: true,
-                    delta: initialStock,
-                });
-            }
-            if (defaultSupplierId) {
-                const supplier = await tx.supplier.findFirst({
-                    where: { id: defaultSupplierId, tenantId: authReq.tenantId! },
-                    select: { id: true },
-                });
-                if (!supplier) throw new Error('PROVEEDOR_NO_ENCONTRADO');
-            }
-
-            // Nace en cero y el stock inicial entra por el mismo camino atómico
-            // que cualquier otro movimiento, manteniendo ProductStock y Kardex.
-            const created = await tx.product.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    name,
-                    sku: sku.toUpperCase(),
-                    description: description || null,
-                    brand: brand || null,
-                    category: category || null,
-                    price: new Decimal(price).toNumber(),
-                    cost: new Decimal(cost ?? 0).toNumber(),
-                    stock: 0,
-                    minStock: initialMinStock,
-                    unit,
-                    saleMode: saleMode ?? null,
-                    quantityStep: quantityStep || null,
-                    productFamily: productFamily ?? null,
-                    isPublished: Boolean(isPublished),
-                    ivaExento: Boolean(ivaExento),
-                    imageUrl: imageUrl || null,
-                    requiresBatchTracking: Boolean(requiresBatchTracking),
-                    reorderPoint: reorder,
-                    maxStock: maximum,
-                    defaultSupplierId: defaultSupplierId || null,
-                    wholesalePrice: wp,
-                    wholesaleMinQty: wq,
-                    packUnit: pUnit,
-                    packSize: pSize,
-                    packPrice: pPrice,
-                    createdBy: authReq.userId!,
-                },
-            });
-
-            if (initialStock > 0) {
-                const stockResult = await applyStockDelta(tx, {
-                    tenantId: authReq.tenantId!,
-                    productId: created.id,
-                    delta: initialStock,
-                    enforceSufficient: false,
-                });
-                await tx.kardexMovement.create({
-                    data: {
-                        tenantId: authReq.tenantId!,
-                        productId: created.id,
-                        type: 'IN',
-                        quantity: initialStock,
-                        stockBefore: stockResult.stockBefore,
-                        stockAfter: stockResult.stockAfter,
-                        referenceType: 'INITIAL',
-                        reason: 'Stock inicial al crear producto',
-                        userId: authReq.userId!,
-                        warehouseId: stockResult.warehouseId,
-                    },
-                });
-            }
-
-            await tx.auditLog.create({
-                data: {
-                    tenantId: authReq.tenantId!,
-                    userId: authReq.userId!,
-                    action: 'PRODUCT_CREATED',
-                    details: JSON.stringify({
-                        productId: created.id,
-                        after: {
-                            sku: created.sku,
-                            name: created.name,
-                            unit: created.unit,
-                            saleMode: created.saleMode,
-                            quantityStep: created.quantityStep?.toString() ?? null,
-                            productFamily: created.productFamily,
-                            stock: initialStock,
-                        },
-                    }),
-                },
-            });
-
-            return tx.product.findUniqueOrThrow({ where: { id: created.id } });
-        });
-
-        res.json(product);
+        res.json(await executeProductCreation(prisma, { tenantId: req.tenantId, userId: req.userId }, req.body));
     } catch (error: any) {
-        if (productQuantityErrorResponse(res, error)) return;
-        if (manualBatchErrorResponse(res, error)) return;
-        if (error?.message === 'PROVEEDOR_NO_ENCONTRADO') {
-            return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
-        }
-        console.error('Error creating product:', error);
+        if (productQuantityErrorResponse(res, error) || manualBatchErrorResponse(res, error)) return;
+        if (error instanceof DuplicateProductCode) return res.status(400).json({ error: error.message });
+        if (error?.message === 'PROVEEDOR_NO_ENCONTRADO') return res.status(400).json({ error: 'El proveedor por defecto no pertenece a tu negocio' });
         res.status(500).json({ error: 'Error creando producto' });
     }
 });
@@ -9747,126 +9586,7 @@ app.get('/api/quotations', authenticate, checkRole(QUOTATION_READ_ROLES), async 
 });
 
 // POST /api/quotations - Crear
-app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), async (req: any, res: any) => {
-    const authReq = req as AuthRequest;
-    const { customerName, customerRuc, items, expiresAt } = req.body;
-
-    if (!items || items.length === 0) return res.status(400).json({ error: 'Faltan items' });
-
-    try {
-        const parsedItems = z.array(z.object({
-            id: z.string().trim().min(1).max(191).optional(),
-            productId: z.string().trim().min(1).max(191).optional(),
-            quantity: z.union([z.string(), z.number()]),
-            price: z.union([z.string(), z.number()]).optional(),
-            name: z.string().trim().min(1).max(255).optional(),
-        }).strict()).min(1).max(500).parse(items).map((item) => ({
-            ...item,
-            quantity: item.quantity,
-        }));
-
-        const productIds = [...new Set(parsedItems.map((item) => String(item.productId ?? item.id)))];
-        const [products, tenantFiscal] = await Promise.all([
-            prisma.product.findMany({
-                where: { tenantId: authReq.tenantId!, id: { in: productIds } },
-                select: {
-                    id: true,
-                    name: true,
-                    price: true,
-                    unit: true,
-                    ivaExento: true,
-                    saleMode: true,
-                    quantityStep: true,
-                },
-            }) as Promise<QuotationProductAuthority[]>,
-            prisma.tenant.findUnique({
-                where: { id: authReq.tenantId! },
-                select: { fiscalRegime: true },
-            }),
-        ]);
-        if (!tenantFiscal) return res.status(404).json({ error: 'Negocio no encontrado' });
-        const fiscalRegimeAtQuote = normalizeFiscalRegime(tenantFiscal.fiscalRegime);
-        const resolvedItems = resolveQuotationItems(parsedItems, products);
-
-        let subtotalD = new Decimal(0);
-        let taxD = new Decimal(0);
-        let grossTotalD = new Decimal(0);
-        for (const item of resolvedItems) {
-            const lineTotal = item.price.mul(item.quantityExact).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
-            grossTotalD = grossTotalD.plus(lineTotal);
-            if (item.ivaExento) {
-                subtotalD = subtotalD.plus(lineTotal);
-                continue;
-            }
-            const { neto, iva } = desglosarIvaIncluido(lineTotal);
-            subtotalD = subtotalD.plus(neto);
-            taxD = taxD.plus(iva);
-        }
-
-        const cuotaFija = fiscalRegimeAtQuote === FISCAL_REGIME_CUOTA_FIJA;
-        const subtotal = (cuotaFija ? grossTotalD : subtotalD)
-            .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
-            .toNumber();
-        const tax = cuotaFija ? 0 : taxD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber();
-        const total = cuotaFija
-            ? grossTotalD.toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toNumber()
-            : new Decimal(subtotal).plus(tax).toNumber();
-
-        const quote = await prisma.quotation.create({
-            data: {
-                tenantId: authReq.tenantId!,
-                customerName,
-                customerRuc,
-                subtotal,
-                tax,
-                fiscalRegimeAtQuote,
-                total,
-                expiresAt: new Date(expiresAt),
-                items: {
-                    create: resolvedItems.map((item) => ({
-                        productId: item.productId,
-                        name: item.name,
-                        price: item.price.toNumber(),
-                        unitPriceExact: item.price.toFixed(4),
-                        quantity: item.quantityLegacy,
-                        quantityExact: item.quantityExact.toFixed(),
-                        unitAtQuote: item.unit,
-                        saleModeAtQuote: item.saleMode,
-                        quantityStepAtQuote: item.quantityStep,
-                        presentationAtQuote: item.presentationAtQuote,
-                        presentationQuantityAtQuote: item.presentationQuantityAtQuote.toFixed(4),
-                        ivaExentoAtQuote: item.ivaExento,
-                    })),
-                },
-            },
-            include: {
-                items: {
-                    orderBy: { id: 'asc' },
-                },
-            },
-        });
-
-        res.json({
-            ...quote,
-            subtotal,
-            tax,
-            total,
-            items: serializeQuotationItemsForClient(quote.items, products),
-        });
-    } catch (error) {
-        if (error instanceof QuotationItemError) {
-            return res.status(error.code === 'PRODUCT_NOT_FOUND' ? 404 : 400).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof QuantityValidationError) {
-            return res.status(400).json({ error: error.message, code: error.code });
-        }
-        if (error instanceof z.ZodError) {
-            return res.status(400).json({ error: error.issues.map((issue) => issue.message).join(' | ') || 'Items inválidos' });
-        }
-        console.error('Create quotation error:', error);
-        res.status(500).json({ error: 'Error al crear cotización' });
-    }
-});
+app.post('/api/quotations', authenticate, checkRole(QUOTATION_WRITE_ROLES), createQuotationHandler({ db: prisma }));
 
 // ==========================================
 // 💰 COBRANZA & CRÉDITOS (RECEIVABLES)
@@ -13094,43 +12814,7 @@ registerFiscalExports(app);
 // ==========================================
 // 🚀 SERVE FRONTEND IN PRODUCTION
 // ==========================================
-const isProduction = process.env.NODE_ENV === 'production';
-if (isProduction) {
-    const distPath = path.join(__dirname, '../dist');
-
-    // Landing page en la raíz — tiene prioridad sobre el SPA
-    app.get('/', (req: any, res: any) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        res.sendFile(path.join(distPath, 'landing.html'));
-    });
-
-    // Assets con hash (JS/CSS) → cache agresivo 1 año
-    app.use('/assets', express.static(path.join(distPath, 'assets'), {
-        maxAge: '1y',
-        immutable: true,
-    }));
-
-    // Resto de archivos estáticos (favicon, logos, etc.).
-    // redirect:false → no redirige /ruta → /ruta/ (controlamos el HTML por-ruta abajo).
-    app.use(express.static(distPath, { maxAge: 0, redirect: false }));
-
-    // SPA catch-all: cualquier ruta que no sea /api.
-    // Sirve el HTML prerenderizado por-ruta (dist/<ruta>/index.html) si existe — cada uno
-    // con su <title>, description y canonical únicos (SEO). Si no, cae al shell del SPA.
-    app.get(/^(?!\/api).+/, (req: any, res: any) => {
-        res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-        const rel = req.path.replace(/^\/+|\/+$/g, '');
-        if (rel) {
-            const prerendered = path.join(distPath, rel, 'index.html');
-            // Guard anti-traversal: el archivo debe quedar dentro de distPath.
-            if (prerendered.startsWith(distPath + path.sep) && fs.existsSync(prerendered)) {
-                return res.sendFile(prerendered);
-            }
-        }
-        res.sendFile(path.join(distPath, 'index.html'));
-    });
-    console.log(`📂 Serving static files from: ${distPath}`);
-}
+if (process.env.NODE_ENV === 'production') registerProductionFrontend(app, path.join(__dirname, '../dist'));
 
 // ==========================================
 // ⏰ CRON: EXPIRACIÓN AUTOMÁTICA DE SUSCRIPCIONES

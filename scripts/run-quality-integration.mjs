@@ -60,6 +60,7 @@ try {
     if (!existsSync(suite)) throw new Error(`Falta una suite requerida: ${suite}`);
     const port = await freePort();
     const runtime = { ...env, PORT: String(port), NORTEX_QA_BASE_URL: `http://127.0.0.1:${port}`, FRONTEND_URL: `http://127.0.0.1:${port}` };
+    if (suite === 'tests/whatsappCommerceFlow.integration.test.ts') Object.assign(runtime, { WHATSAPP_ENABLED: 'true', WHATSAPP_COMMERCE_ENABLED: 'true', WHATSAPP_COMMERCE_SENDING_ENABLED: 'false', WHATSAPP_APP_SECRET: randomBytes(32).toString('hex'), WHATSAPP_VERIFY_TOKEN: randomBytes(24).toString('hex') });
     const name = path.basename(suite);
     const log = createWriteStream(path.join(output, name + '.server.log'));
     server = spawn(process.execPath, ['--import', 'tsx', 'backend/server.ts'], { env: runtime, stdio: ['ignore', 'pipe', 'pipe'] });

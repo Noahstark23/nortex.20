@@ -1,0 +1,21 @@
+/** Demo local determinista. Nunca recibe credenciales ni envía a Meta. */
+import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { PrismaClient } from '@prisma/client';
+import bcrypt from 'bcryptjs';
+import { validateQualityDatabase } from '../quality-gate-contract.mjs';
+validateQualityDatabase(process.env.DATABASE_URL, process.env.NORTEX_QA_DATABASE_ACK);
+const db=new PrismaClient();
+const tenantId='qa-whatsapp-browser-20260929';
+await db.tenant.upsert({where:{id:tenantId},update:{},create:{id:tenantId,businessName:'Ferretería Demo WhatsApp',taxId:tenantId,type:'FERRETERIA'}});
+const user=await db.user.upsert({where:{email:'whatsapp-demo@example.invalid'},update:{},create:{tenantId,email:'whatsapp-demo@example.invalid',password:await bcrypt.hash('DemoLocal2026!',10),name:'Operador Demo',role:'OWNER'}});
+const product=await db.product.upsert({where:{id:'qa-wa-demo-hammer'},update:{},create:{id:'qa-wa-demo-hammer',tenantId,name:'Martillo demo',sku:'QA-WA-MARTILLO',price:115,cost:50,stock:20,unit:'unidad',createdBy:user.id,isPublished:true}});
+const channel=await db.whatsAppChannel.upsert({where:{phoneNumberId:'qa-wa-browser'},update:{},create:{tenantId,phoneNumberId:'qa-wa-browser',displayPhone:'505 8888 0000 (demo)',accessTokenEnc:'QA-NO-REAL-TOKEN',active:true,commerceEnabled:true,commercePolicyVersion:1,commercePolicy:{eligibleProductIds:[product.id],autoQuote:false,ttlHours:24,maxTotal:'1000',maxLines:5,eligibilityAttested:true}}});
+const conversation=await db.waCommerceConversation.upsert({where:{channelId_waId:{channelId:channel.id,waId:'50588889999'}},update:{lastInboundAt:new Date()},create:{tenantId,channelId:channel.id,waId:'50588889999',lastInboundAt:new Date()}});
+const {createCommerceQuoteDraft}=await import('../../backend/services/whatsapp/commerce/quotes.ts');
+await db.$transaction(tx=>createCommerceQuoteDraft(tx,{tenantId,channelId:channel.id,conversationId:conversation.id,waId:conversation.waId,policyVersion:channel.commercePolicyVersion},[{productId:product.id,quantity:'2'}],'browser-demo',new Date()));
+await db.$disconnect();
+const env={PATH:process.env.PATH,NODE_ENV:'test',DATABASE_URL:process.env.DATABASE_URL,JWT_SECRET:randomBytes(48).toString('hex'),HOST:'127.0.0.1',PORT:'3226',FRONTEND_URL:'http://127.0.0.1:4186',NORTEX_DATA_KEYS:'qa:'+randomBytes(32).toString('base64'),NORTEX_LEDGER_KEYS:'qa:'+randomBytes(32).toString('base64'),NORTEX_INDEX_KEY:randomBytes(32).toString('base64'),WHATSAPP_ENABLED:'false',WHATSAPP_COMMERCE_ENABLED:'true',WHATSAPP_COMMERCE_SENDING_ENABLED:'false',SOURCE_COMMIT:'whatsapp-local-demo'};
+const child=spawn(process.execPath,['--import','tsx','backend/server.ts'],{env,stdio:'inherit'});
+process.once('SIGINT',()=>child.kill('SIGTERM'));process.once('SIGTERM',()=>child.kill('SIGTERM'));
+child.once('exit',code=>process.exit(code??1));

@@ -1,13 +1,15 @@
 import React from 'react';
 import IndustryLanding from './public/IndustryLanding';
+import { sectorLandingContent } from '../data/sectorLandingContent';
 
 const LandingFerreteria: React.FC = () => (
   <IndustryLanding
     industryLabel="Ferreterías"
     industryType="FERRETERIA"
     source="landing_ferreteria"
-    hero="Mostrador rápido, inventario ordenado y caja clara para tu ferretería."
-    intro="Pensado para negocios con catálogos extensos, compras frecuentes y atención intensa en mostrador. Nortex conecta la venta con inventario, caja y cobranza sin obligar al equipo a saltar entre herramientas."
+    sector={sectorLandingContent.ferreteria}
+    hero={sectorLandingContent.ferreteria.hero}
+    intro={sectorLandingContent.ferreteria.intro}
     problems={[
       'Búsqueda por nombre, código y categoría para atender sin frenar al vendedor.',
       'Inventario, alertas y kardex visibles para saber qué se movió y qué toca reponer.',

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { PrismaClient } from '@prisma/client';
 import { afterEach,beforeEach,describe, expect, it,vi } from 'vitest';
 import { getAssistantIntent } from '../backend/services/assistant/conversations';
-import { advancePurchaseIntake,readPurchaseIntakeForDocument,attachDocumentProposalToIntake,missingPurchaseFacts,applyIntakeDraftCorrection } from '../backend/services/assistant/purchaseIntake';
+import { advancePurchaseIntake,readPurchaseIntakeForDocument,attachDocumentProposalToIntake,missingPurchaseFacts,applyIntakeDraftCorrection,intakeToDraft } from '../backend/services/assistant/purchaseIntake';
 import { readPurchaseIntake } from '../backend/services/assistant/purchaseIntakeTypes';
 import { acceptLanguageFacts } from '../backend/services/assistant/purchaseIntakeParsing';
 
@@ -17,6 +17,8 @@ function harness() {
     warehouse:{findMany:vi.fn().mockResolvedValue([{id:'warehouse-a',name:'Principal'}]),findFirst:vi.fn().mockResolvedValue({id:'warehouse-a',name:'Principal'})},
     assistantConversation:{findFirst:vi.fn(),updateMany:vi.fn().mockResolvedValue({count:1})},
   };
+  const readPeers=vi.fn(async(query:any)=>/FROM Product p/.test(query.sql)?mocks.product.findMany({where:{tenantId:principal.tenantId},take:21} as any):mocks.supplier.findMany({where:{tenantId:principal.tenantId,status:'ACTIVE',deletedAt:null},take:21} as any));
+  Object.assign(mocks,{$queryRaw:readPeers});
   let metadata:unknown=null;
   const db=mocks as unknown as PrismaClient;
   const say=async(text:string)=>{const result=await advancePurchaseIntake({principal,text,requestId:randomUUID(),metadata},db);metadata=JSON.parse(JSON.stringify(result.metadata));return result;};
@@ -77,7 +79,8 @@ describe('captura conversacional de compras', () => {
     expect(turn.state?.facts.items[0].unitCost).toBeUndefined();expect(turn.state?.facts.documentTotal).toBeUndefined();
   });
   it('farmacia exige lote y vencimiento sin producir borrador mientras falten',async()=>{
-    const h=harness();h.mocks.product.findFirst.mockResolvedValue({...product,name:'Acetaminofén 500 mg',requiresBatchTracking:true});
+    const h=harness(), medicine={...product,name:'Acetaminofén 500 mg',requiresBatchTracking:true};
+    h.mocks.product.findFirst.mockResolvedValue(medicine);h.mocks.product.findMany.mockResolvedValue([medicine]);
     let turn=await h.say('compré 50 cajas de acetaminofén');
     for(const answer of ['Completar por aquí','1','1','C$ 230'])turn=await h.say(answer);
     expect(turn.state?.pendingQuestion?.field).toBe('items.0.batchNumber');
@@ -183,5 +186,86 @@ describe('captura conversacional de compras', () => {
     const facts={items:[{description:'cemento'}]};
     const message='Compré 50 bolsas a C$230 cada una; total C$13225; fecha de factura 2026-09-05; vence el crédito 2026-10-05';
     expect(acceptLanguageFacts(facts,[{field:'quantity',value:'50',suppliedText:'50 bolsas'},{field:'unitCost',value:'230',suppliedText:'a C$230 cada una'},{field:'documentTotal',value:'13225',suppliedText:'total C$13225'},{field:'date',value:'2026-09-05',suppliedText:'fecha de factura 2026-09-05'},{field:'dueDate',value:'2026-10-05',suppliedText:'vence el crédito 2026-10-05'}],message)).toEqual(['quantity','unitCost','documentTotal','date','dueDate']);
+  });
+});
+
+
+describe('H01 identidad vigente en cada elección de captura',()=>{
+  it('lista producto con marca/unidad/empaque reales y proveedor con RUC/dirección',async()=>{
+    const h=harness();h.mocks.product.findMany.mockResolvedValue([{...product,brand:'Holcim'}] as any);
+    await h.say('compré 50 bolsas de cemento');const products=await h.say('Completar por aquí');
+    expect(products.content.text).toContain('Marca "Holcim"');expect(products.content.text).toContain('SKU "CEM-01"');expect(products.content.text).toContain('Empaque "pallet"');
+    expect(products.state?.pendingQuestion?.candidates?.[0]).toMatchObject({brand:'Holcim',unit:'bolsa',packSize:'20'});
+  });
+  it('elección numérica fuera de rango conserva descripción y evidencia originales',async()=>{
+    const h=harness();await h.say('compré 50 bolsas de cemento');const before=await h.say('Completar por aquí');
+    const after=await h.say('opción 9');expect(after.state?.facts).toEqual(before.state?.facts);expect(after.state?.evidence).toEqual(before.state?.evidence);
+    expect(after.state?.pendingQuestion?.field).toBe('items.0.productId');expect(after.draft).toBeUndefined();
+  });
+  it('una búsqueda de aclaración no reemplaza el producto declarado originalmente',async()=>{
+    const h=harness();await h.say('compré 50 bolsas de cemento');const before=await h.say('Completar por aquí');
+    const after=await h.say('CEM-OTRO');expect(after.state?.facts).toEqual(before.state?.facts);
+    expect(after.state?.pendingQuestion?.searchQuery).toBe('CEM-OTRO');
+    expect(h.mocks.product.findMany).toHaveBeenLastCalledWith(expect.objectContaining({where:{tenantId:principal.tenantId,OR:[{name:{contains:'CEM-OTRO'}},{sku:{contains:'CEM-OTRO'}}]}}));
+  });
+  it('cambio de nombre o metadatos entre pregunta y elección exige elegir nuevamente',async()=>{
+    const h=harness();await h.say('compré 50 bolsas de cemento');await h.say('Completar por aquí');
+    h.mocks.product.findFirst.mockResolvedValue({...product,name:'Cemento distinto',packSize:30});
+    const after=await h.say('1');expect(after.state?.facts.items[0]).toMatchObject({description:'cemento',quantity:'50'});
+    expect(after.state?.facts.items[0].productId).toBeUndefined();expect(after.draft).toBeUndefined();
+  });
+  it('no acepta ID que dejó de pertenecer al negocio',async()=>{
+    const h=harness();await h.say('compré 50 bolsas de cemento');await h.say('Completar por aquí');
+    h.mocks.product.findFirst.mockImplementation(async({where}:any)=>where.tenantId==='tenant-b'?product:null);
+    const after=await h.say('1');expect(after.state?.facts.items[0].productId).toBeUndefined();
+    expect(h.mocks.product.findFirst).toHaveBeenLastCalledWith(expect.objectContaining({where:{id:product.id,tenantId:principal.tenantId}}));
+  });
+  it('proveedores homónimos distintos requieren número o RUC exacto único y conservan nombre ante ambigüedad',async()=>{
+    const h=harness();for(const text of ['compré 50 bolsas de cemento','Completar por aquí','1','1','C$ 230'])await h.say(text);
+    const suppliers=[{id:'s-one',name:'Cementos Alfa',ruc:'J-111',address:'León'},{id:'s-two',name:'Cementos Alfa',ruc:'J-222',address:'Managua'}];
+    h.mocks.supplier.findMany.mockResolvedValue(suppliers);h.mocks.supplier.findFirst.mockImplementation(async({where}:any)=>where.tenantId===principal.tenantId?suppliers.find(s=>s.id===where.id)??null:null);
+    await h.say('Cementos Alfa');const ambiguous=await h.say('Cementos Alfa');
+    expect(ambiguous.state?.facts.supplierName).toBe('Cementos Alfa');expect(ambiguous.state?.facts.supplierId).toBeUndefined();
+    expect(ambiguous.content.text).toContain('RUC "J-111"');expect(ambiguous.content.text).toContain('Dirección "Managua"');
+    const selected=await h.say('J-222');expect(selected.state?.facts.supplierId).toBe('s-two');expect(selected.state?.facts.items[0].productId).toBe(product.id);
+  });
+  it('fichas visualmente idénticas bloquean también la opción numérica',async()=>{
+    const h=harness();for(const text of ['compré 50 bolsas de cemento','Completar por aquí','1','1','C$ 230'])await h.say(text);
+    h.mocks.supplier.findMany.mockResolvedValue([{id:'s-one',name:'Cementos Alfa'},{id:'s-two',name:'Cementos Alfa'}]);
+    await h.say('Cementos Alfa');const after=await h.say('2');
+    expect(after.state?.facts.supplierId).toBeUndefined();expect(after.content.text).toContain('no se pueden distinguir');
+    expect(h.mocks.supplier.findFirst).not.toHaveBeenCalled();
+  });
+  it('ficha que se volvió indistinguible durante la espera no queda seleccionada',async()=>{
+    const h=harness();for(const text of ['compré 50 bolsas de cemento','Completar por aquí','1','1','C$ 230','Cementos Alfa'])await h.say(text);
+    h.mocks.supplier.findMany.mockResolvedValue([{id:'supplier-a',name:'Cementos Alfa'},{id:'s-duplicate',name:'Cementos Alfa'}]);
+    const after=await h.say('1');expect(after.state?.facts.supplierId).toBeUndefined();expect(after.state?.facts.supplierName).toBe('Cementos Alfa');
+  });
+  it('revocación durante recuperación impide devolver la captura',async()=>{
+    const h=harness();await h.say('compré 50 bolsas de cemento');await h.say('Completar por aquí');
+    h.mocks.product.findFirst.mockImplementation(async()=>{h.mocks.user.findFirst.mockResolvedValue(null);return product;});
+    await expect(h.say('1')).rejects.toMatchObject({code:'SESSION_REVOKED'});
+  });
+});
+
+
+describe('H01 texto declarado separado de identidad resuelta al convertir',()=>{
+  it('conserva cemento y proveedor declarado al preparar la propuesta con IDs exactos',async()=>{
+    const h=harness(),identified={...product,brand:'Holcim'};
+    h.mocks.product.findMany.mockResolvedValue([identified]);h.mocks.product.findFirst.mockResolvedValue(identified);
+    let turn=await h.say('Nortex, compré 50 bolsas de cemento');
+    for(const answer of ['Completar por aquí','1','1','C$ 230','Cementos','1','F-123','2026-09-05','13225','a crédito','2026-10-05','sí','1'])turn=await h.say(answer);
+    expect(turn.state?.phase).toBe('REVIEW');
+    expect(turn.draft).toMatchObject({supplierId:'supplier-a',supplierName:'Cementos',documentTotal:'13225',items:[{productId:'product-a',description:'cemento',quantity:'50',unitCost:'230',purchaseUnit:'BASE'}]});
+    expect(turn.state?.facts).toMatchObject({supplierName:'Cementos',supplierCatalogName:'Cementos Alfa',items:[{description:'cemento',productName:'Cemento Holcim 42.5',productBrand:'Holcim',quantity:'50'}]});
+    expect(turn.draft?.items[0]).not.toHaveProperty('productBrand');
+    expect(turn.state?.evidence.some(item=>item.field==='supplierName'&&item.suppliedText==='Cementos')).toBe(true);
+  });
+  it('metadatos antiguos conservan texto guardado sin inventar un original perdido',()=>{
+    const state=readPurchaseIntake({purchaseIntake:{id:randomUUID(),phase:'COLLECTING',mode:'MANUAL',facts:{items:[{description:'cemento declarado',quantity:'50',productId:'product-a',productName:'Nombre catálogo'}],supplierId:'supplier-a',supplierName:'Nombre guardado'},evidence:[]}})!;
+    const draft=intakeToDraft(state);
+    expect(draft.items[0]).toMatchObject({description:'cemento declarado',quantity:'50',productId:'product-a'});
+    expect(draft.supplierName).toBe('Nombre guardado');
+    expect(state.facts).not.toHaveProperty('supplierCatalogName');
   });
 });

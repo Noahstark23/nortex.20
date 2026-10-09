@@ -1,3 +1,4 @@
+import type { AssistantDocumentReview } from './assistantDocumentReview';
 /** Contrato del asistente interno. Importes/cantidades viajan como texto decimal. */
 export interface AssistantPrincipal { tenantId: string; userId: string; role: string }
 export interface AssistantCapabilities {
@@ -10,8 +11,10 @@ export interface AssistantCapabilities {
   purchasePrepare?: boolean;
   operations?: boolean; dailyBrief?: boolean; actionPrepare?: boolean; actionConfirm?: boolean;
   promotionManage?: boolean; privateWhatsapp?: boolean;
+  budgetManage?: boolean;
+  cashReview?: boolean;
 }
-export interface AssistantCitation { id: string; title: string; section: string; version: string; path: string }
+export interface AssistantCitation { id: string; title: string; section: string; version: string; path: string; sectionId?: string; contentHash?: string }
 export interface AssistantMetric { key: string; label: string; value: string | null; unit: 'money' | 'count'; status: 'ok' | 'unavailable'; source: string }
 export interface AssistantOverview { checkedAt: string; startDate: string; endDate: string; scope: string; metrics: AssistantMetric[] }
 export interface AssistantAction { type: 'UPLOAD_INVOICE' | 'CONTINUE_PURCHASE' | 'REVIEW_PURCHASE'; label: string; proposalId?: string }
@@ -21,6 +24,8 @@ export interface AssistantMessageDTO {
   citations?: AssistantCitation[]; overview?: AssistantOverview; proposalId?: string;
   actions?: AssistantAction[]; purchaseIntake?: AssistantPurchaseIntakeDTO | null;
   operationalRunId?: string;
+  knowledgeReferences?: import('./assistantKnowledge.js').AssistantKnowledgeReference[];
+  knowledgeUnavailable?: boolean;
 }
 export interface InvoiceDraftLine {
   productId?: string; description: string; quantity: string; unitCost: string;
@@ -48,6 +53,7 @@ export interface AssistantProposalDTO {
   draft: InvoiceDraft; issues: string[]; preview: AssistantPurchasePreview | null;
   attachmentIds: string[]; expiresAt: string; result?: AssistantOperationDTO;
   source?: 'DOCUMENT' | 'MANUAL';
+  documentReview?: AssistantDocumentReview;
 }
 export interface AssistantOperationDTO { id: string; proposalId: string; purchaseId: string; message: string; replayed: boolean }
 export interface AssistantAttachmentDTO { id: string; name: string; mediaType: string; bytes: number; pages: number; status: string }

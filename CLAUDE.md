@@ -1,5 +1,31 @@
 # CLAUDE.md — Guía para agentes en Nortex
 
+## Dirección vigente — 2026-09-19
+
+La [meta](docs/META_NORTEX_EQUIPO_ADMINISTRATIVO.md) es un equipo administrativo
+accesible de contabilidad, RRHH y finanzas. La unidad de avance es un trabajo
+comprobado: primero W01, revisión semanal de caja guardada, retomable y aceptada.
+El [roadmap](docs/ROADMAP_AGENTES_NORTEX.md) ordena A00–A07 y los pendientes H01/RAG;
+los planes y evidencias fechados de abajo conservan su alcance histórico.
+
+Aplicar [reglas de agentes](docs/REGLAS_AGENTES_NORTEX.md) y
+[arquitectura](docs/ARQUITECTURA_AGENTES_NORTEX.md). Separar conversación, encargo,
+run y propuesta/comprobante. Los agentes consultan/preparan; confirmación humana
+exacta y efectos permanecen en servicios de dominio. No ampliar monolitos.
+
+Política acordada: US$2 iniciales de IA por negocio/mes, ampliables por solicitud
+y aprobación de Nortex hasta US$10; techo conjunto US$20. El objetivo comercial
+de US$20 del servicio es distinto. El candidato reunido incorpora esa política;
+comprobar [fuente, QA y entorno](docs/ESTADO_ACTUAL_NORTEX.md) antes de habilitar
+gasto. No aumentar límites mediante una receta antigua.
+
+W01/W01B, biblioteca editorial, presupuesto y H01-1/2 están reunidos en el
+candidato identificado en el estado actual. A01.W01.1–2 incorpora guardado privado,
+notas, espera, reanudación y cancelación; faltan MySQL real, informe aceptado y
+encargo W01 completo. W02/W03 y MCP siguen pendientes. [H01](docs/CONTRATO_COMPRAS_CONVERSACIONALES_H01.md)
+registra A/B/C validados como conductas; la QA determinista local no acredita
+registro financiero, revisión/publicación de artículos ni calidad del modelo.
+
 
 > **Punto de entrada vigente:** [estado actual y evidencia](docs/ESTADO_ACTUAL_NORTEX.md),
 > [plan de estabilidad y RAG](docs/PLAN_DESARROLLO_RAG_Y_ESTABILIDAD_2026-09-08.md)
@@ -31,6 +57,9 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   inferencia. La única ruta es `release-production.yml`, con SHA candidato completo,
   confirmación tipada y una autorización de producto que nombre alcance, ventana y
   rollback; ver `docs/runbooks/release-promotion.md`.
+- Cadencia operativa del 2026-10-06: incrementos pequeños, staging el mismo día,
+  objetivo de producción en 24–48 h desde candidato listo y escalamiento antes
+  de cinco días; ver el runbook. La urgencia no elimina compuertas ni aprobación.
 - La promoción requiere una API Coolify que exponga Auto Deploy explícitamente
   apagado; 4.1.2 omite ese campo y bloquea la compuerta. Los webhooks usan POST.
   Actualizar el panel requiere su propio respaldo y recuperación, separados de
@@ -52,8 +81,14 @@ Maneja **dinero e inventario reales** → la integridad y la seguridad no son ne
   superficie por token. Las islas oscuras reales cortan esa herencia con una
   clase semántica y prueba; no se arregla con selectores de subcadena ni
   excepciones por ruta.
-- Deploy: Docker + `prisma db push` (aplica **solo DDL**; los backfills de datos van
-  en la aplicación con patrón perezoso). Prisma pinneado a **6.4.1** — correr
+- Deploy: Docker + paquete de `deploy/nortex/README.md`; el CMD actual preserva
+  schema y verifica compatibilidad sin DDL. El entrypoint histórico con `db push`
+  queda fuera del CMD; una expansión exige preparación aditiva revisada y respaldo
+  restaurable. Los backfills van en la aplicación con patrón perezoso.
+  Prepare valida también la imagen contra la base antes del corte; CI verify
+  ensaya Dockerfile/CMD y la migración comercial en MySQL sintético. El contrato
+  de producción describe el destino posterior a esa migración, no su ejecución.
+  Prisma pinneado a **6.4.1** — correr
   `npm ci` tras cambiar de rama, o `npx` puede traer prisma 7 y fallar engañosamente.
 - Auth: JWT. `authenticate` (`backend/middleware/auth.ts`) pone `req.tenantId`,
   `req.userId` y `req.role`. **Esa es la única fuente confiable del tenant** — nunca
@@ -228,9 +263,10 @@ la bomba (revisadas junto al Security Loop):
 7. **Estado en memoria = per-proceso.** Rate-limit, caché de paywall y colas NO se
    comparten entre instancias; no asumas multi-instancia sin store compartido
    (Redis/BullMQ).
-8. **Schema estrictamente aditivo.** El deploy corre `db push` **sin**
-   `--accept-data-loss`: un cambio no autorizado hace fallar el arranque en vez
-   de borrar datos de prod. Prisma también puede marcar un `UNIQUE` nuevo como
+8. **Schema estrictamente aditivo.** El paquete actual no aplica DDL al arrancar;
+   exige el contrato revisado y falla si no coincide. Una expansión se prepara por
+   separado con backup/restauración acreditados, nunca con `--accept-data-loss`.
+   Prisma también puede marcar un `UNIQUE` nuevo como
    data loss aunque sea expand-only; ese caso requiere preflight DDL state-based,
    validación con datos y re-ejecución idempotente. Nunca habilitar el flag global
    ni asumir que una instancia vieja seguirá disponible (SCALING_AUDIT C).
@@ -336,7 +372,13 @@ libro firmado de caja · keyring JWT rotable.
 La ruta vigente de promoción es `docs/runbooks/release-promotion.md`.
 Los expedientes de `docs/releases/` prueban su candidato y fecha, no habilitan
 una release nueva. CI de un PR y CI de main son evidencias distintas: la promoción
-exige el candidato exacto vigente de main y staging manual del mismo SHA.
+exige el candidato exacto vigente de main y staging manual del mismo SHA. La excepción
+puntual crédito20261001 conserva el controlador M y las protecciones; los candidatos
+vigentes son C′=`df6fc095fe8da39b4829336e79b78e4454997046` y
+B′=`f656392d2c3a861d605e3da7012c7a9d4732e221`, fijados por
+`docs/releases/credit-hotfix-20261001.json`. El runbook distingue su cadena acreditada
+de los C/B originales históricos. Exige revisión, CI separado, staging/drill/smoke
+y autorización, sin bypass; no habilita otros SHAs ni assets directos.
 
 Actualizar las guías operativas al cambiar sus contratos, con propietario y
 referencias ejecutables; conservar resultados históricos fechados. El índice
@@ -344,3 +386,12 @@ referencias ejecutables; conservar resultados históricos fechados. El índice
 No declarar todos los documentos correctos por un barrido de texto ni por
 validación de enlaces. El equipo y reglas de ownership están en
 `docs/EQUIPO_DESARROLLO_NORTEX.md`.
+
+
+## WhatsApp comercial — C08/C10 local 2026-09-29
+
+Ferretería, búsqueda guiada, precio detalle y unidad base. Tenant de administración viene del JWT; canal firmado determina negocio receptor. El comprador no gana permisos administrativos por su teléfono. Cotización determinista no cobra, reserva stock ni registra venta. El modelo no confirma.
+
+Recepción enruta por canal: commerceEnabled o commercePolicyVersion>0 mantiene propiedad comercial aun pausada. WHATSAPP_COMMERCE_ENABLED controla ejecución del worker; nunca selecciona un handler global. Canales legacy activos conservan cola en memoria; drenar antes de adoptar política y no ejecutar ambos motores para el mismo tráfico. Inbox comercial commit antes de ACK; callbacks mixtos encolan legacy después del commit, sin prometer durabilidad legacy.
+
+Worker separado, heartbeat durable y estados de cola por tenant. Intento registrado antes de red; UNKNOWN no se reenvía ni resuelve por coincidencia aproximada. ID aceptado no demuestra entrega. SUPER_ADMIN tramita solicitudes versionadas; PREPARED no significa conectado. Runbook: docs/runbooks/whatsapp-commerce.md. Gates locales, CI, staging, recepción real y aceptación comercial son distintos. No activa producción ni acepta permisos nuevos.

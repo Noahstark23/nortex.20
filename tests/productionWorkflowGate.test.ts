@@ -16,6 +16,7 @@ const ciSource = readFileSync('.github/workflows/ci.yml', 'utf8');
 const productionSource = readFileSync('.github/workflows/release-production.yml', 'utf8');
 const candidateSha = '$' + '{{ inputs.candidate_sha }}';
 const confirmation = '$' + '{{ inputs.confirmation }}';
+const soleOwnerConfirmation = '$' + '{{ inputs.sole_owner_confirmation }}';
 const productionWebhook = '$' + '{{ secrets.COOLIFY_PROD_WEBHOOK }}';
 
 // La verificación detallada vive en releaseProductionWorkflow.test.ts. Esta
@@ -41,6 +42,10 @@ const assertSeparatedPromotion = (ci: Workflow, production: Workflow) => {
         { required: inputs.confirmation.required, type: inputs.confirmation.type },
         { required: true, type: 'string' },
     );
+    assert.deepEqual(
+        { required: inputs.sole_owner_confirmation.required, type: inputs.sole_owner_confirmation.type },
+        { required: true, type: 'string' },
+    );
     const deploy = production.jobs['deploy-production'];
     assert.deepEqual(deploy.needs, ['preflight']);
     assert.equal(deploy.environment.name, 'production');
@@ -51,8 +56,13 @@ const assertSeparatedPromotion = (ci: Workflow, production: Workflow) => {
     assert.deepEqual(authorization.env, {
         CANDIDATE_SHA: candidateSha,
         PRODUCTION_CONFIRMATION: confirmation,
+        SOLE_OWNER_CONFIRMATION: soleOwnerConfirmation,
         NORTEX_PRODUCTION_DEPLOY_ENABLED: '$' + '{{ vars.NORTEX_PRODUCTION_DEPLOY_ENABLED }}',
         STAGING_URL: '$' + '{{ vars.STAGING_URL }}',
+        PROD_URL: '$' + '{{ vars.PROD_URL }}',
+        CREDIT_HOTFIX_20261001: '$' + '{{ inputs.credit_hotfix_20261001 }}',
+        CREDIT_HOTFIX_ACTION: '$' + '{{ inputs.credit_hotfix_action }}',
+        CREDIT_HOTFIX_PHASE: 'production',
     });
     const webhook = deploy.steps.find((step: Workflow) => step.env?.WEBHOOK === productionWebhook);
     assert.ok(webhook, 'webhook de producción requerido solo después de preflight');

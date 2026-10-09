@@ -43,8 +43,10 @@ function fixture(initial: ReturnType<typeof proposal> | null = null, actor = pri
         return row[key] === value;
     });
     const mocks = {
+        assistantJob: { findFirst: vi.fn().mockResolvedValue(null) },
         user: { findFirst: vi.fn(async ({ where }) => matches(state.user, where) ? structuredClone(state.user) : null) },
         assistantTenantConfig: { findUnique: vi.fn(async () => ({ enabled: true, extractionEnabled: true, executionEnabled: true })) },
+        employee: { findFirst: vi.fn().mockResolvedValue(null) },
         assistantConversation: { findFirst: vi.fn(async ({ where }) => matches(state.conversation, where) ? structuredClone(state.conversation) : null) },
         assistantProposal: {
             findFirst: vi.fn(async ({ where }) => matches(state.row, where) ? structuredClone(state.row) : null),

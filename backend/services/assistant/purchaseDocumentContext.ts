@@ -3,6 +3,7 @@ import Decimal from 'decimal.js';
 import { invoiceDraftSchema } from './proposalValidation.js';
 import { AssistantDocumentError } from './attachments.js';
 import type { InvoiceDraft, InvoiceDraftLine } from '../../../shared/assistant.js';
+import type { AssistantDocumentConflict } from '../../../shared/assistantDocumentReview.js';
 
 export interface PurchaseDocumentIntake {
   intakeId: string;
@@ -51,7 +52,7 @@ function sameValue(a: string, b: string, numeric = false): boolean {
 const lineSummary = (line: InvoiceDraftLine) => `${line.description || 'producto sin nombre'} (cantidad ${line.quantity || 'pendiente'}, costo ${line.unitCost || 'pendiente'}, unidad ${line.purchaseUnit})`;
 
 /** El documento se lee por separado; los hechos del chat no sesgan la extracción del proveedor. */
-export function mergePurchaseDocumentContext(document: InvoiceDraft, context: PurchaseDocumentContext | null): InvoiceDraft {
+export function mergePurchaseDocumentContext(document: InvoiceDraft, context: PurchaseDocumentContext | null, conflicts: AssistantDocumentConflict[] = []): InvoiceDraft {
   if (!context) return document;
   const declared = context.draft;
   const pendingPrefix = 'Dato pendiente declarado por conversación: ';
@@ -62,10 +63,14 @@ export function mergePurchaseDocumentContext(document: InvoiceDraft, context: Pu
   const conflict = (label: string, fromChat: string, fromDocument: string) => {
     warnings.push(`Diferencia en ${label}: conversación «${fromChat}»; documento «${fromDocument}». Revisá ambos valores.`);
   };
-  const merge = (fromChat: string | undefined, fromDocument: string | undefined, label: string, numeric = false) => {
+  const merge = (fromChat: string | undefined, fromDocument: string | undefined, label: string, numeric = false, path = label) => {
     if (!present(fromChat)) return fromDocument;
     if (!present(fromDocument)) return fromChat;
-    if (!sameValue(fromChat, fromDocument, numeric)) conflict(label, fromChat, fromDocument);
+    if (!sameValue(fromChat, fromDocument, numeric)) {
+      conflict(label, fromChat, fromDocument);
+      conflicts.push({id:`value:${path}`,kind:'VALUE',path,label,declaredValue:fromChat,documentValue:fromDocument,status:'PENDING'});
+      return fromChat;
+    }
     return fromDocument;
   };
   for (const [key, label, numeric] of [
@@ -74,15 +79,15 @@ export function mergePurchaseDocumentContext(document: InvoiceDraft, context: Pu
     ['documentSubtotal', 'subtotal', true], ['documentTax', 'IVA', true], ['documentTotal', 'total', true],
     ['discount', 'descuento', true], ['freight', 'flete', true], ['otherCharges', 'otros cargos', true],
   ] as const) {
-    const value = merge(declared[key], document[key], label, numeric);
+    const value = merge(declared[key], document[key], label, numeric, key);
     if (value !== undefined) result[key] = value;
   }
   const currency = (value: string) => ['NIO', 'C$'].includes(value.trim().toUpperCase()) ? 'NIO' : value;
-  result.currency = merge(currency(declared.currency), currency(document.currency), 'moneda') ?? '';
-  result.paymentMethod = merge(declared.paymentMethod, document.paymentMethod, 'condición de pago') as InvoiceDraft['paymentMethod'];
+  result.currency = merge(currency(declared.currency), currency(document.currency), 'moneda', false, 'currency') ?? '';
+  result.paymentMethod = merge(declared.paymentMethod, document.paymentMethod, 'condición de pago', false, 'paymentMethod') as InvoiceDraft['paymentMethod'];
 
   const matched = new Set<number>();
-  result.items = result.items.map(line => {
+  result.items = result.items.map((line, documentIndex) => {
     const matches = declared.items.flatMap((item, index) => present(item.description) && normalized(item.description) === normalized(line.description) ? [index] : []);
     if (!present(line.description) && document.items.length === 1 && declared.items.length === 1) matches.push(0);
     const duplicatedDocumentDescription = document.items.filter(item => normalized(item.description) === normalized(line.description)).length > 1;
@@ -94,17 +99,19 @@ export function mergePurchaseDocumentContext(document: InvoiceDraft, context: Pu
     if (pending.has(`items.${index}.purchaseUnit`)) warnings.push(`La unidad declarada para ${label} no estaba confirmada. El documento indica ${line.purchaseUnit}; revisá BASE/PACK contra el producto elegido antes de registrar.`);
     return {...line,
       description: line.description || previous.description,
-      quantity: merge(previous.quantity, line.quantity, `cantidad de ${label}`, true) ?? '',
-      unitCost: merge(previous.unitCost, line.unitCost, `costo de ${label}`, true) ?? '',
-      purchaseUnit: merge(pending.has(`items.${index}.purchaseUnit`) ? undefined : previous.purchaseUnit, line.purchaseUnit, `unidad de ${label}`) as InvoiceDraftLine['purchaseUnit'],
-      batchNumber: merge(previous.batchNumber, line.batchNumber, `lote de ${label}`),
-      expiryDate: merge(previous.expiryDate, line.expiryDate, `vencimiento de ${label}`),
+      quantity: merge(previous.quantity, line.quantity, `cantidad de ${label}`, true, `items.${documentIndex}.quantity`) ?? '',
+      unitCost: merge(previous.unitCost, line.unitCost, `costo de ${label}`, true, `items.${documentIndex}.unitCost`) ?? '',
+      purchaseUnit: merge(pending.has(`items.${index}.purchaseUnit`) ? undefined : previous.purchaseUnit, line.purchaseUnit, `unidad de ${label}`, false, `items.${documentIndex}.purchaseUnit`) as InvoiceDraftLine['purchaseUnit'],
+      batchNumber: merge(previous.batchNumber, line.batchNumber, `lote de ${label}`, false, `items.${documentIndex}.batchNumber`),
+      expiryDate: merge(previous.expiryDate, line.expiryDate, `vencimiento de ${label}`, false, `items.${documentIndex}.expiryDate`),
     };
   });
   for (const [index, line] of declared.items.entries()) {
     if (!matched.has(index)) {
       const printed = document.items.length === 1 ? ` Documento: ${lineSummary(document.items[0])}.` : '';
       warnings.push(`No se pudo relacionar sin ambigüedad lo declarado: ${lineSummary(line)}.${printed} Revisá su correspondencia con el documento; no se agregaron renglones por suposición.`);
+      conflicts.push({id:`mapping:declared.${index}`,kind:'LINE_MATCH',path:`declared.items.${index}`,label:'Correspondencia de renglón',
+        declaredValue:lineSummary(line).slice(0,500),documentValue:document.items.map(lineSummary).join(' | ').slice(0,500)||null,status:'BLOCKED'});
     }
   }
   if (declared.supplierId || declared.warehouseId || declared.purchaseOrderId || declared.items.some(line => line.productId || line.purchaseOrderItemId)) {

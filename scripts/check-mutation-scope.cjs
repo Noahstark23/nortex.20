@@ -34,6 +34,7 @@ const PISO_MUTANTES = {
     // Bajó exactamente de 60 a 56 al borrar el ternario equivalente de
     // sanitizeDecimalInput: con dot=-1 la expresión única de slices ya devuelve
     // `cleaned`. La corrida completa detectó los 56; no se perdió una conducta.
+    'utils/posCredit.ts': 42,
     'utils/money.ts': 56,
     // calc-laborales.ts bajó de 96 a 88 mutantes en el barrido del motor de
     // nómina, y es una de las bajas legítimas que este guardián contempla: NO se
@@ -128,6 +129,7 @@ const PISO_MUTANTES = {
     // Medido killed; el contrato AST también protege su firma y cuerpo completos.
     'backend/lib/shiftCloseReport.ts': 1,
     'backend/lib/reportMoney.ts': 73,
+    'backend/lib/quotationTotals.ts': 10,
     // Agrupación exacta de cantidades vendidas: 67/67.
     'backend/lib/salesQuantityReport.ts': 67,
     // Saldo recibido aún facturable por producto: 16/16.
@@ -268,6 +270,9 @@ const PISO_MUTANTES = {
     'backend/validation/saleCorrectionSchemas.ts': 50,
     // NortexGPT: costo estricto de entrada/salida y rechazo de consumo inválido.
     'backend/services/assistant/budget.ts': 15,
+    'backend/services/assistant/budgetPolicy.ts': 20,
+    'backend/services/assistant/operations/weeklyCashReviewSummary.ts': 89,
+    'backend/services/assistant/operations/cashCloseInvestigation.ts': 26,
     // Concordancia exacta entre subtotal/IVA/total impreso y cálculo de Compras.
     'backend/services/assistant/proposalValidation.ts': 14,
     // Hash canónico: escalares, orden de líneas, claves, fechas y Decimal.
@@ -287,6 +292,8 @@ const PISO_MUTANTES = {
 // La reducción 212 → 199 anterior a ampliar caja se explica función por función
 // en docs/releases/2026-09-04-production-gate.md; no fue un rango truncado.
 const FUNCTION_FLOORS = {
+    'backend/services/assistant/operations/cashCloseInvestigation.ts': { money: 26 },
+    'backend/services/assistant/operations/weeklyCashReviewSummary.ts': { checkedSnapshotCash: 38, summarizeCashReviewRows: 51 },
     'backend/services/accounting.ts': {
         canonicalJournalAccountLockOrder: 7,
         buildSaleJournalLines: 40,

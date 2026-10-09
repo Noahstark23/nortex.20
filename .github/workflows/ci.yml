@@ -24,6 +24,7 @@ concurrency:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -64,8 +65,24 @@ jobs:
           name: mutation-report
           path: reports/mutation/
           retention-days: 7
-      - name: Build frontend
-        run: npm run build
+      - name: Build frontend y SEO
+        run: npm run build:seo
+      - name: Sellar el paquete real del candidato
+        env:
+          BUILD_COMMIT: ${{ github.sha }}
+        run: |
+          node --input-type=module -e 'import { writeFileSync } from "node:fs"; writeFileSync(".nortex-build-source.json", JSON.stringify({ version: 1, commit: process.env.BUILD_COMMIT }));'
+          node scripts/nortex-seal-image.mjs
+      - name: Arranque de la imagen candidata y ensayo de migración sin datos reales
+        run: python3 scripts/qa/release-runtime.py --evidence "$RUNNER_TEMP/nortex-runtime-evidence"
+      - name: Evidencia del arranque real del candidato
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: candidate-runtime
+          path: ${{ runner.temp }}/nortex-runtime-evidence/
+          if-no-files-found: ignore
+          retention-days: 7
 
   deploy-schema-smoke:
     runs-on: ubuntu-latest
@@ -103,6 +120,19 @@ jobs:
           DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_deploy_test
           LEGACY_SCHEMA_PATH: ${{ runner.temp }}/schema-before-pr158.prisma
           NORTEX_ALLOW_DESTRUCTIVE_SCHEMA_SMOKE: issue-159-ci-only
+
+      # db push no ejecuta los SQL versionados. Verificar también su equivalencia
+      # completa y la recuperación desde estados parciales en otra BD efímera.
+      - name: Presupuesto y espejo SQL del asistente con MySQL 8
+        run: node scripts/qa/test-assistant-budget-upgrade.mjs
+
+      - name: Evidencia del upgrade del asistente
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: assistant-budget-upgrade
+          path: reports/assistant-budget-upgrade/
+          retention-days: 7
 
   # ── DGI-4 · El backup se PRUEBA, no se supone ────────────────────────────────
   # "Un backup no probado no existe": este job genera un dump real contra MySQL 8,
@@ -205,6 +235,56 @@ jobs:
           test "$OBTENIDO" = "$ESPERADO" || { echo "::error::utf8 corrupto tras restaurar: '$OBTENIDO' != '$ESPERADO'"; exit 1; }
           echo "✓ $OBTENIDO"
 
+      - name: Sembrar un original permanente sintético para el respaldo conjunto
+        run: |
+          mkdir -m 700 "$NORTEX_ASSISTANT_STORAGE_DIR"
+          node --import tsx scripts/qa/seed-assistant-backup-ci.ts
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          NORTEX_QA_DATABASE_ACK: disposable-database
+          NORTEX_ASSISTANT_STORAGE_DIR: ${{ runner.temp }}/assistant-source-originals
+
+      - name: Generar respaldo conjunto local de SQL y original
+        run: bash scripts/backup-db.sh
+        env:
+          DATABASE_URL: ${{ env.SOURCE_DATABASE_URL }}
+          BACKUP_DIR: ${{ runner.temp }}/assistant-backups
+          BACKUP_LOCAL_ONLY: '1'
+          BACKUP_ASSISTANT_ORIGINALS_ENABLED: 'true'
+          ASSISTANT_ORIGINALS_DIR: ${{ runner.temp }}/assistant-source-originals
+
+      - name: Restaurar SQL y original en un destino descartable
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const crypto = require('node:crypto');
+          const dir = process.env.BACKUP_DIR;
+          const h = JSON.parse(fs.readFileSync(path.join(dir, 'last-backup.json'), 'utf8'));
+          const check = (name, expected) => {
+            if (path.basename(name) !== name) throw new Error('nombre de archivo inseguro');
+            const actual = crypto.createHash('sha256').update(fs.readFileSync(path.join(dir, name))).digest('hex');
+            if (actual !== expected) throw new Error('hash de respaldo distinto');
+          };
+          if (!h.verificado || h.assistantOriginals?.count !== 1) throw new Error('latido conjunto incompleto');
+          check(h.archivo, h.sha256);
+          check(h.assistantOriginals.archivo, h.assistantOriginals.sha256);
+          fs.writeFileSync(path.join(process.env.RUNNER_TEMP, 'assistant-backup-names'), `${h.archivo}\n${h.assistantOriginals.archivo}\n`, { mode: 0o600 });
+          NODE
+          mapfile -t BACKUP_NAMES < "$RUNNER_TEMP/assistant-backup-names"
+          ASSISTANT_DUMP="$BACKUP_DIR/${BACKUP_NAMES[0]}"
+          ASSISTANT_ARCHIVE="$BACKUP_DIR/${BACKUP_NAMES[1]}"
+          bash scripts/verify-backup-restore.sh "$ASSISTANT_DUMP"
+          mkdir -m 700 "$NORTEX_ASSISTANT_STORAGE_DIR"
+          tar -xf "$ASSISTANT_ARCHIVE" -C "$NORTEX_ASSISTANT_STORAGE_DIR" --strip-components=1 files
+          node --import tsx scripts/qa/verify-assistant-originals-restore.ts > "$RUNNER_TEMP/assistant-restore-result.json"
+          node -e "const r=require(process.env.RUNNER_TEMP+'/assistant-restore-result.json'); if(r.status!=='ok'||r.checked!==1||r.proposalReferencesChecked!==1||r.brokenProposalReferences!==0) throw new Error('restauración conjunta incompleta');"
+          echo '✓ SQL, original y referencia de propuesta restaurados.'
+        env:
+          BACKUP_DIR: ${{ runner.temp }}/assistant-backups
+          RESTORE_DATABASE_URL: mysql://respaldo:p%23a%22ss%20w%40rd@127.0.0.1:3306/nortex_backup_restore_assistant_test
+          NORTEX_ASSISTANT_STORAGE_DIR: ${{ runner.temp }}/assistant-restored-originals
+
       # Caso NEGATIVO: la verificación tiene que RECHAZAR un dump cortado. Si
       # este paso "pasara", el chequeo de integridad no estaría chequeando nada.
       - name: Un dump truncado debe ser rechazado
@@ -233,6 +313,39 @@ jobs:
           docker run --rm --entrypoint bash nortex-backup:ci -lc \
             'set -e; mysqldump --version; aws --version; diff --version; command -v gzip; command -v find'
 
+      # El mismo MySQL 8 sirve para comprobar el control del piloto en una BD
+      # nueva; no se mezcla con el origen ni el destino del restore de backup.
+      - name: Schema descartable del piloto
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \
+            'CREATE DATABASE nortex_quality_pilot CHARACTER SET utf8mb4;'
+          npx --no-install prisma generate --schema=backend/prisma/schema.prisma
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+      - name: Identidad, límite, auditoría y revocación entre dos negocios
+        run: node --import tsx scripts/qa/test-nortexgpt-pilot.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          NORTEX_QA_DATABASE_ACK: disposable-database
+      - name: Panel del piloto limitado a dos identidades
+        run: node --import tsx scripts/qa/test-nortexgpt-pilot-admin.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_pilot
+          NORTEX_QA_DATABASE_ACK: disposable-database
+      - name: Schema editorial descartable e independiente
+        run: |
+          mysql -h 127.0.0.1 -P 3306 -uroot -proot -e \
+            'CREATE DATABASE nortex_quality_help CHARACTER SET utf8mb4;'
+          npx --no-install prisma db push --schema=backend/prisma/schema.prisma --skip-generate
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_help
+      - name: Borrador editorial exacto y visibilidad de fuentes en MySQL QA
+        run: node --import tsx scripts/qa/test-nortexgpt-help-release.ts
+        env:
+          DATABASE_URL: mysql://root:root@127.0.0.1:3306/nortex_quality_help
+          NORTEX_QA_DATABASE_ACK: disposable-database
+
   # Esta compuerta arranca su propia base MySQL 8 efímera y backend loopback.
   # La imagen se obtiene únicamente en CI; el script local falla cerrado si no
   # fue obtenida de forma explícita por la persona que ejecuta la verificación.
@@ -248,3 +361,32 @@ jobs:
         run: docker pull mysql:8.0
       - name: Integración obligatoria de dinero e inventario
         run: npm run test:integration:required
+
+  app-image-amd64:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Preparar ruta efímera del ensayo
+        run: echo "NORTEX_IMAGE_QA_ROOT=$RUNNER_TEMP/nortex-credit-image-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Dockerfile real, SHAs exactos y MySQL efímero en AMD64 nativo
+        run: python3 scripts/qa/credit-image/prepare-ci.py
+      - name: CMD real, health por SHA y recuperación sintética C-B-C
+        run: python3 scripts/qa/credit-image/runtime-check.py
+      - name: Evidencia de imágenes y runtime AMD64
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: credit-app-image-amd64
+          path: ${{ env.NORTEX_IMAGE_QA_ROOT }}/evidence/
+          if-no-files-found: error
+          retention-days: 7
+      - name: Limpiar sólo los recursos sintéticos de este intento
+        if: always()
+        run: python3 scripts/qa/credit-image/prepare-ci.py cleanup
