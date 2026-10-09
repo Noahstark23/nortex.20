@@ -183,10 +183,13 @@ es la regresión que habría causado el `firstName[0]` sin blindar.
   > más chico de lo que se declaró primero. Verificado enumerando los usos de
   > `guidedSimpleMode` en `components/POS.tsx`, `components/pos/PosCatalogPane.tsx` y
   > `components/pos/POSCatalogAdminTools.tsx`.
-- **La pulpería sigue sin descuento por defecto.** Es la conducta original de R2.6 y se
-  conserva a propósito, con prueba que la fija. Si el negocio decide que la pulpería
-  también lo necesita —que es discutible, porque ahí se regatea— debe ser un cambio
-  propio con su decisión, no un efecto colateral de este.
+- ~~**La pulpería sigue sin descuento por defecto.**~~ **RESUELTO el mismo día.** El
+  negocio decidió que el descuento sale del modo por completo: visible SIEMPRE, en los
+  dos modos y en todo giro. Ver
+  [`2026-09-16-descuento-fuera-del-modo.md`](2026-09-16-descuento-fuera-del-modo.md).
+  El modo simple conserva lo que sí corresponde esconder —escáner, tiquetera,
+  importación Excel, "Nuevo" producto completo— y la pulpería lo sigue teniendo por
+  defecto.
 - Este PR no autoriza staging ni producción: son compuertas separadas
   (`docs/runbooks/release-promotion.md`).
 
