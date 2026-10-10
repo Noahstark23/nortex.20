@@ -72,6 +72,9 @@ import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovem
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
+import demoAccountResetRouter from './routes/demoAccountReset.js';
+import adminDemoAccountResetRouter from './routes/adminDemoAccountReset.js';
+import { reportManualPayment } from './services/manualPaymentReporting.js';
 import { executeSale, SaleError } from './services/salesService';
 import { executeBatchWriteoff, BatchWriteoffError } from './services/batchWriteoffService';
 import { loadBatchWriteoffReplay } from './services/batchWriteoffIdempotency';
@@ -545,6 +548,8 @@ app.use('/api/sales/sync', syncRoutes);
 app.use('/api/scale-labels', scaleLabelsRouter);
 app.use('/api/scale-devices', scaleDevicesRouter);
 app.use('/api/tenant/capabilities', tenantCapabilitiesRouter);
+app.use('/api/billing/demo-reset', demoAccountResetRouter);
+app.use('/api/admin/demo-reset', adminDemoAccountResetRouter);
 app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
 app.use('/api', saleCorrectionsRouter); // Historial, aprobaciones, reembolsos e inspecciones de venta
 app.use('/api/reports', salesReportsRouter); // Ventas integrales y snapshots inmutables de cierre
@@ -697,7 +702,7 @@ app.post('/api/auth/login', validate(LoginSchema), async (req: any, res: any) =>
         }
 
         // 2.5 Check if user is disabled
-        if (user.status === 'DISABLED') {
+        if (user.status === 'DISABLED' || user.tenant.demoResetArchivedAt) {
             return res.status(403).json({ error: 'Tu cuenta ha sido desactivada. Contacta al administrador.' });
         }
 
@@ -8807,7 +8812,7 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
         const newEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
         const tenant = await prisma.tenant.update({
-            where: { id: req.params.id },
+            where: { id: req.params.id, demoResetArchivedAt: null },
             data: {
                 subscriptionStatus:  'ACTIVE',
                 subscriptionEndsAt:  newEndsAt,
@@ -9152,16 +9157,7 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
     const monto = new Decimal(String(amount)).toDecimalPlaces(2);
 
     try {
-        // Verificar que no tenga un pago pendiente
-        const pending = await prisma.manualPayment.findFirst({
-            where: { tenantId: authReq.tenantId, status: 'PENDING' }
-        });
-        if (pending) {
-            return res.status(400).json({ error: 'Ya tienes un pago pendiente de revisión. Espera la confirmación.' });
-        }
-
-        const payment = await prisma.manualPayment.create({
-            data: {
+        const payment = await reportManualPayment({
                 tenantId: authReq.tenantId!,
                 amount: monto,
                 currency: currency || 'USD',
@@ -9169,7 +9165,6 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
                 referenceNumber: String(referenceNumber),
                 proofUrl: proofUrl || null,
                 notes: notes || null,
-            }
         });
 
         // Aviso al operador: el rail de cobro es manual, así que sin esto el
@@ -9190,6 +9185,8 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
 
         res.json({ message: 'Pago reportado exitosamente. Será revisado en las próximas horas.', payment });
     } catch (error) {
+        if (error instanceof Error && error.message === 'DEMO_ACCOUNT_RESET') return res.status(409).json({ error: 'La cuenta se reinició. Volvé a ingresar antes de reportar un pago.' });
+        if (error instanceof Error && error.message === 'PAYMENT_ALREADY_PENDING') return res.status(400).json({ error: 'Ya tenés un pago pendiente de revisión.' });
         console.error('Manual payment error:', error);
         res.status(500).json({ error: 'Error al reportar pago' });
     }
@@ -9279,7 +9276,7 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
 
             // Activar tenant
             await tx.tenant.update({
-                where: { id: payment.tenantId },
+                where: { id: payment.tenantId, demoResetArchivedAt: null },
                 data: { subscriptionStatus: 'ACTIVE', subscriptionEndsAt: endsAt }
             });
 

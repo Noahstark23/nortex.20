@@ -30,7 +30,7 @@ assert(address && typeof address !== 'string');
 const base = `http://127.0.0.1:${address.port}/api/admin`;
 const tenant = (id: string, patch = {}) => ({ id, businessName: `Comercio sintético ${id}`, taxId: `SYNTHETIC-${id}`,
     type: 'FERRETERIA', createdAt: new Date('2026-08-01T12:00:00Z'), subscriptionStatus: 'ACTIVE', ...patch });
-const user = (id: string, tenantId: string, role = 'OWNER') => ({ id, tenantId, role, status: 'ACTIVE', name: 'Usuario sintético', password: 'synthetic-non-login-value' });
+const user = (id: string, tenantId: string, role = 'OWNER') => ({ id, tenantId, role, status: 'ACTIVE', email: `${id}@example.invalid`, name: 'Usuario sintético', password: 'synthetic-non-login-value' });
 let token = '';
 async function request(path = '/metrics', auth: string | null = token) {
     return fetch(base + path, { headers: auth ? { Authorization: `Bearer ${auth}` } : {} });
@@ -86,6 +86,10 @@ try {
     await db.manualPayment.create({ data: { tenantId: 'unknown', amount: '8000', bank: 'SYNTHETIC', referenceNumber: 'not-reconciled', status: 'APPROVED', reviewedAt: now, reviewedBy: 'admin' } });
     data = await overview();
     const a = data.tenants.find(t => t.id === 'real-a')!, b = data.tenants.find(t => t.id === 'real-b')!;
+    await check('Reinicio asistido recibe sólo el dueño persistido del tenant visible', () => {
+        assert.deepEqual(a.owner, { id: 'owner-a', email: 'owner-a@example.invalid' });
+        assert.deepEqual(b.owner, { id: 'owner-b', email: 'owner-b@example.invalid' });
+    });
     await check('Demos e internos separados; cuentas sin evidencia no se adivinan', () => assert.deepEqual([data.metrics.real, data.metrics.demo, data.metrics.internal, data.metrics.unclassified], [2, 1, 1, 1]));
     await check('Activación excluye demo, unknown, anuladas, borradores, fallos y futuro', () => assert.deepEqual([data.metrics.activated, a.confirmedSales, a.firstSaleAt], [1, 2, '2026-09-28T05:55:00.000Z']));
     await check('Recurrencia usa dos días civiles de Managua aunque compartan día UTC', () => assert.deepEqual([a.saleDays30d, data.metrics.recurring30d], [2, 1]));
@@ -140,6 +144,24 @@ try {
     await check('Cambiar metadatos a futuro no genera clasificación verificada', async () => {
         await db.platformAccountEvidence.update({ where: { tenantId: 'demo' }, data: { verifiedAt: new Date('2027-01-01') } });
         assert.equal((await overview('/metrics?search=demo')).tenants[0].kind, 'UNKNOWN');
+    });
+    await check('Una cuenta archivada no entra en lista, métricas ni cohortes operativas', async () => {
+        const before = await overview();
+        await db.tenant.update({ where: { id: 'demo' }, data: { demoResetArchivedAt: now } });
+        const after = await overview();
+        assert.equal(after.metrics.registered, before.metrics.registered - 1);
+        assert.equal(after.pagination.total, before.pagination.total - 1);
+        assert.equal((await overview('/metrics?search=demo')).tenants.length, 0);
+        assert.deepEqual(after.cohorts, before.cohorts);
+    });
+    await check('ADMIN sin perfil OWNER no ofrece un dueño para el reinicio', async () => {
+        await db.user.update({ where: { id: 'owner-b' }, data: { role: 'ADMIN' } });
+        assert.equal((await overview('/metrics?search=real-b')).tenants[0].owner, null);
+        await db.employee.create({ data: { tenantId: 'real-b', userId: 'owner-b', firstName: 'Dueño', lastName: 'Sintético', role: 'OWNER', baseSalary: 0 } });
+        assert.deepEqual((await overview('/metrics?search=real-b')).tenants[0].owner, { id: 'owner-b', email: 'owner-b@example.invalid' });
+        await db.user.update({ where: { id: 'owner-b' }, data: { status: 'DISABLED' } });
+        assert.equal((await overview('/metrics?search=real-b')).tenants[0].owner, null);
+        await db.user.update({ where: { id: 'owner-b' }, data: { role: 'OWNER', status: 'ACTIVE' } });
     });
     await db.user.update({ where: { id: 'admin' }, data: { status: 'DISABLED' } });
     await check('Administrador deshabilitado pierde acceso con JWT todavía vigente', async () => assert.equal((await request()).status, 403));

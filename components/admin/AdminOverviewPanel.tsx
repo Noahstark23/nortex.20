@@ -26,7 +26,7 @@ const focusLabels: Record<AdminFocus, string> = {
 };
 const percent = (value: number, total: number): string => total ? `${Math.round(value * 100 / total)}%` : 'Sin base';
 
-type PanelProps = { children?: React.ReactNode; navigation?: React.ReactNode; onExit?: () => void };
+type PanelProps = { children?: React.ReactNode; navigation?: React.ReactNode; onExit?: () => void; operations?: (tenants: AdminOverview['tenants'], refresh: () => void) => React.ReactNode };
 export default function AdminOverviewPanel(props: PanelProps) {
     const session = useAdminOverviewSession();
     // Provider privado y desmontado sólo al cambiar principal/sesión, nunca al
@@ -37,7 +37,7 @@ export default function AdminOverviewPanel(props: PanelProps) {
     </SWRConfig>;
 }
 
-function AdminOverviewContent({ children, navigation, onExit, session, clearCache }: PanelProps & { session: AdminOverviewSession; clearCache: () => void }) {
+function AdminOverviewContent({ children, navigation, onExit, operations, session, clearCache }: PanelProps & { session: AdminOverviewSession; clearCache: () => void }) {
     const alive = useRef(true), revoked = useRef(false);
     const controllers = useRef(new Set<AbortController>());
     const [deniedByServer, setDeniedByServer] = useState(false);
@@ -178,6 +178,7 @@ function AdminOverviewContent({ children, navigation, onExit, session, clearCach
                 </details>
             </>}
             {(authorized || data) && !denied && children}
+            {(authorized || data) && !denied && operations?.(data?.tenants ?? [], () => { void mutate(); })}
         </div>
     </main>;
 }

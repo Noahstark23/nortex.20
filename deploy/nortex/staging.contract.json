@@ -1,7 +1,7 @@
 {
   "prismaVersion": "6.4.1",
-  "models": 156,
-  "scalarColumns": 1882,
+  "models": 158,
+  "scalarColumns": 1903,
   "expandedTables": [
     "WaCommerceActivationRequest",
     "WaCommerceConsentEvent",
@@ -15,7 +15,9 @@
     "WaCommerceWorkerHeartbeat",
     "SaleCreditNote",
     "PlatformAccountEvidence",
-    "PlatformPaymentEvidence"
+    "PlatformPaymentEvidence",
+    "DemoAccountReset",
+    "DemoResetImportRow"
   ],
   "expandedIndexes": [
     {
@@ -454,17 +456,89 @@
         "lastLogin"
       ],
       "nonUnique": 1
+    },
+    {
+      "table": "DemoAccountReset",
+      "name": "DemoAccountReset_tenantId_requestKey_key",
+      "columns": [
+        "tenantId",
+        "requestKey"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "DemoAccountReset",
+      "name": "DemoAccountReset_tenantId_userId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "userId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Loan",
+      "name": "Loan_tenantId_idx",
+      "columns": [
+        "tenantId"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "ManualPayment",
+      "name": "ManualPayment_tenantId_status_idx",
+      "columns": [
+        "tenantId",
+        "status"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Tenant",
+      "name": "Tenant_demoResetArchivedAt_createdAt_idx",
+      "columns": [
+        "demoResetArchivedAt",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Tenant",
+      "name": "Tenant_demoResetRootId_idx",
+      "columns": [
+        "demoResetRootId"
+      ],
+      "nonUnique": 1
     }
   ],
-  "generatedSchemaSha256": "c327596259e53ecb679275305214eb987158e6f2606c7556633b29511fca1d09",
-  "schemaFingerprintSha256": "45c2c763b8c603a411bdfdd553dc7d61df674ecde88015b870b8412e12fa7878",
+  "generatedSchemaSha256": "59ff5613430d5fa58b5ef4d03723f2160a2960a9a704c10ecbec121b88136dae",
+  "schemaFingerprintSha256": "b297c449f8ef2adb26a829b59589f04885788dabb654782a753d6aacdbaaf9e7",
   "provenance": {
-    "receiptSha256": "b9206615b9bcb3997ed8fe8416d6f856a231513047dbddc5cc92103cd0e4c58b",
-    "scope": "PR238 target reproduced only on disposable MySQL8.0.43 from historic staging baseline; H2 withdrawn. No live migration applied or deployment authorized. Receipt and metadata hashes in docs/evidence/pr238-integration/manifest.json.",
+    "scope": "Both #238/#257 additive orders measured on owned synthetic MySQL8.0.43; historical source receipts remain traceable. Does not attest or authorize a remote migration or deployment.",
     "beforeSchemaFingerprintSha256": "97beada8114e8997535471dbefd286ad94b07f6e873158aea424cfd8d33ec35a",
     "migrationFiles": {
       "backend/prisma/migrations/202609300001_b5_fiscal_numbering_credit_note/migration.sql": "c52251c34a4395a2fc730e0895acd20725275d844080bbec0e244f51eeb777fe",
       "backend/prisma/migrations/202609300010_platform_admin_evidence/migration.sql": "fdac103d64713b85bcaf3b60ed7905deb3724174d25f7bcc198edbc489dea121"
-    }
+    },
+    "demoResetExpansion": {
+      "beforeSchemaFingerprintSha256": "45c2c763b8c603a411bdfdd553dc7d61df674ecde88015b870b8412e12fa7878",
+      "migrationFiles": {
+        "backend/prisma/migrations/202610090001_demo_account_reset/migration.sql": "3f82f612f18d12434cccc60230f7c269e0fb36fa4515a6c34b4bb15ce06f5f1b",
+        "backend/prisma/migrations/202610090002_admin_demo_reset/migration.sql": "d1ee1219dc67222626074fa430e18a58fb4d918cf3dafeda65448c593dcb7008"
+      },
+      "scope": "Combined historical runtime rehearsal: #238 SQL precedes the preserved #257 demo SQL. The main-first order was also reproduced and has the same final fingerprint; no remote migration is attested or authorized."
+    },
+    "attempt2Base": "c8cc6ca9bdc5637b0c00bdfa0b1a6727985412cc",
+    "priorReceiptSha256": "b9206615b9bcb3997ed8fe8416d6f856a231513047dbddc5cc92103cd0e4c58b",
+    "receiptSha256": "15b56b591da97933aaf7e37c7c95949b66de164556dc9eee1ede8541308399a0",
+    "sourceMainDemoResetExpansion": {
+      "beforeSchemaFingerprintSha256": "97beada8114e8997535471dbefd286ad94b07f6e873158aea424cfd8d33ec35a",
+      "migrationFiles": {
+        "backend/prisma/migrations/202610090001_demo_account_reset/migration.sql": "3f82f612f18d12434cccc60230f7c269e0fb36fa4515a6c34b4bb15ce06f5f1b",
+        "backend/prisma/migrations/202610090002_admin_demo_reset/migration.sql": "d1ee1219dc67222626074fa430e18a58fb4d918cf3dafeda65448c593dcb7008"
+      },
+      "scope": "Additive demo reset expansion rehearsed on synthetic MySQL 8; does not attest or authorize remote migration."
+    },
+    "attempt2MainSchemaFingerprintSha256": "dfd635e19c80bcea735d14d6a0165c68e417c42c07381c1dfcbb53025f5eb32c"
   }
 }

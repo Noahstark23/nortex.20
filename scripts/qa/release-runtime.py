@@ -131,6 +131,17 @@ try:
                 migration = ROOT / path
                 assert hashlib.sha256(migration.read_bytes()).hexdigest() == expected
                 sql(migration.read_text(), database)
+        expansion = contract['provenance']['demoResetExpansion']
+        assert fingerprint(database) == expansion['beforeSchemaFingerprintSha256']
+        start = sql('SELECT NOW(6)')
+        blocked = subprocess.run(['docker', 'run', '--rm', '--network', net, *envargs, '--entrypoint', 'node', image, 'scripts/nortex-schema-gate.mjs'], text=True, capture_output=True, timeout=150)
+        assert blocked.returncode != 0 and blocked.stderr.strip() == 'ROLLBACK_EXPANSION_MISSING', blocked.stderr
+        assert mutation_count(start) == 0
+        for path, expected in expansion['migrationFiles'].items():
+            migration = ROOT / path
+            assert hashlib.sha256(migration.read_bytes()).hexdigest() == expected
+            sql(migration.read_text(), database)
+        checks.append({'check': 'demo reset migration and old schema rejection', 'profile': profile, 'status': 'PASS'})
         assert fingerprint(database) == contract['schemaFingerprintSha256']
         checks.append({'check': 'declared schema expansion', 'profile': profile, 'schemaFingerprintSha256': fingerprint(database), 'migrationFiles': contract['provenance'].get('migrationFiles', {}), 'status': 'PASS'})
         # Run Compose's exact one-off command beside a running sentinel. It

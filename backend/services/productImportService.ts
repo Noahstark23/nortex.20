@@ -92,10 +92,17 @@ async function importRow(tx: Prisma.TransactionClient, principal: Principal, ite
   if (!user || user.status !== 'ACTIVE' || user.role !== principal.role || !roles.includes(user.role)) {
     throw new ProductImportError('Tu sesión o permiso cambió. Volvé a ingresar.', 403);
   }
+  return writeImportedProductRow(tx, principal, item, sku, name, warehouseId);
+}
+
+/** Autoridad validada bajo lock por el caller; usa el mismo escritor de stock y auditoría. */
+export async function writeImportedProductRow(tx: Prisma.TransactionClient, principal: Principal, item: ImportRow, sku: string, name: string, warehouseId?: string, createOnly = false) {
+  const {tenantId, userId} = principal;
   const locked = await tx.$queryRaw<Array<{id: string}>>`
     SELECT id FROM \`Product\` WHERE tenantId = ${tenantId} AND sku = ${sku} FOR UPDATE`;
   // Prisma normaliza BOOL de MySQL. El raw devuelve 0/1 y no sirve como dato Boolean de update.
   const existing = locked.length ? await tx.product.findFirstOrThrow({where: {id: locked[0].id, tenantId}}) : null;
+  if (existing && createOnly) throw new ProductImportError('Este código ya existe; la carga asistida solo crea productos nuevos.');
   if (existing && firstPresent(item, 'stock', 'existencia') !== undefined) {
     throw new ProductImportError('Este código ya existe. Actualizá el catálogo sin existencias; para cambiar stock usá un conteo o ajuste en su bodega.');
   }

@@ -4,6 +4,7 @@ import { AssistantBudgetRequests } from './admin/AssistantBudgetRequests';
 import { AssistantKnowledgeEditorial } from './admin/AssistantKnowledgeEditorial';
 import { AssistantPilotActivation } from './admin/AssistantPilotActivation';
 import CommerceSupport from './whatsapp/CommerceSupport';
+import AdminDemoReset from './admin/AdminDemoReset';
 import { useAdminOverviewSession } from '../hooks/useAdminOverviewSession';
 import { readActivationSession } from '../hooks/useActivationJourney';
 import { clearEditorialDraft, hasPendingEditorialWork } from './admin/knowledge/editorialDraftMemory';
@@ -31,7 +32,7 @@ const SuperAdmin: React.FC = () => {
         if (pendingEditorialWork || hasPendingEditorialWork(readActivationSession().key)) { setEditorialExitBlocked(true); return; }
         exit();
     };
-    return <AdminOverviewPanel onExit={handleLogout} navigation={<div className="space-y-2">
+    return <AdminOverviewPanel operations={(tenants, refresh) => <AdminDemoReset tenants={tenants.map(({ id, businessName, owner }) => ({ id, businessName, owner }))} onChanged={refresh} />} onExit={handleLogout} navigation={<div className="space-y-2">
         <button type="button" onClick={handleLogout} className="min-h-11 px-4 rounded-lg border border-surface-700">LOGOUT</button>
         {editorialExitBlocked && pendingEditorialWork && <div role="alert" className="text-sm text-amber-300">
             <p>Guardá o descartá tu trabajo editorial antes de salir.</p>

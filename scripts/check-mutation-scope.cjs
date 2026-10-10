@@ -231,12 +231,13 @@ const PISO_MUTANTES = {
     // por el Decreto 06-2019), un hueco de un centavo entre tramos de la tabla IR
     // que devolvía IR = 0, y un finiquito que imprimía los días sin topar junto a
     // un monto topado. Las constantes de módulo conservan su alcance previo.
-    // H2 retirado: se preservan los selectores de fecha y divisor360 de main.
+    // H2 retirado: se preservan calendario, fechas inválidas y divisor360 de main.
     // Se conservan los pisos previos del PR:190 por archivo y50/13 por función.
-    // El diagnóstico del candidato mide203 instrumentados (20 ignored
-    // históricos),54 en pasivo y21 en anual. Tres comparadores equivalentes
-    // sobreviven cuando ambas fechas son iguales; el umbral100 sigue pendiente.
-    // No se recortan rangos, se bajan pisos ni se añaden ignores para aprobarlo.
+    // La corrida dirigida del intento2 mide194 instrumentados (20 ignored
+    // históricos),51 en pasivo y15 en anual:171 killed+3 timeout, score100.
+    // Math.min/max elimina comparadores equivalentes con fechas iguales y
+    // Number.isNaN conserva el fallback previo. Falta acreditar la corrida
+    // global; no se recortan rangos, bajan pisos ni añaden ignores.
     'backend/services/nicaLabor.ts': 190,
     'backend/services/nicaTax.ts': 7,
     // Régimen fiscal puro: normalización, conflicto de versión (incluido el
@@ -247,14 +248,14 @@ const PISO_MUTANTES = {
     // cuánto cobra cada quien — el número con el que el dueño paga o reclama).
     // 59 mutantes, score medido 100.00%.
     'backend/services/sellerReport.ts': 59,
-    // stripe.ts entra solo por sus dos funciones PURAS de cobro (35-62), no por
+    // stripe.ts entra solo por sus dos funciones PURAS de cobro (33-65), no por
     // el cliente de Stripe: 13 mutantes, score medido 100.00%. Protegen el rail
     // que de verdad cobra en Nicaragua — Stripe no soporta el país como
     // comercio, así que el dinero entra por depósito con comprobante y
     // activación a mano. Antes aprobar daba 30 días con cualquier monto
     // reportado y los contaba desde hoy, perdiendo los días de quien renovaba
     // anticipado.
-    'backend/services/stripe.ts': 13,
+    'backend/services/stripe.ts': 17,
     'backend/services/stockService.ts': 5,
     // PR-01 protege toda la canalización pura de posting: normalización
     // estricta string/Decimal, límites 18,4, balance, orden total y huella.

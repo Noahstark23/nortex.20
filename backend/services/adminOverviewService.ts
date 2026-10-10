@@ -60,8 +60,15 @@ function operationalSnapshot(now: Date): Prisma.Sql {
       ), failures AS (
         SELECT tenantId, COUNT(*) AS assistantFailures30d FROM AssistantJob
         WHERE status = 'FAILED' AND updatedAt >= ${since} AND updatedAt <= ${now} GROUP BY tenantId
+      ), owners AS (
+        SELECT u.id, u.tenantId, u.email,
+          ROW_NUMBER() OVER (PARTITION BY u.tenantId ORDER BY u.createdAt, u.id) AS ownerRank
+        FROM User u WHERE u.status = 'ACTIVE' AND u.email IS NOT NULL AND
+          (u.role = 'OWNER' OR (u.role = 'ADMIN' AND EXISTS (
+            SELECT 1 FROM Employee e WHERE e.tenantId = u.tenantId AND e.userId = u.id
+              AND e.role = 'OWNER' AND e.status = 'ACTIVE')))
       ), snapshot AS (
-        SELECT t.id, t.businessName, t.type, t.createdAt, t.subscriptionStatus AS recordedSubscriptionStatus,
+        SELECT t.id, t.businessName, t.type, t.createdAt, o.id AS ownerId, o.email AS ownerEmail, t.subscriptionStatus AS recordedSubscriptionStatus,
           CASE WHEN e.businessKind IN ('REAL', 'DEMO', 'INTERNAL') THEN e.businessKind ELSE 'UNKNOWN' END AS kind,
           e.founder, e.benefitStartedAt, e.benefitEndsAt, e.planLabel,
           COALESCE(c.products, 0) AS products, COALESCE(c.negativeStockProducts, 0) AS negativeStockProducts,
@@ -77,7 +84,8 @@ function operationalSnapshot(now: Date): Prisma.Sql {
           AND e.verifiedAt <= ${now} AND TRIM(e.evidenceReference) <> ''
         LEFT JOIN sale_usage s ON s.tenantId = t.id LEFT JOIN catalog c ON c.tenantId = t.id
         LEFT JOIN shifts h ON h.tenantId = t.id LEFT JOIN logins l ON l.tenantId = t.id LEFT JOIN audits a ON a.tenantId = t.id
-        LEFT JOIN failures f ON f.tenantId = t.id WHERE t.createdAt <= ${now}
+        LEFT JOIN failures f ON f.tenantId = t.id LEFT JOIN owners o ON o.tenantId = t.id AND o.ownerRank = 1
+        WHERE t.createdAt <= ${now} AND t.demoResetArchivedAt IS NULL
       )`;
 }
 
@@ -149,6 +157,7 @@ export function createAdminOverviewService(db: Pick<PrismaClient, '$transaction'
                     const first = iso(row.firstSaleAt);
                     return {
                         id: String(row.id), businessName: String(row.businessName), type: String(row.type),
+                        owner: row.ownerId && row.ownerEmail ? { id: String(row.ownerId), email: String(row.ownerEmail) } : null,
                         kind: row.kind as AdminBusinessKind, createdAt: created,
                         recordedSubscriptionStatus: String(row.recordedSubscriptionStatus), planLabel: row.planLabel ? String(row.planLabel) : null,
                         founder, benefitStartedAt: start, benefitEndsAt: end, benefitState: adminBenefitState(founder, start, end, now),

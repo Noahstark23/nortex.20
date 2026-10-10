@@ -1,5 +1,6 @@
 import type { AdminOverview, AdminTenantRow } from '../../utils/adminMetrics';
 export const syntheticAdminTenant: AdminTenantRow = {
+    owner: { id: 'synthetic-owner', email: 'owner@example.invalid' },
     id: 'synthetic-real', businessName: 'Comercio sintético', type: 'FERRETERIA', kind: 'REAL',
     createdAt: '2026-08-01T12:00:00.000Z', recordedSubscriptionStatus: 'ACTIVE', planLabel: null,
     founder: true, benefitStartedAt: null, benefitEndsAt: null, benefitState: 'DATES_UNKNOWN',

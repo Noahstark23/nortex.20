@@ -6,6 +6,7 @@ export type AdminBenefitState = 'UNKNOWN' | 'NOT_FOUNDER' | 'DATES_UNKNOWN' | 'S
 export interface AdminTenantRow {
     id: string;
     businessName: string;
+    owner: { id: string; email: string } | null;
     type: string;
     kind: AdminBusinessKind;
     createdAt: string;

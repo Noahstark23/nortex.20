@@ -58,6 +58,7 @@ interface PersistedPrincipal {
   role: string;
   status: string;
   email: string | null;
+  tenant?: { demoResetArchivedAt: Date | null };
 }
 
 interface TokenPrincipal {
@@ -77,6 +78,7 @@ export function resolveCurrentPrincipal(
   persisted: PersistedPrincipal | null,
 ): Pick<PersistedPrincipal, 'id' | 'tenantId' | 'role' | 'email'> | null {
   if (!persisted || persisted.status !== 'ACTIVE') return null;
+  if (persisted.tenant?.demoResetArchivedAt) return null;
   if (persisted.id !== decoded.userId || persisted.tenantId !== decoded.tenantId) return null;
   if (!persisted.role || !persisted.role.trim()) return null;
   return {
@@ -134,7 +136,8 @@ export const authenticate = async (req: any, res: any, next: any) => {
   try {
     persistedUser = await prisma.user.findUnique({
       where: { id: decoded.userId },
-      select: { id: true, tenantId: true, role: true, status: true, email: true },
+      select: { id: true, tenantId: true, role: true, status: true, email: true,
+        tenant: { select: { demoResetArchivedAt: true } } },
     });
   } catch (dbError) {
     console.error('🚨 Revalidacion de usuario fallo (fail-closed):', dbError);

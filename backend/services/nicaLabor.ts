@@ -305,7 +305,11 @@ export function calculateLaborLiability(
     const lastDec1 = now.getUTCMonth() >= 11
         ? new Date(Date.UTC(now.getUTCFullYear(), 11, 1))
         : new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 1));
-    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    const hireTime = hire.getTime();
+    // Una fecha inválida conserva el fallback de main; el máximo evita un
+    // comparador equivalente en el empate sin alterar días, límites o redondeo.
+    const aguinaldoStart = new Date(Math.max(
+        Number.isNaN(hireTime) ? lastDec1.getTime() : hireTime, lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, now);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
         ? Math.min(360, diasDesdeInicioAguinaldo + 1)
@@ -460,8 +464,13 @@ export function calculateSettlement(params: {
 export function computeAguinaldoAnual(baseSalary: Decimal.Value, hireDate: Date, year: number, today: Date) {
     const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
     const periodEnd = new Date(year, 10, 30);      // 30 nov del año
-    const effectiveEnd = today < periodEnd ? today : periodEnd;
-    const start = hireDate > periodStart ? hireDate : periodStart;
+    const todayTime = today.getTime(), hireTime = hireDate.getTime();
+    // Los defaults ante NaN son los selectores originales de main; en el
+    // empate ambos timestamps representan el mismo límite efectivo.
+    const effectiveEnd = new Date(Math.min(
+        Number.isNaN(todayTime) ? periodEnd.getTime() : todayTime, periodEnd.getTime()));
+    const start = new Date(Math.max(
+        Number.isNaN(hireTime) ? periodStart.getTime() : hireTime, periodStart.getTime()));
     let dias = 0;
     if (effectiveEnd >= start) {
         dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);

@@ -93,4 +93,16 @@ describe('admin de métricas accionables', () => {
         expect(fetch).toHaveBeenCalledWith('/api/admin/metrics', { headers: { Authorization: 'Bearer synthetic-session' }, cache: 'no-store' });
         expect(json).not.toHaveBeenCalled();
     });
+    it('compone asistencia con dueños de la página y refresca tras el reinicio, sin montar al revocar sesión', () => {
+        ready();
+        const operations = vi.fn((tenants, refresh) => <button onClick={refresh}>Asistencia {tenants[0]?.owner?.email}</button>);
+        const view = render(<AdminOverviewPanel operations={operations} />);
+        expect(screen.getByRole('button', { name: 'Asistencia owner@example.invalid' })).toBeInTheDocument();
+        expect(operations.mock.calls.at(-1)?.[0]).toEqual(syntheticAdminOverview.tenants);
+        fireEvent.click(screen.getByRole('button', { name: 'Asistencia owner@example.invalid' }));
+        expect(swr.mutate).toHaveBeenCalledOnce();
+        localStorage.removeItem('nortex_token'); view.rerender(<AdminOverviewPanel operations={operations} />);
+        expect(screen.queryByRole('button', { name: /Asistencia/ })).not.toBeInTheDocument();
+    });
+
 });

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CreditCard, Shield, CheckCircle, AlertTriangle, Clock, Zap, ArrowRight, ExternalLink, Loader2, XCircle, RefreshCw, Building2, Upload, Send, FileText, DollarSign, Banknote } from 'lucide-react';
 import ImageUploader from './ImageUploader';
+import DemoAccountReset from './billing/DemoAccountReset';
 import {
     BILLING_STATUS_META_CLASS,
     BILLING_STATUS_RENEWAL_CLASS,
@@ -176,6 +177,8 @@ const Billing: React.FC = () => {
                     <RefreshCw size={18} />
                 </button>
             </div>
+
+            {isTrial && <DemoAccountReset />}
 
             {/* Status Card */}
             <div className={`p-6 rounded-2xl mb-6 relative overflow-hidden ${billingStatusSurfaceClass(isActive, isSuspended)}`}>

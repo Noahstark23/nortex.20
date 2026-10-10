@@ -83,7 +83,8 @@ describe('authenticate revalida la autoridad persistida en cada request', () => 
         expect(authMocks.userFindUnique).toHaveBeenCalledTimes(2);
         expect(authMocks.userFindUnique).toHaveBeenNthCalledWith(1, {
             where: { id: 'user-a' },
-            select: { id: true, tenantId: true, role: true, status: true, email: true },
+            select: { id: true, tenantId: true, role: true, status: true, email: true,
+                tenant: { select: { demoResetArchivedAt: true } } },
         });
     });
 
