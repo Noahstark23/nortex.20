@@ -380,3 +380,7 @@ Worktree inicial/final: <resumen; cambios ajenos preservados>
 - Guardrail nuevo:
 - Deuda/follow-up, responsable y fecha:
 ```
+
+### Excepción puntual de crédito y recuperación
+
+Sólo para C=d563c750dd62c9192df1d078c4c13308748f69bd/B=bd67bdb3a5e9a1c9209adec5ffcbc8f015d527a4 se aplica la excepción autorizada en [release-promotion](release-promotion.md#excepción-puntual-autorizada-crédito-2026-10-01-y-recuperación). El workflow y environment siguen en main controlador; la imagen es C o B fijo. Exigir C→B→C en staging, más smoke sintético/PWA/recuperación funcional separados del health. No existe una ruta aprobada asset-only: restaurar la imagen fijada mediante el mismo workflow, nunca sobrescribir chunks ni cambiar el entrypoint. No promover mientras el recorrido funcional o la identidad/compatibilidad reales estén pendientes.

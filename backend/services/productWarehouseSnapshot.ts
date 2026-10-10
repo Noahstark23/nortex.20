@@ -14,6 +14,9 @@ export interface ProductWarehouseSnapshot {
     }>;
     hasMore: boolean;
     unlistedStock?: string;
+    /** Bodegas que existen pero están desactivadas: el mensaje de "no hay
+     *  bodegas" debe mandar a reactivar, no a crear una nueva. */
+    inactiveCount: number;
 }
 
 /**
@@ -39,6 +42,9 @@ export async function readProductWarehouseSnapshot(
             select: { id: true, name: true, isDefault: true, isActive: true },
         });
         const listed = page.slice(0, WAREHOUSE_LIMIT);
+        const inactiveCount = await tx.warehouse.count({
+            where: { tenantId: input.tenantId, isActive: false },
+        });
         const [aggregate] = await tx.$queryRaw<Array<{ stock: Prisma.Decimal }>>(Prisma.sql`
             SELECT COALESCE(SUM(CAST(stock AS DECIMAL(65,4))), 0) AS stock
             FROM ProductStock WHERE tenantId = ${input.tenantId} AND productId = ${input.productId}
@@ -65,6 +71,7 @@ export async function readProductWarehouseSnapshot(
         return {
             productId: product.id, totalStock: total.toFixed(4), unit: product.unit,
             warehouses, hasMore: page.length > WAREHOUSE_LIMIT,
+            inactiveCount,
             ...(unlisted.isZero() ? {} : { unlistedStock: unlisted.toFixed(4) }),
         };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead, maxWait: 5_000, timeout: 5_000 });

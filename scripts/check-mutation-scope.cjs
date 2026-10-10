@@ -34,6 +34,7 @@ const PISO_MUTANTES = {
     // Bajó exactamente de 60 a 56 al borrar el ternario equivalente de
     // sanitizeDecimalInput: con dot=-1 la expresión única de slices ya devuelve
     // `cleaned`. La corrida completa detectó los 56; no se perdió una conducta.
+    'utils/posCredit.ts': 42,
     'utils/money.ts': 56,
     // calc-laborales.ts bajó de 96 a 88 mutantes en el barrido del motor de
     // nómina, y es una de las bajas legítimas que este guardián contempla: NO se

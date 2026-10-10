@@ -235,6 +235,11 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                     <input id="quick-price" required type="text" inputMode="decimal" value={formData.price} onChange={event => setFormData({ ...formData, price: event.target.value })} className={fieldClass} placeholder="150.00" />
                                 </div>
                             </div>
+                            <div>
+                                <label htmlFor="quick-stock" className={labelClass}>¿Cuántas unidades tenés?</label>
+                                <input id="quick-stock" type="text" inputMode="decimal" value={formData.stock} onChange={event => setFormData({ ...formData, stock: event.target.value })} className={fieldClass} placeholder="0" />
+                                <p className="mt-1 text-xs text-surface-400">Las que ya tenés en tu tienda o depósito ({formData.unit}). Quedan listas para vender desde la bodega principal. Podés dejarlo en cero y registrar la entrada después desde Compras.</p>
+                            </div>
                             <div className="grid grid-cols-2 gap-3">
                                 <div>
                                     <label htmlFor="quick-mode" className={labelClass}>¿Cómo se vende?</label>
@@ -271,11 +276,6 @@ const QuickAddProduct: React.FC<QuickAddProductProps> = ({ initialSKU = '', onCl
                                         <div><label htmlFor="quick-cost" className={labelClass}>Costo (C$, opcional)</label><input id="quick-cost" type="text" inputMode="decimal" value={formData.cost} onChange={event => setFormData({ ...formData, cost: event.target.value })} className={fieldClass} placeholder="95.00" /></div>
                                         <div><label htmlFor="quick-step" className={labelClass}>Fracción o salto de venta</label><input id="quick-step" required type="text" inputMode="decimal" value={formData.quantityStep} onChange={event => setFormData({ ...formData, quantityStep: event.target.value })} className={fieldClass} /></div>
                                         <div><label htmlFor="quick-min" className={labelClass}>Avisar al llegar a</label><input id="quick-min" type="text" inputMode="decimal" value={formData.minStock} onChange={event => setFormData({ ...formData, minStock: event.target.value })} className={fieldClass} /></div>
-                                    </div>
-                                    <div>
-                                        <label htmlFor="quick-stock" className={labelClass}>Existencias iniciales ({formData.unit})</label>
-                                        <input id="quick-stock" type="text" inputMode="decimal" value={formData.stock} onChange={event => setFormData({ ...formData, stock: event.target.value })} className={fieldClass} placeholder="0" />
-                                        <p className="mt-1 text-xs text-surface-400">Dejalo en cero para registrar la entrada después desde Compras. El alta inicial usa la bodega principal.</p>
                                     </div>
                                     <label className="flex items-center gap-2 text-sm text-surface-300"><input type="checkbox" checked={formData.requiresBatchTracking} onChange={event => setFormData({ ...formData, requiresBatchTracking: event.target.checked })} />Controlar lotes y vencimiento</label>
                                     {formData.requiresBatchTracking && <p className="text-sm text-amber-300">Creá el producto sin existencias. Luego registrá la entrada con lote, vencimiento y bodega desde Compras o Lotes.</p>}

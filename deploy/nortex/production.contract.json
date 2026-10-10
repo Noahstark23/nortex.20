@@ -1,0 +1,136 @@
+{
+  "prismaVersion": "6.4.1",
+  "models": 156,
+  "scalarColumns": 1882,
+  "expandedTables": [
+    "WaCommerceConversation",
+    "WaCommerceInbox",
+    "WaCommerceOutbox",
+    "WaCommerceReceipt",
+    "WaCommerceQuoteDraft",
+    "WaCommerceConsentEvent",
+    "WaCommercePolicyVersion",
+    "WaCommerceActivationRequest",
+    "WaCommerceWorkerHeartbeat",
+    "WaCommerceOutboxAttempt",
+    "SaleCreditNote",
+    "PlatformAccountEvidence",
+    "PlatformPaymentEvidence"
+  ],
+  "expandedIndexes": [
+    {
+      "table": "PlatformAccountEvidence",
+      "name": "PlatformAccountEvidence_businessKind_verifiedAt_idx",
+      "columns": [
+        "businessKind",
+        "verifiedAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "PlatformPaymentEvidence",
+      "name": "PlatformPaymentEvidence_tenantId_evidenceReference_key",
+      "columns": [
+        "tenantId",
+        "evidenceReference"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "PlatformPaymentEvidence",
+      "name": "PlatformPaymentEvidence_tenantId_paidAt_reconciledAt_idx",
+      "columns": [
+        "tenantId",
+        "paidAt",
+        "reconciledAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Product",
+      "name": "Product_tenantId_stock_idx",
+      "columns": [
+        "tenantId",
+        "stock"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Sale",
+      "name": "Sale_tenantId_invoiceSeries_invoiceNumber_key",
+      "columns": [
+        "tenantId",
+        "invoiceSeries",
+        "invoiceNumber"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_correctionRequestId_key",
+      "columns": [
+        "correctionRequestId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_saleId_key",
+      "columns": [
+        "saleId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_tenantId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_tenantId_series_number_key",
+      "columns": [
+        "tenantId",
+        "series",
+        "number"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "Tenant",
+      "name": "Tenant_createdAt_id_idx",
+      "columns": [
+        "createdAt",
+        "id"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "User",
+      "name": "User_tenantId_lastLogin_idx",
+      "columns": [
+        "tenantId",
+        "lastLogin"
+      ],
+      "nonUnique": 1
+    }
+  ],
+  "generatedSchemaSha256": "c327596259e53ecb679275305214eb987158e6f2606c7556633b29511fca1d09",
+  "schemaFingerprintSha256": "d79f2bfc127666bbd1b4dcc5e9607f6a87f6210de2f79818e0034f46c2ff2e44",
+  "provenance": {
+    "receiptSha256": "b9206615b9bcb3997ed8fe8416d6f856a231513047dbddc5cc92103cd0e4c58b",
+    "scope": "PR238 target reproduced only on disposable MySQL8.0.43 from historic production baseline; H2 withdrawn. No live migration applied or deployment authorized. Receipt and metadata hashes in docs/evidence/pr238-integration/manifest.json.",
+    "beforeSchemaFingerprintSha256": "65341b108be99cda2a06a2ce32660e3d48e4e1e33e89b4a89b596ee1b016870c",
+    "migrationFiles": {
+      "backend/prisma/migrations/202609290001_whatsapp_commerce/migration.sql": "5c56fa5883245b35aa649a0c1ebb7fe8c3cb78e7b14bf108d11dd9c345d07f1f",
+      "backend/prisma/migrations/202609290002_whatsapp_activation_request/migration.sql": "e822d72c0a96f715dcfd573d855b898b33f0ea9912724601109a03e7c643373f",
+      "backend/prisma/migrations/202609290004_whatsapp_operations/migration.sql": "0a8c1b23f962811982e41d41753235347ecdceb53047460961b090cc44a7ccda",
+      "backend/prisma/migrations/202609300001_b5_fiscal_numbering_credit_note/migration.sql": "c52251c34a4395a2fc730e0895acd20725275d844080bbec0e244f51eeb777fe",
+      "backend/prisma/migrations/202609300010_platform_admin_evidence/migration.sql": "fdac103d64713b85bcaf3b60ed7905deb3724174d25f7bcc198edbc489dea121"
+    }
+  }
+}

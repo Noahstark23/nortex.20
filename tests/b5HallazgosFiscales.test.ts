@@ -121,14 +121,14 @@ describe('H1 — IVA a 2 decimales en snapshot y asiento', () => {
 });
 
 // ════════════════════════════════════════════════════════════════════════════
-// H2 — Aguinaldo 365 días calendario (tres funciones)
+// H2 retirado — contrato de main preservado (tres funciones)
 // ════════════════════════════════════════════════════════════════════════════
-describe('H2 — aguinaldo días calendario / 365', () => {
+describe('H2 retirado — aguinaldo vigente / 360', () => {
     it('P2: C$12,000 con 180 días → 5,917.81 en la corrida anual', () => {
         // 1-dic-2025 + 179 días = 29-may-2026 → 180 días.
         const r = computeAguinaldoAnual(12000, new Date(2020, 0, 1), 2026, new Date(2026, 4, 29, 12));
         expect(r.dias).toBe(180);
-        expect(r.monto).toBe(5917.81);
+        expect(r.monto).toBe(6000);
     });
 
     it('P2: la liquidación usa la misma regla (180 días → 5,917.81)', () => {
@@ -140,19 +140,19 @@ describe('H2 — aguinaldo días calendario / 365', () => {
             vacationDaysBalance: 0,
         });
         expect(r.diasAguinaldo).toBe(180);
-        expect(r.aguinaldo).toBe(5917.81);
+        expect(r.aguinaldo).toBe(6000);
     });
 
     it('P2: el pasivo laboral usa la misma regla (180 días → 5,917.8082)', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-05-29T12:00:00Z'));
         const r = calculateLaborLiability('e1', 'Ana', new Date('2020-01-01T12:00:00Z'), 12000, 0);
-        expect(r.aguinaldoAcumulado).toBe(5917.8082);
+        expect(r.aguinaldoAcumulado).toBe(6000);
     });
 
-    it('período completo se topa en 365 días = un salario', () => {
+    it('período completo se topa en 360 días = un salario', () => {
         const r = computeAguinaldoAnual(12000, new Date(2020, 0, 1), 2026, new Date(2027, 0, 5));
-        expect(r.dias).toBe(365);
+        expect(r.dias).toBe(360);
         expect(r.monto).toBe(12000);
     });
 
@@ -437,8 +437,8 @@ describe('H8 / C2 — período cerrado', () => {
         };
         const postPayment = vi.fn(async () => undefined);
         const r = await runAguinaldoForYear({ tenantId: 't1', userId: 'u1', year: 2026, today: new Date(2026, 4, 29, 12), db: db as any, postPayment });
-        expect(postPayment).toHaveBeenCalledWith(expect.anything(), 't1', 'u1', 'ag1', 5917.81);
-        expect(r).toEqual({ pagados: 1, total: 5917.81, fallidos: [] });
+        expect(postPayment).toHaveBeenCalledWith(expect.anything(), 't1', 'u1', 'ag1', 6000);
+        expect(r).toEqual({ pagados: 1, total: 6000, fallidos: [] });
     });
 
     it('server.ts ya no captura el error del asiento del aguinaldo', () => {

@@ -4,12 +4,15 @@ export interface ProductStockSnapshot {
     productId: string; totalStock: string; unit: string;
     warehouses: Array<{ id: string; name: string; isDefault: boolean; isActive: boolean; stock: string; implicit: boolean }>;
     hasMore: boolean; unlistedStock?: string;
+    /** Opcional por compatibilidad: el backend nuevo siempre lo manda. */
+    inactiveCount?: number;
 }
 
 const decimal = (value: unknown): value is string => typeof value === 'string' && /^-?\d+(?:\.\d{1,4})?$/.test(value) && Number.isFinite(Number(value));
 function isSnapshot(value: any, productId: string): value is ProductStockSnapshot {
     return value?.productId === productId && decimal(value.totalStock) && typeof value.unit === 'string'
         && typeof value.hasMore === 'boolean' && (value.unlistedStock === undefined || decimal(value.unlistedStock))
+        && (value.inactiveCount === undefined || (typeof value.inactiveCount === 'number' && Number.isInteger(value.inactiveCount) && value.inactiveCount >= 0))
         && Array.isArray(value.warehouses) && value.warehouses.every((row: any) => typeof row?.id === 'string' && row.id
             && typeof row.name === 'string' && typeof row.isActive === 'boolean' && row.isActive
             && typeof row.isDefault === 'boolean' && typeof row.implicit === 'boolean' && decimal(row.stock));

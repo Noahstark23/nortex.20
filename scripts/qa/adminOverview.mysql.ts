@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 import express from 'express';
 import type { AdminOverview } from '../../utils/adminMetrics';
 
@@ -145,7 +146,9 @@ try {
     await db.user.update({ where: { id: 'admin' }, data: { status: 'ACTIVE' } });
     await check('Lecturas no modifican beneficio ni suscripción legacy', async () => assert.deepEqual(await db.tenant.findUniqueOrThrow({ where: { id: 'real-a' } }), legacyBefore));
     const output = process.env.NORTEX_ADMIN_QA_REPORT ?? '/tmp/nortex-admin-qa-20260930/main-mysql.json';
-    await writeFile(output, JSON.stringify({ base: '43d8d77677bdc468ca2a3fec626b023996080903', result: 'PASS', assertions: checks.length,
+    const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const sourceTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+    await writeFile(output, JSON.stringify({ sourceCommit, sourceTree, result: 'PASS', assertions: checks.length,
         database: 'own disposable MySQL8 / nortex_test_admin_main', checks }, null, 2));
     console.log(`PASS: ${checks.length} comprobaciones HTTP/MySQL8 sintéticas; ${output}`);
 } finally {

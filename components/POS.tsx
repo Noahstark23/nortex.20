@@ -4,6 +4,7 @@ import { Product, CartItem, Shift, CashMovement } from '../types';
 import { effectiveTier, effectiveUnitPrice } from '../utils/pricing';
 import { ArrowDownCircle, ArrowUpCircle, ShoppingCart, Plus, Minus, Trash2, Search, CreditCard, Banknote, QrCode, Tag, PackagePlus, Package, X, Save, User, Clock, Lock, ArrowRight, AlertTriangle, DollarSign, Check, Loader2, Ban, ShieldAlert, MessageCircle, Printer, FileText, RotateCcw, Zap, Upload, ScanBarcode, Volume2, VolumeX, Wallet, ParkingCircle, Percent, RefreshCw, WifiOff, Landmark, SlidersHorizontal, ChevronDown, ChevronUp, MoreHorizontal, House } from 'lucide-react';
 import { formatMoney, formatUSD } from '../utils/money';
+
 import { IconButton } from './ui/IconButton';
 import { printTicket, printA4, sendToWhatsApp, InvoiceData } from './InvoiceTemplate';
 import { maybeAutostartTour } from '../utils/tours';
@@ -91,6 +92,7 @@ import {
     type QuickProductErrors,
     type RequestErrorCategory,
 } from '../utils/posActivation';
+import { resolvePosCredit, isUnverifiableCreditSale } from '../utils/posCredit';
 import { validateCashReceived } from '../utils/posCash';
 import { mapApiProductImage } from '../utils/posProductMapper';
 import Decimal from 'decimal.js';
@@ -286,8 +288,8 @@ interface Customer {
     id: string;
     name: string;
     phone?: string;
-    creditLimit: number;
-    currentDebt: number;
+    creditLimit: number | string;
+    currentDebt: number | string;
     storeCreditBalance?: number;
     isBlocked: boolean;
     isWholesale?: boolean; // cliente mayorista → mayoreo desde la unidad 1
@@ -769,6 +771,8 @@ const POS: React.FC = () => {
             const response = await fetch(`/api/customers?${params.toString()}`, { headers });
             if (!response.ok) return;
             const payload = await response.json();
+            // Los Decimal de Prisma llegan serializados como texto: se pasan
+            // crudos a resolvePosCredit, que falla cerrado si son inválidos.
             setCustomerList(Array.isArray(payload) ? payload : (payload.customers ?? []));
         } catch (error) {
             console.error('Failed to fetch customers', error);
@@ -2687,7 +2691,7 @@ const POS: React.FC = () => {
             showToast({
                 tone: 'success',
                 title: 'Cliente creado y seleccionado',
-                message: created.creditLimit > 0
+                message: new Decimal(created.creditLimit).gt(0)
                     ? 'Podés continuar con el cobro.'
                     : canManageCustomerCreateControls
                         ? 'Para venderle fiado, definí primero su límite de crédito.'
@@ -2819,27 +2823,9 @@ const POS: React.FC = () => {
     // Al desmontar, el menú no puede quedar creyendo que hay una venta abierta.
     useEffect(() => () => reportarVenta({ hayVenta: false, lineas: 0, total: 0 }), [reportarVenta]);
 
-    // SMART CREDIT CHECK
-    const isCreditBlocked = useMemo(() => {
-        if (creditOverrideAuthorized) return false; // Owner override
-        if (!selectedCustomer) return true; // Cannot use credit without customer
-        if (selectedCustomer.isBlocked) return true;
-        if (selectedCustomer.currentDebt + grandTotal > selectedCustomer.creditLimit) return true;
-        return false;
-    }, [selectedCustomer, grandTotal, creditOverrideAuthorized]);
-
-    // CREDIT THERMOMETER DATA
-    const creditInfo = useMemo(() => {
-        if (!selectedCustomer) return null;
-        const limit = selectedCustomer.creditLimit;
-        const currentDebt = selectedCustomer.currentDebt;
-        const debtPct = limit > 0 ? (currentDebt / limit) * 100 : 100;
-        const projectedDebt = currentDebt + grandTotal;
-        const projectedPct = limit > 0 ? (projectedDebt / limit) * 100 : 100;
-        const color = debtPct >= 80 || selectedCustomer.isBlocked ? 'red' : debtPct >= 50 ? 'yellow' : 'green';
-        const projectedColor = projectedPct >= 100 ? 'red' : projectedPct >= 80 ? 'yellow' : 'green';
-        return { limit, currentDebt, debtPct, projectedDebt, projectedPct, color, projectedColor, available: Math.max(0, limit - currentDebt) };
-    }, [selectedCustomer, grandTotal]);
+    const creditInfo = useMemo(() => resolvePosCredit(selectedCustomer, amountDueD), [selectedCustomer, amountDueD]);
+    const isCreditBlocked = !creditInfo || (!creditOverrideAuthorized &&
+        (!selectedCustomer || selectedCustomer.isBlocked || creditInfo.exceedsLimit));
 
     const handleCheckout = async (method: 'CASH' | 'CARD' | 'QR' | 'TRANSFER' | 'CREDIT') => {
         if (!currentShift) {
@@ -2901,6 +2887,14 @@ const POS: React.FC = () => {
         }
         setShowMobileCart(false);
         trackEvent('sale_checkout_started', { payment_method: method, cart_items: cart.length });
+
+        // Crédito no verificable: se rechaza antes del override y del panel.
+        // Igual que el hotfix C′: un override autoriza exceder el límite,
+        // nunca vender fiado sin números verificables.
+        if (isUnverifiableCreditSale(method, creditInfo)) {
+            showToast({ tone: 'error', title: 'No se pudo verificar el crédito', message: 'Volvé a seleccionar el cliente con conexión antes de venderle fiado.' });
+            return;
+        }
 
         // Front-end Block (skip if override authorized)
         if (method === 'CREDIT' && isCreditBlocked && !creditOverrideAuthorized) {
@@ -5004,13 +4998,13 @@ const POS: React.FC = () => {
                         <div className={`mt-2.5 p-3 rounded-xl text-xs border-2 ${selectedCustomer.isBlocked ? 'bg-red-500/10 border-red-300 text-red-400' : 'bg-blue-500/10 border-blue-500/20 text-blue-400'}`}>
                             <div className="flex justify-between font-bold mb-1.5">
                                 <span className="flex items-center gap-1">{selectedCustomer.isBlocked ? 'BLOQUEADO' : 'Linea Disponible:'}</span>
-                                {!selectedCustomer.isBlocked && <span className="text-sm">{formatMoney((selectedCustomer.creditLimit - selectedCustomer.currentDebt))}</span>}
+                                {!selectedCustomer.isBlocked && <span className="text-sm">{creditInfo ? formatMoney(creditInfo.available) : 'No disponible'}</span>}
                             </div>
                             {!selectedCustomer.isBlocked && (
                                 <div className="w-full bg-blue-200 h-2 rounded-full overflow-hidden">
                                     <div
                                         className="bg-blue-500 h-full transition-[width]"
-                                        style={{ width: `${customerCreditUsagePct(selectedCustomer.creditLimit, selectedCustomer.currentDebt)}%` }}
+                                        style={{ width: `${Math.min(creditInfo?.debtPct ?? 0, 100)}%` }}
                                     />
                                 </div>
                             )}
@@ -5211,7 +5205,7 @@ const POS: React.FC = () => {
                                         </button>
                                     </div>
                                     {quantityErrors[key] && <p id={`quantity-error-${key}`} role="alert" className="mt-1.5 text-[11px] text-danger">{quantityErrors[key]}</p>}
-                                    {!guidedSimpleMode && !isQuotationLine && (
+                                    {!isQuotationLine && (
                                         <>
                                             {lineDiscountD.greaterThan(0) ? (
                                                 <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-white/[0.04]">
@@ -5318,8 +5312,8 @@ const POS: React.FC = () => {
                 {/* Bloque de cobro: sticky al fondo del panel, superficie elevada y
                     z-checkout. Ningún flotante puede vivir por encima de esto. */}
                 <div data-empty={cart.length === 0} className={`nx-pos-ticket-footer sticky bottom-0 z-checkout border-t border-white/[0.06] text-slate-100 ${guidedSimpleMode ? 'bg-surface-950 px-5 py-4 lg:px-6 lg:py-5' : 'bg-surface-800 p-5'}`}>
-                    {/* 💸 Global Discount (oculto en modo simple para no invitar al error) */}
-                    {!guidedSimpleMode && <div className="flex items-center gap-2 mb-2">
+                    {/* 💸 Descuento Global — visible en los DOS modos (ver resolvePosSimple). */}
+                    <div className="flex items-center gap-2 mb-2">
                         <Percent size={14} className="text-slate-400" />
                         <span className="text-xs text-slate-500 font-bold">Descuento Global</span>
                         <input
@@ -5340,7 +5334,7 @@ const POS: React.FC = () => {
                         {globalDiscountD.greaterThan(0) && (
                             <span className="text-xs text-red-500 font-bold ml-auto">-{formatMoney(totalD.mul(globalDiscountD).div(100))}</span>
                         )}
-                    </div>}
+                    </div>
                     {/* P1-5 — Antes: "Subtotal C$19.00 · IVA incluido C$2.48 ·
                         TOTAL C$19.00". Tres líneas donde dos eran idénticas y la
                         del medio no sumaba, porque "Subtotal" estaba puesto sobre
@@ -5545,7 +5539,7 @@ const POS: React.FC = () => {
 
                             {/* Projected */}
                             <div className="bg-surface-800/40 rounded-lg p-3 border border-white/[0.04]">
-                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(grandTotal)}):</p>
+                                <p className="text-xs text-slate-500 mb-1">Con esta venta (+{formatMoney(amountDueD.toNumber())}):</p>
                                 <div className="flex justify-between">
                                     <span className="text-sm font-bold text-slate-200">Nuevo total:</span>
                                     <span className={`text-sm font-bold ${creditInfo.projectedColor === 'red' ? 'text-red-400' : creditInfo.projectedColor === 'yellow' ? 'text-amber-400' : 'text-emerald-400'}`}>

@@ -1,0 +1,14 @@
+{
+  "status": "PASS",
+  "startedAt": "2026-10-06T19:51:40.431322+00:00",
+  "finishedAt": "2026-10-06T20:21:40.466153+00:00",
+  "durationSeconds": 1800,
+  "samples": 61,
+  "failedSamples": 0,
+  "latencyMs": {
+    "median": 257,
+    "p95": 303,
+    "max": 448
+  },
+  "scope": "Public health sampled every approximately 30 seconds; this is not complete traffic error-rate telemetry"
+}

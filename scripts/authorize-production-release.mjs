@@ -6,6 +6,8 @@ import {
     waitForExpectedRelease,
 } from './verify-deployed-release.mjs';
 
+import { assessCreditHotfix, creditHotfixEnabled, hotfixAction, verifyCreditHotfixRelease } from './verify-credit-hotfix-release.mjs';
+
 const FULL_SHA = /^[a-f0-9]{40}$/;
 
 // La intención se valida antes de cualquier llamada de red. Los códigos son
@@ -17,7 +19,11 @@ export const assessProductionCandidate = (env) => {
 
     const candidate = env.CANDIDATE_SHA;
     if (typeof candidate !== 'string' || !FULL_SHA.test(candidate)) return 'FULL_CANDIDATE_SHA_REQUIRED';
-    if (candidate !== env.GITHUB_SHA) return 'WORKFLOW_SHA_MISMATCH';
+    try {
+        hotfixAction(env);
+        if (creditHotfixEnabled(env)) assessCreditHotfix(env);
+        else if (candidate !== env.GITHUB_SHA) return 'WORKFLOW_SHA_MISMATCH';
+    } catch (error) { return error.message; }
     if (env.PRODUCTION_CONFIRMATION !== `PROMOTE ${candidate}`) return 'TYPED_CONFIRMATION_REQUIRED';
     if (env.SOLE_OWNER_CONFIRMATION !== `SOLE_OWNER ${candidate}`) return 'SOLE_OWNER_ACK_REQUIRED';
     return null;
@@ -56,10 +62,12 @@ export const authorizeProductionRelease = async ({
     env = process.env,
     verifyStaging = waitForExpectedRelease,
     readMain = readCurrentMain,
+    verifyHotfix = verifyCreditHotfixRelease,
 } = {}) => {
     const rejection = assessProductionCandidate(env);
     if (rejection) throw new Error(rejection);
     if (!validStagingUrl(env.STAGING_URL)) throw new Error('VALID_STAGING_URL_REQUIRED');
+    if (creditHotfixEnabled(env)) await verifyHotfix({ env, phase: 'production' });
 
     try {
         // Una sustitución de contenedor puede devolver 503 transitorio. El
@@ -80,7 +88,7 @@ export const authorizeProductionRelease = async ({
     } catch {
         throw new Error('MAIN_HEAD_UNAVAILABLE');
     }
-    if (currentMain !== env.CANDIDATE_SHA) throw new Error('MAIN_HEAD_MOVED');
+    if (currentMain !== (creditHotfixEnabled(env) ? env.GITHUB_SHA : env.CANDIDATE_SHA)) throw new Error('MAIN_HEAD_MOVED');
     return env.CANDIDATE_SHA;
 };
 

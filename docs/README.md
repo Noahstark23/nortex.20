@@ -2,9 +2,11 @@
 
 # Documentación de Nortex
 
-Actualización del índice: 2026-09-08. La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
+Actualización del índice: 2026-10-06 (cierre de release; las prioridades históricas conservan su fecha). La prioridad actual es primera venta, uso recurrente y soporte confiable para ferreterías/farmacias. Un documento de diseño no acredita implementación, despliegue ni uso efectivo.
 
 ## Dirección y evidencia actual
+
+**Release del 2026-10-06:** [Despliegue y prevención](releases/2026-10-06-production-release.md), con SHA, respaldo restaurado, migración, pruebas y límites. La [cadencia operativa](runbooks/release-promotion.md#cadencia-de-entrega-y-diagnóstico) establece entregas pequeñas y escalamiento antes de cinco días; no habilita despliegues automáticos.
 
 **Admin SaaS local, 2026-09-30:** [Fuentes, contrato y QA](ADMIN_SAAS_LOCAL_2026-09-30.md). Lectura de activación, uso, cohortes y cuentas fundadoras; datos desconocidos explícitos. Candidato local sobre main 43d8d77; no acredita publicación, ingresos ni activación financiera.
 

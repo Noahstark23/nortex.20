@@ -1,0 +1,470 @@
+{
+  "prismaVersion": "6.4.1",
+  "models": 156,
+  "scalarColumns": 1882,
+  "expandedTables": [
+    "WaCommerceActivationRequest",
+    "WaCommerceConsentEvent",
+    "WaCommerceConversation",
+    "WaCommerceInbox",
+    "WaCommerceOutbox",
+    "WaCommerceOutboxAttempt",
+    "WaCommercePolicyVersion",
+    "WaCommerceQuoteDraft",
+    "WaCommerceReceipt",
+    "WaCommerceWorkerHeartbeat",
+    "SaleCreditNote",
+    "PlatformAccountEvidence",
+    "PlatformPaymentEvidence"
+  ],
+  "expandedIndexes": [
+    {
+      "table": "WaCommerceConversation",
+      "name": "WaCommerceConversation_tenantId_status_updatedAt_idx",
+      "columns": [
+        "tenantId",
+        "status",
+        "updatedAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceConversation",
+      "name": "WaCommerceConversation_tenantId_channelId_idx",
+      "columns": [
+        "tenantId",
+        "channelId"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceConversation",
+      "name": "WaCommerceConversation_channelId_waId_key",
+      "columns": [
+        "channelId",
+        "waId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_sequence_key",
+      "columns": [
+        "sequence"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_providerMessageId_key",
+      "columns": [
+        "providerMessageId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_status_availableAt_idx",
+      "columns": [
+        "status",
+        "availableAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_conversationId_status_sequence_idx",
+      "columns": [
+        "conversationId",
+        "status",
+        "sequence"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_tenantId_channelId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "channelId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_tenantId_status_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "status",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceInbox",
+      "name": "WaCommerceInbox_tenantId_status_leaseUntil_idx",
+      "columns": [
+        "tenantId",
+        "status",
+        "leaseUntil"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_sequence_key",
+      "columns": [
+        "sequence"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_idempotencyKey_key",
+      "columns": [
+        "idempotencyKey"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_providerMessageId_key",
+      "columns": [
+        "providerMessageId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_status_createdAt_idx",
+      "columns": [
+        "status",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_conversationId_status_sequence_idx",
+      "columns": [
+        "conversationId",
+        "status",
+        "sequence"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_tenantId_channelId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "channelId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_tenantId_status_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "status",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutbox",
+      "name": "WaCommerceOutbox_tenantId_status_leaseUntil_idx",
+      "columns": [
+        "tenantId",
+        "status",
+        "leaseUntil"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceReceipt",
+      "name": "WaCommerceReceipt_fingerprint_key",
+      "columns": [
+        "fingerprint"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceReceipt",
+      "name": "WaCommerceReceipt_channelId_providerMessageId_waId_idx",
+      "columns": [
+        "channelId",
+        "providerMessageId",
+        "waId"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceReceipt",
+      "name": "WaCommerceReceipt_tenantId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceQuoteDraft",
+      "name": "WaCommerceQuoteDraft_requestKey_key",
+      "columns": [
+        "requestKey"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceQuoteDraft",
+      "name": "WaCommerceQuoteDraft_quotationId_key",
+      "columns": [
+        "quotationId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceQuoteDraft",
+      "name": "WaCommerceQuoteDraft_tenantId_status_updatedAt_idx",
+      "columns": [
+        "tenantId",
+        "status",
+        "updatedAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceQuoteDraft",
+      "name": "WaCommerceQuoteDraft_conversationId_createdAt_idx",
+      "columns": [
+        "conversationId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceConsentEvent",
+      "name": "WaCommerceConsentEvent_sourceId_key",
+      "columns": [
+        "sourceId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceConsentEvent",
+      "name": "WaCommerceConsentEvent_tenantId_conversationId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "conversationId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommercePolicyVersion",
+      "name": "WaCommercePolicyVersion_tenantId_channelId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "channelId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommercePolicyVersion",
+      "name": "WaCommercePolicyVersion_channelId_version_key",
+      "columns": [
+        "channelId",
+        "version"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceActivationRequest",
+      "name": "WaCommerceActivationRequest_tenantId_key",
+      "columns": [
+        "tenantId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "WaCommerceActivationRequest",
+      "name": "WaCommerceActivationRequest_status_createdAt_idx",
+      "columns": [
+        "status",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceActivationRequest",
+      "name": "WaCommerceActivationRequest_createdAt_id_idx",
+      "columns": [
+        "createdAt",
+        "id"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceActivationRequest",
+      "name": "WaCommerceActivationRequest_status_createdAt_id_idx",
+      "columns": [
+        "status",
+        "createdAt",
+        "id"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceWorkerHeartbeat",
+      "name": "WaCommerceWorkerHeartbeat_status_lastSeenAt_idx",
+      "columns": [
+        "status",
+        "lastSeenAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceWorkerHeartbeat",
+      "name": "WaCommerceWorkerHeartbeat_lastSeenAt_idx",
+      "columns": [
+        "lastSeenAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutboxAttempt",
+      "name": "WaCommerceOutboxAttempt_tenantId_outboxId_claimedAt_idx",
+      "columns": [
+        "tenantId",
+        "outboxId",
+        "claimedAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "WaCommerceOutboxAttempt",
+      "name": "WaCommerceOutboxAttempt_status_claimedAt_idx",
+      "columns": [
+        "status",
+        "claimedAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "PlatformAccountEvidence",
+      "name": "PlatformAccountEvidence_businessKind_verifiedAt_idx",
+      "columns": [
+        "businessKind",
+        "verifiedAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "PlatformPaymentEvidence",
+      "name": "PlatformPaymentEvidence_tenantId_evidenceReference_key",
+      "columns": [
+        "tenantId",
+        "evidenceReference"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "PlatformPaymentEvidence",
+      "name": "PlatformPaymentEvidence_tenantId_paidAt_reconciledAt_idx",
+      "columns": [
+        "tenantId",
+        "paidAt",
+        "reconciledAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Product",
+      "name": "Product_tenantId_stock_idx",
+      "columns": [
+        "tenantId",
+        "stock"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "Sale",
+      "name": "Sale_tenantId_invoiceSeries_invoiceNumber_key",
+      "columns": [
+        "tenantId",
+        "invoiceSeries",
+        "invoiceNumber"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_correctionRequestId_key",
+      "columns": [
+        "correctionRequestId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_saleId_key",
+      "columns": [
+        "saleId"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_tenantId_createdAt_idx",
+      "columns": [
+        "tenantId",
+        "createdAt"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "SaleCreditNote",
+      "name": "SaleCreditNote_tenantId_series_number_key",
+      "columns": [
+        "tenantId",
+        "series",
+        "number"
+      ],
+      "nonUnique": 0
+    },
+    {
+      "table": "Tenant",
+      "name": "Tenant_createdAt_id_idx",
+      "columns": [
+        "createdAt",
+        "id"
+      ],
+      "nonUnique": 1
+    },
+    {
+      "table": "User",
+      "name": "User_tenantId_lastLogin_idx",
+      "columns": [
+        "tenantId",
+        "lastLogin"
+      ],
+      "nonUnique": 1
+    }
+  ],
+  "generatedSchemaSha256": "c327596259e53ecb679275305214eb987158e6f2606c7556633b29511fca1d09",
+  "schemaFingerprintSha256": "45c2c763b8c603a411bdfdd553dc7d61df674ecde88015b870b8412e12fa7878",
+  "provenance": {
+    "receiptSha256": "b9206615b9bcb3997ed8fe8416d6f856a231513047dbddc5cc92103cd0e4c58b",
+    "scope": "PR238 target reproduced only on disposable MySQL8.0.43 from historic staging baseline; H2 withdrawn. No live migration applied or deployment authorized. Receipt and metadata hashes in docs/evidence/pr238-integration/manifest.json.",
+    "beforeSchemaFingerprintSha256": "97beada8114e8997535471dbefd286ad94b07f6e873158aea424cfd8d33ec35a",
+    "migrationFiles": {
+      "backend/prisma/migrations/202609300001_b5_fiscal_numbering_credit_note/migration.sql": "c52251c34a4395a2fc730e0895acd20725275d844080bbec0e244f51eeb777fe",
+      "backend/prisma/migrations/202609300010_platform_admin_evidence/migration.sql": "fdac103d64713b85bcaf3b60ed7905deb3724174d25f7bcc198edbc489dea121"
+    }
+  }
+}

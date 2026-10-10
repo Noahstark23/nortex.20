@@ -2,6 +2,7 @@
 import assert from 'node:assert/strict';
 import { writeFile } from 'node:fs/promises';
 import { performance } from 'node:perf_hooks';
+import { execFileSync } from 'node:child_process';
 import { PrismaClient } from '@prisma/client';
 const url = new URL(process.env.DATABASE_URL ?? 'invalid:');
 assert.equal(url.hostname, '127.0.0.1');
@@ -44,9 +45,12 @@ try {
         plans.push(Object.values(result[0]).join('\n'));
     }
     const warmed = samples.slice(1).map(row => row.wallMs).sort((a, b) => a - b);
-    await writeFile('../evidence/admin-v2/cost.json', JSON.stringify({ result: 'PASS', engine: (await db.$queryRawUnsafe<{ version: string }[]>('SELECT VERSION() AS version'))[0].version,
+    const output = process.env.NORTEX_ADMIN_COST_REPORT ?? '../evidence/admin-v2/cost.json';
+    const sourceCommit = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const sourceTree = execFileSync('git', ['rev-parse', 'HEAD^{tree}'], { encoding: 'utf8' }).trim();
+    await writeFile(output, JSON.stringify({ sourceCommit, sourceTree, result: 'PASS', engine: (await db.$queryRawUnsafe<{ version: string }[]>('SELECT VERSION() AS version'))[0].version,
         fixture, samples, warmMedianMs: warmed[Math.floor(warmed.length / 2)], warmMaxMs: warmed.at(-1), plans,
         conclusion: 'Se ejecutan cuatro CTE globales por página más conciliación. Los planes muestran el trabajo real repetido; LIMIT50 no limita los agregados globales.',
         limits: ['Un cliente secuencial, ocho snapshots, dataset acotado sintético', 'No mide autorización HTTP, carga concurrente, cache fría controlada ni producción', 'No cambiar estrategia SQL en este lote; valorar reducción de agregados repetidos antes de escalar'] }, null, 2));
-    console.log('PASS: ocho snapshots y cuatro EXPLAIN ANALYZE; ../evidence/admin-v2/cost.json');
+    console.log(`PASS: ocho snapshots y cuatro EXPLAIN ANALYZE; ${output}`);
 } finally { await db.$disconnect(); }

@@ -368,14 +368,14 @@ describe('Finiquito — calculateSettlement', () => {
 
     // ── Aguinaldo proporcional (Art. 93): el período corre 1-dic → 30-nov ─────
     it('cuenta el aguinaldo desde el 1-dic anterior cuando la salida es en enero', () => {
-        // 1-dic-2023 → 15-ene-2024 = 46 días → 30.000 × 46/365 = 3.780,82 (H2)
+        // 1-dic-2023 → 15-ene-2024 = 46 días → 30.000 × 46/360 = 3.833,33 (contrato vigente)
         const r = calculateSettlement({
             ...base,
             hireDate: new Date(2020, 0, 15),
             terminationDate: new Date(2024, 0, 15),
         });
         expect(r.diasAguinaldo).toBe(46);
-        expect(r.aguinaldo).toBe(3780.82);
+        expect(r.aguinaldo).toBe(3833.33);
     });
 
     it('cuenta desde el 1-dic del MISMO año cuando la salida es en diciembre', () => {
@@ -387,7 +387,7 @@ describe('Finiquito — calculateSettlement', () => {
             terminationDate: new Date(2024, 11, 20),
         });
         expect(r.diasAguinaldo).toBe(20);
-        expect(r.aguinaldo).toBe(1643.84);
+        expect(r.aguinaldo).toBe(1666.67);
     });
 
     it('arranca en la fecha de ingreso si es posterior al 1-dic', () => {
@@ -398,17 +398,17 @@ describe('Finiquito — calculateSettlement', () => {
             terminationDate: new Date(2024, 0, 15),
         });
         expect(r.diasAguinaldo).toBe(27);
-        expect(r.aguinaldo).toBe(2219.18);
+        expect(r.aguinaldo).toBe(2250);
     });
 
     it('el aguinaldo se topa en un salario mensual (período completo)', () => {
-        // 1-dic-2023 → 30-nov-2024 son 366 días corridos: se topan en 365 = 1 mes (H2).
+        // 1-dic-2023 → 30-nov-2024 son 366 días corridos: se topan en 360 = 1 mes (contrato vigente).
         const r = calculateSettlement({
             ...base,
             hireDate: new Date(2010, 0, 1),
             terminationDate: new Date(2024, 10, 30),
         });
-        expect(r.diasAguinaldo).toBe(365);
+        expect(r.diasAguinaldo).toBe(360);
         expect(r.aguinaldo).toBe(30000);
     });
 
@@ -420,7 +420,7 @@ describe('Finiquito — calculateSettlement', () => {
             terminationDate: new Date(2024, 5, 10),
         });
         expect(r.diasAguinaldo).toBe(1);
-        expect(r.aguinaldo).toBeCloseTo(82.19, 2);
+        expect(r.aguinaldo).toBeCloseTo(83.33, 2);
     });
 
     it('con fechas invertidas no acredita aguinaldo negativo', () => {
