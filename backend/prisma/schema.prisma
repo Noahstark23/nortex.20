@@ -190,9 +190,6 @@ model Tenant {
 
 // Intención y comprobante del reinicio. Nunca contiene contraseñas ni tokens.
 model DemoAccountReset {
-  // Actor real de soporte; no se atribuye al dueño una acción administrativa.
-  actorMode     String   @default("OWNER") @db.VarChar(16)
-  ownerUserId   String?
   id            String   @id @default(uuid()) @db.VarChar(36)
   tenantId      String
   userId        String
@@ -205,6 +202,9 @@ model DemoAccountReset {
   nextUserId    String?
   createdAt     DateTime @default(now())
   appliedAt     DateTime?
+  // Actor real de soporte; no se atribuye al dueño una acción administrativa.
+  actorMode     String   @default("OWNER") @db.VarChar(16)
+  ownerUserId   String?
 
   @@unique([tenantId, requestKey])
   @@index([tenantId, userId, createdAt])
