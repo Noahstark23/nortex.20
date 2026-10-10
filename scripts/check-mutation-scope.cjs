@@ -248,8 +248,9 @@ const PISO_MUTANTES = {
     // cuánto cobra cada quien — el número con el que el dueño paga o reclama).
     // 59 mutantes, score medido 100.00%.
     'backend/services/sellerReport.ts': 59,
-    // stripe.ts entra solo por sus dos funciones PURAS de cobro (33-65), no por
-    // el cliente de Stripe: 13 mutantes, score medido 100.00%. Protegen el rail
+    // stripe.ts entra solo por sus dos funciones PURAS de cobro (33-67), no por
+    // el cliente de Stripe: se conserva el piso17 vigente de main; corrida
+    // completa del candidato requerida. Protegen el rail
     // que de verdad cobra en Nicaragua — Stripe no soporta el país como
     // comercio, así que el dinero entra por depósito con comprobante y
     // activación a mano. Antes aprobar daba 30 días con cualquier monto

@@ -94,7 +94,7 @@
     "backend/services/nicaLabor.ts:464-485",
     "backend/services/sellerReport.ts",
     "backend/services/nicaTax.ts:25-77",
-    "backend/services/stripe.ts:33-65",
+    "backend/services/stripe.ts:33-67",
     "backend/services/stockService.ts:58-71",
     "backend/services/journalPosting.ts:212-355",
     "backend/services/legacyShiftCloseService.ts:96-106",
