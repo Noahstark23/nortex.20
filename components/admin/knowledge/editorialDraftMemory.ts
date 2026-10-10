@@ -49,3 +49,9 @@ export function rememberEditorialRetirement(sessionKey: string, referenceKey: st
 }
 
 export function clearEditorialDraft() { activeSessionKey = null; draft = null; importDraft = null; retirementReasons.clear(); }
+
+/** Consulta sin cambiar sesión ni borrar borradores retenidos al desmontar. */
+export function hasPendingEditorialWork(sessionKey: string): boolean {
+    return activeSessionKey === sessionKey && Boolean(draft?.note || draft?.pendingNote
+        || importDraft || retirementReasons.size);
+}

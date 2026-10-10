@@ -77,6 +77,9 @@ model Tenant {
   dgiAuthDate          DateTime? // Fecha de autorización DGI
   createdAt            DateTime  @default(now())
 
+  platformAccountEvidence    PlatformAccountEvidence?
+  platformPaymentEvidence    PlatformPaymentEvidence[]
+
   users                     User[]
   customers                 Customer[]
   suppliers                 Supplier[]
@@ -107,6 +110,7 @@ model Tenant {
   journalEntries            JournalEntry[]
   fiscalRetentions          FiscalRetention[]
   invoiceSeries             InvoiceSeries[]
+  saleCreditNotes           SaleCreditNote[]
   publicOrders              PublicOrder[]
   capitalLoans              CapitalLoan[]
   tenantCapabilities        TenantCapability[]
@@ -168,6 +172,8 @@ model Tenant {
   assistantWaBindings AssistantWaBinding[]
   assistantWaInbox AssistantWaInbox[]
   assistantWaOutbox AssistantWaOutbox[]
+
+  @@index([createdAt, id])
 
   // HR Module
   leaveRequests          LeaveRequest[]
@@ -264,6 +270,7 @@ model User {
   // Retención: escaneo de usuarios activos por recencia de login (métricas admin
   // + detección de dormancia). Índice agregado con la query que lo usa.
   @@index([lastLogin])
+  @@index([tenantId, lastLogin])
 }
 
 /// Activación explícita por negocio; ningún tenant se habilita por migración.
@@ -1859,7 +1866,12 @@ model Sale {
   customerCreditEntries CustomerCreditEntry[]
   serialNumbers  SerialNumber[]
   pedidos        Pedido[]
+  voidCreditNote SaleCreditNote?
 
+  // H3: un número DGI no se repite dentro de su serie. NULL (ventas sin
+  // correlativo) no colisiona en MySQL. El preflight verifica duplicados
+  // antes de crearlo y se detiene si los hay (scripts/saleInvoiceSchemaPreflight.ts).
+  @@unique([tenantId, invoiceSeries, invoiceNumber])
   @@index([tenantId])
   @@index([customerId])
   @@index([employeeId])
@@ -2514,6 +2526,7 @@ model Product {
   @@index([tenantId, brand])
   @@fulltext([name, category])
   @@index([tenantId, name])
+  @@index([tenantId, stock])
 }
 
 model KardexMovement {
@@ -3265,6 +3278,31 @@ model InvoiceSeries {
 
   @@unique([tenantId, series])
   @@index([tenantId])
+}
+
+// H6 — Nota de crédito por ANULACIÓN: documento propio con su número (serie
+// 'NC', correlativo separado de las series de venta A/B). La venta original
+// conserva total, IVA, líneas, serie y número; solo queda marcada como anulada.
+// Quién autorizó (aprobador de la solicitud) y quién ejecutó quedan en la fila.
+model SaleCreditNote {
+  id                  String   @id @default(cuid())
+  tenantId            String
+  saleId              String   @unique
+  correctionRequestId String   @unique
+  series              String   @db.VarChar(8)
+  number              Int
+  total               Decimal  @db.Decimal(18, 4)
+  vatAmount           Decimal  @db.Decimal(18, 4)
+  reason              String   @db.Text
+  authorizedById      String
+  issuedById          String
+  createdAt           DateTime @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+  sale   Sale   @relation(fields: [saleId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, series, number])
+  @@index([tenantId, createdAt])
 }
 
 // ==========================================
@@ -4094,6 +4132,38 @@ model WaCommerceOutboxAttempt {
   errorCode String? @db.VarChar(64)
   @@index([tenantId, outboxId, claimedAt])
   @@index([status, claimedAt])
+}
+
+// Evidencia administrativa separada del entitlement y del dinero del comercio.
+// No hay backfill ni escrituras desde el panel: nada se deduce del trial legacy.
+model PlatformAccountEvidence {
+  tenantId         String @id
+  businessKind     String @default("UNKNOWN") @db.VarChar(16)
+  founder          Boolean?
+  benefitStartedAt DateTime?
+  benefitEndsAt    DateTime?
+  planLabel        String? @db.VarChar(100)
+  evidenceReference String @db.VarChar(191)
+  verifiedAt       DateTime
+  tenant           Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@index([businessKind, verifiedAt])
+}
+
+// Un recibo aquí exige conciliación explícita con una fuente externa verificable.
+// APPROVED en ManualPayment y ACTIVE en Tenant no crean evidencia en esta tabla.
+model PlatformPaymentEvidence {
+  id                String @id @default(cuid())
+  tenantId          String
+  amount            Decimal @db.Decimal(18, 4)
+  currency          String @db.VarChar(3)
+  paidAt            DateTime
+  reconciledAt      DateTime
+  evidenceReference String @db.VarChar(191)
+  tenant            Tenant @relation(fields: [tenantId], references: [id], onDelete: Restrict)
+
+  @@unique([tenantId, evidenceReference])
+  @@index([tenantId, paidAt, reconciledAt])
 }
 
 // Comprobante por fila de carga asistida: mismo contenido no vuelve a sumar stock.

@@ -20,6 +20,24 @@ test('los contratos versionados coinciden con las fuentes y el cliente Prisma de
   }
 });
 
+test('ambos perfiles conservan el before histórico y SQL exacto de la expansión declarada', () => {
+  const paths = new Set([
+    'backend/prisma/migrations/202609300001_b5_fiscal_numbering_credit_note/migration.sql',
+    'backend/prisma/migrations/202609300010_platform_admin_evidence/migration.sql',
+  ]);
+  for (const profile of ['staging', 'production']) {
+    const contract = JSON.parse(readFileSync(new URL(`../deploy/nortex/${profile}.contract.json`, import.meta.url), 'utf8'));
+    assert.match(contract.provenance.beforeSchemaFingerprintSha256, /^[a-f0-9]{64}$/);
+    assert.notEqual(contract.provenance.beforeSchemaFingerprintSha256, contract.schemaFingerprintSha256);
+    for (const path of paths) assert.ok(path in contract.provenance.migrationFiles, `${profile}: ${path}`);
+    for (const [path, expected] of Object.entries(contract.provenance.migrationFiles)) {
+      assert.equal(createHash('sha256').update(readFileSync(new URL(`../${path}`, import.meta.url))).digest('hex'), expected, `${profile}: ${path}`);
+    }
+    for (const table of ['SaleCreditNote', 'PlatformAccountEvidence', 'PlatformPaymentEvidence']) assert.ok(contract.expandedTables.includes(table));
+    assert.ok(contract.expandedIndexes.some(index => index.table === 'Sale' && index.name === 'Sale_tenantId_invoiceSeries_invoiceNumber_key' && index.nonUnique === 0));
+  }
+});
+
 const sha = value => createHash('sha256').update(value).digest('hex');
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), 'nortex-seal-'));

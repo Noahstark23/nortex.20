@@ -119,13 +119,14 @@ try:
         if profile == 'staging': sql((fixture.parent / 'wa-expansion.sql').read_text(), database)
         values = {'DATABASE_URL': 'mysql://root@db:3306/' + database, 'NORTEX_ROLLBACK_DATABASE': database, 'NORTEX_ROLLBACK_MYSQL_UUID': uuid, 'NORTEX_ROLLBACK_CONFIRMATION': 'PRESERVE_SCHEMA ' + sha + ' ' + database, 'NORTEX_SCHEMA_PROFILE': profile, 'SOURCE_COMMIT': sha, 'JWT_SECRET': 'runtime-ci-synthetic-only-not-a-real-key', 'NORTEX_ASSISTANT_ENABLED': 'false', 'NODE_ENV': 'production', 'PORT': '3000'}
         envargs = [part for k, v in values.items() for part in ['-e', k + '=' + v]]
-        if profile == 'production':
-            assert fingerprint(database) == contract['provenance']['beforeSchemaFingerprintSha256']
+        if contract.get('provenance', {}).get('migrationFiles'):
+            before = fingerprint(database)
+            assert before == contract['provenance']['beforeSchemaFingerprintSha256']
             start = sql('SELECT NOW(6)')
             blocked = subprocess.run(['docker', 'run', '--rm', '--network', net, *envargs, '--entrypoint', 'node', image, 'scripts/nortex-schema-gate.mjs'], text=True, capture_output=True, timeout=150)
             assert blocked.returncode != 0 and blocked.stderr.strip() == 'ROLLBACK_EXPANSION_MISSING', blocked.stderr
             assert mutation_count(start) == 0
-            checks.append({'check': 'old production schema rejected', 'mutations': 0, 'status': 'PASS'})
+            checks.append({'check': 'old schema rejected before expansion', 'profile': profile, 'beforeSchemaFingerprintSha256': before, 'mutations': 0, 'status': 'PASS'})
             for path, expected in contract['provenance']['migrationFiles'].items():
                 migration = ROOT / path
                 assert hashlib.sha256(migration.read_bytes()).hexdigest() == expected
@@ -142,6 +143,7 @@ try:
             sql(migration.read_text(), database)
         checks.append({'check': 'demo reset migration and old schema rejection', 'profile': profile, 'status': 'PASS'})
         assert fingerprint(database) == contract['schemaFingerprintSha256']
+        checks.append({'check': 'declared schema expansion', 'profile': profile, 'schemaFingerprintSha256': fingerprint(database), 'migrationFiles': contract['provenance'].get('migrationFiles', {}), 'status': 'PASS'})
         # Run Compose's exact one-off command beside a running sentinel. It
         # must not recreate/start dependencies, publish ports or execute app CMD.
         sentinel = prefix + '-live-' + profile

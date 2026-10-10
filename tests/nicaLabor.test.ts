@@ -368,7 +368,7 @@ describe('Finiquito — calculateSettlement', () => {
 
     // ── Aguinaldo proporcional (Art. 93): el período corre 1-dic → 30-nov ─────
     it('cuenta el aguinaldo desde el 1-dic anterior cuando la salida es en enero', () => {
-        // 1-dic-2023 → 15-ene-2024 = 46 días → 30.000 × 46/360 = 3.833,33
+        // 1-dic-2023 → 15-ene-2024 = 46 días → 30.000 × 46/360 = 3.833,33 (contrato vigente)
         const r = calculateSettlement({
             ...base,
             hireDate: new Date(2020, 0, 15),
@@ -402,7 +402,7 @@ describe('Finiquito — calculateSettlement', () => {
     });
 
     it('el aguinaldo se topa en un salario mensual (período completo)', () => {
-        // 1-dic-2023 → 30-nov-2024 son 366 días corridos: se topan en 360 = 1 mes.
+        // 1-dic-2023 → 30-nov-2024 son 366 días corridos: se topan en 360 = 1 mes (contrato vigente).
         const r = calculateSettlement({
             ...base,
             hireDate: new Date(2010, 0, 1),

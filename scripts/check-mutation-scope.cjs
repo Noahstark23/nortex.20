@@ -230,9 +230,15 @@ const PISO_MUTANTES = {
     // red destapó tres errores de dinero: el techo cotizable del INSS (derogado
     // por el Decreto 06-2019), un hueco de un centavo entre tramos de la tabla IR
     // que devolvía IR = 0, y un finiquito que imprimía los días sin topar junto a
-    // un monto topado. Entra por rangos: las constantes de módulo y
-    // calculateLaborLiability (llama `new Date()`) quedan fuera — ver el config.
-    'backend/services/nicaLabor.ts': 106,
+    // un monto topado. Las constantes de módulo conservan su alcance previo.
+    // H2 retirado: se preservan calendario, fechas inválidas y divisor360 de main.
+    // Se conservan los pisos previos del PR:190 por archivo y50/13 por función.
+    // La corrida dirigida del intento2 mide194 instrumentados (20 ignored
+    // históricos),51 en pasivo y15 en anual:171 killed+3 timeout, score100.
+    // Math.min/max elimina comparadores equivalentes con fechas iguales y
+    // Number.isNaN conserva el fallback previo. Falta acreditar la corrida
+    // global; no se recortan rangos, bajan pisos ni añaden ignores.
+    'backend/services/nicaLabor.ts': 190,
     'backend/services/nicaTax.ts': 7,
     // Régimen fiscal puro: normalización, conflicto de versión (incluido el
     // cliente legacy tras un cambio) y desglose autoritativo GENERAL/CUOTA_FIJA.
@@ -243,7 +249,8 @@ const PISO_MUTANTES = {
     // 59 mutantes, score medido 100.00%.
     'backend/services/sellerReport.ts': 59,
     // stripe.ts entra solo por sus dos funciones PURAS de cobro (33-65), no por
-    // el cliente de Stripe: 13 mutantes, score medido 100.00%. Protegen el rail
+    // el cliente de Stripe: se conserva el piso17 vigente de main; corrida
+    // completa del candidato requerida. Protegen el rail
     // que de verdad cobra en Nicaragua — Stripe no soporta el país como
     // comercio, así que el dinero entra por depósito con comprobante y
     // activación a mano. Antes aprobar daba 30 días con cualquier monto
@@ -292,6 +299,7 @@ const PISO_MUTANTES = {
 // La reducción 212 → 199 anterior a ampliar caja se explica función por función
 // en docs/releases/2026-09-04-production-gate.md; no fue un rango truncado.
 const FUNCTION_FLOORS = {
+    'backend/services/nicaLabor.ts': { calculateLaborLiability: 50, computeAguinaldoAnual: 13 },
     'backend/services/assistant/operations/cashCloseInvestigation.ts': { money: 26 },
     'backend/services/assistant/operations/weeklyCashReviewSummary.ts': { checkedSnapshotCash: 38, summarizeCashReviewRows: 51 },
     'backend/services/accounting.ts': {

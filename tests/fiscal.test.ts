@@ -32,15 +32,15 @@ describe('IVA incluido — desglosarIvaIncluido', () => {
     });
 });
 
-// ── IVA con EXONERACIÓN (canasta básica / medicinas) — 4 decimales ───────────
+// ── IVA con EXONERACIÓN (canasta básica / medicinas) — 2 decimales (H1) ──────
 describe('Exoneración — desglosarVentaConExoneracion', () => {
-    it('C$115 con exento C$50 → gravado 65, netoGravado 56.5217, IVA 8.4783, ingresoNeto 106.5217', () => {
+    it('C$115 con exento C$50 → gravado 65, netoGravado 56.52, IVA 8.48, ingresoNeto 106.52 (H1: centavos)', () => {
         const d = desglosarVentaConExoneracion(115, 50);
         expect(d.exonerado.toNumber()).toBe(50);
         expect(d.gravado.toNumber()).toBe(65);
-        expect(d.netoGravado.toNumber()).toBe(56.5217);
-        expect(d.iva.toNumber()).toBe(8.4783);
-        expect(d.ingresoNeto.toNumber()).toBe(106.5217);
+        expect(d.netoGravado.toNumber()).toBe(56.52);
+        expect(d.iva.toNumber()).toBe(8.48);
+        expect(d.ingresoNeto.toNumber()).toBe(106.52);
         // Identidad clave: ingresoNeto + iva === total (asiento cuadra siempre).
         expect(d.ingresoNeto.plus(d.iva).toNumber()).toBe(115);
     });
@@ -135,13 +135,13 @@ describe('Partida doble — buildSaleJournalLines', () => {
         expect(l[0]).toEqual({ accountCode: '1.1.3', debit: 115, credit: 0 });
     });
     it('parte exonerada: el IVA solo grava lo NO exento', () => {
-        // total 115, exento 15 → gravado 100 → neto 86.9565, IVA 13.0435
-        // ingresoNeto = neto gravado + exonerado = 86.9565 + 15 = 101.9565
+        // total 115, exento 15 → gravado 100 → neto 86.96, IVA 13.04 (H1: centavos)
+        // ingresoNeto = neto gravado + exonerado = 86.96 + 15 = 101.96
         const l = buildSaleJournalLines(115, 60, 'CASH', 15);
         expect(l[1].accountCode).toBe('4.1.1');
-        expect(l[1].credit).toBeCloseTo(101.9565, 4);
+        expect(l[1].credit).toBe(101.96);
         expect(l[2].accountCode).toBe('2.1.2');
-        expect(l[2].credit).toBeCloseTo(13.0435, 4);
+        expect(l[2].credit).toBe(13.04);
     });
     it('sin exonerado (undefined o null) produce el asiento absoluto correcto', () => {
         // Antes este caso comparaba la función contra sí misma con y sin el

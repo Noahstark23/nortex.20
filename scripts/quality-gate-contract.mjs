@@ -12,6 +12,7 @@ export const REQUIRED_INTEGRATION_SUITES = [
   'tests/hrAccess.integration.test.ts',
   'tests/productRefresh.integration.test.ts',
   'tests/fiscalFlow.integration.test.ts',
+  'tests/invoiceNumberingConcurrency.mysql.test.ts',
   'tests/inventoryAdjust.integration.test.ts',
   'tests/bodegaAdjustment.integration.test.ts',
   'tests/bodegaReorder.integration.test.ts',

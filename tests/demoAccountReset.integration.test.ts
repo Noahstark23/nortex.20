@@ -222,4 +222,35 @@ run('reiniciar demo: HTTP y MySQL descartables', () => {
     await prisma.tenant.update({ where: { id: financial.tenantId }, data: { walletBalance: 1 } });
     expect((await api(endpoint, financial)).body).toMatchObject({ eligible: false, code: 'EXTERNAL_FINANCE_EXISTS' });
   });
+  it.each(['actual', 'raíz'])('recibo conciliado en cuenta %s impide elegibilidad y preview sin archivar', async location => {
+    const owner = await fixture(), root = location === 'raíz' ? await fixture() : owner;
+    if (root !== owner) await prisma.tenant.update({ where: { id: owner.tenantId }, data: { demoResetRootId: root.tenantId } });
+    await prisma.platformPaymentEvidence.create({ data: { tenantId: root.tenantId, amount: '20.0000', currency: 'USD',
+      paidAt: new Date(Date.now() - 2000), reconciledAt: new Date(Date.now() - 1000), evidenceReference: 'QA-' + randomUUID() } });
+    expect((await api(endpoint, owner)).body).toMatchObject({ eligible: false, code: 'DEMO_UNPAID_REQUIRED' });
+    const response = await api(endpoint + '/preview', owner, 'POST', { requestKey: randomUUID() });
+    status(response, 409); expect(response.body.code).toBe('DEMO_UNPAID_REQUIRED');
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: owner.tenantId } })).demoResetArchivedAt).toBeNull();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: owner.userId } })).status).toBe('ACTIVE');
+    expect(await prisma.demoAccountReset.count({ where: { tenantId: owner.tenantId } })).toBe(0);
+  });
+  it('revalida recibo conciliado que aparece después del preview; confirm no modifica cuenta ni comprobante', async () => {
+    const owner = await fixture(), review = await preview(owner);
+    await prisma.platformPaymentEvidence.create({ data: { tenantId: owner.tenantId, amount: '20', currency: 'NIO',
+      paidAt: new Date(Date.now() - 2000), reconciledAt: new Date(Date.now() - 1000), evidenceReference: 'QA-' + randomUUID() } });
+    const response = await reset(owner, review); status(response, 409); expect(response.body.code).toBe('DEMO_UNPAID_REQUIRED');
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: owner.tenantId } })).demoResetArchivedAt).toBeNull();
+    expect((await prisma.demoAccountReset.findUniqueOrThrow({ where: { id: review.previewId } })).status).toBe('PREVIEWED');
+    expect(await prisma.auditLog.count({ where: { tenantId: owner.tenantId, action: 'DEMO_ACCOUNT_RESET' } })).toBe(0);
+  });
+  it.each(['referencia vacía', 'pago futuro', 'conciliación futura', 'importe cero'])('no convierte %s en evidencia de cobro', async variant => {
+    const owner = await fixture(), past = new Date(Date.now() - 2000), future = new Date(Date.now() + 86400_000);
+    await prisma.platformPaymentEvidence.create({ data: { tenantId: owner.tenantId,
+      amount: variant === 'importe cero' ? '0' : '20', currency: 'USD', paidAt: variant === 'pago futuro' ? future : past,
+      reconciledAt: variant === 'conciliación futura' ? future : past,
+      evidenceReference: variant === 'referencia vacía' ? '  ' : 'QA-' + randomUUID() } });
+    expect((await api(endpoint, owner)).body.eligible).toBe(true);
+    expect((await preview(owner)).previewId).toEqual(expect.any(String));
+  });
+
 });

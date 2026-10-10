@@ -125,7 +125,7 @@ describe('el Dashboard del dueño no habla de Nortex Capital', () => {
     });
 });
 
-describe('el score se sigue calculando, ahora desde el panel admin', () => {
+describe('score legacy permanece aislado y fuera del panel SaaS', () => {
     it('la ruta es exclusiva de SUPER_ADMIN y persiste score y línea', () => {
         expect(rutaDeScore).toContain('authenticate, requireSuperAdmin');
         expect(rutaDeScore).toContain('calculateTenantScore(tenantId)');
@@ -142,9 +142,14 @@ describe('el score se sigue calculando, ahora desde el panel admin', () => {
         );
     });
 
-    it('el panel admin puede dispararlo por empresa', () => {
-        expect(superAdmin).toContain('/api/admin/tenants/${tenantId}/score');
-        expect(superAdmin).toContain('handleRecalcularScore');
+    it('el panel SaaS no ofrece recalcular score ni reactivar crédito', () => {
+        expect(superAdmin).not.toContain('/score');
+        expect(superAdmin).not.toContain('handleRecalcularScore');
+        const panel = readFileSync('components/admin/AdminOverviewPanel.tsx', 'utf8');
+        expect(panel).not.toContain('/score');
+        expect(panel).not.toContain('/api/admin/loans');
+        expect(panel).not.toContain('creditLimit');
+        expect(panel).not.toContain('walletBalance');
     });
 
     it('el cálculo respeta los guardrails de escalado', () => {

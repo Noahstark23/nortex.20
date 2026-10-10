@@ -305,7 +305,11 @@ export function calculateLaborLiability(
     const lastDec1 = now.getUTCMonth() >= 11
         ? new Date(Date.UTC(now.getUTCFullYear(), 11, 1))
         : new Date(Date.UTC(now.getUTCFullYear() - 1, 11, 1));
-    const aguinaldoStart = hire > lastDec1 ? hire : lastDec1;
+    const hireTime = hire.getTime();
+    // Una fecha inválida conserva el fallback de main; el máximo evita un
+    // comparador equivalente en el empate sin alterar días, límites o redondeo.
+    const aguinaldoStart = new Date(Math.max(
+        Number.isNaN(hireTime) ? lastDec1.getTime() : hireTime, lastDec1.getTime()));
     const diasDesdeInicioAguinaldo = calendarDaysBetween(aguinaldoStart, now);
     const diasAguinaldo = diasDesdeInicioAguinaldo >= 0
         ? Math.min(360, diasDesdeInicioAguinaldo + 1)
@@ -315,7 +319,8 @@ export function calculateLaborLiability(
     // Indemnización (Art. 45): tramos 30/20 días con fracción, techo 150 días.
     const anios = Math.max(0, daysWorked / 365.25);
     let indemnizacionDias = 0;
-    if (anios > 0) {
+    // Cero ya acumula cero en el bloque; NaN conserva la indemnización en cero.
+    if (Number.isFinite(anios)) {
         const completos = Math.floor(anios);
         for (let i = 1; i <= completos; i++) indemnizacionDias += i <= 3 ? 30 : 20;
         const fraccion = anios - completos;
@@ -448,4 +453,33 @@ export function calculateSettlement(params: {
         aguinaldo: aguinaldo.toDecimalPlaces(2).toNumber(),
         total: total.toNumber(),
     };
+}
+
+/**
+ * Cálculo anual extraído de server.ts para la transacción H8.
+ * H2 retirado de esta integración: preserva fechas locales, timestamps,
+ * límite de 360 días y redondeo del main 86549b5. No unifica este calendario
+ * con el pasivo o la liquidación, que conservan sus contratos existentes.
+ */
+export function computeAguinaldoAnual(baseSalary: Decimal.Value, hireDate: Date, year: number, today: Date) {
+    const periodStart = new Date(year - 1, 11, 1); // 1 dic año anterior
+    const periodEnd = new Date(year, 10, 30);      // 30 nov del año
+    const todayTime = today.getTime(), hireTime = hireDate.getTime();
+    // Los defaults ante NaN son los selectores originales de main; en el
+    // empate ambos timestamps representan el mismo límite efectivo.
+    const effectiveEnd = new Date(Math.min(
+        Number.isNaN(todayTime) ? periodEnd.getTime() : todayTime, periodEnd.getTime()));
+    const start = new Date(Math.max(
+        Number.isNaN(hireTime) ? periodStart.getTime() : hireTime, periodStart.getTime()));
+    let dias = 0;
+    if (effectiveEnd >= start) {
+        dias = Math.min(360, Math.floor((effectiveEnd.getTime() - start.getTime()) / 86400000) + 1);
+    }
+    // Precisión financiera (Capa 4): salario × min(1, días/360) con decimal.js para
+    // no divergir del motor Decimal de la liquidación (nicaLabor) al conciliar.
+    const monto = new Decimal(baseSalary.toString())
+        .mul(Decimal.min(1, new Decimal(dias).div(360)))
+        .toDecimalPlaces(2)
+        .toNumber();
+    return { dias, monto };
 }

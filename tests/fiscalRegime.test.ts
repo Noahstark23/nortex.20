@@ -127,7 +127,9 @@ describe('asientos por régimen fiscal', () => {
         });
 
         expect(lines[1]).toEqual({ accountCode: '4.1.1', debit: 0, credit: 315 });
-        expect(lines[2]).toEqual({ accountCode: '2.1.2', debit: 0, credit: 0 });
+        // H5: sin línea de IVA en cero en cuota fija.
+        expect(lines.some(line => line.accountCode === '2.1.2')).toBe(false);
+        expect(lines[2]).toEqual({ accountCode: '5.1.1', debit: 200, credit: 0 });
         expect(Math.abs(journalBalance(lines))).toBeLessThan(0.0001);
     });
 

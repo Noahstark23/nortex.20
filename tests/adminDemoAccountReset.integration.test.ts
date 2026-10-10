@@ -114,4 +114,25 @@ run('Reinicio asistido desde administración', () => {
     expect(await prisma.product.count({ where: { tenantId: reset.nextTenantId! } })).toBe(0);
     expect(await prisma.demoResetImportRow.count({ where: { resetId: reset.id } })).toBe(0);
   });
+  it.each(['actual', 'raíz'])('asistencia rechaza recibo conciliado de cuenta %s sin archivar ni importar', async location => {
+    const admin = await fixture('SUPER_ADMIN'), owner = await fixture('OWNER', true), root = location === 'raíz' ? await fixture() : owner;
+    if (root !== owner) await prisma.tenant.update({ where: { id: owner.tenantId }, data: { demoResetRootId: root.tenantId } });
+    await prisma.platformPaymentEvidence.create({ data: { tenantId: root.tenantId, amount: '20', currency: 'USD',
+      paidAt: new Date(Date.now() - 2000), reconciledAt: new Date(Date.now() - 1000), evidenceReference: 'QA-' + randomUUID() } });
+    const result = await api(path(owner) + '/preview', admin, 'POST', { ownerId: owner.userId, requestKey: randomUUID() });
+    status(result, 409); expect(result.body.code).toBe('DEMO_UNPAID_REQUIRED');
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: owner.tenantId } })).demoResetArchivedAt).toBeNull();
+    expect((await prisma.user.findUniqueOrThrow({ where: { id: owner.userId } })).status).toBe('ACTIVE');
+    expect(await prisma.demoAccountReset.count({ where: { tenantId: owner.tenantId } })).toBe(0);
+  });
+  it('asistencia revalida cobro conciliado entre preview y confirm sin tocar historial', async () => {
+    const admin = await fixture('SUPER_ADMIN'), owner = await fixture(), p = await preview(admin, owner);
+    await prisma.platformPaymentEvidence.create({ data: { tenantId: owner.tenantId, amount: '20', currency: 'USD',
+      paidAt: new Date(Date.now() - 2000), reconciledAt: new Date(Date.now() - 1000), evidenceReference: 'QA-' + randomUUID() } });
+    const result = await confirm(admin, owner, p); status(result, 409); expect(result.body.code).toBe('DEMO_UNPAID_REQUIRED');
+    expect((await prisma.tenant.findUniqueOrThrow({ where: { id: owner.tenantId } })).demoResetArchivedAt).toBeNull();
+    expect((await prisma.demoAccountReset.findUniqueOrThrow({ where: { id: p.previewId } })).status).toBe('PREVIEWED');
+    expect(await prisma.auditLog.count({ where: { tenantId: owner.tenantId, action: 'DEMO_ACCOUNT_RESET' } })).toBe(0);
+  });
+
 });

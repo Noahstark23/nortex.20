@@ -27,6 +27,7 @@ import {
     resolveSaleFiscalAmounts,
 } from '../../utils/fiscalRegime.js';
 import { batchExpiryDayStart, batchExpiryPresentation } from '../lib/batchExpiry.js';
+import { allocateSaleInvoiceNumber, InvoiceNumberingError } from './invoiceNumberingService.js';
 
 /**
  * Cuántos lotes vencidos se nombran en el mensaje de rechazo. El resto se
@@ -50,7 +51,8 @@ export type PedidoFulfillmentCode =
     | 'PEDIDO_BATCH_STOCK_INSUFFICIENT'
     | 'PEDIDO_BATCH_RECONCILIATION_REQUIRED'
     | 'PEDIDO_BATCH_EXPIRED'
-    | 'PEDIDO_BATCH_WAREHOUSE_CONFLICT';
+    | 'PEDIDO_BATCH_WAREHOUSE_CONFLICT'
+    | 'PEDIDO_INVOICE_NUMBERING_FAILED';
 
 export class PedidoFulfillmentError extends Error {
     constructor(
@@ -1340,9 +1342,18 @@ export async function completePedidoDeliveryInTransaction(
         fiscalRegime,
     );
 
+    // H4: toda venta registrada lleva número DGI, también la que nace de un pedido.
+    const invoice = await allocateSaleInvoiceNumber(tx, pedido.tenantId).catch((error: unknown) => {
+        if (error instanceof InvoiceNumberingError) {
+            throw new PedidoFulfillmentError('PEDIDO_INVOICE_NUMBERING_FAILED', error.httpStatus, error.message);
+        }
+        throw error;
+    });
     const sale = await tx.sale.create({
         data: {
             tenantId: pedido.tenantId,
+            invoiceNumber: invoice.number,
+            invoiceSeries: invoice.series,
             total: saleTotal.toFixed(4),
             exemptTotal: exemptTotal.toFixed(2),
             fiscalRegimeAtSale: fiscalRegime,

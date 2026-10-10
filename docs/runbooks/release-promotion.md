@@ -173,6 +173,46 @@ Coolify: si el proveedor los limita al equipo, registrar ese alcance y mantener 
 validación del UUID; no atribuir aislamiento por aplicación que el token no ofrece.
 La identidad pública no comprobada sigue bloqueando el webhook.
 
+### Build Compose de staging sin `.git`
+
+Propietario: responsable de la release. La inspección local del 2026-10-01
+confirmó un contexto sin `.git` y etiquetas de imágenes del commit importado.
+En Coolify 4.3.18, el [job de Compose](https://github.com/coollabsio/coolify/blob/v4.3.18/app/Jobs/ApplicationDeploymentJob.php)
+prepara el Compose gestionado antes de ejecutar el custom build. El
+[parser de esa versión](https://github.com/coollabsio/coolify/blob/v4.3.18/bootstrap/helpers/parsers.php)
+inyecta `<uuid>_<servicio>:<commit>` cuando hay `build` y no hay `image`
+explícita; el Compose base de este candidato mantiene `app` sin `image`.
+`sh scripts/build-whatsapp-staging.sh` valida la imagen directa de `services.app`
+en el YAML canónico emitido por Compose: `<uuid>_app:<SHA>`, con UUID de 24
+alfanuméricos minúsculos y SHA de 40 hex minúsculos. Admite el prefijo `library/`
+o `docker.io/library/`. Otra imagen `_app`, formato inesperado o conflicto de
+identidades bloquea el build; no basta encontrar un SHA en otra dependencia.
+
+La consulta usa `--env-file /dev/null`, `--no-interpolate` y
+`--no-env-resolution`; no carga archivos de entorno del build/runtime ni imprime
+la configuración. `config --images app` incluye dependencias y no vincula por sí
+solo una imagen con `app`. El extractor acotado exige la estructura canónica de
+Compose y falla cerrado si no la reconoce. Sólo requiere shell, `env` y `awk`
+(disponibles en Alpine del [helper oficial](https://github.com/coollabsio/coolify/blob/v4.3.18/docker/coolify-helper/Dockerfile));
+no depende de Node o jq antes de construir la imagen.
+
+Con `.git` local, Git recibe `--git-dir=./.git`, `--work-tree=.` y un entorno
+acotado que elimina overrides heredados. Metadata rota, incluso bajo un repo
+ancestro o con `GIT_DIR` ajeno, bloquea antes de consultar Compose. Worktrees con
+`.git` archivo siguen válidos. HEAD debe ser un commit y coincidir con la etiqueta
+si está presente y con el SHA explícito opcional por argumento o
+`NORTEX_BUILD_COMMIT`; las entradas explícitas también deben coincidir entre sí.
+`SOURCE_COMMIT` no participa en la elección. Sin Git, etiqueta o entrada explícita
+verificada son necesarias. La etiqueta debe haber sido escrita por el controlador
+para el código importado: no es una firma ni verifica todo el árbol del archive.
+
+Contrato ejecutable: `tests/whatsappStagingBuild.test.ts` y
+`tests/releaseIdentity.test.ts`. Se conserva el argv de build y se pasa el mismo
+`NORTEX_BUILD_COMMIT` a los tres servicios. El marker se genera dentro de la imagen
+y health conserva su validación del hash del servidor. El fix local no acredita
+CI, build remoto, contenedor vivo ni health fresco del SHA definitivo. El start,
+las pausas de workers, backup/rollback y los gates de promoción siguen vigentes.
+
 ## Requisitos antes de solicitar producción
 
 1. Identificá un SHA candidato completo de 40 caracteres que ya esté en `main`.

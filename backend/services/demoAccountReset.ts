@@ -39,8 +39,17 @@ async function context(tx: Tx, principal: DemoResetPrincipal, target?: AdminRese
   }
   if (!tenant) throw new DemoResetError('ACCOUNT_NOT_FOUND', 'No se encontró tu cuenta.', 404);
   const billingIds = [...new Set([tenant.id, tenant.demoResetRootId].filter((id): id is string => Boolean(id)))];
-  const [payment, activation, capital, orders, loans, fleetWallets, networkDeliveries, root] = await Promise.all([
+  const now = new Date();
+  const [payment, platformPayments, activation, capital, orders, loans, fleetWallets, networkDeliveries, root] = await Promise.all([
     tx.manualPayment.findFirst({ where: { tenantId: { in: billingIds }, status: { in: ['PENDING', 'APPROVED'] } }, select: { id: true } }),
+    // Misma condición de pago conciliado explícito del admin #238. Incluye la
+    // identidad original: otro reinicio no vuelve una cuenta cobrada a sin cobro.
+    tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT id FROM PlatformPaymentEvidence
+      WHERE tenantId IN (${Prisma.join(billingIds)}) AND amount > 0
+        AND paidAt <= ${now} AND reconciledAt <= ${now}
+        AND TRIM(evidenceReference) <> ''
+      LIMIT 1`),
     tx.auditLog.findFirst({ where: { tenantId: { in: billingIds }, action: { in: target ? paidActions.filter(action => action !== 'ADMIN_REACTIVATE') : paidActions } }, select: { id: true } }),
     tx.capitalLoan.count({ where: { tenantId: tenant.id } }),
     tx.b2BOrder.count({ where: { tenantId: tenant.id } }),
@@ -50,7 +59,7 @@ async function context(tx: Tx, principal: DemoResetPrincipal, target?: AdminRese
     tenant.demoResetRootId ? tx.tenant.findUnique({ where: { id: tenant.demoResetRootId } }) : Promise.resolve(null),
   ]);
   if (tenant.demoResetArchivedAt || !(target ? ['TRIAL', 'ACTIVE'] : ['TRIAL']).includes(tenant.subscriptionStatus) || !tenant.trialEndsAt
-      || (!target && tenant.subscriptionEndsAt) || tenant.stripeCustomerId || tenant.stripeSubscriptionId || payment || activation
+      || (!target && tenant.subscriptionEndsAt) || tenant.stripeCustomerId || tenant.stripeSubscriptionId || payment || platformPayments.length > 0 || activation
       || (tenant.demoResetRootId && (!root || root.stripeCustomerId || root.stripeSubscriptionId || (!target && root.subscriptionEndsAt)))) {
     throw new DemoResetError('DEMO_UNPAID_REQUIRED', 'El reinicio solo está disponible en cuentas de prueba sin pagos ni cobros pendientes.');
   }
