@@ -1,7 +1,7 @@
 {
   "prismaVersion": "6.4.1",
-  "models": 153,
-  "scalarColumns": 1855,
+  "models": 155,
+  "scalarColumns": 1876,
   "expandedTables": [
     "WaCommerceActivationRequest",
     "WaCommerceConsentEvent",
@@ -12,7 +12,9 @@
     "WaCommercePolicyVersion",
     "WaCommerceQuoteDraft",
     "WaCommerceReceipt",
-    "WaCommerceWorkerHeartbeat"
+    "WaCommerceWorkerHeartbeat",
+    "DemoAccountReset",
+    "DemoResetImportRow"
   ],
   "expandedIndexes": [
     {
@@ -353,10 +355,18 @@
       "nonUnique": 1
     }
   ],
-  "generatedSchemaSha256": "01ea9516c27d0cf279e539b44b6e28c9de82f32d3a652366e49c389412639da4",
-  "schemaFingerprintSha256": "97beada8114e8997535471dbefd286ad94b07f6e873158aea424cfd8d33ec35a",
+  "generatedSchemaSha256": "3275fae283bef47edeecd58eb3ce9b140c41d2486147eaf55b16fa9c520243f5",
+  "schemaFingerprintSha256": "dfd635e19c80bcea735d14d6a0165c68e417c42c07381c1dfcbb53025f5eb32c",
   "provenance": {
     "receiptSha256": "f6ffe094be134f94466213d8d3f661502529108f1d7012fb62f6ad5f47e8b55c",
-    "scope": "Database fingerprint preserved from the reviewed receipt. Client regenerated from main schema on 2026-10-06; this does not attest database compatibility or authorize deployment."
+    "scope": "Database fingerprint preserved from the reviewed receipt. Client regenerated from main schema on 2026-10-06; this does not attest database compatibility or authorize deployment.",
+    "demoResetExpansion": {
+      "beforeSchemaFingerprintSha256": "97beada8114e8997535471dbefd286ad94b07f6e873158aea424cfd8d33ec35a",
+      "migrationFiles": {
+        "backend/prisma/migrations/202610090001_demo_account_reset/migration.sql": "3f82f612f18d12434cccc60230f7c269e0fb36fa4515a6c34b4bb15ce06f5f1b",
+        "backend/prisma/migrations/202610090002_admin_demo_reset/migration.sql": "d1ee1219dc67222626074fa430e18a58fb4d918cf3dafeda65448c593dcb7008"
+      },
+      "scope": "Additive demo reset expansion rehearsed on synthetic MySQL 8; does not attest or authorize remote migration."
+    }
   }
 }

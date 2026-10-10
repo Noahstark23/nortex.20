@@ -65,6 +65,10 @@ export const authenticateDriver = async (req: any, res: any, next: any) => {
         if (!driver || !driver.activo) {
             return res.status(403).json({ error: 'Tu cuenta está inactiva. Contacta a Nortex.' });
         }
+        if (driver.tenantId) {
+            const tenant = await prisma.tenant.findUnique({ where: { id: driver.tenantId }, select: { demoResetArchivedAt: true } });
+            if (!tenant || tenant.demoResetArchivedAt) return res.status(403).json({ error: 'Tu cuenta está inactiva. Contacta a Nortex.' });
+        }
         req.driver = driver;
         next();
     } catch {

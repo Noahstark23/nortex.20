@@ -69,6 +69,9 @@ import { recordSale, recordPayment, recordExpense, recordCashIn, recordCashMovem
 import { composeSeedCatalog } from './data/seedCatalogs';
 import { runDepreciationForTenant, runMonthlyDepreciationAllTenants, VIDA_UTIL_DEFAULT } from './services/depreciation';
 import { getStripe, createCheckoutSession, createPortalSession, handleWebhookEvent, PLAN_PRICE_USD, requiereConfirmacionDePagoCorto, calcularNuevoVencimiento } from './services/stripe';
+import demoAccountResetRouter from './routes/demoAccountReset.js';
+import adminDemoAccountResetRouter from './routes/adminDemoAccountReset.js';
+import { reportManualPayment } from './services/manualPaymentReporting.js';
 import { executeSale, SaleError } from './services/salesService';
 import { executeBatchWriteoff, BatchWriteoffError } from './services/batchWriteoffService';
 import { loadBatchWriteoffReplay } from './services/batchWriteoffIdempotency';
@@ -541,6 +544,8 @@ app.use('/api/sales/sync', syncRoutes);
 app.use('/api/scale-labels', scaleLabelsRouter);
 app.use('/api/scale-devices', scaleDevicesRouter);
 app.use('/api/tenant/capabilities', tenantCapabilitiesRouter);
+app.use('/api/billing/demo-reset', demoAccountResetRouter);
+app.use('/api/admin/demo-reset', adminDemoAccountResetRouter);
 app.use('/api/agent-banking', agentBankingRouter); // Agente bancario (corresponsalía en caja)
 app.use('/api', saleCorrectionsRouter); // Historial, aprobaciones, reembolsos e inspecciones de venta
 app.use('/api/reports', salesReportsRouter); // Ventas integrales y snapshots inmutables de cierre
@@ -693,7 +698,7 @@ app.post('/api/auth/login', validate(LoginSchema), async (req: any, res: any) =>
         }
 
         // 2.5 Check if user is disabled
-        if (user.status === 'DISABLED') {
+        if (user.status === 'DISABLED' || user.tenant.demoResetArchivedAt) {
             return res.status(403).json({ error: 'Tu cuenta ha sido desactivada. Contacta al administrador.' });
         }
 
@@ -8863,21 +8868,21 @@ app.get('/api/admin/metrics', authenticate, requireSuperAdmin, async (_req: expr
         // en la BD —Sale.createdAt y User.lastLogin— agregadas en la BD (distinct),
         // no traídas fila por fila (guardrail de escalabilidad #2).
         const [tenants, loanAgg, salesAgg, activeUsers, activeUsers30d, newTenantsThisMonth, salesTenantIds, loginTenantIds] = await Promise.all([
-            prisma.tenant.findMany({ select: { id: true, subscriptionStatus: true, walletBalance: true, createdAt: true } }),
+            prisma.tenant.findMany({ where: { demoResetArchivedAt: null }, select: { id: true, subscriptionStatus: true, walletBalance: true, createdAt: true } }),
             prisma.b2BOrder.aggregate({
                 where: { status: { in: ['PENDING', 'APPROVED', 'DELIVERED'] } },
                 _sum: { total: true },
             }),
             prisma.sale.aggregate({
-                where: { createdAt: { gte: monthStart } },
+                where: { createdAt: { gte: monthStart }, tenant: { demoResetArchivedAt: null } },
                 _sum: { total: true },
                 _count: true,
             }),
-            prisma.user.count(),
-            prisma.user.count({ where: { lastLogin: { gte: thirtyDaysAgo } } }),
-            prisma.tenant.count({ where: { createdAt: { gte: monthStart } } }),
-            prisma.sale.findMany({ where: { createdAt: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
-            prisma.user.findMany({ where: { lastLogin: { gte: thirtyDaysAgo } }, select: { tenantId: true }, distinct: ['tenantId'] }),
+            prisma.user.count({ where: { tenant: { demoResetArchivedAt: null } } }),
+            prisma.user.count({ where: { lastLogin: { gte: thirtyDaysAgo }, tenant: { demoResetArchivedAt: null } } }),
+            prisma.tenant.count({ where: { createdAt: { gte: monthStart }, demoResetArchivedAt: null } }),
+            prisma.sale.findMany({ where: { createdAt: { gte: thirtyDaysAgo }, tenant: { demoResetArchivedAt: null } }, select: { tenantId: true }, distinct: ['tenantId'] }),
+            prisma.user.findMany({ where: { lastLogin: { gte: thirtyDaysAgo }, tenant: { demoResetArchivedAt: null } }, select: { tenantId: true }, distinct: ['tenantId'] }),
         ]);
 
         const morosos = tenants.filter(t => t.subscriptionStatus === 'PAST_DUE' || t.subscriptionStatus === 'CANCELLED').length;
@@ -8941,6 +8946,7 @@ app.get('/api/admin/tenants', authenticate, requireSuperAdmin, async (req: any, 
         // tenants con ventas en 30d (distinct) — sin traer filas de negocio.
         const [tenants, lastLoginByTenant, salesTenantIds] = await Promise.all([
             prisma.tenant.findMany({
+                where: { demoResetArchivedAt: null },
                 include: {
                     users: {
                         select: { id: true, name: true, email: true, role: true },
@@ -9032,7 +9038,7 @@ app.post('/api/admin/tenants/:id/reactivate', authenticate, requireSuperAdmin, a
         const newEndsAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
 
         const tenant = await prisma.tenant.update({
-            where: { id: req.params.id },
+            where: { id: req.params.id, demoResetArchivedAt: null },
             data: {
                 subscriptionStatus:  'ACTIVE',
                 subscriptionEndsAt:  newEndsAt,
@@ -9377,16 +9383,7 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
     const monto = new Decimal(String(amount)).toDecimalPlaces(2);
 
     try {
-        // Verificar que no tenga un pago pendiente
-        const pending = await prisma.manualPayment.findFirst({
-            where: { tenantId: authReq.tenantId, status: 'PENDING' }
-        });
-        if (pending) {
-            return res.status(400).json({ error: 'Ya tienes un pago pendiente de revisión. Espera la confirmación.' });
-        }
-
-        const payment = await prisma.manualPayment.create({
-            data: {
+        const payment = await reportManualPayment({
                 tenantId: authReq.tenantId!,
                 amount: monto,
                 currency: currency || 'USD',
@@ -9394,7 +9391,6 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
                 referenceNumber: String(referenceNumber),
                 proofUrl: proofUrl || null,
                 notes: notes || null,
-            }
         });
 
         // Aviso al operador: el rail de cobro es manual, así que sin esto el
@@ -9415,6 +9411,8 @@ app.post('/api/billing/report-manual', authenticate, async (req: any, res: any) 
 
         res.json({ message: 'Pago reportado exitosamente. Será revisado en las próximas horas.', payment });
     } catch (error) {
+        if (error instanceof Error && error.message === 'DEMO_ACCOUNT_RESET') return res.status(409).json({ error: 'La cuenta se reinició. Volvé a ingresar antes de reportar un pago.' });
+        if (error instanceof Error && error.message === 'PAYMENT_ALREADY_PENDING') return res.status(400).json({ error: 'Ya tenés un pago pendiente de revisión.' });
         console.error('Manual payment error:', error);
         res.status(500).json({ error: 'Error al reportar pago' });
     }
@@ -9504,7 +9502,7 @@ app.post('/api/admin/manual-payments/:id/approve', authenticate, requireSuperAdm
 
             // Activar tenant
             await tx.tenant.update({
-                where: { id: payment.tenantId },
+                where: { id: payment.tenantId, demoResetArchivedAt: null },
                 data: { subscriptionStatus: 'ACTIVE', subscriptionEndsAt: endsAt }
             });
 

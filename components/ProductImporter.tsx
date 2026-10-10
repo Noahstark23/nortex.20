@@ -19,6 +19,7 @@ import {
 interface ProductImporterProps {
     onClose: () => void;
     onSuccess: () => void;
+    assisted?: { productsUrl: string; warehouses: ImportWarehouse[]; businessName: string };
 }
 
 interface ImportWarehouse { id: string; name: string; isActive: boolean; isDefault?: boolean }
@@ -43,7 +44,7 @@ interface ImportSummary {
     uncertain: { excelRow: number | null; sku: string; reason: string }[];
 }
 
-const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess }) => {
+const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess, assisted }) => {
     const [rows, setRows] = useState<ParsedRow[]>([]);
     const [resolution, setResolution] = useState<ColumnResolution | null>(null);
     const [loading, setLoading] = useState(false);
@@ -56,7 +57,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     const [limit, setLimit] = useState(PREVIEW_PAGE_SIZE);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const importingRef = useRef(false);
-    const [includeInitialStock, setIncludeInitialStock] = useState(false);
+    const [includeInitialStock, setIncludeInitialStock] = useState(Boolean(assisted));
     const [warehouses, setWarehouses] = useState<ImportWarehouse[]>([]);
     const [warehouseId, setWarehouseId] = useState('');
     const [warehousesLoading, setWarehousesLoading] = useState(false);
@@ -65,6 +66,11 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
     const [fileError, setFileError] = useState('');
     const initialWarehouseReady = !warehousesLoading && !warehousesError && warehouses.some(warehouse => warehouse.id === warehouseId);
     useEffect(() => {
+        if (assisted) {
+            setWarehouses(assisted.warehouses);
+            setWarehouseId(current => assisted.warehouses.some(w => w.id === current) ? current : assisted.warehouses.length === 1 ? assisted.warehouses[0].id : '');
+            return;
+        }
         if (!includeInitialStock) return;
         const controller = new AbortController();
         let active = true;
@@ -281,7 +287,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
         const result = await importInChunks<ParsedRow>(
             validRows,
             async (chunk) => {
-                const res = await fetch('/api/products/bulk', {
+                const res = await fetch(assisted?.productsUrl ?? '/api/products/bulk', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
@@ -376,7 +382,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
                     <div className="min-w-0">
                         <h2 className="text-base sm:text-xl font-bold text-white flex items-center gap-2">
                             <Upload size={20} className="text-brand-400 shrink-0" />
-                            <span className="truncate">Importar productos</span>
+                            <span className="truncate">Importar productos{assisted ? ` — ${assisted.businessName}` : ''}</span>
                         </h2>
                         <p className="hidden sm:block text-sm text-surface-400 mt-1">Carga hasta 500 productos desde Excel/CSV con validación automática</p>
                     </div>
@@ -542,7 +548,7 @@ const ProductImporter: React.FC<ProductImporterProps> = ({ onClose, onSuccess })
 
                     {rows.length > 0 && !summary && <div className="space-y-2 rounded-lg border border-surface-600 p-4">
                         <label htmlFor="catalog-import-purpose" className="block text-sm font-semibold text-white">Qué querés importar</label>
-                        <select id="catalog-import-purpose" disabled={importing} value={includeInitialStock ? 'initial' : 'catalog'} onChange={event => { if (!importingRef.current) setIncludeInitialStock(event.target.value === 'initial'); }} className="nx-form-field w-full rounded-control border bg-surface-900 p-3 text-slate-100">
+                        <select id="catalog-import-purpose" disabled={importing || Boolean(assisted)} value={includeInitialStock ? 'initial' : 'catalog'} onChange={event => { if (!importingRef.current) setIncludeInitialStock(event.target.value === 'initial'); }} className="nx-form-field w-full rounded-control border bg-surface-900 p-3 text-slate-100">
                             <option value="catalog">Actualizar catálogo y precios</option>
                             <option value="initial">Cargar existencias iniciales de productos nuevos</option>
                         </select>

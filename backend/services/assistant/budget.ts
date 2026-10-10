@@ -6,6 +6,7 @@ import { assertAssistantAccess } from './access.js';
 import { AssistantDocumentError } from './attachments.js';
 import type { AssistantPrincipal } from '../../../shared/assistant.js';
 import { effectiveAssistantBudget } from './budgetPolicy.js';
+import { assistantBudgetTenantId } from './budgetIdentity.js';
 
 export const GLOBAL_BUDGET_USD = '20';
 export const TENANT_BUDGET_USD = '10';
@@ -61,7 +62,8 @@ export async function reserveAssistantBudget(principal: AssistantPrincipal, requ
     const config=await tx.assistantTenantConfig.findUnique({where:{tenantId:principal.tenantId},select:{monthlyBudgetUsd:true,approvedMonthlyBudgetUsd:true}});
     const tenantLimit=effectiveAssistantBudget(config);
     const global=await lockBudget(tx,'global',month,GLOBAL_BUDGET_USD);
-    const tenant=await lockBudget(tx,`tenant:${principal.tenantId}`,month,tenantLimit.toString());
+    const budgetTenantId=await assistantBudgetTenantId(tx,principal.tenantId);
+    const tenant=await lockBudget(tx,`tenant:${budgetTenantId}`,month,tenantLimit.toString());
     for (const bucket of [global,tenant]) {
       if (bucket.blocked || new Decimal(bucket.spentUsd.toString()).add(bucket.reservedUsd.toString()).add(amount).gt(bucket.limitUsd.toString())) throw new AssistantDocumentError('BUDGET_EXHAUSTED','Se alcanzó el presupuesto mensual de IA. Podés continuar con las funciones habituales.',429);
     }
@@ -80,7 +82,8 @@ export async function settleAssistantBudget(principal: AssistantPrincipal, usage
     const actual=tokenCostUsd(usage.inputTokens,usage.outputTokens);
     // Un consumo real superior al máximo reservado se contabiliza y bloquea nuevas llamadas.
     const exceeded=new Decimal(actual).gt(row.reservedUsd.toString());
-    for (const scope of ['global',`tenant:${principal.tenantId}`]) {
+    const budgetTenantId=await assistantBudgetTenantId(tx,principal.tenantId);
+    for (const scope of ['global',`tenant:${budgetTenantId}`]) {
       const id=`${scope}:${row.month}`;
       await tx.$queryRaw(Prisma.sql`SELECT id FROM AssistantBudget WHERE id = ${id} FOR UPDATE`);
       const changed=await tx.assistantBudget.updateMany({where:{id,reservedUsd:{gte:row.reservedUsd}},data:{reservedUsd:{decrement:row.reservedUsd},spentUsd:{increment:actual},...(exceeded?{blocked:true}:{})}});

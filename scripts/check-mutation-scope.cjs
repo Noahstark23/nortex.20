@@ -242,14 +242,14 @@ const PISO_MUTANTES = {
     // cuánto cobra cada quien — el número con el que el dueño paga o reclama).
     // 59 mutantes, score medido 100.00%.
     'backend/services/sellerReport.ts': 59,
-    // stripe.ts entra solo por sus dos funciones PURAS de cobro (35-62), no por
+    // stripe.ts entra solo por sus dos funciones PURAS de cobro (33-65), no por
     // el cliente de Stripe: 13 mutantes, score medido 100.00%. Protegen el rail
     // que de verdad cobra en Nicaragua — Stripe no soporta el país como
     // comercio, así que el dinero entra por depósito con comprobante y
     // activación a mano. Antes aprobar daba 30 días con cualquier monto
     // reportado y los contaba desde hoy, perdiendo los días de quien renovaba
     // anticipado.
-    'backend/services/stripe.ts': 13,
+    'backend/services/stripe.ts': 17,
     'backend/services/stockService.ts': 5,
     // PR-01 protege toda la canalización pura de posting: normalización
     // estricta string/Decimal, límites 18,4, balance, orden total y huella.

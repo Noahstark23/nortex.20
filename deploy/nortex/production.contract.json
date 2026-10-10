@@ -1,7 +1,7 @@
 {
   "prismaVersion": "6.4.1",
-  "models": 153,
-  "scalarColumns": 1855,
+  "models": 155,
+  "scalarColumns": 1876,
   "expandedTables": [
     "WaCommerceConversation",
     "WaCommerceInbox",
@@ -12,11 +12,13 @@
     "WaCommercePolicyVersion",
     "WaCommerceActivationRequest",
     "WaCommerceWorkerHeartbeat",
-    "WaCommerceOutboxAttempt"
+    "WaCommerceOutboxAttempt",
+    "DemoAccountReset",
+    "DemoResetImportRow"
   ],
   "expandedIndexes": [],
-  "generatedSchemaSha256": "01ea9516c27d0cf279e539b44b6e28c9de82f32d3a652366e49c389412639da4",
-  "schemaFingerprintSha256": "7941abbd1ab5a72d5df3028c8ef755427bdf8e85042bff37bd224964502b8bb2",
+  "generatedSchemaSha256": "3275fae283bef47edeecd58eb3ce9b140c41d2486147eaf55b16fa9c520243f5",
+  "schemaFingerprintSha256": "9e3d8dc319e441e53c40844f11faabdf5bad3af718109697be03b7f8a361336f",
   "provenance": {
     "receiptSha256": "9f0455ad187e5ddc6fec38e5e8a82c1f1ed6f1154043359a1c668f34fd48d2fd",
     "scope": "Target after the three existing additive WhatsApp migrations, reproduced on MySQL 8.0.43 from the production baseline. Remote baseline verified read-only on 2026-10-06; migration is not applied or authorized by this contract.",
@@ -25,6 +27,14 @@
       "backend/prisma/migrations/202609290001_whatsapp_commerce/migration.sql": "5c56fa5883245b35aa649a0c1ebb7fe8c3cb78e7b14bf108d11dd9c345d07f1f",
       "backend/prisma/migrations/202609290002_whatsapp_activation_request/migration.sql": "e822d72c0a96f715dcfd573d855b898b33f0ea9912724601109a03e7c643373f",
       "backend/prisma/migrations/202609290004_whatsapp_operations/migration.sql": "0a8c1b23f962811982e41d41753235347ecdceb53047460961b090cc44a7ccda"
+    },
+    "demoResetExpansion": {
+      "beforeSchemaFingerprintSha256": "7941abbd1ab5a72d5df3028c8ef755427bdf8e85042bff37bd224964502b8bb2",
+      "migrationFiles": {
+        "backend/prisma/migrations/202610090001_demo_account_reset/migration.sql": "3f82f612f18d12434cccc60230f7c269e0fb36fa4515a6c34b4bb15ce06f5f1b",
+        "backend/prisma/migrations/202610090002_admin_demo_reset/migration.sql": "d1ee1219dc67222626074fa430e18a58fb4d918cf3dafeda65448c593dcb7008"
+      },
+      "scope": "Additive demo reset expansion rehearsed on synthetic MySQL 8; does not attest or authorize remote migration."
     }
   }
 }

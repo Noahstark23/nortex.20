@@ -406,7 +406,7 @@ router.get('/:id/tracking', async (req: any, res: any) => {
         }
         const capability = verifyPedidoTrackingToken(token, id);
         const pedido = await prisma.pedido.findFirst({
-            where: { id, tenantId: capability.tenantId },
+            where: { id, tenantId: capability.tenantId, tenant: { demoResetArchivedAt: null } },
             select: PUBLIC_PEDIDO_TRACKING_SELECT,
         });
 

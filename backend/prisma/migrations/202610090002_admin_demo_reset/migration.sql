@@ -1,0 +1,9 @@
+ALTER TABLE `DemoAccountReset`
+  ADD COLUMN `actorMode` VARCHAR(16) NOT NULL DEFAULT 'OWNER',
+  ADD COLUMN `ownerUserId` VARCHAR(191) NULL;
+CREATE TABLE `DemoResetImportRow` (
+  `resetId` VARCHAR(36) NOT NULL, `sku` VARCHAR(191) NOT NULL,
+  `payloadHash` VARCHAR(64) NOT NULL, `productId` VARCHAR(191) NOT NULL,
+  `createdAt` DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  PRIMARY KEY (`resetId`, `sku`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
