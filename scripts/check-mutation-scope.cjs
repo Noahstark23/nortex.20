@@ -231,11 +231,12 @@ const PISO_MUTANTES = {
     // por el Decreto 06-2019), un hueco de un centavo entre tramos de la tabla IR
     // que devolvía IR = 0, y un finiquito que imprimía los días sin topar junto a
     // un monto topado. Las constantes de módulo conservan su alcance previo.
-    // Pasivo y aguinaldo anual protegen sus cuerpos completos con50 +13.
-    // El refactor equivalente reemplaza tres comparaciones ternarias por
-    // min/max y la guarda de antigüedad por finitud preservando NaN. Elimina
-    // 11 mutantes de esas expresiones:55→50 y19→13, sin recortar rangos ni
-    // añadir ignores. Con los127 anteriores el piso medido es190; umbral100.
+    // H2 retirado: se preservan los selectores de fecha y divisor360 de main.
+    // Se conservan los pisos previos del PR:190 por archivo y50/13 por función.
+    // El diagnóstico del candidato mide203 instrumentados (20 ignored
+    // históricos),54 en pasivo y21 en anual. Tres comparadores equivalentes
+    // sobreviven cuando ambas fechas son iguales; el umbral100 sigue pendiente.
+    // No se recortan rangos, se bajan pisos ni se añaden ignores para aprobarlo.
     'backend/services/nicaLabor.ts': 190,
     'backend/services/nicaTax.ts': 7,
     // Régimen fiscal puro: normalización, conflicto de versión (incluido el

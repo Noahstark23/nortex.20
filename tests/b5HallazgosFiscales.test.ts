@@ -124,14 +124,14 @@ describe('H1 — IVA a 2 decimales en snapshot y asiento', () => {
 // H2 retirado — contrato de main preservado (tres funciones)
 // ════════════════════════════════════════════════════════════════════════════
 describe('H2 retirado — aguinaldo vigente / 360', () => {
-    it('P2: C$12,000 con 180 días → 5,917.81 en la corrida anual', () => {
+    it('P2: C$12,000 con 180 días → 6,000.00 en la corrida anual', () => {
         // 1-dic-2025 + 179 días = 29-may-2026 → 180 días.
         const r = computeAguinaldoAnual(12000, new Date(2020, 0, 1), 2026, new Date(2026, 4, 29, 12));
         expect(r.dias).toBe(180);
         expect(r.monto).toBe(6000);
     });
 
-    it('P2: la liquidación usa la misma regla (180 días → 5,917.81)', () => {
+    it('P2: la liquidación usa la regla vigente (180 días → 6,000.00)', () => {
         const r = calculateSettlement({
             hireDate: new Date('2020-01-01T12:00:00Z'),
             terminationDate: new Date('2026-05-29T12:00:00Z'),
@@ -143,7 +143,7 @@ describe('H2 retirado — aguinaldo vigente / 360', () => {
         expect(r.aguinaldo).toBe(6000);
     });
 
-    it('P2: el pasivo laboral usa la misma regla (180 días → 5,917.8082)', () => {
+    it('P2: el pasivo laboral usa la regla vigente (180 días → 6,000.0000)', () => {
         vi.useFakeTimers();
         vi.setSystemTime(new Date('2026-05-29T12:00:00Z'));
         const r = calculateLaborLiability('e1', 'Ana', new Date('2020-01-01T12:00:00Z'), 12000, 0);
