@@ -35,9 +35,13 @@ export function assistantStatusQueries(tenantId:string, start:Date, end:Date, mo
       COALESCE(SUM(CASE WHEN status IN ('RESERVED','UNKNOWN') THEN reservedUsd ELSE 0 END),0) AS activeReservationsUsd,
       COALESCE(SUM(CASE WHEN status='SETTLED' THEN actualUsd ELSE 0 END),0) AS settledUsd,
       COALESCE(SUM(status='SETTLED' AND actualUsd IS NULL),0) AS missingSettledCost
-      FROM AssistantUsage WHERE tenantId=${tenantId} AND month=${month}),
+      FROM AssistantUsage WHERE tenantId IN (
+        SELECT id FROM Tenant WHERE id=COALESCE((SELECT demoResetRootId FROM Tenant WHERE id=${tenantId}),${tenantId})
+          OR demoResetRootId=COALESCE((SELECT demoResetRootId FROM Tenant WHERE id=${tenantId}),${tenantId})
+      ) AND month=${month}),
     bucket AS (SELECT COUNT(*) AS bucketCount,SUM(spentUsd) AS spentUsd,SUM(reservedUsd) AS reservedUsd,MAX(limitUsd) AS limitUsd,MAX(blocked) AS blocked
-      FROM AssistantBudget WHERE scope=${`tenant:${tenantId}`} AND month=${month}) SELECT usage_totals.*,bucket.* FROM usage_totals CROSS JOIN bucket`;
+      FROM AssistantBudget WHERE scope=CONCAT('tenant:',COALESCE((SELECT demoResetRootId FROM Tenant WHERE id=${tenantId}),${tenantId}))
+        AND month=${month}) SELECT usage_totals.*,bucket.* FROM usage_totals CROSS JOIN bucket`;
   const queuePart=(table:Prisma.Sql,source:string,expiry:boolean)=>Prisma.sql`
     SELECT ${source} AS source,status,COUNT(*) AS count,
       SUM(status='PENDING' AND availableAt<=${end} ${expiry?Prisma.sql`AND expiresAt>${end}`:Prisma.empty}) AS ready,

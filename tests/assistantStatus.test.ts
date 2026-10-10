@@ -35,7 +35,7 @@ describe('Estado administrativo: evidencia agregada y privacidad',()=>{
   it('sólo devuelve agregados, cuatro consultas acotadas al negocio y nada de texto',async()=>{
     const {actor,db,deps}=fixture();await getAssistantHealthStatus(actor,deps);expect(db.$queryRaw).toHaveBeenCalledTimes(4);
     for(const [query] of db.$queryRaw.mock.calls){expect(query.values).toContain(actor.tenantId);expect(query.sql).not.toMatch(/SELECT \*|inputText|checkpoint|providerRequestId|payload|attachmentIds|\btext\b|INSERT|UPDATE|DELETE/);}
-    const budget=db.$queryRaw.mock.calls[1][0];expect(budget.values).toContain('tenant:tenant-a');expect(budget.values).not.toContain('global');
+    const budget=db.$queryRaw.mock.calls[1][0];expect(budget.values).toContain('tenant-a');expect(budget.sql).toContain("CONCAT('tenant:'");expect(budget.sql).toContain('demoResetRootId');expect(budget.values).not.toContain('global');
   });
   it('latencia usa muestras reales y conserva falta de timestamps',async()=>{
     const {actor,db,deps}=fixture();db.$queryRaw.mockReset().mockResolvedValueOnce([{status:'SUCCEEDED',count:3,degraded:1,degradedUnknown:0,latencySamples:2,latencyUnknown:1,latencyMs:'5000',firstStartedAt:new Date('2026-08-31T12:00:00Z'),lastFinishedAt:new Date('2026-08-31T12:00:05Z')}]).mockResolvedValueOnce([emptyBudget]).mockResolvedValueOnce([]).mockResolvedValueOnce([]);

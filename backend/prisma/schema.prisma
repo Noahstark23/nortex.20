@@ -29,6 +29,10 @@ model Tenant {
   // Nunca sembrar un valor fantasma; el número solo existe si hay con qué.
   creditScore          Int?
   subscriptionStatus   String    @default("TRIAL") // TRIAL | ACTIVE | PAST_DUE | CANCELLED
+  // Reinicio de prueba: el espacio anterior queda inaccesible, con historial intacto.
+  demoResetArchivedAt  DateTime?
+  // Mantiene el mismo presupuesto de IA y evita renovar crédito con un reinicio.
+  demoResetRootId      String?   @db.VarChar(191)
   stripeCustomerId     String? // Stripe Customer ID (cus_xxx)
   stripeSubscriptionId String? // Stripe Subscription ID (sub_xxx)
   subscriptionEndsAt   DateTime? // Fecha de vencimiento de la suscripción activa
@@ -179,6 +183,31 @@ model Tenant {
   // WhatsApp channel
   whatsappSessions        WhatsappSession[]
   whatsappInboundMessages WhatsappInboundMessage[]
+
+  @@index([demoResetArchivedAt, createdAt])
+  @@index([demoResetRootId])
+}
+
+// Intención y comprobante del reinicio. Nunca contiene contraseñas ni tokens.
+model DemoAccountReset {
+  id            String   @id @default(uuid()) @db.VarChar(36)
+  tenantId      String
+  userId        String
+  requestKey    String   @db.VarChar(36)
+  status        String   @default("PREVIEWED") @db.VarChar(16)
+  fingerprint   String   @db.VarChar(64)
+  counts        Json
+  expiresAt     DateTime
+  nextTenantId  String?
+  nextUserId    String?
+  createdAt     DateTime @default(now())
+  appliedAt     DateTime?
+  // Actor real de soporte; no se atribuye al dueño una acción administrativa.
+  actorMode     String   @default("OWNER") @db.VarChar(16)
+  ownerUserId   String?
+
+  @@unique([tenantId, requestKey])
+  @@index([tenantId, userId, createdAt])
 }
 
 model User {
@@ -2878,6 +2907,7 @@ model ManualPayment {
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId])
+  @@index([tenantId, status])
   @@index([status])
 }
 
@@ -3721,6 +3751,7 @@ model Loan {
   // Índices (Fase 0 blindaje): la cartera filtra por lenderId y ordena por
   // createdAt; el cobrador filtra por assignedToId; los reportes por estado.
   @@index([lenderId, createdAt])
+  @@index([tenantId])
   @@index([lenderId, status])
   @@index([assignedToId])
 }
@@ -4063,4 +4094,14 @@ model WaCommerceOutboxAttempt {
   errorCode String? @db.VarChar(64)
   @@index([tenantId, outboxId, claimedAt])
   @@index([status, claimedAt])
+}
+
+// Comprobante por fila de carga asistida: mismo contenido no vuelve a sumar stock.
+model DemoResetImportRow {
+  resetId String @db.VarChar(36)
+  sku String @db.VarChar(191)
+  payloadHash String @db.VarChar(64)
+  productId String
+  createdAt DateTime @default(now())
+  @@id([resetId, sku])
 }

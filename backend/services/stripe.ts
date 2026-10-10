@@ -6,9 +6,7 @@
 import Stripe from 'stripe';
 import Decimal from 'decimal.js';
 // @ts-ignore
-import { PrismaClient } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import prisma from '../lib/prisma.js';
 
 /**
  * Precio público del plan, en USD. Tiene que coincidir con el PLAN_PRICE de
@@ -94,7 +92,7 @@ export async function getOrCreateStripeCustomer(tenantId: string): Promise<strin
         include: { users: { take: 1, orderBy: { createdAt: 'asc' } } }
     });
 
-    if (!tenant) throw new Error('Tenant no encontrado');
+    if (!tenant || tenant.demoResetArchivedAt) throw new Error('Cuenta no disponible para cobros.');
 
     // Si ya tiene un customer ID, retornarlo
     if (tenant.stripeCustomerId) {
@@ -113,10 +111,11 @@ export async function getOrCreateStripeCustomer(tenantId: string): Promise<strin
     });
 
     // Guardar en DB
-    await prisma.tenant.update({
-        where: { id: tenantId },
+    const saved = await prisma.tenant.updateMany({
+        where: { id: tenantId, demoResetArchivedAt: null },
         data: { stripeCustomerId: customer.id },
     });
+    if (saved.count !== 1) throw new Error('La cuenta se reinició antes de abrir el cobro.');
 
     return customer.id;
 }

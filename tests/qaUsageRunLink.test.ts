@@ -9,6 +9,7 @@ const RUN = 'run-42';
 function database() {
   const buckets = new Map<string, any>(), usages = new Map<string, any>();
   const tx = {
+    tenant: { findUnique: vi.fn().mockResolvedValue({ demoResetRootId: null }) },
     $executeRaw: vi.fn(async (query: any) => { const [id, scope, month, limitUsd] = query.values; if (!buckets.has(id)) buckets.set(id, { id, scope, month, limitUsd, reservedUsd: new Decimal(0), spentUsd: new Decimal(0), blocked: false }); return 1; }),
     $queryRaw: vi.fn(async (query: any) => { const row = buckets.get(query.values[0]); return row ? [row] : []; }),
     assistantTenantConfig: { findUnique: vi.fn().mockResolvedValue({ monthlyBudgetUsd: new Decimal(10) }) },

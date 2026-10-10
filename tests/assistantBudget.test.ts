@@ -7,6 +7,7 @@ const principal={tenantId:'tenant',userId:'user',role:'OWNER'};
 function database() {
   const buckets=new Map<string,any>(),usages=new Map<string,any>();
   const tx={
+    tenant:{findUnique:vi.fn().mockResolvedValue({demoResetRootId:null})},
     $executeRaw:vi.fn(async(query:any)=>{const [id,scope,month,limitUsd]=query.values;if(!buckets.has(id))buckets.set(id,{id,scope,month,limitUsd,reservedUsd:new Decimal(0),spentUsd:new Decimal(0)});else buckets.get(id).limitUsd=limitUsd;return 1;}),
     $queryRaw:vi.fn(async(query:any)=>{const row=buckets.get(query.values[0]);return row?[row]:[];}),
     assistantTenantConfig:{findUnique:vi.fn().mockResolvedValue({monthlyBudgetUsd:new Decimal(10)})},

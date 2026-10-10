@@ -1,5 +1,7 @@
 /** Suites obligatorias: no se acepta un verde producido por describe.skip. */
 export const REQUIRED_INTEGRATION_SUITES = [
+  'tests/adminDemoAccountReset.integration.test.ts',
+  'tests/demoAccountReset.integration.test.ts',
   'tests/journalSingleConnection.mysql.test.ts',
   'tests/whatsappIdentity.mysql.test.ts',
   'tests/cashCloseJournal.mysql.test.ts',
