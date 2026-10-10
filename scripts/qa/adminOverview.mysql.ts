@@ -153,6 +153,7 @@ try {
         assert.equal(after.pagination.total, before.pagination.total - 1);
         assert.equal((await overview('/metrics?search=demo')).tenants.length, 0);
         assert.deepEqual(after.cohorts, before.cohorts);
+        await db.tenant.update({ where: { id: 'demo' }, data: { demoResetArchivedAt: null } });
     });
     await check('ADMIN sin perfil OWNER no ofrece un dueño para el reinicio', async () => {
         await db.user.update({ where: { id: 'owner-b' }, data: { role: 'ADMIN' } });
